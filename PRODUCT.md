@@ -27,7 +27,7 @@
 
 ## Product Direction
 
-This project starts from scratch and is intended to supersede the predecessor repository's Sandbox task. It may become a drop-in replacement only after the independent MVP path is proven; old implementation behavior is not copied as a compatibility requirement.
+This project is a standalone Windows Sandbox workflow with no external compatibility target.
 
 Prefer the happy path and fast real feedback over broad configuration, compatibility variants, or speculative abstractions.
 

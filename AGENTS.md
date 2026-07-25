@@ -4,7 +4,7 @@
 
 Repository contract for agents working on this Go CLI. The default loop is: find the current owner, implement the smallest real path, keep hard contracts at unsafe boundaries, delete replaced paths, verify the shared path, and report net complexity.
 
-This repository intentionally starts lean. Do not import generic template machinery, compatibility layers, or infrastructure from the predecessor application unless a current requirement makes it useful and it removes more complexity than it adds.
+This repository intentionally starts lean. Do not import generic template machinery, compatibility layers, or infrastructure unless a current requirement makes it useful and it removes more complexity than it adds.
 
 ## Sources Of Truth
 

@@ -54,7 +54,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Terminal failure outranks stale progress. Host waiting is cancellable and time-bounded.
 - Per-run identity and known-hosts files remain app-owned. The Sandbox tool updates a stable app-owned `Host sandbox` file and owns one idempotent, marked `Include` at the start of the user's standard SSH config; unrelated user content is preserved.
 - The `herdr-win` project owns generic Windows SSH behavior matching Unix: it builds a private temporary config that includes the normal user and system SSH configs before Herdr keepalive defaults, then passes that file to `ssh.exe -F`. It has no Sandbox-specific target knowledge or required environment-variable contract.
-- No backward-compatibility state, dual read/write path, legacy marker parser, or predecessor-task shim is part of the MVP.
+- No backward-compatibility state, dual read/write path, or legacy marker parser is part of the MVP.
 
 ## Development Provisioning
 
