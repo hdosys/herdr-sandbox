@@ -91,16 +91,7 @@ func TestValidateStackProvisioningContract(t *testing.T) {
 }
 
 func TestDefaultBaseInstallsGitHubCLIThroughCachedMSIAdapter(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
-	contents, err := os.ReadFile(baseScript)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(contents)
+	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		baseProvisioningContract,
 		"-Role 'GitHub CLI' -Id 'GitHub.cli'",
@@ -587,12 +578,7 @@ if ($accepted) { throw 'Package plan without Core PowerShell was accepted.' }
 
 func readDefaultBaseProvisioning(t *testing.T) string {
 	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
-	contents, err := os.ReadFile(baseScript)
+	contents, err := os.ReadFile(defaultProvisioningPath(t, baseProvisioningName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,29 +587,24 @@ func readDefaultBaseProvisioning(t *testing.T) string {
 
 func readDefaultStackProvisioning(t *testing.T) string {
 	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	stackScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", stackProvisioningName)
-	contents, err := os.ReadFile(stackScript)
+	contents, err := os.ReadFile(defaultProvisioningPath(t, stackProvisioningName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(contents)
 }
 
-func TestDefaultBaseExtractsPortablePackagesWithInboxTar(t *testing.T) {
+func defaultProvisioningPath(t *testing.T, name string) string {
+	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
-	contents, err := os.ReadFile(baseScript)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(contents)
+	return filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", name)
+}
+
+func TestDefaultBaseExtractsPortablePackagesWithInboxTar(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		"Join-Path $env:SystemRoot 'System32\\tar.exe'",
 		"-ArgumentList @('-xf', $PayloadPath, '-C', $toolRoot)",
@@ -642,11 +623,7 @@ func TestProvisioningProgressAndTimingDiagnosticsInWindowsPowerShell51(t *testin
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	statusDirectory := t.TempDir()
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
@@ -692,11 +669,7 @@ func TestRegistryValueWriterIsTypedAndIdempotentInWindowsPowerShell51(t *testing
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	registryPath := `HKCU:\Software\HerdrSandboxTests\` + strings.ReplaceAll(t.Name(), "/", "-")
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
@@ -737,11 +710,7 @@ func TestWinGetListParserRequiresExactIDAndVersionInWindowsPowerShell51(t *testi
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $tokens = $null
@@ -770,11 +739,7 @@ func TestNativeProcessTreeWaitUsesReturnedExitCodeInWindowsPowerShell51(t *testi
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	powerShell := mustWindowsPowerShellPath(t)
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
@@ -807,11 +772,7 @@ func TestRustupAdapterPreservesInstallerBasenameInWindowsPowerShell51(t *testing
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	stage := t.TempDir()
 	payload := filepath.Join(stage, "payload")
 	if err := os.WriteFile(payload, []byte("fixture"), 0o600); err != nil {
@@ -860,11 +821,7 @@ func TestPackageAdapterCanDeferCommandReadinessInWindowsPowerShell51(t *testing.
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	payload := filepath.Join(t.TempDir(), "payload.exe")
 	if err := os.WriteFile(payload, []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
@@ -900,11 +857,7 @@ func TestMergedManifestParserAcceptsBlankLinesInWindowsPowerShell51(t *testing.T
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	manifest := filepath.Join(t.TempDir(), "package.yaml")
 	hash := strings.Repeat("A", 64)
 	contents := "PackageIdentifier: Fixture.Package\nPackageVersion: 1.2.3\n\nInstallers:\n- Architecture: x64\n  InstallerType: inno\n  Scope: machine\n  InstallerUrl: https://example.invalid/fixture.exe\n  InstallerSha256: " + hash + "\n  Dependencies:\n    PackageDependencies:\n    - PackageIdentifier: Nested.Dependency\nManifestType: merged\nManifestVersion: 1.10.0\n"
@@ -937,11 +890,7 @@ func TestGuestPackageStageCleanupRetriesSharingViolation(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	stageRoot := t.TempDir()
 	stage := filepath.Join(stageRoot, "locked-stage")
 	if err := os.MkdirAll(stage, 0o700); err != nil {
@@ -1000,11 +949,7 @@ func TestWaitProvisioningCommandAvailableHandlesDelayedInstallerChild(t *testing
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	commandPath := filepath.Join(t.TempDir(), "delayed-command.exe")
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	childScript := fmt.Sprintf(`Start-Sleep -Milliseconds 900
@@ -1039,11 +984,7 @@ func TestWaitProvisioningCommandAvailableRejectsExcludedAlias(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	baseScript := filepath.Join(filepath.Dir(currentFile), "..", "..", "provisioning", baseProvisioningName)
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $tokens = $null

@@ -13,14 +13,6 @@ import (
 	"unicode/utf8"
 )
 
-func inspectHostHerdr(ctx context.Context) (string, string, error) {
-	path, err := exec.LookPath("herdr.exe")
-	if err != nil {
-		return "", "", errors.New("Herdr herdr.exe is not on PATH")
-	}
-	return inspectHostHerdrAt(ctx, path)
-}
-
 func inspectHostHerdrAt(ctx context.Context, path string) (string, string, error) {
 	info, err := os.Stat(path)
 	if err != nil {

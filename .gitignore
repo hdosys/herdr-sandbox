@@ -6,8 +6,6 @@ reference/
 references/
 
 # Local environment and secrets
-.env
-.env.*
 *.env
 *.env.*
 !.env.example
@@ -29,9 +27,6 @@ coverage/
 tmp/
 temp/
 .cache/
-
-# Optional local OpenCode dependencies
-.opencode/node_modules/
 
 # OS/editor state
 .DS_Store

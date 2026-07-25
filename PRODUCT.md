@@ -24,7 +24,6 @@
 - The CLI does not create a host-side Herdr workspace or pane as a substitute for remote attach.
 - Failure names the failed phase and points to bounded diagnostics. The workflow times out rather than waiting forever.
 - `up` never closes an existing Sandbox automatically. `status` reports the app-owned session as starting, ready, failed, stale, stopped, or unmanaged without changing it. `down` is idempotent and requests an orderly close through the exact owned Sandbox client's main window only after revalidation; it refuses to stop an unowned or changed process and never force-kills a nonresponsive client or triggers crash-report submission as normal shutdown behavior.
-- The MVP establishes the communication channel first. Installing the full development toolchain, OpenCode runtime, project synchronization, and predecessor drop-in compatibility are later work.
 
 ## Product Direction
 

@@ -113,25 +113,25 @@ func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	if err != nil || status.State != SessionStarting || status.Phase != "" {
 		t.Fatalf("empty status = %#v, %v", status, err)
 	}
-	writeLifecycleStatus(t, filepath.Join(statusDirectory, progressFileName), progressStatus{SchemaVersion: 1, Phase: "base", Message: "Installing"})
+	writeJSON(t, filepath.Join(statusDirectory, progressFileName), progressStatus{SchemaVersion: 1, Phase: "base", Message: "Installing"})
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionStarting || status.Phase != "base" || status.Message != "Installing" {
 		t.Fatalf("progress status = %#v, %v", status, err)
 	}
 	connectable := connectableStatus{SchemaVersion: statusSchemaVersion, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZha2VwdWJsaWNrZXlieXRlcw==", WinGetVersion: "v1", HerdrVersion: "herdr 1.0.0", HerdrProtocol: 18}
-	writeLifecycleStatus(t, filepath.Join(statusDirectory, connectableFileName), connectable)
+	writeJSON(t, filepath.Join(statusDirectory, connectableFileName), connectable)
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionStarting || status.Phase != "connectable" || status.GuestIP != "" || status.HerdrVersion != "" {
 		t.Fatalf("connectable status = %#v, %v", status, err)
 	}
 	ready := readyStatus(connectionStatus(connectable))
 	ready.SchemaVersion = readyStatusSchemaVersion
-	writeLifecycleStatus(t, filepath.Join(statusDirectory, readyFileName), ready)
+	writeJSON(t, filepath.Join(statusDirectory, readyFileName), ready)
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionReady || status.GuestIP != ready.IP || status.HerdrVersion != ready.HerdrVersion {
 		t.Fatalf("ready status = %#v, %v", status, err)
 	}
-	writeLifecycleStatus(t, filepath.Join(statusDirectory, failureFileName), failureStatus{SchemaVersion: 1, Phase: "attach", Message: "failed"})
+	writeJSON(t, filepath.Join(statusDirectory, failureFileName), failureStatus{SchemaVersion: 1, Phase: "attach", Message: "failed"})
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionFailed || status.Phase != "attach" || status.Message != "failed" {
 		t.Fatalf("failure status = %#v, %v", status, err)
@@ -258,16 +258,5 @@ func testActiveSession(root, runID, executable string) activeSession {
 		ExecutablePath: executable,
 		StartedAtUTC:   "2026-07-24T12:34:56.1234567Z",
 		CommandLine:    expectedWindowsSandboxCommandLine(executable, config),
-	}
-}
-
-func writeLifecycleStatus(t *testing.T, path string, value any) {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
 	}
 }
