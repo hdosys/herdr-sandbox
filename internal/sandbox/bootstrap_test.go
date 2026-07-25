@@ -1,0 +1,260 @@
+package sandbox
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
+	script := string(bootstrapScript)
+	for _, required := range []string{
+		"Net.SecurityProtocolType]::Tls12",
+		"-ErrorAction Stop",
+		"[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)",
+		"github.com/microsoft/winget-cli/releases/download/",
+		"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
+		"DesktopAppInstaller_Dependencies.zip",
+		"function Get-PinnedBootstrapAsset",
+		"function Get-BootstrapFileSHA256",
+		"function Assert-BootstrapCacheTree",
+		"C:\\HerdrSandbox\\cache",
+		"bootstrap cache hit",
+		"Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths",
+		"$env:HERDR_SANDBOX_STATUS_DIRECTORY = [IO.Path]::GetFullPath($StatusDirectory)",
+		"winget-packages.json",
+		"workspaces.json",
+		"-Phase 'Registry'",
+		"-Phase 'Development'",
+		"-WorkspacesDirectory 'C:\\Workspaces' -PackagePlanPath $packagePlanPath",
+		"function Get-PowerShell7Installation",
+		"Get-AppxPackage -Name 'Microsoft.PowerShell'",
+		"Join-Path ([string]$package.InstallLocation) 'pwsh.exe'",
+		"$file.VersionInfo.ProductVersion",
+		"Get-AuthenticodeSignature -LiteralPath $executable",
+		"default_shell = `\"pwsh.exe`\"",
+		"-Value $powerShell7Executable",
+		"OpenSSH default shell verification failed",
+		"download.visualstudio.microsoft.com/download/pr/",
+		"VC_redist.x64.exe",
+		"@('/install', '/quiet', '/norestart')",
+		"github.com/hdosys/herdr-win/releases/download/",
+		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
+		"C:\\HerdrSandbox\\runtime\\herdr",
+		"OpenSSH-Win64-v10.0.0.0.msi",
+		"'ADDLOCAL=Server'",
+		"administrators_authorized_keys",
+		"Start-Process -FilePath $herdrExecutable -ArgumentList @('server')",
+		"'connectable.json'",
+		"'configuration-handoff.json'",
+		"Verified host configuration did not arrive within 7 minutes.",
+		"$workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName)",
+		"$workspaceArguments += '--focus'",
+		"Creating $($workspaceEntries.Count) mounted-project workspaces",
+		"$workspaceResponse.result.root_pane.pane_id",
+		"PasswordAuthentication no",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("bootstrap is missing %q", required)
+		}
+	}
+	lower := strings.ToLower(script)
+	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "c:\\herdr\\", "active-workspace.txt"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("bootstrap contains forbidden path %q", forbidden)
+		}
+	}
+	for _, forbidden := range []string{
+		"-FilePath $powerShell7Executable",
+		"PowerShell 7 bootstrap version is unexpected",
+		"PowerShell 7 bootstrap verification",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("bootstrap executes PowerShell 7 during provisioning with %q", forbidden)
+		}
+	}
+	if count := strings.Count(script, "Invoke-WebRequest -Uri"); count != 1 {
+		t.Fatalf("bootstrap has %d direct web download owners; want one cached asset owner", count)
+	}
+	if strings.Contains(script, "-ArgumentList @('--version') -join") {
+		t.Fatal("bootstrap must join Invoke-Native output after command invocation")
+	}
+}
+
+func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
+	script := string(bootstrapScript)
+	needles := []string{
+		"-Phase 'Registry'",
+		"Get-PinnedBootstrapAsset -Role 'WinGet bundle'",
+		"Add-AppxPackage -Path $wingetBundle",
+		"-Phase 'Development'",
+		"$powerShell7 = Get-PowerShell7Installation",
+		"$vcRuntimeProcess = Start-Process",
+		"Expand-Archive -LiteralPath $herdrArchive",
+		"$initialHerdrConfig =",
+		"$openSSHInstallProcess = Start-Process",
+		"Start-Process -FilePath $herdrExecutable",
+		"'connectable.json'",
+		"'configuration-handoff.json'",
+		"$workspaceArguments = @('workspace', 'create'",
+		"'ready.json'",
+	}
+	previous := -1
+	for _, needle := range needles {
+		index := strings.Index(script, needle)
+		if index < 0 {
+			t.Fatalf("bootstrap is missing %q", needle)
+		}
+		if index <= previous {
+			t.Fatalf("bootstrap ordering is wrong at %q", needle)
+		}
+		previous = index
+	}
+	connectableIndex := strings.Index(script, "schemaVersion = 1\n        ip = $ipAddress")
+	readyIndex := strings.LastIndex(script, "schemaVersion = 2\n        ip = $ipAddress")
+	if connectableIndex < 0 || readyIndex <= connectableIndex {
+		t.Fatalf("bootstrap connection/ready schemas are not ordered: connectable=%d ready=%d", connectableIndex, readyIndex)
+	}
+}
+
+func TestPinnedBootstrapAssetCachesRepairsAndStagesInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	payload := []byte("pinned bootstrap payload\n")
+	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests.Add(1)
+		response.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = response.Write(payload)
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+foreach ($name in @('Assert-BootstrapCachePath', 'Assert-BootstrapCacheTree', 'Get-BootstrapFileSHA256', 'Get-PinnedBootstrapAsset')) {
+    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$trustRoot = '%s'
+$cacheRoot = Join-Path $trustRoot 'bootstrap'
+$stageRoot = '%s'
+New-Item -ItemType Directory -Path $trustRoot, $stageRoot -Force | Out-Null
+$destination = Join-Path $stageRoot 'payload.bin'
+$arguments = @{
+    Role = 'Test asset'
+    CacheKey = 'test-asset'
+    Uri = '%s'
+    ExpectedSHA256 = '%s'
+    FileName = 'payload.bin'
+    DestinationPath = $destination
+    CacheRoot = $cacheRoot
+    CacheTrustRoot = $trustRoot
+}
+$first = Get-PinnedBootstrapAsset @arguments
+if ($first -cne $destination -or (Get-BootstrapFileSHA256 -Path $first) -cne '%s') {
+    throw 'Initial cached asset result is invalid.'
+}
+$cached = Join-Path $cacheRoot 'test-asset\%s\payload.bin'
+[IO.File]::WriteAllText($cached, 'corrupt')
+$second = Get-PinnedBootstrapAsset @arguments
+if ($second -cne $destination -or (Get-BootstrapFileSHA256 -Path $second) -cne '%s') {
+    throw 'Repaired cached asset result is invalid.'
+}
+$third = Get-PinnedBootstrapAsset @arguments
+if ($third -cne $destination -or (Get-BootstrapFileSHA256 -Path $third) -cne '%s') {
+    throw 'Cache-hit staged asset result is invalid.'
+}
+exit 0
+`, quote(bootstrapPath), quote(filepath.Join(directory, "cache")), quote(filepath.Join(directory, "stage")), server.URL+"/payload.bin", digest, digest, digest, digest, digest)
+	powerShell := mustWindowsPowerShellPath(t)
+	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("pinned bootstrap cache regression: %v: %s", err, output)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("bootstrap cache HTTP requests = %d, want 2 (miss + corrupt repair)", got)
+	}
+}
+
+func TestBootstrapAndReleaseMetadataAreEmbedded(t *testing.T) {
+	if len(bytes.TrimSpace(bootstrapScript)) == 0 {
+		t.Fatal("bootstrap script is empty")
+	}
+	if len(bytes.TrimSpace(herdrReleaseJSON)) == 0 {
+		t.Fatal("Herdr release metadata is empty")
+	}
+}
+
+func TestBootstrapConfigurationHandoffParserIsStrictInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handoffPath := filepath.Join(directory, "configuration-handoff.json")
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Read-ConfigurationHandoff' }, $true)
+Invoke-Expression $definition.Extent.Text
+$path = '%s'
+$utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"outcome":"verified"}', $utf8)
+$verified = Read-ConfigurationHandoff -Path $path
+if ([string]$verified.outcome -cne 'verified') { throw 'Canonical verified handoff was rejected.' }
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"outcome":"failed","phase":"configuration-sync","message":"copy failed"}', $utf8)
+$failed = Read-ConfigurationHandoff -Path $path
+if ([string]$failed.outcome -cne 'failed' -or [string]$failed.phase -cne 'configuration-sync' -or [string]$failed.message -cne 'copy failed') {
+    throw 'Canonical failed handoff was rejected.'
+}
+$invalid = @(
+    '{"schemaVersion":"1","outcome":"verified"}',
+    '{"schemaVersion":true,"outcome":"verified"}',
+    '{"schemaVersion":1,"outcome":["verified"]}',
+    '{"schemaVersion":1,"outcome":"verified","outcome":"verified"}',
+    '{"schemaVersion":1,"outcome":"verified","extra":true}',
+    ' {"schemaVersion":1,"outcome":"verified"}'
+)
+foreach ($value in $invalid) {
+    [IO.File]::WriteAllText($path, $value, $utf8)
+    $accepted = $false
+    try { $null = Read-ConfigurationHandoff -Path $path; $accepted = $true } catch { }
+    if ($accepted) { throw "Invalid handoff was accepted: $value" }
+}
+[IO.File]::WriteAllText($path, ('x' * 8193), $utf8)
+$accepted = $false
+try { $null = Read-ConfigurationHandoff -Path $path; $accepted = $true } catch { }
+if ($accepted) { throw 'Oversized handoff was accepted.' }
+exit 0
+`, quote(bootstrapPath), quote(handoffPath))
+	powerShell := mustWindowsPowerShellPath(t)
+	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("configuration handoff parser regression: %v: %s", err, output)
+	}
+}

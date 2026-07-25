@@ -1,0 +1,1553 @@
+package sandbox
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"unicode/utf16"
+)
+
+const (
+	maximumConfigurationFileSize        = 32 * 1024 * 1024
+	maximumConfigurationSize            = 128 * 1024 * 1024
+	windowsTerminalStableEdition        = "stable"
+	windowsTerminalPreviewEdition       = "preview"
+	windowsTerminalEditionArchivePath   = "windows-terminal/edition.txt"
+	starshipPresetArchivePath           = "starship/preset.txt"
+	githubCLIAuthenticationArchivePath  = "github-cli/authentication.json"
+	configurationApplyScriptArchivePath = "herdr-sandbox/apply.ps1"
+	configurationWorkspaceManifestPath  = "herdr-sandbox/workspaces.json"
+	configurationPackagePlanArchivePath = "herdr-sandbox/winget-packages.json"
+	powerShellProfileGUID               = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
+	powerShellCommandLine               = `pwsh.exe`
+	windowsTerminalGuestFont            = "GeistMono Nerd Font"
+	windowsTerminalLightTheme           = "light"
+	windowsTerminalDarkTheme            = "dark"
+	starshipPastelPowerlinePreset       = "pastel-powerline"
+	starshipCatppuccinLattePreset       = "catppuccin-powerline-latte"
+	maximumGitHubCLIAccounts            = 32
+	maximumGitHubCLIStatusSize          = 256 * 1024
+	maximumGitHubCLITokenSize           = 16 * 1024
+)
+
+type windowsTerminalConfiguration struct {
+	Edition           string
+	Theme             string
+	WinGetPackageID   string
+	PackageFamilyName string
+	SettingsPath      string
+	FragmentsPath     string
+}
+
+func detectHostWindowsTerminalConfiguration() (windowsTerminalConfiguration, error) {
+	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+	return detectHostWindowsTerminal(localAppData)
+}
+
+func detectHostWindowsTerminal(localAppData string) (windowsTerminalConfiguration, error) {
+	if !filepath.IsAbs(localAppData) {
+		return windowsTerminalConfiguration{}, fmt.Errorf("LOCALAPPDATA is not absolute: %q", localAppData)
+	}
+	fragments := filepath.Join(localAppData, "Microsoft", "Windows Terminal", "Fragments")
+	candidates := []windowsTerminalConfiguration{
+		{
+			Edition:           windowsTerminalPreviewEdition,
+			WinGetPackageID:   "Microsoft.WindowsTerminal.Preview",
+			PackageFamilyName: "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe",
+			SettingsPath:      filepath.Join(localAppData, "Packages", "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe", "LocalState", "settings.json"),
+			FragmentsPath:     fragments,
+		},
+		{
+			Edition:           windowsTerminalStableEdition,
+			WinGetPackageID:   "Microsoft.WindowsTerminal",
+			PackageFamilyName: "Microsoft.WindowsTerminal_8wekyb3d8bbwe",
+			SettingsPath:      filepath.Join(localAppData, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState", "settings.json"),
+			FragmentsPath:     fragments,
+		},
+	}
+	for _, candidate := range candidates {
+		exists, err := regularFileExists(candidate.SettingsPath)
+		if err != nil {
+			return windowsTerminalConfiguration{}, fmt.Errorf("inspect host Windows Terminal %s settings: %w", candidate.Edition, err)
+		}
+		if exists {
+			candidate.Theme, err = readHostWindowsTerminalTheme(candidate.SettingsPath)
+			if err != nil {
+				return windowsTerminalConfiguration{}, fmt.Errorf("inspect host Windows Terminal %s theme: %w", candidate.Edition, err)
+			}
+			return candidate, nil
+		}
+		packageRoot := filepath.Join(localAppData, "Packages", candidate.PackageFamilyName)
+		info, err := os.Stat(packageRoot)
+		if err == nil {
+			if !info.IsDir() {
+				return windowsTerminalConfiguration{}, fmt.Errorf("host Windows Terminal %s package path is not a directory: %s", candidate.Edition, packageRoot)
+			}
+			candidate.SettingsPath = ""
+			candidate.Theme = windowsTerminalDarkTheme
+			return candidate, nil
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return windowsTerminalConfiguration{}, fmt.Errorf("inspect host Windows Terminal %s package: %w", candidate.Edition, err)
+		}
+	}
+	unpackagedSettings := filepath.Join(localAppData, "Microsoft", "Windows Terminal", "settings.json")
+	if exists, err := regularFileExists(unpackagedSettings); err != nil {
+		return windowsTerminalConfiguration{}, fmt.Errorf("inspect unpackaged host Windows Terminal settings: %w", err)
+	} else if exists {
+		stable := candidates[1]
+		stable.SettingsPath = unpackagedSettings
+		stable.Theme, err = readHostWindowsTerminalTheme(stable.SettingsPath)
+		if err != nil {
+			return windowsTerminalConfiguration{}, fmt.Errorf("inspect unpackaged host Windows Terminal theme: %w", err)
+		}
+		return stable, nil
+	}
+	return windowsTerminalConfiguration{}, errors.New("host Windows Terminal Stable or Preview installation was not found")
+}
+
+func readHostWindowsTerminalTheme(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect settings file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
+		return "", fmt.Errorf("settings are not a bounded regular file: %s", path)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read settings: %w", err)
+	}
+	return classifyHostWindowsTerminalTheme(contents)
+}
+
+func classifyHostWindowsTerminalTheme(contents []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.UseNumber()
+	var settings map[string]any
+	if err := decoder.Decode(&settings); err != nil {
+		return "", fmt.Errorf("decode settings: %w", err)
+	}
+	if settings == nil {
+		return "", errors.New("decode settings: root is not an object")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return "", errors.New("decode settings: trailing JSON data")
+	}
+	themeValue, exists := settings["theme"]
+	if !exists {
+		return windowsTerminalDarkTheme, nil
+	}
+	themeName, ok := themeValue.(string)
+	if !ok || strings.TrimSpace(themeName) != themeName || themeName == "" {
+		return "", errors.New("theme must resolve to one explicit light or dark application theme")
+	}
+	if themeName == windowsTerminalLightTheme || themeName == windowsTerminalDarkTheme {
+		return themeName, nil
+	}
+	if themeName == "system" {
+		return "", errors.New(`theme "system" does not identify an explicit light or dark application theme`)
+	}
+	themesValue, exists := settings["themes"]
+	if !exists {
+		return "", fmt.Errorf("custom theme %q is missing from themes", themeName)
+	}
+	themes, ok := themesValue.([]any)
+	if !ok {
+		return "", errors.New("themes is not an array")
+	}
+	matchedTheme := ""
+	for index, value := range themes {
+		theme, ok := value.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("theme %d is not an object", index)
+		}
+		name, _ := theme["name"].(string)
+		if name != themeName {
+			continue
+		}
+		if matchedTheme != "" {
+			return "", fmt.Errorf("custom theme %q is duplicated", themeName)
+		}
+		window, ok := theme["window"].(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("custom theme %q has no window application theme", themeName)
+		}
+		applicationTheme, _ := window["applicationTheme"].(string)
+		if applicationTheme != windowsTerminalLightTheme && applicationTheme != windowsTerminalDarkTheme {
+			return "", fmt.Errorf("custom theme %q does not identify an explicit light or dark application theme", themeName)
+		}
+		matchedTheme = applicationTheme
+	}
+	if matchedTheme == "" {
+		return "", fmt.Errorf("custom theme %q is missing from themes", themeName)
+	}
+	return matchedTheme, nil
+}
+
+func starshipPresetForWindowsTerminalTheme(theme string) (string, error) {
+	switch theme {
+	case windowsTerminalDarkTheme:
+		return starshipPastelPowerlinePreset, nil
+	case windowsTerminalLightTheme:
+		return starshipCatppuccinLattePreset, nil
+	default:
+		return "", fmt.Errorf("unsupported host Windows Terminal theme %q", theme)
+	}
+}
+
+func (configuration windowsTerminalConfiguration) validate() error {
+	expectedPackageID := "Microsoft.WindowsTerminal"
+	expectedPackageFamily := "Microsoft.WindowsTerminal_8wekyb3d8bbwe"
+	if configuration.Edition == windowsTerminalPreviewEdition {
+		expectedPackageID = "Microsoft.WindowsTerminal.Preview"
+		expectedPackageFamily = "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe"
+	} else if configuration.Edition != windowsTerminalStableEdition {
+		return fmt.Errorf("unsupported host Windows Terminal edition %q", configuration.Edition)
+	}
+	if configuration.WinGetPackageID != expectedPackageID || configuration.PackageFamilyName != expectedPackageFamily {
+		return fmt.Errorf("host Windows Terminal %s package identity is inconsistent", configuration.Edition)
+	}
+	if configuration.Theme != windowsTerminalLightTheme && configuration.Theme != windowsTerminalDarkTheme {
+		return fmt.Errorf("unsupported host Windows Terminal theme %q", configuration.Theme)
+	}
+	for name, path := range map[string]string{"settings": configuration.SettingsPath, "fragments": configuration.FragmentsPath} {
+		if path != "" && !filepath.IsAbs(path) {
+			return fmt.Errorf("host Windows Terminal %s path is not absolute: %q", name, path)
+		}
+	}
+	return nil
+}
+
+type hostConfigurationSources struct {
+	GitConfig                string
+	GitConfigDirectory       string
+	GitIgnore                string
+	GitAttributes            string
+	GitHubCLIConfiguration   string
+	GitHubCLIAuthentication  []byte
+	OpenCodeDirectory        string
+	OpenCodeAuthentication   string
+	HerdrConfig              string
+	WindowsTerminalSettings  string
+	WindowsTerminalFragments string
+	WindowsTerminalEdition   string
+	StarshipPreset           string
+	WorkspaceManifest        string
+	PackagePlan              string
+}
+
+type developmentConfigurationSyncResult struct {
+	SchemaVersion                int    `json:"schemaVersion"`
+	ArchiveSHA256                string `json:"archiveSha256"`
+	CopiedFiles                  int    `json:"copiedFiles"`
+	WindowsTerminalEdition       string `json:"windowsTerminalEdition"`
+	StarshipPreset               string `json:"starshipPreset"`
+	StarshipConfigured           bool   `json:"starshipConfigured"`
+	GitHubAuthenticatedAccounts  int    `json:"githubAuthenticatedAccounts"`
+	GitHubAuthenticationVerified bool   `json:"githubAuthenticationVerified"`
+	HerdrConfigurationReloaded   bool   `json:"herdrConfigurationReloaded"`
+}
+
+type githubCLIAuthentication struct {
+	SchemaVersion int                `json:"schemaVersion"`
+	Accounts      []githubCLIAccount `json:"accounts"`
+}
+
+type githubCLIAccount struct {
+	Hostname    string `json:"hostname"`
+	Login       string `json:"login"`
+	Active      bool   `json:"active"`
+	GitProtocol string `json:"gitProtocol"`
+	Token       string `json:"token"`
+}
+
+type githubCLIAuthStatus struct {
+	Hosts map[string][]githubCLIAuthStatusEntry `json:"hosts"`
+}
+
+type githubCLIAuthStatusEntry struct {
+	State       string `json:"state"`
+	Error       string `json:"error,omitempty"`
+	Active      bool   `json:"active"`
+	Host        string `json:"host"`
+	Login       string `json:"login"`
+	TokenSource string `json:"tokenSource"`
+	Scopes      string `json:"scopes,omitempty"`
+	GitProtocol string `json:"gitProtocol"`
+}
+
+func configurationArchivePayloadFileCount(data []byte) (int, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return 0, fmt.Errorf("inspect development configuration archive: %w", err)
+	}
+	count := 0
+	for _, file := range reader.File {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func decodeDevelopmentConfigurationSyncResult(output []byte) (developmentConfigurationSyncResult, error) {
+	var result developmentConfigurationSyncResult
+	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(output)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return developmentConfigurationSyncResult{}, fmt.Errorf("decode guest development configuration result: %w: %s", err, boundedText(output))
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return developmentConfigurationSyncResult{}, errors.New("decode guest development configuration result: trailing JSON data")
+	}
+	return result, nil
+}
+
+func exportGitHubCLIAuthentication(ctx context.Context, configurationDirectory string) ([]byte, int, error) {
+	if !filepath.IsAbs(configurationDirectory) {
+		return nil, 0, fmt.Errorf("GitHub CLI configuration directory is not absolute: %q", configurationDirectory)
+	}
+	executable, err := exec.LookPath("gh.exe")
+	if err != nil {
+		return nil, 0, errors.New("GitHub CLI gh.exe is not on PATH")
+	}
+	environment := githubCLICommandEnvironment(configurationDirectory)
+	statusOutput, err := runBoundedGitHubCLI(ctx, executable, environment, maximumGitHubCLIStatusSize, "auth", "status", "--json", "hosts")
+	if err != nil {
+		return nil, 0, fmt.Errorf("inspect host GitHub CLI authentication: %w", err)
+	}
+	var status githubCLIAuthStatus
+	decoder := json.NewDecoder(bytes.NewReader(statusOutput))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&status); err != nil {
+		return nil, 0, errors.New("decode host GitHub CLI authentication status")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, 0, errors.New("decode host GitHub CLI authentication status: trailing JSON data")
+	}
+	hostnames := make([]string, 0, len(status.Hosts))
+	for hostname := range status.Hosts {
+		hostnames = append(hostnames, hostname)
+	}
+	sort.Strings(hostnames)
+	authentication := githubCLIAuthentication{SchemaVersion: 1, Accounts: []githubCLIAccount{}}
+	for _, hostname := range hostnames {
+		activeAccounts := 0
+		successfulAccounts := 0
+		entries := status.Hosts[hostname]
+		sort.Slice(entries, func(left, right int) bool { return entries[left].Login < entries[right].Login })
+		for _, entry := range entries {
+			if entry.State != "success" {
+				continue
+			}
+			successfulAccounts++
+			if entry.Active {
+				activeAccounts++
+			}
+			account := githubCLIAccount{
+				Hostname:    entry.Host,
+				Login:       entry.Login,
+				Active:      entry.Active,
+				GitProtocol: entry.GitProtocol,
+			}
+			if hostname != entry.Host {
+				return nil, 0, errors.New("host GitHub CLI authentication status has inconsistent host identity")
+			}
+			if err := validateGitHubCLIAccount(account, false); err != nil {
+				return nil, 0, fmt.Errorf("validate host GitHub CLI account metadata: %w", err)
+			}
+			tokenOutput, err := runBoundedGitHubCLI(ctx, executable, environment, maximumGitHubCLITokenSize, "auth", "token", "--hostname", account.Hostname, "--user", account.Login)
+			if err != nil {
+				return nil, 0, fmt.Errorf("export one host GitHub CLI credential: %w", err)
+			}
+			account.Token = strings.TrimSpace(string(tokenOutput))
+			if err := validateGitHubCLIAccount(account, true); err != nil {
+				return nil, 0, fmt.Errorf("validate one exported host GitHub CLI credential: %w", err)
+			}
+			authentication.Accounts = append(authentication.Accounts, account)
+			if len(authentication.Accounts) > maximumGitHubCLIAccounts {
+				return nil, 0, fmt.Errorf("host GitHub CLI account count exceeds %d", maximumGitHubCLIAccounts)
+			}
+		}
+		if successfulAccounts > 0 && activeAccounts != 1 {
+			return nil, 0, fmt.Errorf("one host GitHub CLI host has %d active successful accounts", activeAccounts)
+		}
+	}
+	payload, err := json.Marshal(authentication)
+	if err != nil {
+		return nil, 0, fmt.Errorf("encode host GitHub CLI authentication: %w", err)
+	}
+	return payload, len(authentication.Accounts), nil
+}
+
+func githubCLICommandEnvironment(configurationDirectory string) []string {
+	removed := map[string]bool{
+		"GH_CONFIG_DIR":           true,
+		"GH_TOKEN":                true,
+		"GITHUB_TOKEN":            true,
+		"GH_ENTERPRISE_TOKEN":     true,
+		"GITHUB_ENTERPRISE_TOKEN": true,
+		"GH_PROMPT_DISABLED":      true,
+		"NO_COLOR":                true,
+	}
+	environment := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if !removed[strings.ToUpper(name)] {
+			environment = append(environment, entry)
+		}
+	}
+	return append(environment,
+		"GH_CONFIG_DIR="+configurationDirectory,
+		"GH_PROMPT_DISABLED=1",
+		"NO_COLOR=1",
+	)
+}
+
+func runBoundedGitHubCLI(ctx context.Context, executable string, environment []string, maximumBytes int64, arguments ...string) ([]byte, error) {
+	command := hiddenCommandContext(ctx, executable, arguments...)
+	command.Env = environment
+	command.Stderr = io.Discard
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("capture GitHub CLI output: %w", err)
+	}
+	if err := command.Start(); err != nil {
+		return nil, fmt.Errorf("start GitHub CLI: %w", err)
+	}
+	output, readErr := io.ReadAll(io.LimitReader(stdout, maximumBytes+1))
+	if int64(len(output)) > maximumBytes {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return nil, fmt.Errorf("GitHub CLI output exceeds %d bytes", maximumBytes)
+	}
+	waitErr := command.Wait()
+	if readErr != nil {
+		return nil, fmt.Errorf("read GitHub CLI output: %w", readErr)
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("GitHub CLI command failed: %w", waitErr)
+	}
+	return bytes.TrimSpace(output), nil
+}
+
+func decodeGitHubCLIAuthentication(payload []byte) (githubCLIAuthentication, error) {
+	var authentication githubCLIAuthentication
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&authentication); err != nil {
+		return githubCLIAuthentication{}, errors.New("decode GitHub CLI authentication payload")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return githubCLIAuthentication{}, errors.New("decode GitHub CLI authentication payload: trailing JSON data")
+	}
+	if authentication.SchemaVersion != 1 {
+		return githubCLIAuthentication{}, fmt.Errorf("unsupported GitHub CLI authentication schema %d", authentication.SchemaVersion)
+	}
+	if len(authentication.Accounts) > maximumGitHubCLIAccounts {
+		return githubCLIAuthentication{}, fmt.Errorf("GitHub CLI account count exceeds %d", maximumGitHubCLIAccounts)
+	}
+	seen := make(map[string]bool, len(authentication.Accounts))
+	activeByHost := make(map[string]int)
+	accountsByHost := make(map[string]int)
+	for _, account := range authentication.Accounts {
+		if err := validateGitHubCLIAccount(account, true); err != nil {
+			return githubCLIAuthentication{}, err
+		}
+		identity := strings.ToLower(account.Hostname) + "\x00" + strings.ToLower(account.Login)
+		if seen[identity] {
+			return githubCLIAuthentication{}, errors.New("duplicate GitHub CLI account metadata")
+		}
+		seen[identity] = true
+		accountsByHost[strings.ToLower(account.Hostname)]++
+		if account.Active {
+			activeByHost[strings.ToLower(account.Hostname)]++
+		}
+	}
+	for hostname := range accountsByHost {
+		if activeByHost[hostname] != 1 {
+			return githubCLIAuthentication{}, fmt.Errorf("one GitHub CLI host has %d active accounts", activeByHost[hostname])
+		}
+	}
+	return authentication, nil
+}
+
+func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error {
+	for field, value := range map[string]string{"hostname": account.Hostname, "login": account.Login} {
+		if strings.TrimSpace(value) != value || value == "" || len(value) > 256 || strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("GitHub CLI account %s is invalid", field)
+		}
+	}
+	if account.GitProtocol != "https" && account.GitProtocol != "ssh" {
+		return errors.New("GitHub CLI account Git protocol is invalid")
+	}
+	if requireToken && (account.Token == "" || len(account.Token) > maximumGitHubCLITokenSize || strings.ContainsAny(account.Token, "\x00\r\n")) {
+		return errors.New("GitHub CLI account token is invalid")
+	}
+	return nil
+}
+
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan) error {
+	if err := terminal.validate(); err != nil {
+		return err
+	}
+	if err := packages.validate(terminal); err != nil {
+		return err
+	}
+	sources, err := defaultHostConfigurationSources(terminal, packages)
+	if err != nil {
+		return err
+	}
+	provisioningInput := filepath.Join(connection.RunDirectory, "input", "provisioning")
+	sources.PackagePlan = filepath.Join(provisioningInput, wingetPackagePlanFileName)
+	if packages.enabled(packageGit) {
+		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
+	}
+	expectedGitHubAccounts := 0
+	if packages.enabled(packageGitHubCLI) {
+		authenticationPayload, accountCount, err := exportGitHubCLIAuthentication(ctx, sources.GitHubCLIConfiguration)
+		if err != nil {
+			return err
+		}
+		sources.GitHubCLIAuthentication = authenticationPayload
+		expectedGitHubAccounts = accountCount
+	}
+	remoteScript := `$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$archive = [string]$env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE
+$expanded = [string]$env:HERDR_SANDBOX_CONFIGURATION_EXPANDED
+if ([string]::IsNullOrWhiteSpace($archive) -or [string]::IsNullOrWhiteSpace($expanded) -or
+    -not [IO.Path]::IsPathRooted($archive) -or -not [IO.Path]::IsPathRooted($expanded) -or
+    -not (Test-Path -LiteralPath $archive -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $expanded -PathType Container)) {
+    throw 'Development configuration launcher state is invalid.'
+}
+$script:CopiedConfigurationFiles = 0
+function Copy-VerifiedConfigurationFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "Configuration source file is missing: $Source"
+    }
+    $destinationDirectory = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    $expected = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+    $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+    if ($actual -ne $expected) {
+        throw "Configuration destination hash mismatch: $Destination"
+    }
+    $script:CopiedConfigurationFiles += 1
+}
+function Copy-VerifiedConfigurationTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        throw "Configuration source directory is missing: $Source"
+    }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $sourceRoot = (Resolve-Path -LiteralPath $Source).Path.TrimEnd('\')
+    foreach ($file in @(Get-ChildItem -LiteralPath $Source -File -Recurse)) {
+        $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+        Copy-VerifiedConfigurationFile -Source $file.FullName -Destination (Join-Path $Destination $relative)
+    }
+}
+function Invoke-GuestGitHubCLI {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [AllowEmptyString()][string]$InputText = '',
+        [switch]$UseStandardInput
+    )
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        if ($UseStandardInput) {
+            $output = @($InputText | & $script:GitHubCLICommand @Arguments 2>&1)
+        } else {
+            $output = @(& $script:GitHubCLICommand @Arguments 2>&1)
+        }
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Role failed with exit code $exitCode."
+    }
+    return $output
+}
+try {
+    $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $packagePlanPath = Join-Path $expanded 'herdr-sandbox\winget-packages.json'
+    if (-not (Test-Path -LiteralPath $packagePlanPath -PathType Leaf)) {
+        throw 'Resolved WinGet package plan is missing from the configuration archive.'
+    }
+    $packagePlan = [IO.File]::ReadAllText($packagePlanPath) | ConvertFrom-Json
+    $packagePlanProperties = @($packagePlan.PSObject.Properties.Name | Sort-Object)
+    $packageEntries = @($packagePlan.defaults) + @($packagePlan.additions)
+    if (($packagePlanProperties -join '|') -cne 'additions|defaults|schemaVersion|windowsTerminalEdition' -or
+        $packagePlan.schemaVersion -isnot [int] -or $packagePlan.windowsTerminalEdition -isnot [string] -or
+        [int]$packagePlan.schemaVersion -ne 1 -or
+        [string]$packagePlan.windowsTerminalEdition -notin @('stable', 'preview') -or
+        $packageEntries.Count -eq 0 -or $packageEntries.Count -gt 75) {
+        throw 'Resolved WinGet package plan has an unsupported configuration-sync contract.'
+    }
+    $enabledPackages = @{}
+    foreach ($entry in $packageEntries) {
+        $entryProperties = @($entry.PSObject.Properties.Name | Sort-Object)
+        $id = [string]$entry.id
+        $version = [string]$entry.version
+        if (($entryProperties -join '|') -cne 'id|version' -or
+            $entry.id -isnot [string] -or $entry.version -isnot [string] -or
+            $id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
+            (-not [string]::IsNullOrEmpty($version) -and
+                $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
+            $enabledPackages.ContainsKey($id)) {
+            throw "Resolved WinGet package plan entry is invalid: $id"
+        }
+        $enabledPackages[$id] = $true
+    }
+    if (-not $enabledPackages.ContainsKey('Microsoft.PowerShell')) {
+        throw 'Resolved WinGet package plan is missing Core PowerShell 7.'
+    }
+    $gitEnabled = $enabledPackages.ContainsKey('Git.Git')
+    $githubCLIEnabled = $enabledPackages.ContainsKey('GitHub.cli')
+    $openCodeEnabled = $enabledPackages.ContainsKey('SST.opencode')
+    $starshipEnabled = $enabledPackages.ContainsKey('Starship.Starship')
+    $terminalPackageID = 'Microsoft.WindowsTerminal'
+    if ([string]$packagePlan.windowsTerminalEdition -ceq 'preview') {
+        $terminalPackageID = 'Microsoft.WindowsTerminal.Preview'
+    }
+    $windowsTerminalEnabled = $enabledPackages.ContainsKey($terminalPackageID)
+    $githubAccounts = @()
+    $githubAuthenticationVerified = $false
+    $starshipPreset = ''
+    $starshipConfigured = $false
+    $terminalEdition = ''
+
+    if ($openCodeEnabled) {
+        [Console]::Error.WriteLine('[config-sync] apply-opencode')
+        $openCodeSource = Join-Path $expanded 'opencode'
+        $openCodeDestination = Join-Path $env:USERPROFILE '.config\opencode'
+        Copy-VerifiedConfigurationTree -Source $openCodeSource -Destination $openCodeDestination
+
+        $authSource = Join-Path $expanded 'opencode-auth\auth.json'
+        $authDestinationDirectory = Join-Path $env:USERPROFILE '.local\share\opencode'
+        Copy-VerifiedConfigurationFile -Source $authSource -Destination (Join-Path $authDestinationDirectory 'auth.json')
+    }
+
+    if ($gitEnabled) {
+        [Console]::Error.WriteLine('[config-sync] apply-git')
+        $gitConfig = Join-Path $expanded 'git\.gitconfig'
+        Copy-VerifiedConfigurationFile -Source $gitConfig -Destination (Join-Path $env:USERPROFILE '.gitconfig')
+        $gitConfigSource = Join-Path $expanded 'git\config'
+        if (Test-Path -LiteralPath $gitConfigSource -PathType Container) {
+            $gitConfigDestination = Join-Path $env:USERPROFILE '.config\git'
+            Copy-VerifiedConfigurationTree -Source $gitConfigSource -Destination $gitConfigDestination
+        }
+        foreach ($name in @('.gitignore_global', '.gitattributes')) {
+            $source = Join-Path (Join-Path $expanded 'git') $name
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Copy-VerifiedConfigurationFile -Source $source -Destination (Join-Path $env:USERPROFILE $name)
+            }
+        }
+
+        [Console]::Error.WriteLine('[config-sync] apply-git-safe-directories')
+        $workspaceManifestPath = Join-Path $expanded 'herdr-sandbox\workspaces.json'
+        if (-not (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
+            throw 'Workspace manifest is missing from the configuration archive.'
+        }
+        $workspaceManifest = [IO.File]::ReadAllText($workspaceManifestPath) | ConvertFrom-Json
+        $manifestProperties = @($workspaceManifest.PSObject.Properties.Name | Sort-Object)
+        $workspaceEntries = @($workspaceManifest.workspaces)
+        if (($manifestProperties -join '|') -cne 'activeWorkspace|schemaVersion|workspaces' -or
+            [int]$workspaceManifest.schemaVersion -ne 1 -or $workspaceEntries.Count -eq 0 -or
+            $workspaceEntries.Count -gt 16) {
+            throw 'Workspace manifest has an unsupported configuration-sync contract.'
+        }
+        $safeDirectories = @()
+        $seenWorkspaces = @{}
+        $activeWorkspace = [string]$workspaceManifest.activeWorkspace
+        $activeWorkspaceMatches = 0
+        foreach ($workspace in $workspaceEntries) {
+            $entryProperties = @($workspace.PSObject.Properties.Name | Sort-Object)
+            $workspaceName = [string]$workspace.name
+            $workspaceDirectory = [string]$workspace.directory
+            $expectedDirectory = Join-Path 'C:\Workspaces' $workspaceName
+            if (($entryProperties -join '|') -cne 'directory|name' -or
+                $workspaceName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
+                $workspaceDirectory -cne $expectedDirectory -or
+                -not (Test-Path -LiteralPath $workspaceDirectory -PathType Container) -or
+                $seenWorkspaces.ContainsKey($workspaceName.ToLowerInvariant())) {
+                throw "Workspace manifest entry is invalid during configuration sync: $workspaceName"
+            }
+            $seenWorkspaces[$workspaceName.ToLowerInvariant()] = $true
+            if ($workspaceDirectory -ceq $activeWorkspace) { $activeWorkspaceMatches += 1 }
+            $safeDirectories += $workspaceDirectory.Replace('\', '/')
+        }
+        if ($activeWorkspaceMatches -ne 1) {
+            throw 'Workspace manifest active workspace is invalid during configuration sync.'
+        }
+        $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $null = & $gitCommand 'config' '--global' '--replace-all' 'safe.directory' $safeDirectories[0]
+        if ($LASTEXITCODE -ne 0) { throw "Git safe-directory reset failed with exit code $LASTEXITCODE." }
+        foreach ($safeDirectory in @($safeDirectories | Select-Object -Skip 1)) {
+            $null = & $gitCommand 'config' '--global' '--add' 'safe.directory' $safeDirectory
+            if ($LASTEXITCODE -ne 0) { throw "Git safe-directory addition failed with exit code $LASTEXITCODE." }
+        }
+        $verifiedSafeDirectories = @(& $gitCommand 'config' '--global' '--get-all' 'safe.directory')
+        if ($LASTEXITCODE -ne 0 -or ($verifiedSafeDirectories -join '|') -cne ($safeDirectories -join '|')) {
+            throw 'Git safe-directory verification failed after configuration copy.'
+        }
+    }
+
+    if ($githubCLIEnabled) {
+    [Console]::Error.WriteLine('[config-sync] apply-github-cli')
+    $githubCLISource = Join-Path $expanded 'github-cli'
+    $githubCLIDestination = Join-Path $env:APPDATA 'GitHub CLI'
+    foreach ($name in @('config.yml', 'hosts.yml')) {
+        Copy-VerifiedConfigurationFile -Source (Join-Path $githubCLISource $name) -Destination (Join-Path $githubCLIDestination $name)
+    }
+    foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
+        Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+    }
+    $env:GH_CONFIG_DIR = $githubCLIDestination
+    $env:GH_PROMPT_DISABLED = '1'
+    $env:NO_COLOR = '1'
+    $githubCLICommand = Get-Command 'gh.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $githubCLICommand) {
+        throw 'Guest GitHub CLI command is unavailable: gh.exe'
+    }
+    $script:GitHubCLICommand = [string]$githubCLICommand.Source
+    $githubAuthenticationPath = Join-Path $githubCLISource 'authentication.json'
+    if (-not (Test-Path -LiteralPath $githubAuthenticationPath -PathType Leaf)) {
+        throw 'GitHub CLI authentication input is missing.'
+    }
+    $githubAuthentication = [IO.File]::ReadAllText($githubAuthenticationPath) | ConvertFrom-Json
+    $authenticationProperties = @($githubAuthentication.PSObject.Properties.Name | Sort-Object)
+    if (($authenticationProperties -join '|') -cne 'accounts|schemaVersion' -or
+        [int]$githubAuthentication.schemaVersion -ne 1) {
+        throw 'GitHub CLI authentication input has an unsupported contract.'
+    }
+    $githubAccounts = @($githubAuthentication.accounts)
+    if ($githubAccounts.Count -gt 32) {
+        throw 'GitHub CLI authentication input contains too many accounts.'
+    }
+    [Console]::Error.WriteLine('[config-sync] apply-github-authentication')
+    $githubAccountIdentities = @{}
+    foreach ($account in $githubAccounts) {
+        $accountProperties = @($account.PSObject.Properties.Name | Sort-Object)
+        $hostname = [string]$account.hostname
+        $login = [string]$account.login
+        $protocol = [string]$account.gitProtocol
+        $token = [string]$account.token
+        if (($accountProperties -join '|') -cne 'active|gitProtocol|hostname|login|token' -or
+            [Uri]::CheckHostName($hostname) -eq [UriHostNameType]::Unknown -or
+            [string]::IsNullOrWhiteSpace($login) -or $login.Length -gt 256 -or $login -match '[\x00\r\n]' -or
+            $protocol -notin @('https', 'ssh') -or [string]::IsNullOrWhiteSpace($token) -or
+            $token.Length -gt 16384 -or $token -match '[\x00\r\n]') {
+            throw 'GitHub CLI authentication input contains invalid account data.'
+        }
+        $identity = ($hostname + '/' + $login).ToLowerInvariant()
+        if ($githubAccountIdentities.ContainsKey($identity)) {
+            throw 'GitHub CLI authentication input contains duplicate account metadata.'
+        }
+        $githubAccountIdentities[$identity] = $true
+        $loginArguments = @('auth', 'login', '--hostname', $hostname, '--git-protocol', $protocol,
+            '--with-token', '--skip-ssh-key')
+        $loginOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI authentication import' -Arguments $loginArguments -InputText $token -UseStandardInput)
+        $account.token = ''
+    }
+    foreach ($account in @($githubAccounts | Where-Object { [bool]$_.active })) {
+        $switchOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI active-account selection' -Arguments @('auth', 'switch', '--hostname', [string]$account.hostname, '--user', [string]$account.login))
+    }
+    $githubAuthenticationVerified = $true
+    if ($githubAccounts.Count -gt 0) {
+        $statusOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI authentication verification' -Arguments @('auth', 'status', '--json', 'hosts'))
+        $githubStatus = (($statusOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json
+        foreach ($account in $githubAccounts) {
+            $hostProperties = @($githubStatus.hosts.PSObject.Properties | Where-Object { $_.Name -ceq [string]$account.hostname })
+            if ($hostProperties.Count -ne 1) {
+                throw 'GitHub CLI authentication verification is missing one expected host.'
+            }
+            $matches = @($hostProperties[0].Value | Where-Object { [string]$_.login -ceq [string]$account.login })
+            if ($matches.Count -ne 1 -or [string]$matches[0].state -cne 'success' -or
+                [bool]$matches[0].active -ne [bool]$account.active) {
+                throw 'GitHub CLI authentication verification failed for one expected account.'
+            }
+        }
+    }
+    Remove-Item -LiteralPath $githubAuthenticationPath -Force
+    }
+
+    [Console]::Error.WriteLine('[config-sync] apply-herdr')
+    $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
+    $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
+    Copy-VerifiedConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination
+    $guestHerdr = 'C:\HerdrSandbox\runtime\herdr\herdr.exe'
+    if (-not (Test-Path -LiteralPath $guestHerdr -PathType Leaf)) {
+        throw "Guest Herdr executable is missing: $guestHerdr"
+    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $reloadOutput = @(& $guestHerdr 'server' 'reload-config' 2>&1)
+        $reloadExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($reloadExitCode -ne 0) {
+        $reloadDetail = ($reloadOutput -join [Environment]::NewLine).Trim()
+        if ($reloadDetail.Length -gt 1600) { $reloadDetail = $reloadDetail.Substring($reloadDetail.Length - 1600) }
+        throw "Guest Herdr configuration reload failed with exit code $reloadExitCode. $reloadDetail"
+    }
+
+    if ($starshipEnabled) {
+    [Console]::Error.WriteLine('[config-sync] apply-starship')
+    $starshipPresetPath = Join-Path $expanded 'starship\preset.txt'
+    if (-not (Test-Path -LiteralPath $starshipPresetPath -PathType Leaf)) {
+        throw 'Starship preset metadata is missing from the configuration archive.'
+    }
+    $starshipPreset = [IO.File]::ReadAllText($starshipPresetPath).Trim()
+    switch ($starshipPreset) {
+        'pastel-powerline' {
+            $upstreamStarshipPreset = 'pastel-powerline'
+            $useCatppuccinLatte = $false
+        }
+        'catppuccin-powerline-latte' {
+            $upstreamStarshipPreset = 'catppuccin-powerline'
+            $useCatppuccinLatte = $true
+        }
+        default { throw "Unsupported Starship preset metadata: $starshipPreset" }
+    }
+    $starshipCommand = Get-Command 'starship.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $starshipCommand) {
+        throw 'Guest Starship command is unavailable: starship.exe'
+    }
+    $starshipConfigDirectory = Join-Path $env:USERPROFILE '.config'
+    $starshipConfigPath = Join-Path $starshipConfigDirectory 'starship.toml'
+    New-Item -ItemType Directory -Path $starshipConfigDirectory -Force | Out-Null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $starshipOutput = @(& $starshipCommand.Source 'preset' $upstreamStarshipPreset '-o' $starshipConfigPath 2>&1)
+        $starshipExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($starshipExitCode -ne 0) {
+        $starshipDetail = ($starshipOutput -join [Environment]::NewLine).Trim()
+        if ($starshipDetail.Length -gt 1600) { $starshipDetail = $starshipDetail.Substring($starshipDetail.Length - 1600) }
+        throw "Guest Starship preset generation failed with exit code $starshipExitCode. $starshipDetail"
+    }
+    $starshipConfig = Get-Item -LiteralPath $starshipConfigPath -ErrorAction Stop
+    if ($starshipConfig.Length -le 0 -or $starshipConfig.Length -gt 1048576) {
+        throw "Guest Starship configuration has an invalid size: $($starshipConfig.Length)"
+    }
+    if ($useCatppuccinLatte) {
+        $starshipConfigText = [IO.File]::ReadAllText($starshipConfigPath)
+        $mochaSelector = "palette = 'catppuccin_mocha'"
+        $mochaIndex = $starshipConfigText.IndexOf($mochaSelector, [StringComparison]::Ordinal)
+        if ($mochaIndex -lt 0 -or $mochaIndex -ne $starshipConfigText.LastIndexOf($mochaSelector, [StringComparison]::Ordinal)) {
+            throw 'Catppuccin Powerline preset does not contain exactly one default Mocha palette selector.'
+        }
+        $latteSelector = "palette = 'catppuccin_latte'"
+        $starshipConfigText = $starshipConfigText.Substring(0, $mochaIndex) + $latteSelector +
+            $starshipConfigText.Substring($mochaIndex + $mochaSelector.Length)
+        [IO.File]::WriteAllText($starshipConfigPath, $starshipConfigText, (New-Object Text.UTF8Encoding($false)))
+    }
+    $verifiedStarshipConfig = [IO.File]::ReadAllText($starshipConfigPath)
+    if ($useCatppuccinLatte -and ($verifiedStarshipConfig -notmatch "(?m)^palette = 'catppuccin_latte'\r?$" -or
+        $verifiedStarshipConfig -match "(?m)^palette = 'catppuccin_mocha'\r?$")) {
+        throw 'Catppuccin Latte palette verification failed.'
+    }
+    $previousStarshipConfig = [Environment]::GetEnvironmentVariable('STARSHIP_CONFIG', 'Process')
+    try {
+        $env:STARSHIP_CONFIG = $starshipConfigPath
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $starshipValidationOutput = @(& $starshipCommand.Source 'prompt' 2>&1)
+            $starshipValidationExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+    } finally {
+        if ($null -eq $previousStarshipConfig) {
+            Remove-Item Env:STARSHIP_CONFIG -ErrorAction SilentlyContinue
+        } else {
+            $env:STARSHIP_CONFIG = $previousStarshipConfig
+        }
+    }
+    if ($starshipValidationExitCode -ne 0) {
+        throw "Guest Starship configuration validation failed with exit code $starshipValidationExitCode."
+    }
+    $starshipConfigured = $true
+    }
+
+    if ($windowsTerminalEnabled) {
+    [Console]::Error.WriteLine('[config-sync] apply-windows-terminal')
+    $terminalSource = Join-Path $expanded 'windows-terminal'
+    $terminalEditionPath = Join-Path $terminalSource 'edition.txt'
+    if (-not (Test-Path -LiteralPath $terminalEditionPath -PathType Leaf)) {
+        throw 'Windows Terminal edition metadata is missing from the configuration archive.'
+    }
+    $terminalEdition = [IO.File]::ReadAllText($terminalEditionPath).Trim()
+    switch ($terminalEdition) {
+        'stable' { $terminalPackageFamily = 'Microsoft.WindowsTerminal_8wekyb3d8bbwe' }
+        'preview' { $terminalPackageFamily = 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe' }
+        default { throw "Unsupported Windows Terminal edition metadata: $terminalEdition" }
+    }
+    $terminalPackageRoot = Join-Path $env:LOCALAPPDATA (Join-Path 'Packages' $terminalPackageFamily)
+    if (-not (Test-Path -LiteralPath $terminalPackageRoot -PathType Container)) {
+        throw "Selected Windows Terminal package is not registered in the guest: $terminalPackageFamily"
+    }
+    $settingsSource = Join-Path $terminalSource 'settings.json'
+    if (Test-Path -LiteralPath $settingsSource -PathType Leaf) {
+        $terminalLocalState = Join-Path $terminalPackageRoot 'LocalState'
+        Copy-VerifiedConfigurationFile -Source $settingsSource -Destination (Join-Path $terminalLocalState 'settings.json')
+    }
+    $fragmentsSource = Join-Path $terminalSource 'Fragments'
+    if (Test-Path -LiteralPath $fragmentsSource -PathType Container) {
+        $fragmentsDestination = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragments'
+        Copy-VerifiedConfigurationTree -Source $fragmentsSource -Destination $fragmentsDestination
+    }
+    }
+    Write-Output ([ordered]@{
+        schemaVersion = 5
+        archiveSha256 = $digest
+        copiedFiles = $script:CopiedConfigurationFiles
+        windowsTerminalEdition = $terminalEdition
+        starshipPreset = $starshipPreset
+        starshipConfigured = $starshipConfigured
+        githubAuthenticatedAccounts = $githubAccounts.Count
+        githubAuthenticationVerified = $githubAuthenticationVerified
+        herdrConfigurationReloaded = $true
+    } | ConvertTo-Json -Compress)
+} finally {
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
+}`
+	archive, err := buildDevelopmentConfigurationArchive(sources, []byte(remoteScript))
+	if err != nil {
+		return err
+	}
+	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(archive))
+	expectedCopiedFiles, err := configurationArchivePayloadFileCount(archive)
+	if err != nil {
+		return err
+	}
+	sshExecutable, err := exec.LookPath("ssh.exe")
+	if err != nil {
+		return errors.New("OpenSSH ssh.exe is not on PATH")
+	}
+	launcherScript := buildDevelopmentConfigurationLauncher(expectedDigest, len(archive))
+	command := hiddenCommandContext(ctx, sshExecutable,
+		"-T", "-F", connection.SSHConfigPath, connection.SSHTarget,
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+		"-EncodedCommand", encodePowerShell(launcherScript),
+	)
+	command.Stdin = bytes.NewReader(archive)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err = command.Run()
+	if err != nil {
+		if contextError := ctx.Err(); contextError != nil {
+			return fmt.Errorf("transfer development configuration over SSH: %w (%v): %s", err, contextError, boundedText(stderr.Bytes()))
+		}
+		return fmt.Errorf("transfer development configuration over SSH: %w: %s", err, boundedText(stderr.Bytes()))
+	}
+	output := stdout.Bytes()
+	result, err := decodeDevelopmentConfigurationSyncResult(output)
+	if err != nil {
+		return err
+	}
+	if result.SchemaVersion != 5 {
+		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
+	}
+	if result.ArchiveSHA256 != expectedDigest {
+		return fmt.Errorf("verify guest development configuration: expected SHA-256 %s but got %q", expectedDigest, result.ArchiveSHA256)
+	}
+	if result.CopiedFiles != expectedCopiedFiles {
+		return fmt.Errorf("verify guest development configuration: copied %d files, expected %d", result.CopiedFiles, expectedCopiedFiles)
+	}
+	expectedTerminalEdition := ""
+	if packages.enabled(terminal.WinGetPackageID) {
+		expectedTerminalEdition = terminal.Edition
+	}
+	if result.WindowsTerminalEdition != expectedTerminalEdition {
+		return fmt.Errorf("verify guest Windows Terminal edition: expected %q but got %q", expectedTerminalEdition, result.WindowsTerminalEdition)
+	}
+	if result.StarshipPreset != sources.StarshipPreset || result.StarshipConfigured != packages.enabled(packageStarship) {
+		return fmt.Errorf("verify guest Starship configuration: preset %q, expected %q", result.StarshipPreset, sources.StarshipPreset)
+	}
+	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
+		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)
+	}
+	if !result.HerdrConfigurationReloaded {
+		return errors.New("verify guest Herdr configuration: server did not report a successful reload")
+	}
+	return nil
+}
+
+func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int) string {
+	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$archive = Join-Path $env:TEMP 'herdr-sandbox-configuration.zip'
+$expanded = Join-Path $env:TEMP 'herdr-sandbox-configuration'
+$expectedArchiveLength = [long]%d
+Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
+try {
+    [Console]::Error.WriteLine('[config-sync] receive-archive')
+    $inputStream = [Console]::OpenStandardInput()
+    $outputStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $remaining = $expectedArchiveLength
+        $buffer = New-Object byte[] 65536
+        while ($remaining -gt 0) {
+            $requested = [int][Math]::Min([long]$buffer.Length, $remaining)
+            $read = $inputStream.Read($buffer, 0, $requested)
+            if ($read -le 0) { throw "Development configuration archive ended with $remaining bytes missing." }
+            $outputStream.Write($buffer, 0, $read)
+            $remaining -= $read
+        }
+        $outputStream.Flush($true)
+    } finally {
+        $outputStream.Dispose()
+    }
+    [Console]::Error.WriteLine('[config-sync] verify-archive')
+    $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($digest -cne '%s') { throw 'Development configuration archive SHA-256 mismatch.' }
+    Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+    $applyScript = Join-Path $expanded 'herdr-sandbox\apply.ps1'
+    if (-not (Test-Path -LiteralPath $applyScript -PathType Leaf)) {
+        throw 'Development configuration apply script is missing.'
+    }
+    [Console]::Error.WriteLine('[config-sync] invoke-apply-script')
+    $env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE = $archive
+    $env:HERDR_SANDBOX_CONFIGURATION_EXPANDED = $expanded
+    & $applyScript
+} finally {
+    Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_EXPANDED -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
+}
+exit 0`, expectedArchiveLength, expectedDigest)
+}
+
+func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan) (hostConfigurationSources, error) {
+	if err := packages.validate(terminal); err != nil {
+		return hostConfigurationSources{}, err
+	}
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		return hostConfigurationSources{}, fmt.Errorf("resolve user home for development configuration: %w", err)
+	}
+	roamingAppData := strings.TrimSpace(os.Getenv("APPDATA"))
+	if !filepath.IsAbs(roamingAppData) {
+		return hostConfigurationSources{}, fmt.Errorf("APPDATA is not absolute: %q", roamingAppData)
+	}
+	sources := hostConfigurationSources{HerdrConfig: filepath.Join(roamingAppData, "herdr", "config.toml")}
+	if packages.enabled(packageGit) {
+		sources.GitConfig = filepath.Join(userHome, ".gitconfig")
+		sources.GitConfigDirectory = filepath.Join(userHome, ".config", "git")
+		sources.GitIgnore = filepath.Join(userHome, ".gitignore_global")
+		sources.GitAttributes = filepath.Join(userHome, ".gitattributes")
+	}
+	if packages.enabled(packageGitHubCLI) {
+		sources.GitHubCLIConfiguration, err = defaultGitHubCLIConfigurationDirectory(userHome, roamingAppData)
+		if err != nil {
+			return hostConfigurationSources{}, err
+		}
+	}
+	if packages.enabled(packageOpenCode) {
+		openCodeConfiguration, openCodeData, openCodeErr := defaultOpenCodeDirectories(userHome)
+		if openCodeErr != nil {
+			return hostConfigurationSources{}, openCodeErr
+		}
+		sources.OpenCodeDirectory = openCodeConfiguration
+		sources.OpenCodeAuthentication = filepath.Join(openCodeData, "auth.json")
+	}
+	if packages.enabled(packageStarship) {
+		sources.StarshipPreset, err = starshipPresetForWindowsTerminalTheme(terminal.Theme)
+		if err != nil {
+			return hostConfigurationSources{}, err
+		}
+	}
+	if packages.enabled(terminal.WinGetPackageID) {
+		sources.WindowsTerminalSettings = terminal.SettingsPath
+		sources.WindowsTerminalFragments = terminal.FragmentsPath
+		sources.WindowsTerminalEdition = terminal.Edition
+	}
+	return sources, nil
+}
+
+func defaultGitHubCLIConfigurationDirectory(userHome, roamingAppData string) (string, error) {
+	if !filepath.IsAbs(userHome) {
+		return "", fmt.Errorf("user home is not absolute: %q", userHome)
+	}
+	if roamingAppData != "" && !filepath.IsAbs(roamingAppData) {
+		return "", fmt.Errorf("APPDATA is not absolute: %q", roamingAppData)
+	}
+	if configured := strings.TrimSpace(os.Getenv("GH_CONFIG_DIR")); configured != "" {
+		if !filepath.IsAbs(configured) {
+			return "", fmt.Errorf("GH_CONFIG_DIR is not absolute: %q", configured)
+		}
+		return filepath.Clean(configured), nil
+	}
+	if configurationRoot := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); configurationRoot != "" {
+		if !filepath.IsAbs(configurationRoot) {
+			return "", fmt.Errorf("XDG_CONFIG_HOME is not absolute: %q", configurationRoot)
+		}
+		return filepath.Join(configurationRoot, "gh"), nil
+	}
+	if roamingAppData != "" {
+		return filepath.Join(roamingAppData, "GitHub CLI"), nil
+	}
+	return filepath.Join(userHome, ".config", "gh"), nil
+}
+
+func defaultOpenCodeDirectories(userHome string) (string, string, error) {
+	if !filepath.IsAbs(userHome) {
+		return "", "", fmt.Errorf("user home is not absolute: %q", userHome)
+	}
+	configurationRoot := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configurationRoot == "" {
+		configurationRoot = filepath.Join(userHome, ".config")
+	} else if !filepath.IsAbs(configurationRoot) {
+		return "", "", fmt.Errorf("XDG_CONFIG_HOME is not absolute: %q", configurationRoot)
+	}
+	dataRoot := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+	if dataRoot == "" {
+		dataRoot = filepath.Join(userHome, ".local", "share")
+	} else if !filepath.IsAbs(dataRoot) {
+		return "", "", fmt.Errorf("XDG_DATA_HOME is not absolute: %q", dataRoot)
+	}
+	return filepath.Join(configurationRoot, "opencode"), filepath.Join(dataRoot, "opencode"), nil
+}
+
+func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, applyScript []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	total := int64(0)
+	addData := func(contents []byte, destination, description string) error {
+		if len(contents) > maximumConfigurationFileSize || total+int64(len(contents)) > maximumConfigurationSize {
+			return fmt.Errorf("configuration source exceeds size limit: %s", description)
+		}
+		writer, err := archive.Create(strings.ReplaceAll(destination, `\`, "/"))
+		if err != nil {
+			return err
+		}
+		if _, err := writer.Write(contents); err != nil {
+			return err
+		}
+		total += int64(len(contents))
+		return nil
+	}
+	add := func(source, destination string) error {
+		info, err := os.Lstat(source)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("configuration source is not a regular file: %s", source)
+		}
+		if info.Size() > maximumConfigurationFileSize || total+info.Size() > maximumConfigurationSize {
+			return fmt.Errorf("configuration source exceeds size limit: %s", source)
+		}
+		contents, err := os.ReadFile(source)
+		if err != nil {
+			return err
+		}
+		return addData(contents, destination, source)
+	}
+	if len(applyScript) == 0 {
+		return nil, errors.New("development configuration apply script is empty")
+	}
+	if err := addData(applyScript, configurationApplyScriptArchivePath, "development configuration apply script"); err != nil {
+		return nil, fmt.Errorf("archive development configuration apply script: %w", err)
+	}
+	if err := add(sources.PackagePlan, configurationPackagePlanArchivePath); err != nil {
+		return nil, fmt.Errorf("archive resolved WinGet package plan: %w", err)
+	}
+	if sources.WorkspaceManifest != "" {
+		if err := add(sources.WorkspaceManifest, configurationWorkspaceManifestPath); err != nil {
+			return nil, fmt.Errorf("archive guest workspace manifest: %w", err)
+		}
+	}
+	if sources.WindowsTerminalEdition != "" {
+		if sources.WindowsTerminalEdition != windowsTerminalStableEdition && sources.WindowsTerminalEdition != windowsTerminalPreviewEdition {
+			return nil, fmt.Errorf("archive Windows Terminal edition: unsupported value %q", sources.WindowsTerminalEdition)
+		}
+		editionWriter, err := archive.Create(windowsTerminalEditionArchivePath)
+		if err != nil {
+			return nil, fmt.Errorf("archive Windows Terminal edition: %w", err)
+		}
+		if _, err := editionWriter.Write([]byte(sources.WindowsTerminalEdition + "\n")); err != nil {
+			return nil, fmt.Errorf("archive Windows Terminal edition: %w", err)
+		}
+	}
+	if sources.StarshipPreset != "" {
+		if sources.StarshipPreset != starshipPastelPowerlinePreset && sources.StarshipPreset != starshipCatppuccinLattePreset {
+			return nil, fmt.Errorf("archive Starship preset: unsupported value %q", sources.StarshipPreset)
+		}
+		if err := addData([]byte(sources.StarshipPreset+"\n"), starshipPresetArchivePath, "Starship preset marker"); err != nil {
+			return nil, fmt.Errorf("archive Starship preset: %w", err)
+		}
+	}
+
+	if sources.GitConfig != "" {
+		if err := add(sources.GitConfig, filepath.Join("git", ".gitconfig")); err != nil {
+			return nil, fmt.Errorf("archive global Git config: %w", err)
+		}
+		if info, err := os.Stat(sources.GitConfigDirectory); err == nil && info.IsDir() {
+			if err := addConfigurationDirectory(sources.GitConfigDirectory, filepath.Join("git", "config"), add); err != nil {
+				return nil, err
+			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect Git config directory: %w", err)
+		}
+		for _, optional := range []struct {
+			source      string
+			destination string
+		}{
+			{source: sources.GitIgnore, destination: filepath.Join("git", ".gitignore_global")},
+			{source: sources.GitAttributes, destination: filepath.Join("git", ".gitattributes")},
+		} {
+			if info, err := os.Stat(optional.source); err == nil && info.Mode().IsRegular() {
+				if err := add(optional.source, optional.destination); err != nil {
+					return nil, err
+				}
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("inspect optional Git config file: %w", err)
+			}
+		}
+	}
+
+	if sources.GitHubCLIConfiguration != "" {
+		for _, name := range []string{"config.yml", "hosts.yml"} {
+			source := filepath.Join(sources.GitHubCLIConfiguration, name)
+			if err := add(source, filepath.Join("github-cli", name)); err != nil {
+				return nil, fmt.Errorf("archive GitHub CLI %s: %w", name, err)
+			}
+		}
+		if _, err := decodeGitHubCLIAuthentication(sources.GitHubCLIAuthentication); err != nil {
+			return nil, fmt.Errorf("validate GitHub CLI authentication payload: %w", err)
+		}
+		if err := addData(sources.GitHubCLIAuthentication, githubCLIAuthenticationArchivePath, "GitHub CLI authentication"); err != nil {
+			return nil, fmt.Errorf("archive GitHub CLI authentication: %w", err)
+		}
+	}
+
+	if sources.OpenCodeDirectory != "" {
+		info, err := os.Stat(sources.OpenCodeDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("inspect OpenCode config directory: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("OpenCode config path is not a directory: %s", sources.OpenCodeDirectory)
+		}
+		configFiles := []string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "package.json", "package-lock.json", "bun.lock", "bun.lockb"}
+		configFound := false
+		for _, name := range configFiles {
+			source := filepath.Join(sources.OpenCodeDirectory, name)
+			if info, err := os.Stat(source); err == nil && info.Mode().IsRegular() {
+				if err := add(source, filepath.Join("opencode", name)); err != nil {
+					return nil, fmt.Errorf("archive OpenCode config %s: %w", name, err)
+				}
+				if name == "opencode.json" || name == "opencode.jsonc" {
+					configFound = true
+				}
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("inspect OpenCode config %s: %w", name, err)
+			}
+		}
+		if !configFound {
+			return nil, errors.New("OpenCode config is missing opencode.json or opencode.jsonc")
+		}
+		for _, name := range []string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"} {
+			directory := filepath.Join(sources.OpenCodeDirectory, name)
+			if info, err := os.Stat(directory); err == nil && info.IsDir() {
+				if err := addConfigurationDirectory(directory, filepath.Join("opencode", name), add); err != nil {
+					return nil, err
+				}
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("inspect OpenCode directory %s: %w", name, err)
+			}
+		}
+		if err := add(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json")); err != nil {
+			return nil, fmt.Errorf("archive OpenCode authentication: %w", err)
+		}
+	}
+	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig)
+	if err != nil {
+		return nil, err
+	}
+	if err := addData(herdrConfig, filepath.Join("herdr", "config.toml"), sources.HerdrConfig); err != nil {
+		return nil, fmt.Errorf("archive Herdr config: %w", err)
+	}
+	if sources.WindowsTerminalEdition != "" && sources.WindowsTerminalSettings != "" {
+		settings, err := buildGuestWindowsTerminalSettings(sources.WindowsTerminalSettings)
+		if err != nil {
+			return nil, err
+		}
+		if err := addData(settings, filepath.Join("windows-terminal", "settings.json"), sources.WindowsTerminalSettings); err != nil {
+			return nil, fmt.Errorf("archive Windows Terminal settings: %w", err)
+		}
+	}
+	if sources.WindowsTerminalEdition != "" && sources.WindowsTerminalFragments != "" {
+		if info, err := os.Stat(sources.WindowsTerminalFragments); err == nil && info.IsDir() {
+			if err := addConfigurationDirectory(sources.WindowsTerminalFragments, filepath.Join("windows-terminal", "Fragments"), add); err != nil {
+				return nil, err
+			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect Windows Terminal fragments: %w", err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		return nil, fmt.Errorf("finish development configuration archive: %w", err)
+	}
+	return buffer.Bytes(), nil
+}
+
+func buildGuestHerdrConfig(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Herdr config: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
+		return nil, fmt.Errorf("Herdr config is not a bounded regular file: %s", path)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read Herdr config: %w", err)
+	}
+	return patchGuestHerdrConfig(contents)
+}
+
+func patchGuestHerdrConfig(contents []byte) ([]byte, error) {
+	if bytes.IndexByte(contents, 0) >= 0 {
+		return nil, errors.New("Herdr config contains a NUL byte")
+	}
+	text := strings.ReplaceAll(string(contents), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	terminalSection := -1
+	terminalEnd := len(lines)
+	defaultShellLine := -1
+	for index, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && !strings.HasPrefix(trimmed, "[[") {
+			section := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]"))
+			if terminalSection >= 0 && terminalEnd == len(lines) {
+				terminalEnd = index
+			}
+			if section == "terminal" {
+				if terminalSection >= 0 {
+					return nil, errors.New("Herdr config contains duplicate [terminal] sections")
+				}
+				terminalSection = index
+				terminalEnd = len(lines)
+			}
+			continue
+		}
+		if terminalSection >= 0 && terminalEnd == len(lines) {
+			withoutLeadingSpace := strings.TrimLeft(line, " \t")
+			if strings.HasPrefix(withoutLeadingSpace, "default_shell") {
+				separator := strings.Index(withoutLeadingSpace, "=")
+				if separator < 0 || strings.TrimSpace(withoutLeadingSpace[:separator]) != "default_shell" || defaultShellLine >= 0 {
+					return nil, errors.New("Herdr config has an ambiguous terminal.default_shell")
+				}
+				defaultShellLine = index
+			}
+		}
+	}
+	const guestShell = `default_shell = "pwsh.exe"`
+	if terminalSection < 0 {
+		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "[terminal]", guestShell)
+	} else if defaultShellLine >= 0 {
+		indent := lines[defaultShellLine][:len(lines[defaultShellLine])-len(strings.TrimLeft(lines[defaultShellLine], " \t"))]
+		lines[defaultShellLine] = indent + guestShell
+	} else {
+		lines = append(lines[:terminalEnd], append([]string{guestShell}, lines[terminalEnd:]...)...)
+	}
+	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"), nil
+}
+
+func buildGuestWindowsTerminalSettings(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Windows Terminal settings: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
+		return nil, fmt.Errorf("Windows Terminal settings are not a bounded regular file: %s", path)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read Windows Terminal settings: %w", err)
+	}
+	return patchGuestWindowsTerminalSettings(contents)
+}
+
+func patchGuestWindowsTerminalSettings(contents []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.UseNumber()
+	var settings map[string]any
+	if err := decoder.Decode(&settings); err != nil {
+		return nil, fmt.Errorf("decode Windows Terminal settings: %w", err)
+	}
+	if settings == nil {
+		return nil, errors.New("decode Windows Terminal settings: root is not an object")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("decode Windows Terminal settings: trailing JSON data")
+	}
+	settings["defaultProfile"] = powerShellProfileGUID
+
+	profiles, err := terminalSettingsObject(settings, "profiles")
+	if err != nil {
+		return nil, err
+	}
+	defaults, err := terminalSettingsObject(profiles, "defaults")
+	if err != nil {
+		return nil, err
+	}
+	if err := patchGuestTerminalFont(defaults); err != nil {
+		return nil, err
+	}
+
+	listValue, exists := profiles["list"]
+	if !exists {
+		listValue = []any{}
+	}
+	list, ok := listValue.([]any)
+	if !ok {
+		return nil, errors.New("Windows Terminal profiles.list is not an array")
+	}
+	powerShellFound := false
+	for index, value := range list {
+		profile, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("Windows Terminal profile %d is not an object", index)
+		}
+		if err := patchGuestTerminalFont(profile); err != nil {
+			return nil, fmt.Errorf("Windows Terminal profile %d: %w", index, err)
+		}
+		guid, _ := profile["guid"].(string)
+		if strings.EqualFold(guid, powerShellProfileGUID) {
+			configureGuestPowerShellProfile(profile)
+			powerShellFound = true
+		}
+	}
+	if !powerShellFound {
+		profile := map[string]any{}
+		if err := patchGuestTerminalFont(profile); err != nil {
+			return nil, fmt.Errorf("configure PowerShell Terminal profile: %w", err)
+		}
+		configureGuestPowerShellProfile(profile)
+		list = append(list, profile)
+	}
+	profiles["list"] = list
+
+	patched, err := json.MarshalIndent(settings, "", "    ")
+	if err != nil {
+		return nil, fmt.Errorf("encode guest Windows Terminal settings: %w", err)
+	}
+	return append(patched, '\n'), nil
+}
+
+func terminalSettingsObject(parent map[string]any, name string) (map[string]any, error) {
+	value, exists := parent[name]
+	if !exists {
+		object := map[string]any{}
+		parent[name] = object
+		return object, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("Windows Terminal %s is not an object", name)
+	}
+	return object, nil
+}
+
+func patchGuestTerminalFont(profile map[string]any) error {
+	if _, exists := profile["fontFace"]; exists {
+		profile["fontFace"] = windowsTerminalGuestFont
+	}
+	font, exists := profile["font"]
+	if !exists {
+		font = map[string]any{}
+		profile["font"] = font
+	}
+	fontObject, ok := font.(map[string]any)
+	if !ok {
+		return errors.New("font is not an object")
+	}
+	fontObject["face"] = windowsTerminalGuestFont
+	return nil
+}
+
+func configureGuestPowerShellProfile(profile map[string]any) {
+	profile["guid"] = powerShellProfileGUID
+	profile["name"] = "PowerShell"
+	profile["hidden"] = false
+	profile["commandline"] = powerShellCommandLine
+	profile["source"] = "Windows.Terminal.PowershellCore"
+	delete(profile, "startingDirectory")
+}
+
+func addConfigurationDirectory(directory, archiveRoot string, add func(string, string) error) error {
+	return filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("configuration directory contains a symbolic link: %s", path)
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		return add(path, filepath.Join(archiveRoot, relative))
+	})
+}
+
+func encodePowerShell(script string) string {
+	codeUnits := utf16.Encode([]rune(script))
+	encoded := make([]byte, len(codeUnits)*2)
+	for index, codeUnit := range codeUnits {
+		encoded[index*2] = byte(codeUnit)
+		encoded[index*2+1] = byte(codeUnit >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(encoded)
+}

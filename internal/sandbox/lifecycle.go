@@ -1,0 +1,495 @@
+package sandbox
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const (
+	activeSessionFileName      = "active.json"
+	activeSessionSchemaVersion = 1
+	maximumActiveSessionBytes  = 64 * 1024
+
+	SessionStopped   = "stopped"
+	SessionUnmanaged = "unmanaged"
+	SessionStarting  = "starting"
+	SessionReady     = "ready"
+	SessionFailed    = "failed"
+	SessionStale     = "stale"
+)
+
+var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{8}$`)
+
+type SessionStatus struct {
+	State        string
+	RunID        string
+	PID          int
+	Phase        string
+	Message      string
+	GuestIP      string
+	HerdrVersion string
+	Processes    []string
+}
+
+type DownResult struct {
+	RunID          string
+	AlreadyStopped bool
+}
+
+type activeSession struct {
+	SchemaVersion  int    `json:"schemaVersion"`
+	RunID          string `json:"runID"`
+	ConfigPath     string `json:"configPath"`
+	PID            int    `json:"pid"`
+	ExecutablePath string `json:"executablePath"`
+	StartedAtUTC   string `json:"startedAtUTC"`
+	CommandLine    string `json:"commandLine"`
+}
+
+type sandboxProcessSnapshot struct {
+	PID            int    `json:"pid"`
+	Name           string `json:"name"`
+	ExecutablePath string `json:"executablePath"`
+	StartedAtUTC   string `json:"startedAtUTC"`
+	CommandLine    string `json:"commandLine"`
+}
+
+func InspectSession(ctx context.Context) (SessionStatus, error) {
+	dataDirectory, err := defaultDataDirectory()
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	return inspectSessionAt(ctx, dataDirectory)
+}
+
+func Down(ctx context.Context) (DownResult, error) {
+	dataDirectory, err := defaultDataDirectory()
+	if err != nil {
+		return DownResult{}, err
+	}
+	release, err := acquireLifecycleLock(ctx)
+	if err != nil {
+		return DownResult{}, err
+	}
+	result, downErr := downAt(ctx, dataDirectory)
+	releaseErr := release()
+	if downErr != nil {
+		return DownResult{}, downErr
+	}
+	if releaseErr != nil {
+		return DownResult{}, releaseErr
+	}
+	return result, nil
+}
+
+func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus, error) {
+	executable, err := windowsSandboxExecutable()
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	active, found, err := loadActiveSession(dataDirectory, executable)
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	if !found {
+		processes, err := runningSandboxProcesses(ctx)
+		if err != nil {
+			return SessionStatus{}, err
+		}
+		if len(processes) == 0 {
+			return SessionStatus{State: SessionStopped}, nil
+		}
+		return SessionStatus{State: SessionUnmanaged, Processes: describeRunningSandboxProcesses(processes)}, nil
+	}
+
+	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	status := SessionStatus{State: SessionStale, RunID: active.RunID, PID: active.PID}
+	if !running {
+		status.Message = "recorded Windows Sandbox process is no longer running"
+		return status, nil
+	}
+	if err := active.matches(snapshot); err != nil {
+		status.Message = err.Error()
+		return status, nil
+	}
+
+	return classifyManagedSession(dataDirectory, active)
+}
+
+func classifyManagedSession(dataDirectory string, active activeSession) (SessionStatus, error) {
+	status := SessionStatus{State: SessionStarting, RunID: active.RunID, PID: active.PID}
+	statusDirectory := filepath.Join(dataDirectory, "runs", active.RunID, "status")
+	if failure, ok, err := readOptionalStatus[failureStatus](filepath.Join(statusDirectory, failureFileName)); err != nil {
+		return SessionStatus{}, fmt.Errorf("read active Sandbox failure status: %w", err)
+	} else if ok {
+		if err := failure.validate(); err != nil {
+			return SessionStatus{}, fmt.Errorf("validate active Sandbox failure status: %w", err)
+		}
+		status.State = SessionFailed
+		status.Phase = failure.Phase
+		status.Message = failure.Message
+		return status, nil
+	}
+	if ready, ok, err := readOptionalStatus[readyStatus](filepath.Join(statusDirectory, readyFileName)); err != nil {
+		return SessionStatus{}, fmt.Errorf("read active Sandbox ready status: %w", err)
+	} else if ok {
+		if err := ready.validate(); err != nil {
+			return SessionStatus{}, fmt.Errorf("validate active Sandbox ready status: %w", err)
+		}
+		status.State = SessionReady
+		status.GuestIP = ready.IP
+		status.HerdrVersion = ready.HerdrVersion
+		return status, nil
+	}
+	if connectable, ok, err := readOptionalStatus[connectableStatus](filepath.Join(statusDirectory, connectableFileName)); err != nil {
+		return SessionStatus{}, fmt.Errorf("read active Sandbox connectable status: %w", err)
+	} else if ok {
+		if err := connectable.validate(); err != nil {
+			return SessionStatus{}, fmt.Errorf("validate active Sandbox connectable status: %w", err)
+		}
+		status.Phase = "connectable"
+		status.Message = "SSH and Herdr server are ready; applying verified host configuration"
+		return status, nil
+	}
+	if progress, ok, err := readOptionalStatus[progressStatus](filepath.Join(statusDirectory, progressFileName)); err != nil {
+		return SessionStatus{}, fmt.Errorf("read active Sandbox progress status: %w", err)
+	} else if ok {
+		if err := progress.validate(); err != nil {
+			return SessionStatus{}, fmt.Errorf("validate active Sandbox progress status: %w", err)
+		}
+		status.Phase = progress.Phase
+		status.Message = progress.Message
+	}
+	return status, nil
+}
+
+func downAt(ctx context.Context, dataDirectory string) (DownResult, error) {
+	executable, err := windowsSandboxExecutable()
+	if err != nil {
+		return DownResult{}, err
+	}
+	active, found, err := loadActiveSession(dataDirectory, executable)
+	if err != nil {
+		return DownResult{}, err
+	}
+	if !found {
+		processes, err := runningSandboxProcesses(ctx)
+		if err != nil {
+			return DownResult{}, err
+		}
+		if len(processes) > 0 {
+			return DownResult{}, fmt.Errorf("refusing to stop unmanaged Windows Sandbox process(es): %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+		}
+		return DownResult{AlreadyStopped: true}, nil
+	}
+
+	stopped, err := stopOwnedSandboxProcess(ctx, active)
+	if err != nil {
+		return DownResult{}, err
+	}
+	if !stopped {
+		processes, err := runningSandboxProcesses(ctx)
+		if err != nil {
+			return DownResult{}, err
+		}
+		if len(processes) > 0 {
+			return DownResult{}, fmt.Errorf("recorded session ended; refusing to stop unmanaged Windows Sandbox process(es): %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+		}
+		if err := removeActiveSession(dataDirectory); err != nil {
+			return DownResult{}, err
+		}
+		return DownResult{RunID: active.RunID, AlreadyStopped: true}, nil
+	}
+	if err := removeActiveSession(dataDirectory); err != nil {
+		return DownResult{}, err
+	}
+	return DownResult{RunID: active.RunID}, nil
+}
+
+func recordActiveSession(ctx context.Context, plan runPlan, pid int) error {
+	deadline := time.Now().Add(5 * time.Second)
+	var snapshot sandboxProcessSnapshot
+	for {
+		current, found, err := inspectSandboxProcess(ctx, pid)
+		if err != nil {
+			return err
+		}
+		if found {
+			snapshot = current
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("record active Sandbox process %d: process identity was unavailable", pid)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("record active Sandbox process %d: %w", pid, ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	active := activeSession{
+		SchemaVersion:  activeSessionSchemaVersion,
+		RunID:          plan.ID,
+		ConfigPath:     plan.ConfigPath,
+		PID:            snapshot.PID,
+		ExecutablePath: snapshot.ExecutablePath,
+		StartedAtUTC:   snapshot.StartedAtUTC,
+		CommandLine:    snapshot.CommandLine,
+	}
+	if err := active.validate(plan.DataDirectory, plan.SandboxExecutable); err != nil {
+		return fmt.Errorf("validate active Sandbox identity: %w", err)
+	}
+	data, err := json.MarshalIndent(active, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode active Sandbox identity: %w", err)
+	}
+	data = append(data, '\n')
+	if err := writeFileAtomically(filepath.Join(plan.DataDirectory, activeSessionFileName), data, 0o600); err != nil {
+		return fmt.Errorf("publish active Sandbox identity: %w", err)
+	}
+	return nil
+}
+
+func loadActiveSession(dataDirectory, sandboxExecutable string) (activeSession, bool, error) {
+	path := filepath.Join(dataDirectory, activeSessionFileName)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return activeSession{}, false, nil
+	}
+	if err != nil {
+		return activeSession{}, false, fmt.Errorf("inspect active Sandbox identity: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maximumActiveSessionBytes {
+		return activeSession{}, false, fmt.Errorf("active Sandbox identity must be a regular file no larger than %d bytes", maximumActiveSessionBytes)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return activeSession{}, false, fmt.Errorf("inspect active Sandbox identity reparse state: %w", err)
+	}
+	if reparse {
+		return activeSession{}, false, errors.New("active Sandbox identity must not be a reparse point")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return activeSession{}, false, fmt.Errorf("read active Sandbox identity: %w", err)
+	}
+	if err := validateActiveSessionShape(data); err != nil {
+		return activeSession{}, false, fmt.Errorf("decode active Sandbox identity: %w", err)
+	}
+	var active activeSession
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&active); err != nil {
+		return activeSession{}, false, fmt.Errorf("decode active Sandbox identity: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return activeSession{}, false, errors.New("active Sandbox identity contains trailing JSON data")
+	}
+	if err := active.validate(dataDirectory, sandboxExecutable); err != nil {
+		return activeSession{}, false, fmt.Errorf("validate active Sandbox identity: %w", err)
+	}
+	return active, true, nil
+}
+
+func validateActiveSessionShape(data []byte) error {
+	return validateJSONObjectShape(data, "identity", []string{
+		"schemaVersion",
+		"runID",
+		"configPath",
+		"pid",
+		"executablePath",
+		"startedAtUTC",
+		"commandLine",
+	})
+}
+
+func removeActiveSession(dataDirectory string) error {
+	if err := os.Remove(filepath.Join(dataDirectory, activeSessionFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove active Sandbox identity: %w", err)
+	}
+	return nil
+}
+
+func (active activeSession) validate(dataDirectory, sandboxExecutable string) error {
+	if active.SchemaVersion != activeSessionSchemaVersion {
+		return fmt.Errorf("schemaVersion = %d, want %d", active.SchemaVersion, activeSessionSchemaVersion)
+	}
+	if !runIDPattern.MatchString(active.RunID) {
+		return fmt.Errorf("runID is invalid: %q", active.RunID)
+	}
+	expectedConfig := filepath.Join(filepath.Clean(dataDirectory), "runs", active.RunID, applicationName+".wsb")
+	if !strings.EqualFold(filepath.Clean(active.ConfigPath), expectedConfig) {
+		return fmt.Errorf("configPath = %q, want %q", active.ConfigPath, expectedConfig)
+	}
+	if active.PID < 1 {
+		return fmt.Errorf("pid = %d, want a positive value", active.PID)
+	}
+	if !strings.EqualFold(filepath.Clean(active.ExecutablePath), filepath.Clean(sandboxExecutable)) {
+		return fmt.Errorf("executablePath = %q, want %q", active.ExecutablePath, sandboxExecutable)
+	}
+	startedAt, err := time.Parse(time.RFC3339Nano, active.StartedAtUTC)
+	if err != nil || startedAt.Location() != time.UTC {
+		return fmt.Errorf("startedAtUTC is invalid: %q", active.StartedAtUTC)
+	}
+	if len(active.CommandLine) == 0 || len(active.CommandLine) > 4096 || strings.ContainsAny(active.CommandLine, "\r\n") {
+		return errors.New("commandLine is empty, multiline, or too large")
+	}
+	if active.CommandLine != expectedWindowsSandboxCommandLine(active.ExecutablePath, expectedConfig) {
+		return errors.New("commandLine is not the exact Windows Sandbox launch command")
+	}
+	return nil
+}
+
+func (active activeSession) matches(snapshot sandboxProcessSnapshot) error {
+	if snapshot.PID != active.PID || !strings.EqualFold(snapshot.Name, "WindowsSandbox.exe") ||
+		!strings.EqualFold(snapshot.ExecutablePath, active.ExecutablePath) || snapshot.StartedAtUTC != active.StartedAtUTC ||
+		snapshot.CommandLine != active.CommandLine {
+		return errors.New("recorded Windows Sandbox process identity changed")
+	}
+	return nil
+}
+
+func inspectSandboxProcess(ctx context.Context, pid int) (sandboxProcessSnapshot, bool, error) {
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		return sandboxProcessSnapshot{}, false, err
+	}
+	script := fmt.Sprintf(`$ProgressPreference = 'SilentlyContinue'
+$item = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
+if ($null -eq $item) { exit 3 }
+$process = Get-Process -Id %d -ErrorAction Stop
+[ordered]@{
+    pid = [int]$item.ProcessId
+    name = [string]$item.Name
+    executablePath = [string]$item.ExecutablePath
+    startedAtUTC = $process.StartTime.ToUniversalTime().ToString('O')
+    commandLine = [string]$item.CommandLine
+} | ConvertTo-Json -Compress`, pid, pid)
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) && exitError.ExitCode() == 3 {
+			return sandboxProcessSnapshot{}, false, nil
+		}
+		return sandboxProcessSnapshot{}, false, fmt.Errorf("inspect Windows Sandbox process %d: %w: %s", pid, err, boundedText(output))
+	}
+	var snapshot sandboxProcessSnapshot
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&snapshot); err != nil {
+		return sandboxProcessSnapshot{}, false, fmt.Errorf("decode Windows Sandbox process %d: %w", pid, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return sandboxProcessSnapshot{}, false, fmt.Errorf("decode Windows Sandbox process %d: trailing JSON data", pid)
+	}
+	if snapshot.PID < 1 || snapshot.Name == "" || snapshot.ExecutablePath == "" || snapshot.StartedAtUTC == "" || snapshot.CommandLine == "" {
+		return sandboxProcessSnapshot{}, false, fmt.Errorf("inspect Windows Sandbox process %d: incomplete identity", pid)
+	}
+	return snapshot, true, nil
+}
+
+func stopOwnedSandboxProcess(ctx context.Context, active activeSession) (bool, error) {
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		return false, err
+	}
+	script := `$ProgressPreference = 'SilentlyContinue'
+$item = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $env:HERDR_SANDBOX_EXPECTED_PID) -ErrorAction Stop
+if ($null -eq $item) { exit 3 }
+	$process = Get-Process -Id ([int]$env:HERDR_SANDBOX_EXPECTED_PID) -ErrorAction Stop
+$handle = $process.Handle
+$startedAtUTC = $process.StartTime.ToUniversalTime().ToString('O')
+if ([string]$item.Name -cne 'WindowsSandbox.exe' -or
+    [string]$item.ExecutablePath -cne $env:HERDR_SANDBOX_EXPECTED_EXECUTABLE -or
+    $startedAtUTC -cne $env:HERDR_SANDBOX_EXPECTED_STARTED -or
+    [string]$item.CommandLine -cne $env:HERDR_SANDBOX_EXPECTED_COMMAND_LINE) {
+    exit 12
+}
+$clientItem = $null
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
+do {
+    if ($process.HasExited) { exit 3 }
+    $children = @(Get-CimInstance Win32_Process -Filter "Name = 'WindowsSandboxClient.exe'" -ErrorAction Stop |
+        Where-Object { [int]$_.ParentProcessId -eq [int]$env:HERDR_SANDBOX_EXPECTED_PID })
+    if ($children.Count -gt 1) { exit 15 }
+    if ($children.Count -eq 1) {
+        $clientItem = $children[0]
+        break
+    }
+    Start-Sleep -Milliseconds 200
+} while ([DateTime]::UtcNow -lt $deadline)
+if ($null -eq $clientItem) { exit 15 }
+$client = Get-Process -Id ([int]$clientItem.ProcessId) -ErrorAction Stop
+$clientHandle = $client.Handle
+$verifiedClient = Get-CimInstance Win32_Process -Filter ("ProcessId = " + [string]$clientItem.ProcessId) -ErrorAction Stop
+if ($null -eq $verifiedClient -or [string]$verifiedClient.Name -cne 'WindowsSandboxClient.exe' -or
+    [int]$verifiedClient.ParentProcessId -ne [int]$env:HERDR_SANDBOX_EXPECTED_PID) {
+    exit 15
+}
+$windowDeadline = [DateTime]::UtcNow.AddSeconds(10)
+do {
+    $client.Refresh()
+    if ($client.MainWindowHandle -ne [IntPtr]::Zero) { break }
+    if ($client.HasExited) { exit 3 }
+    Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $windowDeadline)
+if ($client.MainWindowHandle -eq [IntPtr]::Zero -or -not $client.CloseMainWindow()) { exit 15 }
+if (-not $client.WaitForExit(60000)) { exit 16 }
+if (-not $process.WaitForExit(30000)) { exit 17 }
+$client.Dispose()
+$process.Dispose()
+Write-Output 'HERDR_SANDBOX_STOPPED'`
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	command.Env = append(os.Environ(),
+		"HERDR_SANDBOX_EXPECTED_PID="+strconv.Itoa(active.PID),
+		"HERDR_SANDBOX_EXPECTED_EXECUTABLE="+active.ExecutablePath,
+		"HERDR_SANDBOX_EXPECTED_STARTED="+active.StartedAtUTC,
+		"HERDR_SANDBOX_EXPECTED_COMMAND_LINE="+active.CommandLine,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			switch exitError.ExitCode() {
+			case 3:
+				return false, nil
+			case 12:
+				return false, fmt.Errorf("recorded Windows Sandbox process identity changed; refusing to stop PID %d", active.PID)
+			case 15:
+				return false, errors.New("owned Windows Sandbox client did not expose one closable main window; it was not force-terminated")
+			case 16:
+				return false, errors.New("owned Windows Sandbox client refused to exit within 60 seconds; it was not force-terminated")
+			case 17:
+				return false, errors.New("owned Windows Sandbox launcher did not exit after its client closed; it was not force-terminated")
+			}
+		}
+		return false, fmt.Errorf("stop owned Windows Sandbox: %w: %s", err, boundedText(output))
+	}
+	if strings.TrimSpace(string(output)) != "HERDR_SANDBOX_STOPPED" {
+		return false, fmt.Errorf("stop owned Windows Sandbox: completion marker missing from %q", boundedText(output))
+	}
+	return true, nil
+}
+
+func describeRunningSandboxProcesses(processes []runningSandboxProcess) []string {
+	descriptions := make([]string, 0, len(processes))
+	for _, process := range processes {
+		descriptions = append(descriptions, fmt.Sprintf("%s:%d", process.Name, process.PID))
+	}
+	return descriptions
+}

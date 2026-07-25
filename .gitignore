@@ -1,0 +1,41 @@
+# Local agent/session state
+.agent/
+
+# Temporary reference material
+reference/
+references/
+
+# Local environment and secrets
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+
+# Build, test, and profiling output
+build/
+bin/
+coverage/
+*.cover
+*.out
+*.prof
+*.test
+*.exe
+
+# Logs, generated runtime state, and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+.cache/
+
+# Optional local OpenCode dependencies
+.opencode/node_modules/
+
+# OS/editor state
+.DS_Store
+Thumbs.db
+*.sublime-workspace
+.idea/
+.vscode/

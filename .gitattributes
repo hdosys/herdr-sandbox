@@ -1,0 +1,9 @@
+# Keep source text LF regardless of each developer's core.autocrlf setting.
+* text=auto eol=lf
+
+# Generated and packaged artifacts are binary.
+*.dll binary
+*.exe binary
+*.ico binary
+*.png binary
+*.zip binary
