@@ -565,20 +565,20 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 }
 
 func TestDecodeDevelopmentConfigurationSyncResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":5,"archiveSha256":"abc","copiedFiles":4,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true}`)
+	valid := []byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true}`)
 	result, err := decodeDevelopmentConfigurationSyncResult(valid)
 	if err != nil || result.CopiedFiles != 4 {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
-		[]byte(`{"schemaVersion":5,"archiveSha256":"abc","copiedFiles":4,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"extra":true}`),
-		[]byte(`{"schemaVersion":5,"archiveSha256":"abc","copiedFiles":4,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true} {}`),
+		[]byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"extra":true}`),
+		[]byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true} {}`),
 	} {
 		if _, err := decodeDevelopmentConfigurationSyncResult(invalid); err == nil {
 			t.Fatalf("invalid result unexpectedly succeeded: %s", invalid)

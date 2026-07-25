@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 1
+# herdr-sandbox-stacks-contract: 2
 
 function Get-StackWebResponseText {
     param(
@@ -332,7 +332,8 @@ function Invoke-StackVisualStudioInstaller {
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $process = $null
     try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
+            -WindowStyle Hidden -PassThru
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
             throw "Visual Studio Build Tools installer exceeded $TimeoutSeconds seconds."

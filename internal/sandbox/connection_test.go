@@ -18,6 +18,9 @@ func TestRenderSSHConfigPinsIdentityAndHostKey(t *testing.T) {
 		`UserKnownHostsFile "C:/Runs/one/known_hosts"`,
 		"HostKeyAlias windows-sandbox-one",
 		"ForwardAgent no",
+		"ControlMaster no",
+		"ControlPath none",
+		"ControlPersist no",
 		"StrictHostKeyChecking yes",
 		"PasswordAuthentication no",
 	}

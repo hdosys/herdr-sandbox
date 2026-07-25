@@ -252,6 +252,7 @@ type developmentConfigurationSyncResult struct {
 	SchemaVersion                int    `json:"schemaVersion"`
 	ArchiveSHA256                string `json:"archiveSha256"`
 	CopiedFiles                  int    `json:"copiedFiles"`
+	OpenCodePermissionVerified   bool   `json:"openCodePermissionVerified"`
 	WindowsTerminalEdition       string `json:"windowsTerminalEdition"`
 	StarshipPreset               string `json:"starshipPreset"`
 	StarshipConfigured           bool   `json:"starshipConfigured"`
@@ -499,7 +500,7 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, provisioningInput string) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
@@ -510,7 +511,10 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	provisioningInput := filepath.Join(connection.RunDirectory, "input", "provisioning")
+	if !filepath.IsAbs(provisioningInput) {
+		return fmt.Errorf("configuration sync provisioning input is not absolute: %q", provisioningInput)
+	}
+	provisioningInput = filepath.Clean(provisioningInput)
 	sources.PackagePlan = filepath.Join(provisioningInput, wingetPackagePlanFileName)
 	if packages.enabled(packageGit) {
 		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
@@ -596,6 +600,75 @@ function Invoke-GuestGitHubCLI {
     }
     return $output
 }
+function Invoke-OpenCodeJSON {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $script:OpenCodeCommand @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Role failed with exit code $exitCode."
+    }
+    try {
+        return (($output | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw "$Role returned invalid JSON."
+    }
+}
+function Assert-OpenCodeAllowAll {
+    $requiredPermissions = @(
+        'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'external_directory',
+        'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'doom_loop', 'skill',
+        'plan_enter', 'plan_exit'
+    )
+    $resolvedConfig = Invoke-OpenCodeJSON -Role 'OpenCode effective configuration inspection' -Arguments @('debug', 'config')
+    foreach ($permissionName in @('*') + $requiredPermissions) {
+        $property = $resolvedConfig.permission.PSObject.Properties[$permissionName]
+        if ($null -eq $property -or [string]$property.Value -cne 'allow') {
+            throw "OpenCode effective permission is not allow: $permissionName"
+        }
+    }
+    $agentNames = @('build', 'plan', 'general', 'explore', 'compaction', 'title', 'summary')
+    if ($null -ne $resolvedConfig.agent) {
+        $agentNames += @($resolvedConfig.agent.PSObject.Properties.Name)
+    }
+    foreach ($agentName in @($agentNames | Sort-Object -Unique)) {
+        $agent = Invoke-OpenCodeJSON -Role "OpenCode agent permission inspection ($agentName)" -Arguments @('debug', 'agent', [string]$agentName)
+        $rules = @($agent.permission)
+        $lastAllowAll = -1
+        for ($index = 0; $index -lt $rules.Count; $index++) {
+            if ([string]$rules[$index].permission -ceq '*' -and
+                [string]$rules[$index].pattern -ceq '*' -and
+                [string]$rules[$index].action -ceq 'allow') {
+                $lastAllowAll = $index
+            }
+        }
+        if ($lastAllowAll -lt 0) {
+            throw "OpenCode agent lacks a final allow-all rule: $agentName"
+        }
+        for ($index = $lastAllowAll + 1; $index -lt $rules.Count; $index++) {
+            if ([string]$rules[$index].action -cne 'allow') {
+                throw "OpenCode agent has a restrictive rule after allow-all: $agentName"
+            }
+        }
+        foreach ($permissionName in $requiredPermissions) {
+            $matches = @($rules | Where-Object {
+                ([string]$_.permission -ceq '*' -or [string]$_.permission -ceq $permissionName) -and
+                [string]$_.pattern -ceq '*'
+            })
+            if ($matches.Count -eq 0 -or [string]$matches[-1].action -cne 'allow') {
+                throw "OpenCode agent permission is not allow: $agentName/$permissionName"
+            }
+        }
+    }
+}
 try {
     $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -642,6 +715,7 @@ try {
     $windowsTerminalEnabled = $enabledPackages.ContainsKey($terminalPackageID)
     $githubAccounts = @()
     $githubAuthenticationVerified = $false
+    $openCodePermissionVerified = $false
     $starshipPreset = ''
     $starshipConfigured = $false
     $terminalEdition = ''
@@ -655,6 +729,10 @@ try {
         $authSource = Join-Path $expanded 'opencode-auth\auth.json'
         $authDestinationDirectory = Join-Path $env:USERPROFILE '.local\share\opencode'
         Copy-VerifiedConfigurationFile -Source $authSource -Destination (Join-Path $authDestinationDirectory 'auth.json')
+        $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $script:OpenCodeCommand = [string]$openCodeCommand.Source
+        Assert-OpenCodeAllowAll
+        $openCodePermissionVerified = $true
     }
 
     if ($gitEnabled) {
@@ -851,7 +929,7 @@ try {
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $starshipOutput = @(& $starshipCommand.Source 'preset' $upstreamStarshipPreset '-o' $starshipConfigPath 2>&1)
+        $starshipOutput = @(& $starshipCommand.Source 'preset' $upstreamStarshipPreset '-o' $starshipConfigPath '--force' 2>&1)
         $starshipExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -935,9 +1013,10 @@ try {
     }
     }
     Write-Output ([ordered]@{
-        schemaVersion = 5
+        schemaVersion = 6
         archiveSha256 = $digest
         copiedFiles = $script:CopiedConfigurationFiles
+        openCodePermissionVerified = $openCodePermissionVerified
         windowsTerminalEdition = $terminalEdition
         starshipPreset = $starshipPreset
         starshipConfigured = $starshipConfigured
@@ -958,34 +1037,16 @@ try {
 	if err != nil {
 		return err
 	}
-	sshExecutable, err := exec.LookPath("ssh.exe")
-	if err != nil {
-		return errors.New("OpenSSH ssh.exe is not on PATH")
-	}
 	launcherScript := buildDevelopmentConfigurationLauncher(expectedDigest, len(archive))
-	command := hiddenCommandContext(ctx, sshExecutable,
-		"-T", "-F", connection.SSHConfigPath, connection.SSHTarget,
-		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-		"-EncodedCommand", encodePowerShell(launcherScript),
-	)
-	command.Stdin = bytes.NewReader(archive)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	err = command.Run()
+	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcherScript, "transfer development configuration")
 	if err != nil {
-		if contextError := ctx.Err(); contextError != nil {
-			return fmt.Errorf("transfer development configuration over SSH: %w (%v): %s", err, contextError, boundedText(stderr.Bytes()))
-		}
-		return fmt.Errorf("transfer development configuration over SSH: %w: %s", err, boundedText(stderr.Bytes()))
+		return err
 	}
-	output := stdout.Bytes()
 	result, err := decodeDevelopmentConfigurationSyncResult(output)
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 5 {
+	if result.SchemaVersion != 6 {
 		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
 	}
 	if result.ArchiveSHA256 != expectedDigest {
@@ -1003,6 +1064,9 @@ try {
 	}
 	if result.StarshipPreset != sources.StarshipPreset || result.StarshipConfigured != packages.enabled(packageStarship) {
 		return fmt.Errorf("verify guest Starship configuration: preset %q, expected %q", result.StarshipPreset, sources.StarshipPreset)
+	}
+	if result.OpenCodePermissionVerified != packages.enabled(packageOpenCode) {
+		return fmt.Errorf("verify guest OpenCode permissions: verified = %t, expected %t", result.OpenCodePermissionVerified, packages.enabled(packageOpenCode))
 	}
 	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
 		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)

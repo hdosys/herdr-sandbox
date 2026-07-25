@@ -66,6 +66,16 @@ type runPlan struct {
 	SandboxExecutable          string
 }
 
+type provisioningSnapshot struct {
+	Directory                  string
+	ProjectScriptsDirectory    string
+	PackagePlanPath            string
+	WorkspaceManifestPath      string
+	Workspaces                 []workspacePlan
+	ActiveWorkspace            string
+	RequiresVisualStudioLayout bool
+}
+
 func DefaultOptions() Options {
 	return Options{Timeout: defaultTimeout, Output: io.Discard}
 }
@@ -105,10 +115,6 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if hostVersion != release.Version {
 		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, release.Version)
 	}
-	if err := ensureNoRunningSandbox(ctx); err != nil {
-		return Connection{}, err
-	}
-
 	provisioning, err := resolveProvisioning("")
 	if err != nil {
 		return Connection{}, err
@@ -119,19 +125,40 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	fmt.Fprintf(options.Output, "Windows Terminal host edition: %s\n", provisioning.WindowsTerminal.Edition)
 	fmt.Fprintf(options.Output, "Sandbox memory: %d MB\n", memoryMB)
-	plan, err := prepareRun(ctx, dataDirectory, memoryMB, provisioning)
-	if err != nil {
-		return Connection{}, err
-	}
-	fmt.Fprintf(options.Output, "Run workspace: %s\n", plan.RunDirectory)
 	releaseLifecycle, err := acquireLifecycleLock(ctx)
 	if err != nil {
 		return Connection{}, err
 	}
 	defer releaseLifecycle()
+	sessionStatus, err := inspectSessionAt(ctx, dataDirectory)
+	if err != nil {
+		return Connection{}, err
+	}
+	if sessionStatus.State == SessionReady {
+		sandboxExecutable, err := windowsSandboxExecutable()
+		if err != nil {
+			return Connection{}, err
+		}
+		active, found, err := loadActiveSession(dataDirectory, sandboxExecutable)
+		if err != nil {
+			return Connection{}, err
+		}
+		if !found {
+			return Connection{}, errors.New("ready Sandbox lost its active-session identity")
+		}
+		return reprovisionReadySession(ctx, options, active, provisioning, memoryMB, herdrExecutable, release)
+	}
+	if sessionStatus.State != SessionStopped {
+		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `herdr-sandbox status` and use `herdr-sandbox down` before a fresh launch", sessionStatus.State)
+	}
 	if err := ensureNoRunningSandbox(ctx); err != nil {
 		return Connection{}, err
 	}
+	plan, err := prepareRun(ctx, dataDirectory, memoryMB, provisioning)
+	if err != nil {
+		return Connection{}, err
+	}
+	fmt.Fprintf(options.Output, "Run workspace: %s\n", plan.RunDirectory)
 	if plan.RequiresVisualStudioLayout {
 		fmt.Fprintln(options.Output, "Preparing the required Visual Studio Build Tools layout on the host...")
 		if err := prepareVisualStudioLayout(ctx, plan, options.Output); err != nil {
@@ -173,7 +200,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages))
 	syncContext, cancelSync := context.WithTimeout(waitContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -415,10 +442,6 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, fmt.Errorf("read host SSH public key: %w", err)
 	}
-	packagePlanData, err := encodeWingetPackagePlan(plan.Packages, plan.WindowsTerminal)
-	if err != nil {
-		return runPlan{}, err
-	}
 	files := []struct {
 		path string
 		data []byte
@@ -433,57 +456,87 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 			return runPlan{}, fmt.Errorf("write run input %s: %w", filepath.Base(file.path), err)
 		}
 	}
-	provisioningDirectory := filepath.Join(plan.InputDirectory, "provisioning")
-	if err := os.MkdirAll(provisioningDirectory, 0o700); err != nil {
-		return runPlan{}, fmt.Errorf("create run provisioning directory: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(provisioningDirectory, wingetPackagePlanFileName), packagePlanData, 0o600); err != nil {
-		return runPlan{}, fmt.Errorf("write WinGet package plan: %w", err)
-	}
-	baseData, err := os.ReadFile(provisioning.BaseScript)
-	if err != nil {
-		return runPlan{}, fmt.Errorf("read base provisioning script %s: %w", provisioning.BaseScript, err)
-	}
-	if err := os.WriteFile(filepath.Join(provisioningDirectory, baseProvisioningName), baseData, 0o600); err != nil {
-		return runPlan{}, fmt.Errorf("write run base provisioning script: %w", err)
-	}
-	stackData, err := os.ReadFile(provisioning.StackScript)
-	if err != nil {
-		return runPlan{}, fmt.Errorf("read stack provisioning script %s: %w", provisioning.StackScript, err)
-	}
-	if err := os.WriteFile(filepath.Join(provisioningDirectory, stackProvisioningName), stackData, 0o600); err != nil {
-		return runPlan{}, fmt.Errorf("write run stack provisioning script: %w", err)
-	}
-	projectScriptsDirectory := filepath.Join(provisioningDirectory, "projects")
-	if err := os.MkdirAll(projectScriptsDirectory, 0o700); err != nil {
-		return runPlan{}, fmt.Errorf("create project provisioning directory: %w", err)
-	}
-	for _, workspace := range plan.Workspaces {
-		data, readErr := os.ReadFile(workspace.ProvisioningPath)
-		if readErr != nil {
-			return runPlan{}, fmt.Errorf("read provisioning script %s: %w", workspace.ProvisioningPath, readErr)
-		}
-		name := workspace.Name + ".ps1"
-		if writeErr := os.WriteFile(filepath.Join(projectScriptsDirectory, name), data, 0o600); writeErr != nil {
-			return runPlan{}, fmt.Errorf("write run provisioning script %s: %w", name, writeErr)
-		}
-	}
-	plan.Workspaces, err = inspectProjectProvisioningPlan(ctx, plan.RunDirectory, projectScriptsDirectory, plan.Workspaces)
+	snapshot, err := prepareProvisioningSnapshot(ctx, plan.RunDirectory, filepath.Join(plan.InputDirectory, "provisioning"), provisioning)
 	if err != nil {
 		return runPlan{}, err
 	}
-	applyWorkspaceRequirements(&plan)
-	workspaceManifest, err := encodeGuestWorkspaceManifest(plan.Workspaces, plan.ActiveWorkspace)
-	if err != nil {
-		return runPlan{}, err
-	}
-	if err := os.WriteFile(filepath.Join(provisioningDirectory, workspaceManifestName), workspaceManifest, 0o600); err != nil {
-		return runPlan{}, fmt.Errorf("write workspace manifest: %w", err)
-	}
+	plan.Workspaces = snapshot.Workspaces
+	plan.ActiveWorkspace = snapshot.ActiveWorkspace
+	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
 	if err := os.WriteFile(plan.ConfigPath, config, 0o600); err != nil {
 		return runPlan{}, fmt.Errorf("write Windows Sandbox configuration: %w", err)
 	}
 	return plan, nil
+}
+
+func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snapshotDirectory string, provisioning provisioningPlan) (provisioningSnapshot, error) {
+	if !filepath.IsAbs(inspectionDirectory) || !filepath.IsAbs(snapshotDirectory) {
+		return provisioningSnapshot{}, errors.New("provisioning snapshot directories must be absolute")
+	}
+	if err := os.MkdirAll(snapshotDirectory, 0o700); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("create provisioning snapshot directory: %w", err)
+	}
+	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
+	if err != nil {
+		return provisioningSnapshot{}, err
+	}
+	packagePlanPath := filepath.Join(snapshotDirectory, wingetPackagePlanFileName)
+	if err := os.WriteFile(packagePlanPath, packagePlanData, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write WinGet package plan: %w", err)
+	}
+	for _, source := range []struct {
+		path string
+		name string
+		role string
+	}{
+		{path: provisioning.BaseScript, name: baseProvisioningName, role: "base"},
+		{path: provisioning.StackScript, name: stackProvisioningName, role: "stack"},
+	} {
+		data, readErr := os.ReadFile(source.path)
+		if readErr != nil {
+			return provisioningSnapshot{}, fmt.Errorf("read %s provisioning script %s: %w", source.role, source.path, readErr)
+		}
+		if writeErr := os.WriteFile(filepath.Join(snapshotDirectory, source.name), data, 0o600); writeErr != nil {
+			return provisioningSnapshot{}, fmt.Errorf("write %s provisioning snapshot: %w", source.role, writeErr)
+		}
+	}
+	projectScriptsDirectory := filepath.Join(snapshotDirectory, "projects")
+	if err := os.MkdirAll(projectScriptsDirectory, 0o700); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("create project provisioning snapshot directory: %w", err)
+	}
+	for _, workspace := range provisioning.Workspaces {
+		data, readErr := os.ReadFile(workspace.ProvisioningPath)
+		if readErr != nil {
+			return provisioningSnapshot{}, fmt.Errorf("read provisioning script %s: %w", workspace.ProvisioningPath, readErr)
+		}
+		name := workspace.Name + ".ps1"
+		if writeErr := os.WriteFile(filepath.Join(projectScriptsDirectory, name), data, 0o600); writeErr != nil {
+			return provisioningSnapshot{}, fmt.Errorf("write project provisioning snapshot %s: %w", name, writeErr)
+		}
+	}
+	workspaces, err := inspectProjectProvisioningPlan(ctx, inspectionDirectory, projectScriptsDirectory, provisioning.Workspaces)
+	if err != nil {
+		return provisioningSnapshot{}, err
+	}
+	requirements := runPlan{Workspaces: workspaces}
+	applyWorkspaceRequirements(&requirements)
+	workspaceManifest, err := encodeGuestWorkspaceManifest(workspaces, requirements.ActiveWorkspace)
+	if err != nil {
+		return provisioningSnapshot{}, err
+	}
+	workspaceManifestPath := filepath.Join(snapshotDirectory, workspaceManifestName)
+	if err := os.WriteFile(workspaceManifestPath, workspaceManifest, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write workspace manifest: %w", err)
+	}
+	return provisioningSnapshot{
+		Directory:                  snapshotDirectory,
+		ProjectScriptsDirectory:    projectScriptsDirectory,
+		PackagePlanPath:            packagePlanPath,
+		WorkspaceManifestPath:      workspaceManifestPath,
+		Workspaces:                 workspaces,
+		ActiveWorkspace:            requirements.ActiveWorkspace,
+		RequiresVisualStudioLayout: requirements.RequiresVisualStudioLayout,
+	}, nil
 }
 
 func provisioningConfigurationSummary(packages wingetPackagePlan) string {

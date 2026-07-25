@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 28
+# herdr-sandbox-base-contract: 29
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -259,7 +259,8 @@ function Invoke-ProvisioningNative {
     try {
         $ErrorActionPreference = 'Continue'
         if ($WaitForProcessTree) {
-            $process = Start-Process -FilePath $command.Source -ArgumentList $ArgumentList -Wait -PassThru
+            $process = Start-Process -FilePath $command.Source -ArgumentList $ArgumentList `
+                -WindowStyle Hidden -Wait -PassThru
             try {
                 $exitCode = $process.ExitCode
             } finally {
@@ -2188,21 +2189,114 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
         -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
     $openCodeManagedDirectory = Join-Path $env:ProgramData 'opencode'
     New-Item -ItemType Directory -Path $openCodeManagedDirectory -Force | Out-Null
-    $openCodeManagedConfig = @'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "permission": "allow"
-}
+    $openCodeAllowAllPermissions = [ordered]@{
+        '*' = 'allow'
+        read = 'allow'
+        edit = 'allow'
+        glob = 'allow'
+        grep = 'allow'
+        list = 'allow'
+        bash = 'allow'
+        task = 'allow'
+        external_directory = 'allow'
+        todowrite = 'allow'
+        question = 'allow'
+        webfetch = 'allow'
+        websearch = 'allow'
+        lsp = 'allow'
+        doom_loop = 'allow'
+        skill = 'allow'
+        plan_enter = 'allow'
+        plan_exit = 'allow'
+    }
+    $openCodeManagedPluginPath = Join-Path $openCodeManagedDirectory 'sandbox-allow-all.js'
+    if ($openCodeManagedPluginPath -notmatch '^[A-Za-z]:\\') {
+        throw "OpenCode managed plugin path is not a local absolute path: $openCodeManagedPluginPath"
+    }
+    $openCodeManagedPluginURI = 'file:///' + $openCodeManagedPluginPath.Replace('\', '/')
+    $openCodeManagedPlugin = @'
+const allowAll = () => ({
+  "*": "allow",
+  read: "allow",
+  edit: "allow",
+  glob: "allow",
+  grep: "allow",
+  list: "allow",
+  bash: "allow",
+  task: "allow",
+  external_directory: "allow",
+  todowrite: "allow",
+  question: "allow",
+  webfetch: "allow",
+  websearch: "allow",
+  lsp: "allow",
+  doom_loop: "allow",
+  skill: "allow",
+  plan_enter: "allow",
+  plan_exit: "allow",
+})
+
+export default async () => ({
+  config: async (config) => {
+    config.permission = allowAll()
+    for (const agent of Object.values(config.agent ?? {})) {
+      agent.permission = allowAll()
+    }
+  },
+})
 '@
+    $openCodeManagedConfig = ([ordered]@{
+        '$schema' = 'https://opencode.ai/config.json'
+        permission = $openCodeAllowAllPermissions
+        plugin = @($openCodeManagedPluginURI)
+    } | ConvertTo-Json -Depth 6) + [Environment]::NewLine
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     $openCodeManagedPath = Join-Path $openCodeManagedDirectory 'opencode.json'
-    if (-not (Test-Path -LiteralPath $openCodeManagedPath -PathType Leaf) -or
-        [IO.File]::ReadAllText($openCodeManagedPath) -cne $openCodeManagedConfig) {
-        [IO.File]::WriteAllText($openCodeManagedPath, $openCodeManagedConfig, $utf8NoBom)
+    foreach ($managedFile in @(
+        [pscustomobject]@{ Path = $openCodeManagedPluginPath; Contents = $openCodeManagedPlugin },
+        [pscustomobject]@{ Path = $openCodeManagedPath; Contents = $openCodeManagedConfig }
+    )) {
+        if (-not (Test-Path -LiteralPath $managedFile.Path -PathType Leaf) -or
+            [IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents) {
+            [IO.File]::WriteAllText($managedFile.Path, $managedFile.Contents, $utf8NoBom)
+        }
+        if ([IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents) {
+            throw "OpenCode managed file verification failed: $($managedFile.Path)"
+        }
     }
     $verifiedManagedConfig = [IO.File]::ReadAllText($openCodeManagedPath) | ConvertFrom-Json
-    if ($verifiedManagedConfig.permission -ne 'allow') {
-        throw 'OpenCode managed permission configuration was not written correctly.'
+    if (@($verifiedManagedConfig.plugin).Count -ne 1 -or
+        [string]$verifiedManagedConfig.plugin[0] -cne $openCodeManagedPluginURI) {
+        throw 'OpenCode managed plugin configuration was not written correctly.'
+    }
+    foreach ($permissionName in $openCodeAllowAllPermissions.Keys) {
+        $property = $verifiedManagedConfig.permission.PSObject.Properties[$permissionName]
+        if ($null -eq $property -or [string]$property.Value -cne 'allow') {
+            throw "OpenCode managed permission is not allow: $permissionName"
+        }
+    }
+    $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $resolvedConfigOutput = @(& $openCodeCommand.Source 'debug' 'config' 2>&1)
+        $resolvedConfigExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($resolvedConfigExitCode -ne 0) {
+        throw "OpenCode managed configuration validation failed with exit code $resolvedConfigExitCode."
+    }
+    try {
+        $resolvedOpenCodeConfig = (($resolvedConfigOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw 'OpenCode managed configuration validation returned invalid JSON.'
+    }
+    foreach ($permissionName in $openCodeAllowAllPermissions.Keys) {
+        $property = $resolvedOpenCodeConfig.permission.PSObject.Properties[$permissionName]
+        if ($null -eq $property -or [string]$property.Value -cne 'allow') {
+            throw "OpenCode effective managed permission is not allow: $permissionName"
+        }
     }
     Write-Output "OpenCode ready: $openCodeVersion"
 }

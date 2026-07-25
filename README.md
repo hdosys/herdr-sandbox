@@ -19,6 +19,8 @@ The host repositories remain on the host and are mapped into the guest. Private 
 
 The visible bootstrap console inside Windows Sandbox is intentional. It shows guest progress and does not require interaction.
 
+When that exact app-owned Sandbox is already ready, running `up` again does not recreate it. The tool verifies that memory, cache, and workspace mappings still match, snapshots the current Base/stack/project scripts, re-runs Development provisioning inside the existing guest, reapplies host configuration, and reattaches.
+
 ## Requirements
 
 Host requirements:
@@ -123,6 +125,7 @@ ssh sandbox
 ```
 
 The managed `sandbox` alias uses the verified guest IP, public host key, host-only private key, and strict host-key checking.
+Reuse here means reconnecting to the same ready guest and persistent Herdr server. The managed target disables OpenSSH `ControlMaster` multiplexing because native Win32 OpenSSH does not support its required Unix socket/file-descriptor path.
 
 ## Commands
 
@@ -130,11 +133,14 @@ The managed `sandbox` alias uses the verified guest IP, public host key, host-on
 herdr-sandbox up [--memory-mb MB] [--timeout 20m]
 herdr-sandbox status
 herdr-sandbox down
+herdr-sandbox clean
 ```
 
 ### `up`
 
-Creates a fresh Sandbox. It refuses to start while another Windows Sandbox is running, including an unmanaged instance.
+Creates a fresh Sandbox when none exists. If the exact app-owned Sandbox is already ready and its fixed launch plan still matches, `up` re-runs the current provisioning scripts in that guest and then reattaches. This is the normal edit/test loop for `.herdr-sandbox\provision.ps1` changes.
+
+It refuses unmanaged, starting, failed, or stale instances. A changed workspace, cache, or memory plan requires `down` followed by `up`, because Windows Sandbox mappings and memory cannot change after launch.
 
 `--memory-mb` overrides the configured memory for one run. The minimum is 2048 MB.
 
@@ -152,6 +158,10 @@ Reads app-owned state without changing it. States are:
 ### `down`
 
 Stops only the exact app-owned Sandbox after revalidating its process identity. It does not force-kill changed, unrelated, or unmanaged processes.
+
+### `clean`
+
+Explicitly removes inactive app-owned run workspaces. A valid active or stale recorded run is preserved. Cleanup refuses to proceed while a running Sandbox is unmanaged or its ownership changed, and it never follows or removes unknown or reparse-bearing paths. The SSH identity, stable alias, and package/tool cache are unaffected.
 
 ## Global configuration
 
@@ -223,7 +233,7 @@ Host:
 <system-temp>\herdr-sandbox\cache\       default package/tool cache
 ```
 
-Each run directory is isolated because its `.wsb`, provisioning snapshot, status records, and known host key belong to one exact Sandbox process. Do not edit an active run directory.
+Each run directory is isolated because its `.wsb`, provisioning snapshot, status records, and known host key belong to one exact Sandbox process. Do not edit an active run directory. Inactive diagnostics remain until `herdr-sandbox clean` is invoked.
 
 Guest:
 
@@ -243,8 +253,10 @@ C:\Workspaces\<name>\         explicitly selected writable projects
 - Only selected project roots are writable guest mappings.
 - The host home directory, general AppData, unrelated repositories, and private SSH/GPG keys are not mapped.
 - OpenCode and GitHub CLI credentials are streamed only through the verified SSH channel and are not written to host run state.
+- Guest OpenCode managed policy sets every resolved agent permission to `allow`; host permission settings remain unchanged.
 - Downloads and cache hits are validated against strict metadata, versions, hashes, signatures, or package identity as applicable.
 - An app-owned Sandbox is stopped only after exact process identity revalidation.
+- Run cleanup preserves the valid active identity and rejects every exact-ID candidate containing a reparse point before deleting any candidate.
 
 ## Development
 
@@ -263,7 +275,7 @@ Repository-owned Windows scripting uses Windows PowerShell 5.1. PowerShell 7 is 
 
 ## Troubleshooting
 
-### `up` reports an existing Sandbox
+### `up` refuses an existing Sandbox
 
 Inspect it first:
 
@@ -277,7 +289,7 @@ Stop an exact app-owned instance with:
 herdr-sandbox down
 ```
 
-The tool intentionally refuses to close unmanaged Windows Sandbox processes.
+An exact ready app-owned Sandbox is reused automatically. The tool intentionally refuses to close or reuse unmanaged/non-ready Windows Sandbox processes.
 
 ### Automatic attach fails in a redirected/headless process
 
@@ -304,6 +316,10 @@ Merge deliberate local customizations into the current contract and retry.
 ### Initial provisioning is slow
 
 The first run may download WinGet payloads, Herdr/OpenSSH assets, Rust distributions, and a Visual Studio Build Tools layout. Confirm that the configured cache directory is writable and does not overlap a workspace or app-owned run state.
+
+### Old run diagnostics consume space
+
+Inspect the current owner first with `herdr-sandbox status`, then run `herdr-sandbox clean`. The command preserves the recorded active run and removes only strictly validated inactive run workspaces; it does not remove the persistent cache.
 
 ## More detail
 

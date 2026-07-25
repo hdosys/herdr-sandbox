@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -101,6 +102,141 @@ func TestActiveSessionMatchesExactProcessIdentity(t *testing.T) {
 	}
 }
 
+func TestCleanInactiveRunDirectoriesPreservesActiveAndUnknownEntries(t *testing.T) {
+	dataDirectory := t.TempDir()
+	activeRunID := "20260725-121936-0d9549e4"
+	inactiveRunIDs := []string{
+		"20260723-101112-12345678",
+		"20260724-111213-abcdef12",
+	}
+	for _, runID := range append([]string{activeRunID}, inactiveRunIDs...) {
+		directory := filepath.Join(dataDirectory, "runs", runID, "status")
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "progress.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unknownDirectory := filepath.Join(dataDirectory, "runs", "manual-notes")
+	if err := os.MkdirAll(unknownDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := cleanInactiveRunDirectories(dataDirectory, activeRunID)
+	if err != nil {
+		t.Fatalf("cleanInactiveRunDirectories: %v", err)
+	}
+	if removed != len(inactiveRunIDs) {
+		t.Fatalf("removed runs = %d, want %d", removed, len(inactiveRunIDs))
+	}
+	for _, preserved := range []string{activeRunID, "manual-notes"} {
+		if info, err := os.Stat(filepath.Join(dataDirectory, "runs", preserved)); err != nil || !info.IsDir() {
+			t.Fatalf("preserved path %s = %v, %v", preserved, info, err)
+		}
+	}
+	for _, removedRunID := range inactiveRunIDs {
+		if _, err := os.Stat(filepath.Join(dataDirectory, "runs", removedRunID)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inactive run %s still exists: %v", removedRunID, err)
+		}
+	}
+}
+
+func TestCleanInactiveRunDirectoriesPreflightsEveryCandidateBeforeDeletion(t *testing.T) {
+	dataDirectory := t.TempDir()
+	safeRun := filepath.Join(dataDirectory, "runs", "20260720-101112-12345678")
+	unsafeRun := filepath.Join(dataDirectory, "runs", "20260721-101112-abcdef12")
+	if err := os.MkdirAll(safeRun, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unsafeRun, []byte("not a run directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := cleanInactiveRunDirectories(dataDirectory, "")
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("removed = %d, error = %v", removed, err)
+	}
+	if removed != 0 {
+		t.Fatalf("removed runs = %d before failed preflight", removed)
+	}
+	if info, err := os.Stat(safeRun); err != nil || !info.IsDir() {
+		t.Fatalf("safe candidate was removed before failed preflight: %v, %v", info, err)
+	}
+}
+
+func TestCleanInactiveRunDirectoriesRejectsNestedReparsePoint(t *testing.T) {
+	dataDirectory := t.TempDir()
+	runID := "20260720-101112-12345678"
+	runDirectory := filepath.Join(dataDirectory, "runs", runID)
+	target := filepath.Join(dataDirectory, "outside-target")
+	link := filepath.Join(runDirectory, "linked")
+	for _, directory := range []string{runDirectory, target} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	createTestDirectoryLink(t, link, target)
+
+	removed, err := cleanInactiveRunDirectories(dataDirectory, "")
+	if err == nil || !strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("removed = %d, error = %v", removed, err)
+	}
+	if removed != 0 {
+		t.Fatalf("removed reparse-bearing run count = %d", removed)
+	}
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		t.Fatalf("reparse target changed: %v, %v", info, err)
+	}
+}
+
+func TestCleanInactiveRunDirectoriesRejectsReparseAncestor(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target-data")
+	linkedData := filepath.Join(root, "linked-data")
+	runID := "20260720-101112-12345678"
+	runDirectory := filepath.Join(target, "runs", runID)
+	if err := os.MkdirAll(runDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	createTestDirectoryLink(t, linkedData, target)
+
+	removed, err := cleanInactiveRunDirectories(linkedData, "")
+	if err == nil || !strings.Contains(err.Error(), "reparse point") {
+		t.Fatalf("removed = %d, error = %v", removed, err)
+	}
+	if removed != 0 {
+		t.Fatalf("removed runs through reparse ancestor = %d", removed)
+	}
+	if info, err := os.Stat(runDirectory); err != nil || !info.IsDir() {
+		t.Fatalf("target run changed through reparse ancestor: %v, %v", info, err)
+	}
+}
+
+func TestValidateCleanupProcessOwnershipRequiresExactClientParent(t *testing.T) {
+	root := t.TempDir()
+	active := testActiveSession(root, "20260724-123456-abcdef12", filepath.Join(root, "WindowsSandbox.exe"))
+	snapshot := sandboxProcessSnapshot{
+		PID:            active.PID,
+		Name:           "WindowsSandbox.exe",
+		ExecutablePath: active.ExecutablePath,
+		StartedAtUTC:   active.StartedAtUTC,
+		CommandLine:    active.CommandLine,
+	}
+	owned := []runningSandboxProcess{
+		{Name: "WindowsSandbox", PID: active.PID, ParentPID: 100},
+		{Name: "WindowsSandboxClient", PID: active.PID + 1, ParentPID: active.PID},
+	}
+	if err := validateCleanupProcessOwnership(active, snapshot, true, owned); err != nil {
+		t.Fatalf("owned cleanup process tree: %v", err)
+	}
+	unmanaged := append([]runningSandboxProcess(nil), owned...)
+	unmanaged[1].ParentPID = active.PID + 99
+	if err := validateCleanupProcessOwnership(active, snapshot, true, unmanaged); err == nil || !strings.Contains(err.Error(), "unmanaged Windows Sandbox client") {
+		t.Fatalf("unmanaged client error = %v", err)
+	}
+}
+
 func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	root := t.TempDir()
 	active := testActiveSession(root, "20260724-123456-abcdef12", filepath.Join(root, "WindowsSandbox.exe"))
@@ -166,14 +302,14 @@ func TestLoadActiveSessionRejectsUnknownAndTrailingJSON(t *testing.T) {
 }
 
 func TestParseRunningSandboxProcesses(t *testing.T) {
-	processes, err := parseRunningSandboxProcesses([]byte("WindowsSandbox:12\r\nWindowsSandboxClient:34\r\n"))
+	processes, err := parseRunningSandboxProcesses([]byte("WindowsSandbox:12:5\r\nWindowsSandboxClient:34:12\r\n"))
 	if err != nil {
 		t.Fatalf("parseRunningSandboxProcesses: %v", err)
 	}
-	if len(processes) != 2 || processes[0].PID != 12 || processes[1].Name != "WindowsSandboxClient" {
+	if len(processes) != 2 || processes[0].PID != 12 || processes[1].Name != "WindowsSandboxClient" || processes[1].ParentPID != 12 {
 		t.Fatalf("processes = %#v", processes)
 	}
-	for _, invalid := range []string{"other:12", "WindowsSandbox:0", "WindowsSandbox:not-a-pid"} {
+	for _, invalid := range []string{"other:12:5", "WindowsSandbox:0:5", "WindowsSandbox:not-a-pid:5", "WindowsSandbox:12:0", "WindowsSandbox:12"} {
 		if _, err := parseRunningSandboxProcesses([]byte(invalid)); err == nil {
 			t.Fatalf("invalid record unexpectedly parsed: %q", invalid)
 		}
@@ -258,5 +394,19 @@ func testActiveSession(root, runID, executable string) activeSession {
 		ExecutablePath: executable,
 		StartedAtUTC:   "2026-07-24T12:34:56.1234567Z",
 		CommandLine:    expectedWindowsSandboxCommandLine(executable, config),
+	}
+}
+
+func createTestDirectoryLink(t *testing.T, link, target string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		script := `New-Item -ItemType Junction -Path $env:HERDR_SANDBOX_TEST_LINK -Target $env:HERDR_SANDBOX_TEST_TARGET -ErrorAction Stop | Out-Null`
+		command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+		command.Env = append(os.Environ(), "HERDR_SANDBOX_TEST_LINK="+link, "HERDR_SANDBOX_TEST_TARGET="+target)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("create Windows junction: %v: %s", err, output)
+		}
+	} else if err := os.Symlink(target, link); err != nil {
+		t.Skipf("directory link unavailable: %v", err)
 	}
 }

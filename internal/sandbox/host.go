@@ -110,8 +110,9 @@ func ensureNoRunningSandbox(ctx context.Context) error {
 }
 
 type runningSandboxProcess struct {
-	Name string
-	PID  int
+	Name      string
+	PID       int
+	ParentPID int
 }
 
 func runningSandboxProcesses(ctx context.Context) ([]runningSandboxProcess, error) {
@@ -119,8 +120,11 @@ func runningSandboxProcesses(ctx context.Context) ([]runningSandboxProcess, erro
 	if err != nil {
 		return nil, err
 	}
-	script := `$processes = @(Get-Process -Name WindowsSandboxClient,WindowsSandbox -ErrorAction SilentlyContinue)
-	$processes | ForEach-Object { '{0}:{1}' -f $_.ProcessName,$_.Id }`
+	script := `$processes = @(Get-CimInstance Win32_Process -Filter "Name = 'WindowsSandbox.exe' OR Name = 'WindowsSandboxClient.exe'" -ErrorAction Stop)
+$processes | ForEach-Object {
+    $name = [IO.Path]::GetFileNameWithoutExtension([string]$_.Name)
+    '{0}:{1}:{2}' -f $name,$_.ProcessId,$_.ParentProcessId
+}`
 	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -140,15 +144,19 @@ func parseRunningSandboxProcesses(output []byte) ([]runningSandboxProcess, error
 	}
 	processes := make([]runningSandboxProcess, 0, len(lines))
 	for _, line := range lines {
-		name, rawPID, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found || (name != "WindowsSandbox" && name != "WindowsSandboxClient") {
+		fields := strings.Split(strings.TrimSpace(line), ":")
+		if len(fields) != 3 || (fields[0] != "WindowsSandbox" && fields[0] != "WindowsSandboxClient") {
 			return nil, fmt.Errorf("check for an existing Windows Sandbox: unexpected process record %q", line)
 		}
-		pid, err := strconv.Atoi(rawPID)
+		pid, err := strconv.Atoi(fields[1])
 		if err != nil || pid < 1 {
 			return nil, fmt.Errorf("check for an existing Windows Sandbox: invalid process record %q", line)
 		}
-		processes = append(processes, runningSandboxProcess{Name: name, PID: pid})
+		parentPID, err := strconv.Atoi(fields[2])
+		if err != nil || parentPID < 1 {
+			return nil, fmt.Errorf("check for an existing Windows Sandbox: invalid parent process record %q", line)
+		}
+		processes = append(processes, runningSandboxProcess{Name: fields[0], PID: pid, ParentPID: parentPID})
 	}
 	return processes, nil
 }

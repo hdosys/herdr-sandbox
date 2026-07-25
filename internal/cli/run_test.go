@@ -15,13 +15,13 @@ func TestRunPrintsHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "herdr-sandbox up") || !strings.Contains(stdout.String(), "herdr-sandbox status") || !strings.Contains(stdout.String(), "herdr-sandbox down") || !strings.Contains(stdout.String(), "cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)") || !strings.Contains(stdout.String(), "memoryMB (default 32768)") || !strings.Contains(stdout.String(), "wingetPackages") {
+	if !strings.Contains(stdout.String(), "herdr-sandbox up") || !strings.Contains(stdout.String(), "herdr-sandbox status") || !strings.Contains(stdout.String(), "herdr-sandbox down") || !strings.Contains(stdout.String(), "herdr-sandbox clean") || !strings.Contains(stdout.String(), "cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)") || !strings.Contains(stdout.String(), "memoryMB (default 32768)") || !strings.Contains(stdout.String(), "wingetPackages") {
 		t.Fatalf("help = %q", stdout.String())
 	}
 }
 
 func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
-	for _, command := range []string{"status", "down"} {
+	for _, command := range []string{"status", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
 		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
@@ -71,6 +71,28 @@ func TestPrintDownResult(t *testing.T) {
 			printDownResult(&output, test.result)
 			if output.String() != test.want {
 				t.Fatalf("down = %q, want %q", output.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestPrintCleanResult(t *testing.T) {
+	tests := []struct {
+		name   string
+		result sandbox.CleanResult
+		want   string
+	}{
+		{name: "empty", result: sandbox.CleanResult{}, want: "herdr-sandbox: no inactive run workspaces\n"},
+		{name: "active", result: sandbox.CleanResult{ActiveRunID: "20260725-121936-0d9549e4"}, want: "herdr-sandbox: no inactive run workspaces; preserved active run 20260725-121936-0d9549e4\n"},
+		{name: "one", result: sandbox.CleanResult{RemovedRuns: 1}, want: "herdr-sandbox: removed 1 inactive run workspace\n"},
+		{name: "many", result: sandbox.CleanResult{RemovedRuns: 3, ActiveRunID: "20260725-121936-0d9549e4"}, want: "herdr-sandbox: removed 3 inactive run workspaces; preserved active run 20260725-121936-0d9549e4\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			printCleanResult(&output, test.result)
+			if output.String() != test.want {
+				t.Fatalf("clean = %q, want %q", output.String(), test.want)
 			}
 		})
 	}

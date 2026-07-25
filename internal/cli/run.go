@@ -16,11 +16,13 @@ const usage = `Usage:
   herdr-sandbox up [--memory-mb MB] [--timeout 20m]
   herdr-sandbox status
   herdr-sandbox down
+  herdr-sandbox clean
 
 Commands:
-  up      launch, provision, verify, and attach to a fresh Windows Sandbox
+  up      launch fresh or re-provision the exact ready Sandbox, then attach
   status  report the app-owned Sandbox without changing it
   down    stop only the exact app-owned Sandbox
+  clean   remove inactive app-owned run workspaces
 
 Global workspaces, optional absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache), memoryMB (default 32768), and wingetPackages add/remove/version choices come from %APPDATA%\herdr-sandbox\config.json.
 The nearest .herdr-sandbox\provision.ps1, when present, becomes the active workspace.
@@ -55,6 +57,21 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			return 1
 		}
 		printDownResult(stdout, result)
+		return 0
+	case "clean":
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "herdr-sandbox: clean does not accept arguments\n\n%s", usage)
+			return 2
+		}
+		result, err := sandbox.Clean(ctx)
+		if err != nil {
+			if result.RemovedRuns > 0 {
+				printCleanResult(stderr, result)
+			}
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		printCleanResult(stdout, result)
 		return 0
 	case "up":
 	default:
@@ -117,6 +134,20 @@ func printDownResult(output io.Writer, result sandbox.DownResult) {
 		return
 	}
 	fmt.Fprintf(output, "herdr-sandbox: stopped run %s\n", result.RunID)
+}
+
+func printCleanResult(output io.Writer, result sandbox.CleanResult) {
+	if result.RemovedRuns == 0 {
+		fmt.Fprint(output, "herdr-sandbox: no inactive run workspaces")
+	} else if result.RemovedRuns == 1 {
+		fmt.Fprint(output, "herdr-sandbox: removed 1 inactive run workspace")
+	} else {
+		fmt.Fprintf(output, "herdr-sandbox: removed %d inactive run workspaces", result.RemovedRuns)
+	}
+	if result.ActiveRunID != "" {
+		fmt.Fprintf(output, "; preserved active run %s", result.ActiveRunID)
+	}
+	fmt.Fprintln(output)
 }
 
 func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {

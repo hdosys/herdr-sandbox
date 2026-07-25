@@ -47,6 +47,17 @@ type DownResult struct {
 	AlreadyStopped bool
 }
 
+type CleanResult struct {
+	RemovedRuns int
+	ActiveRunID string
+}
+
+type inactiveRunCleanupPlan struct {
+	RunsDirectory string
+	RootIdentity  string
+	Candidates    []string
+}
+
 type activeSession struct {
 	SchemaVersion  int    `json:"schemaVersion"`
 	RunID          string `json:"runID"`
@@ -89,6 +100,26 @@ func Down(ctx context.Context) (DownResult, error) {
 	}
 	if releaseErr != nil {
 		return DownResult{}, releaseErr
+	}
+	return result, nil
+}
+
+func Clean(ctx context.Context) (CleanResult, error) {
+	dataDirectory, err := defaultDataDirectory()
+	if err != nil {
+		return CleanResult{}, err
+	}
+	release, err := acquireLifecycleLock(ctx)
+	if err != nil {
+		return CleanResult{}, err
+	}
+	result, cleanErr := cleanAt(ctx, dataDirectory)
+	releaseErr := release()
+	if cleanErr != nil {
+		return result, cleanErr
+	}
+	if releaseErr != nil {
+		return result, releaseErr
 	}
 	return result, nil
 }
@@ -218,6 +249,238 @@ func downAt(ctx context.Context, dataDirectory string) (DownResult, error) {
 		return DownResult{}, err
 	}
 	return DownResult{RunID: active.RunID}, nil
+}
+
+func cleanAt(ctx context.Context, dataDirectory string) (CleanResult, error) {
+	executable, err := windowsSandboxExecutable()
+	if err != nil {
+		return CleanResult{}, err
+	}
+	activeRunID, err := cleanupProtectedRunID(ctx, dataDirectory, executable)
+	if err != nil {
+		return CleanResult{}, err
+	}
+	plan, err := planInactiveRunDirectories(dataDirectory, activeRunID)
+	if err != nil {
+		return CleanResult{ActiveRunID: activeRunID}, err
+	}
+	revalidatedRunID, err := cleanupProtectedRunID(ctx, dataDirectory, executable)
+	if err != nil {
+		return CleanResult{ActiveRunID: activeRunID}, err
+	}
+	if revalidatedRunID != activeRunID {
+		return CleanResult{ActiveRunID: activeRunID}, errors.New("refusing to clean because the active Sandbox identity changed during preflight")
+	}
+	removed, err := removeInactiveRunDirectories(plan)
+	return CleanResult{RemovedRuns: removed, ActiveRunID: activeRunID}, err
+}
+
+func cleanupProtectedRunID(ctx context.Context, dataDirectory, executable string) (string, error) {
+	active, found, err := loadActiveSession(dataDirectory, executable)
+	if err != nil {
+		return "", err
+	}
+	processes, err := runningSandboxProcesses(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		if len(processes) > 0 {
+			return "", fmt.Errorf("refusing to clean while unmanaged Windows Sandbox process(es) are running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+		}
+		return "", nil
+	}
+	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
+	if err != nil {
+		return "", err
+	}
+	if err := validateCleanupProcessOwnership(active, snapshot, running, processes); err != nil {
+		return "", err
+	}
+	return active.RunID, nil
+}
+
+func validateCleanupProcessOwnership(active activeSession, snapshot sandboxProcessSnapshot, running bool, processes []runningSandboxProcess) error {
+	if !running {
+		if len(processes) > 0 {
+			return fmt.Errorf("refusing to clean while unmanaged Windows Sandbox process(es) are running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+		}
+		return nil
+	}
+	if err := active.matches(snapshot); err != nil {
+		return fmt.Errorf("refusing to clean while the active Sandbox identity is unowned or changed: %w", err)
+	}
+	launcherCount := 0
+	clientCount := 0
+	for _, process := range processes {
+		switch process.Name {
+		case "WindowsSandbox":
+			if process.PID != active.PID {
+				return fmt.Errorf("refusing to clean while an unmanaged Windows Sandbox is running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+			}
+			launcherCount++
+		case "WindowsSandboxClient":
+			if process.ParentPID != active.PID {
+				return fmt.Errorf("refusing to clean while an unmanaged Windows Sandbox client is running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+			}
+			clientCount++
+		}
+	}
+	if launcherCount != 1 || clientCount > 1 {
+		return fmt.Errorf("refusing to clean because the owned Windows Sandbox process tree could not be revalidated: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+	}
+	return nil
+}
+
+func cleanInactiveRunDirectories(dataDirectory, activeRunID string) (int, error) {
+	plan, err := planInactiveRunDirectories(dataDirectory, activeRunID)
+	if err != nil {
+		return 0, err
+	}
+	return removeInactiveRunDirectories(plan)
+}
+
+func planInactiveRunDirectories(dataDirectory, activeRunID string) (inactiveRunCleanupPlan, error) {
+	if !filepath.IsAbs(dataDirectory) {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("run data directory is not absolute: %q", dataDirectory)
+	}
+	if activeRunID != "" && !runIDPattern.MatchString(activeRunID) {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("active run ID is invalid: %q", activeRunID)
+	}
+
+	runsDirectory := filepath.Join(filepath.Clean(dataDirectory), "runs")
+	rootInfo, err := os.Lstat(runsDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return inactiveRunCleanupPlan{RunsDirectory: runsDirectory}, nil
+	}
+	if err != nil {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("inspect run directory root: %w", err)
+	}
+	if err := rejectMappedPathReparsePoints(runsDirectory); err != nil {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("refusing to clean unsafe run directory root: %w", err)
+	}
+	rootReparse, err := fileInfoIsReparsePoint(rootInfo)
+	if err != nil {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("inspect run directory root reparse state: %w", err)
+	}
+	if rootReparse {
+		return inactiveRunCleanupPlan{}, errors.New("refusing to clean because the run directory root is a reparse point")
+	}
+	if !rootInfo.IsDir() {
+		return inactiveRunCleanupPlan{}, errors.New("refusing to clean because the run directory root is not a directory")
+	}
+	rootIdentity, err := physicalMappedDirectory(runsDirectory)
+	if err != nil {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("resolve run directory root identity: %w", err)
+	}
+
+	entries, err := os.ReadDir(runsDirectory)
+	if err != nil {
+		return inactiveRunCleanupPlan{}, fmt.Errorf("read run directory root: %w", err)
+	}
+	candidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == activeRunID || !runIDPattern.MatchString(name) {
+			continue
+		}
+		path := filepath.Join(runsDirectory, name)
+		if err := validateCleanableRunDirectory(path, name); err != nil {
+			return inactiveRunCleanupPlan{}, err
+		}
+		candidates = append(candidates, path)
+	}
+	return inactiveRunCleanupPlan{RunsDirectory: runsDirectory, RootIdentity: rootIdentity, Candidates: candidates}, nil
+}
+
+func removeInactiveRunDirectories(plan inactiveRunCleanupPlan) (int, error) {
+	removed := 0
+	for _, path := range plan.Candidates {
+		if err := validateRunCleanupRoot(plan); err != nil {
+			return removed, err
+		}
+		name := filepath.Base(path)
+		if filepath.Dir(path) != plan.RunsDirectory || !runIDPattern.MatchString(name) {
+			return removed, fmt.Errorf("refusing to clean invalid planned run path: %s", path)
+		}
+		if err := validateCleanableRunDirectory(path, name); err != nil {
+			return removed, err
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return removed, fmt.Errorf("remove inactive run %s: %w", name, err)
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			if err == nil {
+				return removed, fmt.Errorf("remove inactive run %s: path still exists", name)
+			}
+			return removed, fmt.Errorf("verify inactive run %s removal: %w", name, err)
+		}
+		removed++
+		if err := validateRunCleanupRoot(plan); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+func validateRunCleanupRoot(plan inactiveRunCleanupPlan) error {
+	if len(plan.Candidates) == 0 && plan.RootIdentity == "" {
+		return nil
+	}
+	if err := rejectMappedPathReparsePoints(plan.RunsDirectory); err != nil {
+		return fmt.Errorf("run directory root changed during cleanup: %w", err)
+	}
+	identity, err := physicalMappedDirectory(plan.RunsDirectory)
+	if err != nil {
+		return fmt.Errorf("resolve run directory root during cleanup: %w", err)
+	}
+	if !strings.EqualFold(identity, plan.RootIdentity) {
+		return errors.New("run directory root identity changed during cleanup")
+	}
+	return nil
+}
+
+func validateCleanableRunDirectory(path, runID string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect inactive run %s: %w", runID, err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect inactive run %s reparse state: %w", runID, err)
+	}
+	if reparse {
+		return fmt.Errorf("refusing to clean inactive run %s because it is a reparse point", runID)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("refusing to clean inactive run %s because it is not a directory", runID)
+	}
+
+	err = filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		entryInfo, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		entryReparse, reparseErr := fileInfoIsReparsePoint(entryInfo)
+		if reparseErr != nil {
+			return reparseErr
+		}
+		if entryReparse {
+			relative, relativeErr := filepath.Rel(path, current)
+			if relativeErr != nil {
+				return relativeErr
+			}
+			return fmt.Errorf("contains reparse point %s", relative)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("refusing to clean inactive run %s: %w", runID, err)
+	}
+	return nil
 }
 
 func recordActiveSession(ctx context.Context, plan runPlan, pid int) error {

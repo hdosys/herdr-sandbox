@@ -599,7 +599,8 @@ try {
         -Uri $VCRuntimeUrl -ExpectedSHA256 $VCRuntimeSha256 -FileName 'VC_redist.x64.exe' `
         -DestinationPath $vcRuntimeInstaller -CacheRoot $bootstrapCacheRoot `
         -CacheTrustRoot $bootstrapCacheTrustRoot
-    $vcRuntimeProcess = Start-Process -FilePath $vcRuntimeInstaller -ArgumentList @('/install', '/quiet', '/norestart') -Wait -PassThru
+    $vcRuntimeProcess = Start-Process -FilePath $vcRuntimeInstaller `
+        -ArgumentList @('/install', '/quiet', '/norestart') -WindowStyle Hidden -Wait -PassThru
     if ($vcRuntimeProcess.ExitCode -notin @(0, 1638)) {
         throw "VC++ runtime installer exited with code $($vcRuntimeProcess.ExitCode)."
     }
@@ -651,7 +652,8 @@ try {
         -DestinationPath $openSSHInstaller -CacheRoot $bootstrapCacheRoot `
         -CacheTrustRoot $bootstrapCacheTrustRoot
     $openSSHInstallProcess = Start-Process -FilePath 'msiexec.exe' `
-        -ArgumentList @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server') -Wait -PassThru
+        -ArgumentList @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server') `
+        -WindowStyle Hidden -Wait -PassThru
     if ($openSSHInstallProcess.ExitCode -notin @(0, 1638)) {
         throw "OpenSSH MSI installer exited with code $($openSSHInstallProcess.ExitCode)."
     }

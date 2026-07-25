@@ -126,6 +126,30 @@ func TestDefaultBaseInstallsTailscaleWithoutAuthentication(t *testing.T) {
 	}
 }
 
+func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"$openCodeManagedDirectory = Join-Path $env:ProgramData 'opencode'",
+		"sandbox-allow-all.js",
+		"config.permission = allowAll()",
+		"for (const agent of Object.values(config.agent ?? {}))",
+		"agent.permission = allowAll()",
+		"external_directory = 'allow'",
+		"task = 'allow'",
+		"todowrite = 'allow'",
+		"doom_loop = 'allow'",
+		"$openCodeCommand.Source 'debug' 'config'",
+		"OpenCode effective managed permission is not allow",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing OpenCode allow-all contract %q", required)
+		}
+	}
+	if strings.Contains(text, `"permission": "allow"`) {
+		t.Fatal("default Base still relies on the merge-unsafe scalar OpenCode permission")
+	}
+}
+
 func TestDefaultBaseInstallsStarshipFZFRipgrepAndPinnedGeistMonoBeforeTerminal(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -434,7 +458,7 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName)",
 		"already matches requested version:",
 		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
-		"[IO.File]::ReadAllText($openCodeManagedPath) -cne $openCodeManagedConfig",
+		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
 		"if (($existingSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|'))",
 	} {
 		if !strings.Contains(text, required) {
@@ -918,7 +942,7 @@ foreach ($name in @('Get-ProvisioningBoundedDiagnosticText', 'Remove-Provisionin
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
-$child = Start-Process -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', '%s') -PassThru
+$child = Start-Process -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', '%s') -WindowStyle Hidden -PassThru
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while (-not (Test-Path -LiteralPath '%s') -and [DateTime]::UtcNow -lt $deadline) {
@@ -963,7 +987,7 @@ foreach ($name in @('Update-ProvisioningPath', 'Wait-ProvisioningCommandAvailabl
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     Invoke-Expression $definition.Extent.Text
 }
-$child = Start-Process -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', '%s') -PassThru
+$child = Start-Process -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', '%s') -WindowStyle Hidden -PassThru
 try {
     $resolved = Wait-ProvisioningCommandAvailable -Role 'Delayed fixture' -Name '%s' -TimeoutSeconds 5 -DelayMilliseconds 100
     if ($resolved -ine '%s') { throw "Resolved unexpected command: $resolved" }
