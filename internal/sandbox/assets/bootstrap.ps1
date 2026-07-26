@@ -491,10 +491,11 @@ try {
 
     $provisioningDirectory = Join-Path $InputDirectory 'provisioning'
     $baseProvisioning = Join-Path $provisioningDirectory 'base.ps1'
+    $userProvisioning = Join-Path $provisioningDirectory 'user.ps1'
     $projectProvisioningDirectory = Join-Path $provisioningDirectory 'projects'
     $workspaceManifestPath = Join-Path $provisioningDirectory 'workspaces.json'
     $packagePlanPath = Join-Path $provisioningDirectory 'winget-packages.json'
-    foreach ($requiredPath in @($baseProvisioning, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath)) {
+    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Development provisioning input is missing: $requiredPath"
         }
@@ -537,7 +538,8 @@ try {
 
     Write-ProgressStatus -Phase 'registry-customization' -Message 'Applying registry settings before package installation'
     & $baseProvisioning -Phase 'Registry' -ProjectProvisioningDirectory $projectProvisioningDirectory `
-        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath
+        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
+        -UserProvisioningPath $userProvisioning
 
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
@@ -589,7 +591,8 @@ try {
 
     Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
     & $baseProvisioning -Phase 'Development' -ProjectProvisioningDirectory $projectProvisioningDirectory `
-        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath
+        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
+        -UserProvisioningPath $userProvisioning
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
 

@@ -91,6 +91,18 @@ func TestValidateStackProvisioningContract(t *testing.T) {
 	}
 }
 
+func TestValidateUserProvisioningContract(t *testing.T) {
+	path := filepath.Join(t.TempDir(), userProvisioningName)
+	writeTestFile(t, path, userProvisioningContract+"\nWrite-Output 'ready'\n")
+	if err := validateUserProvisioningContract(path); err != nil {
+		t.Fatalf("validate current user contract: %v", err)
+	}
+	writeTestFile(t, path, userProvisioningContract+"\n"+baseProvisioningContract+"\n")
+	if err := validateUserProvisioningContract(path); err == nil {
+		t.Fatal("app-owned Base masquerading as user provisioning unexpectedly succeeded")
+	}
+}
+
 func TestDefaultBaseInstallsGitHubCLIThroughCachedMSIAdapter(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -518,9 +530,10 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 	}
 	base := readDefaultBaseProvisioning(t)
 	dotSource := strings.Index(base, ". $stackProvisioning")
+	userCall := strings.Index(base, "& $userProvisioning.FullName")
 	projectCall := strings.Index(base, "& $projectScript.FullName -ProjectDirectory $projectDirectory")
-	if dotSource < 0 || projectCall <= dotSource {
-		t.Fatalf("stack library must load before project scripts: load=%d project=%d", dotSource, projectCall)
+	if dotSource < 0 || userCall <= dotSource || projectCall <= userCall {
+		t.Fatalf("provisioning order must be stack, user, project: stack=%d user=%d project=%d", dotSource, userCall, projectCall)
 	}
 }
 
@@ -528,6 +541,7 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		"[string]$PackagePlanPath",
+		"[string]$UserProvisioningPath",
 		"function Read-ProvisioningPackagePlan",
 		"function Test-ProvisioningPackageEnabled",
 		"function Get-ProvisioningPackageVersion",
@@ -1071,6 +1085,9 @@ func TestResolveProvisioningCombinesGlobalAndActiveWorkspaces(t *testing.T) {
 	if plan.MemoryMB != defaultMemoryMB || len(plan.Workspaces) != 2 || !plan.Workspaces[0].Active || plan.Workspaces[0].HostDirectory != active {
 		t.Fatalf("workspaces = %#v", plan.Workspaces)
 	}
+	if plan.BaseScript != filepath.Join(defaults, baseProvisioningName) || plan.StackScript != filepath.Join(defaults, stackProvisioningName) || plan.UserScript != filepath.Join(global, userProvisioningName) {
+		t.Fatalf("provisioning owners = base %q, stacks %q, user %q", plan.BaseScript, plan.StackScript, plan.UserScript)
+	}
 }
 
 func TestResolveProvisioningUsesConfiguredMemory(t *testing.T) {
@@ -1283,19 +1300,10 @@ func createWorkspaceFixture(t *testing.T, root, name string) string {
 	return directory
 }
 
-func TestEnsureGlobalProvisioningSeedsWithoutOverwriting(t *testing.T) {
+func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	root := t.TempDir()
-	defaults := filepath.Join(root, "defaults")
 	global := filepath.Join(root, "global")
-	if err := os.MkdirAll(defaults, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{baseProvisioningName} {
-		if err := os.WriteFile(filepath.Join(defaults, name), []byte("default "+name), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := ensureGlobalProvisioning(global, defaults); err != nil {
+	if err := ensureGlobalProvisioning(global); err != nil {
 		t.Fatalf("ensureGlobalProvisioning: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(global, globalConfigurationName)); err != nil {
@@ -1310,18 +1318,42 @@ func TestEnsureGlobalProvisioningSeedsWithoutOverwriting(t *testing.T) {
 		config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
 	}
-	base := filepath.Join(global, baseProvisioningName)
-	if err := os.WriteFile(base, []byte("user customization"), 0o600); err != nil {
+	user := filepath.Join(global, userProvisioningName)
+	custom := []byte(userProvisioningContract + "\nWrite-Output 'custom'\n")
+	if err := os.WriteFile(user, custom, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureGlobalProvisioning(global, defaults); err != nil {
+	if err := ensureGlobalProvisioning(global); err != nil {
 		t.Fatalf("second ensureGlobalProvisioning: %v", err)
 	}
-	data, err := os.ReadFile(base)
+	data, err := os.ReadFile(user)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "user customization" {
-		t.Fatalf("global base was overwritten: %q", data)
+	if !bytes.Equal(data, custom) {
+		t.Fatalf("user provisioning was overwritten: %q", data)
+	}
+}
+
+func TestEnsureGlobalProvisioningPreservesAndRefusesLegacyBase(t *testing.T) {
+	global := t.TempDir()
+	legacy := filepath.Join(global, baseProvisioningName)
+	legacyData := []byte(baseProvisioningContract + "\nWrite-Output 'legacy customization'\n")
+	if err := os.WriteFile(legacy, legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := ensureGlobalProvisioning(global)
+	if err == nil || !strings.Contains(err.Error(), "was not modified and will not be executed") || !strings.Contains(err.Error(), userProvisioningName) {
+		t.Fatalf("legacy Base migration error = %v", err)
+	}
+	got, readErr := os.ReadFile(legacy)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, legacyData) {
+		t.Fatalf("legacy Base changed: %q", got)
+	}
+	if err := validateUserProvisioningContract(filepath.Join(global, userProvisioningName)); err != nil {
+		t.Fatalf("user provisioning was not seeded before migration refusal: %v", err)
 	}
 }

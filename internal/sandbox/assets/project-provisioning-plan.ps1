@@ -1,5 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
+    [string]$UserProvisioningPath,
+    [Parameter(Mandatory = $true)]
     [string]$ProjectsDirectory
 )
 
@@ -21,28 +23,29 @@ $knownStacks = @{
     'Install-ZigStack' = 'zig'
 }
 
-$scripts = @(Get-ChildItem -LiteralPath $ProjectsDirectory -File -Filter '*.ps1' | Sort-Object Name)
-if ($scripts.Count -eq 0 -or $scripts.Count -gt 16) {
-    throw "Project provisioning script count is invalid: $($scripts.Count)"
-}
+function Get-SelectedProvisioningStacks {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IO.FileInfo]$Script,
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [switch]$RejectParamBlock
+    )
 
-$projects = @()
-foreach ($script in $scripts) {
-    $name = [IO.Path]::GetFileNameWithoutExtension($script.Name)
-    if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
-        $script.Length -le 0 -or $script.Length -gt 1048576) {
-        throw "Project provisioning script identity is invalid: $($script.Name)"
+    if ($Script.Length -le 0 -or $Script.Length -gt 1048576) {
+        throw "$Role script size is invalid: $($Script.Name)"
     }
-
     $tokens = $null
     $parseErrors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-        $script.FullName, [ref]$tokens, [ref]$parseErrors)
+        $Script.FullName, [ref]$tokens, [ref]$parseErrors)
     if ($parseErrors.Count -ne 0) {
         $first = $parseErrors[0]
-        throw "Project provisioning script parse failed for $($script.Name) at line $($first.Extent.StartLineNumber): $($first.Message)"
+        throw "$Role script parse failed for $($Script.Name) at line $($first.Extent.StartLineNumber): $($first.Message)"
     }
-
+    if ($RejectParamBlock -and $null -ne $ast.ParamBlock) {
+        throw "$Role script must not declare a script-level param block: $($Script.Name)"
+    }
     $selected = @{}
     $commands = @($ast.FindAll({
         param($node)
@@ -56,14 +59,37 @@ foreach ($script in $scripts) {
     foreach ($command in $commands) {
         $selected[[string]$knownStacks[$command.GetCommandName()]] = $true
     }
+    return @($selected.Keys | Sort-Object)
+}
+
+$userScript = Get-Item -LiteralPath $UserProvisioningPath -Force
+$userText = [IO.File]::ReadAllText($userScript.FullName)
+if (-not $userText.Contains('# herdr-sandbox-user-contract: 1')) {
+    throw "User provisioning contract is unsupported: $($userScript.FullName)"
+}
+$userStacks = @(Get-SelectedProvisioningStacks -Script $userScript -Role 'User provisioning' -RejectParamBlock)
+
+$scripts = @(Get-ChildItem -LiteralPath $ProjectsDirectory -File -Filter '*.ps1' | Sort-Object Name)
+if ($scripts.Count -eq 0 -or $scripts.Count -gt 16) {
+    throw "Project provisioning script count is invalid: $($scripts.Count)"
+}
+
+$projects = @()
+foreach ($script in $scripts) {
+    $name = [IO.Path]::GetFileNameWithoutExtension($script.Name)
+    if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
+        $script.Length -le 0 -or $script.Length -gt 1048576) {
+        throw "Project provisioning script identity is invalid: $($script.Name)"
+    }
 
     $projects += [pscustomobject]@{
         name = $name
-        stacks = @($selected.Keys | Sort-Object)
+        stacks = @(Get-SelectedProvisioningStacks -Script $script -Role 'Project provisioning')
     }
 }
 
 [pscustomobject]@{
-    schemaVersion = 1
+    schemaVersion = 2
+    userStacks = @($userStacks)
     projects = @($projects)
 } | ConvertTo-Json -Compress -Depth 4

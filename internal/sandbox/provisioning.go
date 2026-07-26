@@ -18,16 +18,26 @@ const (
 	projectProvisioningName   = "provision.ps1"
 	baseProvisioningName      = "base.ps1"
 	stackProvisioningName     = "stacks.ps1"
+	userProvisioningName      = "user.ps1"
 	workspaceManifestName     = "workspaces.json"
 	globalConfigurationName   = "config.json"
 	guestWorkspacesDirectory  = `C:\Workspaces`
-	baseProvisioningContract  = "# herdr-sandbox-base-contract: 29"
+	baseProvisioningContract  = "# herdr-sandbox-base-contract: 30"
 	stackProvisioningContract = "# herdr-sandbox-stacks-contract: 2"
+	userProvisioningContract  = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema   = 1
 	maximumBaseScriptSize     = 1024 * 1024
 	maximumStackScriptSize    = 2 * 1024 * 1024
+	maximumUserScriptSize     = 1024 * 1024
 	maximumProjectScriptSize  = 1024 * 1024
 )
+
+var defaultUserProvisioningScript = []byte(userProvisioningContract + `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+
+# Add idempotent global guest customization below. Prefer config.json for packages.
+`)
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -99,6 +109,7 @@ func encodeGuestWorkspaceManifest(workspaces []workspacePlan, activeWorkspace st
 type provisioningPlan struct {
 	BaseScript           string
 	StackScript          string
+	UserScript           string
 	CacheDirectory       string
 	MemoryMB             int
 	Tailscale            bool
@@ -158,6 +169,9 @@ func resolveProvisioning(startDirectory string) (provisioningPlan, error) {
 	if err := validateStackProvisioningContract(plan.StackScript); err != nil {
 		return provisioningPlan{}, err
 	}
+	if err := validateUserProvisioningContract(plan.UserScript); err != nil {
+		return provisioningPlan{}, err
+	}
 	plan.WindowsTerminal, err = detectHostWindowsTerminalConfiguration()
 	if err != nil {
 		return provisioningPlan{}, err
@@ -180,30 +194,38 @@ func validateTailscalePackageSelection(enabled bool, packages wingetPackagePlan)
 }
 
 func validateBaseProvisioningContract(path string) error {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("inspect global base provisioning script: %w", err)
+		return fmt.Errorf("inspect app-owned base provisioning script: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() > maximumBaseScriptSize {
-		return fmt.Errorf("global base provisioning script must be a regular file no larger than %d bytes: %s", maximumBaseScriptSize, path)
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect app-owned base provisioning reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumBaseScriptSize {
+		return fmt.Errorf("app-owned base provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumBaseScriptSize, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read global base provisioning script: %w", err)
+		return fmt.Errorf("read app-owned base provisioning script: %w", err)
 	}
 	if !strings.Contains(string(contents), baseProvisioningContract) {
-		return fmt.Errorf("global base provisioning script is outdated; merge the current %s into %s", baseProvisioningName, path)
+		return fmt.Errorf("app-owned base provisioning script has an unsupported contract: %s", path)
 	}
 	return nil
 }
 
 func validateStackProvisioningContract(path string) error {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("inspect app-owned stack provisioning script: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumStackScriptSize {
-		return fmt.Errorf("app-owned stack provisioning script must be a nonempty regular file no larger than %d bytes: %s", maximumStackScriptSize, path)
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect app-owned stack provisioning reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumStackScriptSize {
+		return fmt.Errorf("app-owned stack provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumStackScriptSize, path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -215,8 +237,34 @@ func validateStackProvisioningContract(path string) error {
 	return nil
 }
 
+func validateUserProvisioningContract(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect user provisioning script: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect user provisioning reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumUserScriptSize {
+		return fmt.Errorf("user provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumUserScriptSize, path)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read user provisioning script: %w", err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, userProvisioningContract) {
+		return fmt.Errorf("user provisioning script has an unsupported contract: %s", path)
+	}
+	if strings.Contains(text, "# herdr-sandbox-base-contract:") {
+		return fmt.Errorf("user provisioning script must not contain an app-owned Base contract: %s", path)
+	}
+	return nil
+}
+
 func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (provisioningPlan, error) {
-	if err := ensureGlobalProvisioning(globalRoot, defaultRoot); err != nil {
+	if err := ensureGlobalProvisioning(globalRoot); err != nil {
 		return provisioningPlan{}, err
 	}
 	configuration, err := loadGlobalConfiguration(filepath.Join(globalRoot, globalConfigurationName))
@@ -304,8 +352,9 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 		return strings.ToLower(workspaces[left].Name) < strings.ToLower(workspaces[right].Name)
 	})
 	return provisioningPlan{
-		BaseScript:           filepath.Join(globalRoot, baseProvisioningName),
+		BaseScript:           filepath.Join(defaultRoot, baseProvisioningName),
 		StackScript:          filepath.Join(defaultRoot, stackProvisioningName),
+		UserScript:           filepath.Join(globalRoot, userProvisioningName),
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             memoryMB,
 		Tailscale:            configuration.Tailscale,
@@ -653,31 +702,52 @@ func findProjectProvisioning(startDirectory string) (string, string, bool, error
 	return "", "", false, nil
 }
 
-func ensureGlobalProvisioning(globalRoot, defaultRoot string) error {
-	if !filepath.IsAbs(globalRoot) || !filepath.IsAbs(defaultRoot) {
-		return errors.New("global and default provisioning directories must be absolute")
+func ensureGlobalProvisioning(globalRoot string) error {
+	if !filepath.IsAbs(globalRoot) {
+		return errors.New("global provisioning directory must be absolute")
 	}
 	if err := os.MkdirAll(globalRoot, 0o700); err != nil {
 		return fmt.Errorf("create global herdr-sandbox directory: %w", err)
 	}
-	destination := filepath.Join(globalRoot, baseProvisioningName)
-	if info, err := os.Stat(destination); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("global base provisioning path is not a regular file: %s", destination)
-		}
+	userPath := filepath.Join(globalRoot, userProvisioningName)
+	if err := seedUserProvisioning(userPath); err != nil {
+		return err
+	}
+	legacyBase := filepath.Join(globalRoot, baseProvisioningName)
+	if _, err := os.Lstat(legacyBase); err == nil {
+		return fmt.Errorf("legacy user-owned Base found at %s; it was not modified and will not be executed: move only deliberate global extension commands into %s, route package choices to %s, archive the legacy file under a non-reserved name, then retry", legacyBase, userPath, filepath.Join(globalRoot, globalConfigurationName))
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect global base provisioning file: %w", err)
-	} else {
-		source := filepath.Join(defaultRoot, baseProvisioningName)
-		data, err := os.ReadFile(source)
-		if err != nil {
-			return fmt.Errorf("read default base provisioning file %s: %w", source, err)
-		}
-		if err := writeFileAtomically(destination, data, 0o600); err != nil {
-			return fmt.Errorf("seed global base provisioning file %s: %w", destination, err)
-		}
+		return fmt.Errorf("inspect legacy user-owned Base: %w", err)
 	}
 	return ensureGlobalWorkspaceConfig(globalRoot)
+}
+
+func seedUserProvisioning(path string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return validateUserProvisioningContract(path)
+	}
+	if err != nil {
+		return fmt.Errorf("create user provisioning script %s: %w", path, err)
+	}
+	written := false
+	defer func() {
+		_ = file.Close()
+		if !written {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := file.Write(defaultUserProvisioningScript); err != nil {
+		return fmt.Errorf("write user provisioning script %s: %w", path, err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync user provisioning script %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close user provisioning script %s: %w", path, err)
+	}
+	written = true
+	return nil
 }
 
 func ensureGlobalWorkspaceConfig(globalRoot string) error {

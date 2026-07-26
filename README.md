@@ -44,7 +44,7 @@ From the repository root:
 go run ./cmd/task check
 ```
 
-The checked build writes `build\bin\herdr-sandbox.exe` beside its required editable `base.ps1` and `stacks.ps1` assets.
+The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets. Installing a newer release replaces those providers together.
 
 ### 2. Add a project profile
 
@@ -131,7 +131,7 @@ The first run creates:
 
 ```text
 %APPDATA%\herdr-sandbox\config.json
-%APPDATA%\herdr-sandbox\base.ps1
+%APPDATA%\herdr-sandbox\user.ps1
 ```
 
 Example `config.json`:
@@ -188,13 +188,15 @@ OpenCode (`SST.opencode`) is already a Base default and must not be added again.
 
 The active project is added automatically and deduplicated against global workspaces. Workspace paths must exist, must not overlap, and must not contain reparse aliases.
 
-`base.ps1` is user-owned after it is seeded and is never silently overwritten. If a newer binary reports an unsupported Base contract, merge deliberate customizations into the current repository `provisioning\base.ps1` contract and retry.
+`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable run snapshot remains with diagnostics until `clean`.
+
+Older releases seeded a user-owned `%APPDATA%\herdr-sandbox\base.ps1`. The new ownership model never overwrites or executes that file: `up` stops with migration instructions. Review it, move only deliberate global extension commands into `user.ps1`, move package choices into `config.json`, keep project tools in project profiles, archive the complete legacy Base under a non-reserved name, and retry.
 
 Persistent host state is split intentionally:
 
 | Path | Contents |
 | --- | --- |
-| `%APPDATA%\herdr-sandbox` | User-owned global config and Base profile. |
+| `%APPDATA%\herdr-sandbox` | User-owned global config and `user.ps1` extension. |
 | `%LOCALAPPDATA%\herdr-sandbox\identity` | Host SSH identity and optional DPAPI-protected Tailscale identity. |
 | `%LOCALAPPDATA%\herdr-sandbox\runs` | Per-run status, diagnostics, SSH material, and `.wsb` files. Do not edit an active run. |
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
@@ -311,7 +313,7 @@ Start with `herdr-sandbox status`; it is read-only.
 | `up` refuses an existing Sandbox | A ready exact guest is reused automatically. For failed, stale, changed-plan, or unmanaged state, inspect the reported owner and use `herdr-sandbox down` only when it identifies the app-owned instance. |
 | Automatic attach fails in a headless process | Open a real terminal and run `herdr --remote sandbox`; the verified guest remains ready. |
 | `ssh sandbox` no longer connects | A `stale` status means the recorded process ended. Use `down` to clear safe stale ownership, then start again. |
-| Global Base contract is outdated | Compare `%APPDATA%\herdr-sandbox\base.ps1` with `provisioning\base.ps1`, merge deliberate customizations, and retry. |
+| Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, Rust, and Visual Studio layout payloads. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
 | Old diagnostics consume space | Run `clean`; it preserves active ownership and the persistent cache while removing only validated inactive run workspaces. |

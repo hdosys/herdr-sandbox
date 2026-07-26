@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	projectProvisioningPlanSchema        = 1
+	projectProvisioningPlanSchema        = 2
 	projectProvisioningPlanScriptName    = "inspect-project-provisioning.ps1"
 	projectProvisioningPlanTimeout       = 30 * time.Second
 	maximumProjectProvisioningPlanOutput = 64 * 1024
@@ -38,6 +38,7 @@ const (
 
 type projectProvisioningPlan struct {
 	SchemaVersion int                            `json:"schemaVersion"`
+	UserStacks    []projectStack                 `json:"userStacks"`
 	Projects      []projectProvisioningPlanEntry `json:"projects"`
 }
 
@@ -55,27 +56,27 @@ func (stack projectStack) valid() bool {
 	}
 }
 
-func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, projectsDirectory string, workspaces []workspacePlan) ([]workspacePlan, error) {
-	if !filepath.IsAbs(runDirectory) || !filepath.IsAbs(projectsDirectory) {
-		return nil, errors.New("project provisioning inspection requires absolute directories")
+func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScript, projectsDirectory string, workspaces []workspacePlan) ([]workspacePlan, []projectStack, error) {
+	if !filepath.IsAbs(runDirectory) || !filepath.IsAbs(userScript) || !filepath.IsAbs(projectsDirectory) {
+		return nil, nil, errors.New("provisioning inspection requires absolute paths")
 	}
 	if len(workspaces) == 0 || len(workspaces) > 16 {
-		return nil, fmt.Errorf("project provisioning inspection workspace count is invalid: %d", len(workspaces))
+		return nil, nil, fmt.Errorf("project provisioning inspection workspace count is invalid: %d", len(workspaces))
 	}
 	powerShell, err := windowsPowerShellExecutable()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	scriptPath := filepath.Join(runDirectory, projectProvisioningPlanScriptName)
 	if err := os.WriteFile(scriptPath, projectProvisioningPlanScript, 0o600); err != nil {
-		return nil, fmt.Errorf("write project provisioning inspection script: %w", err)
+		return nil, nil, fmt.Errorf("write provisioning inspection script: %w", err)
 	}
 
 	inspectionContext, cancel := context.WithTimeout(ctx, projectProvisioningPlanTimeout)
 	defer cancel()
 	command := hiddenCommandContext(inspectionContext, powerShell,
 		"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-		"-File", scriptPath, "-ProjectsDirectory", projectsDirectory,
+		"-File", scriptPath, "-UserProvisioningPath", userScript, "-ProjectsDirectory", projectsDirectory,
 	)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -83,29 +84,36 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, projectsD
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
 		if inspectionContext.Err() != nil {
-			return nil, fmt.Errorf("inspect project provisioning scripts: %w", inspectionContext.Err())
+			return nil, nil, fmt.Errorf("inspect provisioning scripts: %w", inspectionContext.Err())
 		}
-		return nil, fmt.Errorf("inspect project provisioning scripts: %w: %s", err, boundedText(stderr.Bytes()))
+		return nil, nil, fmt.Errorf("inspect provisioning scripts: %w: %s", err, boundedText(stderr.Bytes()))
 	}
 	if stdout.Len() == 0 || stdout.Len() > maximumProjectProvisioningPlanOutput {
-		return nil, fmt.Errorf("project provisioning inspection output size is invalid: %d", stdout.Len())
+		return nil, nil, fmt.Errorf("provisioning inspection output size is invalid: %d", stdout.Len())
 	}
 
 	return decodeProjectProvisioningPlan(stdout.Bytes(), workspaces)
 }
 
-func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]workspacePlan, error) {
+func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]workspacePlan, []projectStack, error) {
+	if err := validateExactJSONObjectShape(data, "provisioning inspection", []string{"schemaVersion", "userStacks", "projects"}); err != nil {
+		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
+	}
 	var decoded projectProvisioningPlan
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
-		return nil, fmt.Errorf("decode project provisioning inspection output: %w", err)
+		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return nil, fmt.Errorf("decode project provisioning inspection output: %w", err)
+		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
 	}
 	if decoded.SchemaVersion != projectProvisioningPlanSchema || len(decoded.Projects) != len(workspaces) {
-		return nil, fmt.Errorf("project provisioning inspection schema or project count is invalid")
+		return nil, nil, fmt.Errorf("provisioning inspection schema or project count is invalid")
+	}
+	userStacks, err := validateInspectedStacks(decoded.UserStacks, "user provisioning")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	result := append([]workspacePlan(nil), workspaces...)
@@ -118,21 +126,27 @@ func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]w
 	for _, project := range decoded.Projects {
 		index, found := indexes[project.Name]
 		if !found || seenProjects[project.Name] {
-			return nil, fmt.Errorf("project provisioning inspection returned unexpected or duplicate project %q", project.Name)
+			return nil, nil, fmt.Errorf("project provisioning inspection returned unexpected or duplicate project %q", project.Name)
 		}
 		seenProjects[project.Name] = true
-		seenStacks := make(map[projectStack]bool, len(project.Stacks))
-		for _, stack := range project.Stacks {
-			if !stack.valid() || seenStacks[stack] {
-				return nil, fmt.Errorf("project provisioning inspection returned invalid or duplicate stack %q for project %q", stack, project.Name)
-			}
-			seenStacks[stack] = true
-			result[index].Stacks = append(result[index].Stacks, stack)
+		result[index].Stacks, err = validateInspectedStacks(project.Stacks, fmt.Sprintf("project %q", project.Name))
+		if err != nil {
+			return nil, nil, err
 		}
-		sort.Slice(result[index].Stacks, func(left, right int) bool {
-			return result[index].Stacks[left] < result[index].Stacks[right]
-		})
 	}
+	return result, userStacks, nil
+}
+
+func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack, error) {
+	result := append([]projectStack(nil), stacks...)
+	seen := make(map[projectStack]bool, len(result))
+	for _, stack := range result {
+		if !stack.valid() || seen[stack] {
+			return nil, fmt.Errorf("provisioning inspection returned invalid or duplicate stack %q for %s", stack, role)
+		}
+		seen[stack] = true
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	return result, nil
 }
 

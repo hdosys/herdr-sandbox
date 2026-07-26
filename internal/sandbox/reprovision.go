@@ -269,6 +269,7 @@ func buildReprovisionArchive(snapshot provisioningSnapshot) ([]byte, error) {
 	}{
 		{filepath.Join(snapshot.Directory, baseProvisioningName), baseProvisioningName},
 		{filepath.Join(snapshot.Directory, stackProvisioningName), stackProvisioningName},
+		{filepath.Join(snapshot.Directory, userProvisioningName), userProvisioningName},
 		{snapshot.PackagePlanPath, wingetPackagePlanFileName},
 		{snapshot.WorkspaceManifestPath, workspaceManifestName},
 	}
@@ -319,7 +320,7 @@ try {
     if ($digest -cne '%s') { throw 'Retained provisioning archive SHA-256 mismatch.' }
     New-Item -ItemType Directory -Path $expanded -Force | Out-Null
     Expand-Archive -LiteralPath $archive -DestinationPath $expanded
-    foreach ($name in @('base.ps1', 'stacks.ps1', 'winget-packages.json', 'workspaces.json')) {
+    foreach ($name in @('base.ps1', 'stacks.ps1', 'user.ps1', 'winget-packages.json', 'workspaces.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $expanded $name) -PathType Leaf)) {
             throw "Retained provisioning input is missing: $name"
         }
@@ -331,7 +332,7 @@ try {
     $env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'
     $captured = @()
     try {
-        $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory (Join-Path $expanded 'projects') -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') *>&1)
+        $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory (Join-Path $expanded 'projects') -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') *>&1)
     } catch {
         $detail = @($captured | Select-Object -Last 20 | ForEach-Object { [string]$_ })
         $detail += [string]$_.Exception.Message

@@ -1,11 +1,13 @@
-# herdr-sandbox-base-contract: 29
+# herdr-sandbox-base-contract: 30
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
     [string]$ProjectProvisioningDirectory = '',
     [string]$WorkspacesDirectory = 'C:\Workspaces',
     [Parameter(Mandatory = $true)]
-    [string]$PackagePlanPath
+    [string]$PackagePlanPath,
+    [Parameter(Mandatory = $true)]
+    [string]$UserProvisioningPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -2426,6 +2428,19 @@ if (-not (Test-Path -LiteralPath $stackProvisioning -PathType Leaf)) {
     throw "App-owned stack provisioning library is missing: $stackProvisioning"
 }
 . $stackProvisioning
+$userProvisioning = Get-Item -LiteralPath $UserProvisioningPath -Force
+if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -and
+    $userProvisioning.Length -le 1048576) {
+    $userProvisioningText = [IO.File]::ReadAllText($userProvisioning.FullName)
+    if (-not $userProvisioningText.Contains('# herdr-sandbox-user-contract: 1') -or
+        $userProvisioningText.Contains('# herdr-sandbox-base-contract:')) {
+        throw "User provisioning contract is invalid: $UserProvisioningPath"
+    }
+    Write-Output 'Running global user provisioning'
+    & $userProvisioning.FullName
+} else {
+    throw "User provisioning script identity is invalid: $UserProvisioningPath"
+}
 foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     $workspaceName = [string]$workspace.name
     $projectDirectory = [string]$workspace.directory

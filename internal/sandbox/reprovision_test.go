@@ -96,6 +96,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 	files := map[string]string{
 		baseProvisioningName:                 "base",
 		stackProvisioningName:                "stacks",
+		userProvisioningName:                 "user",
 		wingetPackagePlanFileName:            "packages",
 		workspaceManifestName:                "workspaces",
 		filepath.Join("projects", "one.ps1"): "project",
@@ -160,6 +161,7 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		"Retained provisioning archive SHA-256 mismatch",
 		`C:\HerdrSandbox\staging`,
 		`$env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'`,
+		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
 		"*>&1",
 	} {
 		if !strings.Contains(launcher, required) {

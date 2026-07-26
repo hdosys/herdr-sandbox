@@ -118,16 +118,16 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 			return Connection{}, err
 		}
 	}
+	provisioning, err := resolveProvisioning("")
+	if err != nil {
+		return Connection{}, err
+	}
 	herdrExecutable, hostVersion, err := ensurePinnedHostHerdr(ctx, release, dataDirectory, options.Output)
 	if err != nil {
 		return Connection{}, err
 	}
 	if hostVersion != release.Version {
 		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, release.Version)
-	}
-	provisioning, err := resolveProvisioning("")
-	if err != nil {
-		return Connection{}, err
 	}
 	memoryMB := options.MemoryMB
 	if memoryMB == 0 {
@@ -532,6 +532,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}{
 		{path: provisioning.BaseScript, name: baseProvisioningName, role: "base"},
 		{path: provisioning.StackScript, name: stackProvisioningName, role: "stack"},
+		{path: provisioning.UserScript, name: userProvisioningName, role: "user"},
 	} {
 		data, readErr := os.ReadFile(source.path)
 		if readErr != nil {
@@ -555,12 +556,15 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 			return provisioningSnapshot{}, fmt.Errorf("write project provisioning snapshot %s: %w", name, writeErr)
 		}
 	}
-	workspaces, err := inspectProjectProvisioningPlan(ctx, inspectionDirectory, projectScriptsDirectory, provisioning.Workspaces)
+	workspaces, userStacks, err := inspectProjectProvisioningPlan(ctx, inspectionDirectory, filepath.Join(snapshotDirectory, userProvisioningName), projectScriptsDirectory, provisioning.Workspaces)
 	if err != nil {
 		return provisioningSnapshot{}, err
 	}
 	requirements := runPlan{Workspaces: workspaces}
 	applyWorkspaceRequirements(&requirements)
+	if stacksContain(userStacks, stackRustMSVC) {
+		requirements.RequiresVisualStudioLayout = true
+	}
 	workspaceManifest, err := encodeGuestWorkspaceManifest(workspaces, requirements.ActiveWorkspace)
 	if err != nil {
 		return provisioningSnapshot{}, err
@@ -617,7 +621,11 @@ func applyWorkspaceRequirements(plan *runPlan) {
 }
 
 func workspaceHasStack(workspace workspacePlan, expected projectStack) bool {
-	for _, stack := range workspace.Stacks {
+	return stacksContain(workspace.Stacks, expected)
+}
+
+func stacksContain(stacks []projectStack, expected projectStack) bool {
+	for _, stack := range stacks {
 		if stack == expected {
 			return true
 		}
