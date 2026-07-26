@@ -102,6 +102,7 @@ type provisioningPlan struct {
 	CacheDirectory       string
 	MemoryMB             int
 	Tailscale            bool
+	CodingAgentSync      codingAgentSyncConfiguration
 	PackageConfiguration wingetPackageConfiguration
 	Packages             wingetPackagePlan
 	WindowsTerminal      windowsTerminalConfiguration
@@ -109,11 +110,30 @@ type provisioningPlan struct {
 }
 
 type globalConfiguration struct {
-	CacheDirectory string                     `json:"cacheDirectory"`
-	MemoryMB       *int                       `json:"memoryMB,omitempty"`
-	Tailscale      bool                       `json:"tailscale"`
-	WingetPackages wingetPackageConfiguration `json:"wingetPackages"`
-	Workspaces     map[string]string          `json:"workspaces"`
+	CacheDirectory  string                       `json:"cacheDirectory"`
+	MemoryMB        *int                         `json:"memoryMB,omitempty"`
+	Tailscale       bool                         `json:"tailscale"`
+	CodingAgentSync codingAgentSyncConfiguration `json:"codingAgentSync"`
+	WingetPackages  wingetPackageConfiguration   `json:"wingetPackages"`
+	Workspaces      map[string]string            `json:"workspaces"`
+}
+
+type codingAgentSyncConfiguration struct {
+	OpenCode      bool `json:"opencode"`
+	ClaudeCode    bool `json:"claudeCode"`
+	Codex         bool `json:"codex"`
+	GitHubCopilot bool `json:"githubCopilot"`
+	Pi            bool `json:"pi"`
+}
+
+func defaultCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
+	return codingAgentSyncConfiguration{
+		OpenCode:      true,
+		ClaudeCode:    true,
+		Codex:         true,
+		GitHubCopilot: true,
+		Pi:            true,
+	}
 }
 
 func resolveProvisioning(startDirectory string) (provisioningPlan, error) {
@@ -289,6 +309,7 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             memoryMB,
 		Tailscale:            configuration.Tailscale,
+		CodingAgentSync:      configuration.CodingAgentSync,
 		PackageConfiguration: configuration.WingetPackages,
 		Workspaces:           workspaces,
 	}, nil
@@ -297,9 +318,10 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 func loadGlobalConfiguration(path string) (globalConfiguration, error) {
 	defaultMemory := defaultMemoryMB
 	config := globalConfiguration{
-		MemoryMB:       &defaultMemory,
-		WingetPackages: defaultWingetPackageConfiguration(),
-		Workspaces:     map[string]string{},
+		MemoryMB:        &defaultMemory,
+		CodingAgentSync: defaultCodingAgentSyncConfiguration(),
+		WingetPackages:  defaultWingetPackageConfiguration(),
+		Workspaces:      map[string]string{},
 	}
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -380,6 +402,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.WingetPackages = packages
+		case "codingAgentSync":
+			agents, err := decodeCodingAgentSyncConfiguration(decoder)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.CodingAgentSync = agents
 		default:
 			return fmt.Errorf("unknown field %q", key)
 		}
@@ -392,6 +420,62 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 		return errors.New("configuration object is not closed")
 	}
 	return nil
+}
+
+func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return codingAgentSyncConfiguration{}, err
+	}
+	if opening != json.Delim('{') {
+		return codingAgentSyncConfiguration{}, errors.New("must be a JSON object")
+	}
+	configuration := defaultCodingAgentSyncConfiguration()
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return codingAgentSyncConfiguration{}, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return codingAgentSyncConfiguration{}, errors.New("coding-agent field name must be a string")
+		}
+		if seen[name] {
+			return codingAgentSyncConfiguration{}, fmt.Errorf("duplicate field %q", name)
+		}
+		seen[name] = true
+		raw, err := decodeNonNullJSONValue(decoder, name)
+		if err != nil {
+			return codingAgentSyncConfiguration{}, err
+		}
+		var enabled bool
+		if err := json.Unmarshal(raw, &enabled); err != nil {
+			return codingAgentSyncConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+		}
+		switch name {
+		case "opencode":
+			configuration.OpenCode = enabled
+		case "claudeCode":
+			configuration.ClaudeCode = enabled
+		case "codex":
+			configuration.Codex = enabled
+		case "githubCopilot":
+			configuration.GitHubCopilot = enabled
+		case "pi":
+			configuration.Pi = enabled
+		default:
+			return codingAgentSyncConfiguration{}, fmt.Errorf("unknown field %q", name)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return codingAgentSyncConfiguration{}, err
+	}
+	if closing != json.Delim('}') {
+		return codingAgentSyncConfiguration{}, errors.New("coding-agent sync object is not closed")
+	}
+	return configuration, nil
 }
 
 func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error) {
@@ -606,7 +690,7 @@ func ensureGlobalWorkspaceConfig(globalRoot string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect global workspace config: %w", err)
 	}
-	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaces\": {}\n}\n")
+	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaces\": {}\n}\n")
 	if err := writeFileAtomically(path, contents, 0o600); err != nil {
 		return fmt.Errorf("seed global workspace config %s: %w", path, err)
 	}

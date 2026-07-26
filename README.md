@@ -13,7 +13,7 @@ Container-first tools make isolated Linux development straightforward. Native Wi
 
 This is a contract-driven product rather than a loose bootstrap script: versioned provisioning contracts, validated mappings and downloads, bounded phases, explicit status, and fail-closed handoffs make runs repeatable and failures diagnosable.
 
-**Agent support:** OpenCode is currently the only coding agent whose configuration and authentication are transferred automatically. Other agents can be installed and configured in a project profile, but out-of-the-box migration for them is future work.
+**Agent support:** OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi configuration are copied automatically when present. Portable saved credentials come with them; Copilot reuses the transferred GitHub CLI login. Machine-bound Windows credentials still require one guest login. This copies setup only—the four additional agent CLIs are installed separately or by a project profile.
 
 **Herdr dependency:** Install the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork first. Sandbox needs its Windows remote support, which official upstream builds do not provide yet, and keeps the host and guest Herdr versions aligned. A combined WinGet package is planned.
 
@@ -136,7 +136,7 @@ The managed `sandbox` alias uses the verified guest IP, public host key, host-on
 5. Installs and verifies WinGet, OpenSSH Server, PowerShell 7, Herdr, and selected development tools inside the guest.
 6. Verifies SSH and the guest Herdr server from the host.
 7. When opted in, restores or enrolls and captures the stable tagged Tailscale identity over verified SSH.
-8. Transfers selected Git, GitHub CLI, OpenCode, Herdr, and Windows Terminal configuration without staging credentials in run files.
+8. Transfers selected Git, GitHub CLI, coding-agent, Herdr, and Windows Terminal configuration without staging credentials in run files.
 9. Creates one Herdr workspace for each mapped project and attaches the host Herdr client.
 
 The visible bootstrap console inside Windows Sandbox is intentional. It shows guest progress and does not require interaction.
@@ -219,6 +219,13 @@ Example `config.json`:
   "cacheDirectory": "",
   "memoryMB": 32768,
   "tailscale": false,
+  "codingAgentSync": {
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
+  },
   "wingetPackages": {
     "remove": [],
     "add": [],
@@ -235,10 +242,25 @@ Fields:
 - `cacheDirectory`: absolute host directory for package/tool caches. Empty uses `<system-temp>\herdr-sandbox\cache`.
 - `memoryMB`: default Sandbox memory, minimum 2048.
 - `tailscale`: exact boolean opt-in for one stable tagged Tailscale device identity; omitted or `false` leaves Tailscale install-only.
+- `codingAgentSync`: per-agent configuration/authentication copying. All five fields default to `true`; set one to `false` to opt out.
 - `workspaces`: additional workspace names mapped to absolute host project roots.
 - `wingetPackages.remove`: known optional Base packages to omit.
 - `wingetPackages.add`: exact extra WinGet package IDs.
 - `wingetPackages.versions`: exact versions for retained or added packages.
+
+Agent sync uses fixed portable surfaces rather than copying whole home directories:
+
+| Agent | Host source | Authentication copied |
+| --- | --- | --- |
+| OpenCode | `XDG_CONFIG_HOME\opencode` and `XDG_DATA_HOME\opencode` | `auth.json` |
+| Claude Code | `CLAUDE_CONFIG_DIR` or `%USERPROFILE%\.claude` | `.credentials.json` |
+| Codex | `CODEX_HOME` or `%USERPROFILE%\.codex` | File-mode `auth.json` and `.credentials.json` |
+| GitHub Copilot CLI | `COPILOT_HOME` or `%USERPROFILE%\.copilot` | Reuses imported GitHub CLI accounts |
+| Pi | `PI_CODING_AGENT_DIR` or `%USERPROFILE%\.pi\agent` | `auth.json` |
+
+The standard `%USERPROFILE%\.agents\skills` tree is shared by Codex, Copilot, and Pi. Copilot authentication reuse requires the default `GitHub.cli` Base package and at least one successfully imported GitHub CLI account. Sessions, history, logs, caches, generated package/plugin state, and project trust are excluded. Codex encrypted/keyring credentials and Copilot-native Windows Credential Manager tokens are machine-bound and must be authenticated once inside the guest. Sandbox copies these agents' setup but does not install their executables.
+
+The four new integrations are implemented from current official source/documentation and covered by local archive, security, and Windows PowerShell 5.1 contract tests. A fresh-Sandbox live copy/login/read-back pass is still pending manual verification.
 
 The nearest active project profile is added automatically and deduplicated against global workspaces.
 
@@ -306,7 +328,7 @@ C:\Workspaces\<name>\         explicitly selected writable projects
 - The host private SSH key is never mapped into the guest.
 - Only selected project roots are writable guest mappings.
 - The host home directory, general AppData, unrelated repositories, and private SSH/GPG keys are not mapped.
-- OpenCode and GitHub CLI credentials are streamed only through the verified SSH channel and are not written to host run state.
+- Approved coding-agent and GitHub CLI credentials are streamed only through the verified SSH channel and are not written to host run state. Codex/Copilot machine-bound keyring entries are never scraped.
 - Tailscale auth-key and node-state bytes use only bounded verified SSH payloads; they never enter mappings, run status, diagnostics, command lines, or the package cache.
 - Guest OpenCode managed policy sets every resolved agent permission to `allow`; host permission settings remain unchanged.
 - Downloads and cache hits are validated against strict metadata, versions, hashes, signatures, or package identity as applicable.

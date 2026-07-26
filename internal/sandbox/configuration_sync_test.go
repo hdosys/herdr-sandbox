@@ -73,8 +73,11 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		GitConfig:               gitConfig,
 		GitHubCLIConfiguration:  githubCLI,
 		GitHubCLIAuthentication: githubAuthentication,
-		OpenCodeDirectory:       openCode,
-		OpenCodeAuthentication:  authentication,
+		CodingAgents: codingAgentConfigurationSources{
+			Selection:              defaultCodingAgentSyncConfiguration(),
+			OpenCodeDirectory:      openCode,
+			OpenCodeAuthentication: authentication,
+		},
 		HerdrConfig:             herdrConfig,
 		WindowsTerminalSettings: settings,
 		WindowsTerminalEdition:  windowsTerminalPreviewEdition,
@@ -172,11 +175,11 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages)
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgentSyncConfiguration{})
 	if err != nil {
 		t.Fatalf("disabled integrations triggered host discovery: %v", err)
 	}
-	if sources.GitConfig != "" || sources.GitHubCLIConfiguration != "" || sources.OpenCodeDirectory != "" ||
+	if sources.GitConfig != "" || sources.GitHubCLIConfiguration != "" || sources.CodingAgents.OpenCodeDirectory != "" ||
 		sources.StarshipPreset != "" || sources.WindowsTerminalEdition != "" {
 		t.Fatalf("disabled integration sources = %#v", sources)
 	}
@@ -565,7 +568,7 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 }
@@ -665,6 +668,12 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("starship\\preset.txt"),
 		[]byte("catppuccin_latte"),
 		[]byte("starshipConfigured = $starshipConfigured"),
+		[]byte("herdr-sandbox\\coding-agent-sync.json"),
+		[]byte("Assert-ConfigurationDestinationPath"),
+		[]byte("[config-sync] apply-claude-code"),
+		[]byte("[config-sync] apply-codex"),
+		[]byte("[config-sync] apply-github-copilot"),
+		[]byte("[config-sync] apply-pi"),
 	} {
 		if !bytes.Contains(remoteScript, required) {
 			t.Fatalf("remote configuration script is missing %q", required)

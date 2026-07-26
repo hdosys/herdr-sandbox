@@ -39,6 +39,7 @@ const (
 	maximumGitHubCLIAccounts            = 32
 	maximumGitHubCLIStatusSize          = 256 * 1024
 	maximumGitHubCLITokenSize           = 16 * 1024
+	maximumConfigurationFiles           = 4096
 )
 
 type windowsTerminalConfiguration struct {
@@ -237,8 +238,7 @@ type hostConfigurationSources struct {
 	GitAttributes            string
 	GitHubCLIConfiguration   string
 	GitHubCLIAuthentication  []byte
-	OpenCodeDirectory        string
-	OpenCodeAuthentication   string
+	CodingAgents             codingAgentConfigurationSources
 	HerdrConfig              string
 	WindowsTerminalSettings  string
 	WindowsTerminalFragments string
@@ -296,7 +296,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != codingAgentSyncManifestArchivePath {
 			count++
 		}
 	}
@@ -501,14 +501,14 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, provisioningInput string) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, provisioningInput string) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
 	if err := packages.validate(terminal); err != nil {
 		return err
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages)
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgents)
 	if err != nil {
 		return err
 	}
@@ -540,6 +540,29 @@ if ([string]::IsNullOrWhiteSpace($archive) -or [string]::IsNullOrWhiteSpace($exp
     throw 'Development configuration launcher state is invalid.'
 }
 $script:CopiedConfigurationFiles = 0
+function Assert-ConfigurationDestinationPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not [IO.Path]::IsPathRooted($fullPath)) {
+        throw "Configuration destination is not absolute: $Path"
+    }
+    $root = [IO.Path]::GetPathRoot($fullPath).TrimEnd('\')
+    $current = $fullPath
+    while ($current.Length -ge $root.Length) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Configuration destination contains a reparse point: $current"
+            }
+        }
+        if ($current -ieq $root) { break }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ieq $current) {
+            throw "Configuration destination parent resolution failed: $fullPath"
+        }
+        $current = $parent.TrimEnd('\')
+    }
+}
 function Copy-VerifiedConfigurationFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -550,6 +573,7 @@ function Copy-VerifiedConfigurationFile {
     if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
         throw "Configuration source file is missing: $Source"
     }
+    Assert-ConfigurationDestinationPath -Path $Destination
     $destinationDirectory = Split-Path -Parent $Destination
     New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
@@ -570,12 +594,58 @@ function Copy-VerifiedConfigurationTree {
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
         throw "Configuration source directory is missing: $Source"
     }
+    Assert-ConfigurationDestinationPath -Path $Destination
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     $sourceRoot = (Resolve-Path -LiteralPath $Source).Path.TrimEnd('\')
     foreach ($file in @(Get-ChildItem -LiteralPath $Source -File -Recurse)) {
         $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
         Copy-VerifiedConfigurationFile -Source $file.FullName -Destination (Join-Path $Destination $relative)
     }
+}
+function Sync-VerifiedConfigurationRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) { return }
+    Copy-VerifiedConfigurationTree -Source $Source -Destination $Destination
+}
+function Sync-OptionalConfigurationFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { return }
+    Copy-VerifiedConfigurationFile -Source $Source -Destination $Destination
+}
+function Sync-ClaudeCodeUserState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { return }
+    $incoming = [IO.File]::ReadAllText($Source) | ConvertFrom-Json
+    $incomingProperties = @($incoming.PSObject.Properties.Name)
+    if (($incomingProperties -join '|') -cne 'mcpServers') {
+        throw 'Claude Code user-state input has an unsupported shape.'
+    }
+    $destinationState = [pscustomobject]@{}
+    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+        $destinationState = [IO.File]::ReadAllText($Destination) | ConvertFrom-Json
+    }
+    $destinationState | Add-Member -MemberType NoteProperty -Name mcpServers -Value $incoming.mcpServers -Force
+    $destinationDirectory = Split-Path -Parent $Destination
+    Assert-ConfigurationDestinationPath -Path $Destination
+    New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    $encoded = $destinationState | ConvertTo-Json -Depth 100
+    [IO.File]::WriteAllText($Destination, $encoded + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
+    $verified = [IO.File]::ReadAllText($Destination) | ConvertFrom-Json
+    $expectedMCP = $incoming.mcpServers | ConvertTo-Json -Depth 100 -Compress
+    $actualMCP = $verified.mcpServers | ConvertTo-Json -Depth 100 -Compress
+    if ($actualMCP -cne $expectedMCP) {
+        throw 'Claude Code user MCP configuration verification failed.'
+    }
+    $script:CopiedConfigurationFiles += 1
 }
 function Invoke-GuestGitHubCLI {
     param(
@@ -705,6 +775,19 @@ try {
     if (-not $enabledPackages.ContainsKey('Microsoft.PowerShell')) {
         throw 'Resolved WinGet package plan is missing Core PowerShell 7.'
     }
+    $agentSyncPath = Join-Path $expanded 'herdr-sandbox\coding-agent-sync.json'
+    if (-not (Test-Path -LiteralPath $agentSyncPath -PathType Leaf)) {
+        throw 'Coding-agent sync manifest is missing from the configuration archive.'
+    }
+    $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
+    $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
+    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|opencode|pi|schemaVersion' -or
+        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 1 -or
+        $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
+        $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or
+        $agentSync.pi -isnot [bool]) {
+        throw 'Coding-agent sync manifest has an unsupported contract.'
+    }
     $gitEnabled = $enabledPackages.ContainsKey('Git.Git')
     $githubCLIEnabled = $enabledPackages.ContainsKey('GitHub.cli')
     $openCodeEnabled = $enabledPackages.ContainsKey('SST.opencode')
@@ -721,15 +804,53 @@ try {
     $starshipConfigured = $false
     $terminalEdition = ''
 
-    if ($openCodeEnabled) {
+    if ([bool]$agentSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode')
         $openCodeSource = Join-Path $expanded 'opencode'
         $openCodeDestination = Join-Path $env:USERPROFILE '.config\opencode'
-        Copy-VerifiedConfigurationTree -Source $openCodeSource -Destination $openCodeDestination
+        Sync-VerifiedConfigurationRoot -Source $openCodeSource -Destination $openCodeDestination
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'opencode-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.local\share\opencode\auth.json')
+    }
 
-        $authSource = Join-Path $expanded 'opencode-auth\auth.json'
-        $authDestinationDirectory = Join-Path $env:USERPROFILE '.local\share\opencode'
-        Copy-VerifiedConfigurationFile -Source $authSource -Destination (Join-Path $authDestinationDirectory 'auth.json')
+    if ([bool]$agentSync.claudeCode) {
+        [Console]::Error.WriteLine('[config-sync] apply-claude-code')
+        $claudeDestination = Join-Path $env:USERPROFILE '.claude'
+        Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'claude-code') -Destination $claudeDestination
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $claudeDestination '.credentials.json')
+        Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination (Join-Path $env:USERPROFILE '.claude.json')
+    }
+
+    if ([bool]$agentSync.codex) {
+        [Console]::Error.WriteLine('[config-sync] apply-codex')
+        $codexDestination = Join-Path $env:USERPROFILE '.codex'
+        Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'codex') -Destination $codexDestination
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\auth.json') -Destination (Join-Path $codexDestination 'auth.json')
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\.credentials.json') -Destination (Join-Path $codexDestination '.credentials.json')
+    }
+
+    if ([bool]$agentSync.githubCopilot) {
+        [Console]::Error.WriteLine('[config-sync] apply-github-copilot')
+        $copilotDestination = Join-Path $env:USERPROFILE '.copilot'
+        Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'github-copilot') -Destination $copilotDestination
+    }
+
+    if ([bool]$agentSync.pi) {
+        [Console]::Error.WriteLine('[config-sync] apply-pi')
+        $piDestination = Join-Path $env:USERPROFILE '.pi\agent'
+        Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'pi') -Destination $piDestination
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $piDestination 'auth.json')
+    }
+
+    if ([bool]$agentSync.codex -or [bool]$agentSync.githubCopilot -or [bool]$agentSync.pi) {
+        [Console]::Error.WriteLine('[config-sync] apply-shared-agent-skills')
+        $sharedSkillsDestination = Join-Path $env:USERPROFILE '.agents\skills'
+        $sharedSkillsSource = Join-Path $expanded 'shared-agent-skills'
+        if (Test-Path -LiteralPath $sharedSkillsSource -PathType Container) {
+            Copy-VerifiedConfigurationTree -Source $sharedSkillsSource -Destination $sharedSkillsDestination
+        }
+    }
+
+    if ($openCodeEnabled) {
         $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
         $script:OpenCodeCommand = [string]$openCodeCommand.Source
         Assert-OpenCodeAllowAll
@@ -1125,7 +1246,7 @@ try {
 exit 0`, expectedArchiveLength, expectedDigest)
 }
 
-func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan) (hostConfigurationSources, error) {
+func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) (hostConfigurationSources, error) {
 	if err := packages.validate(terminal); err != nil {
 		return hostConfigurationSources{}, err
 	}
@@ -1138,6 +1259,10 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 		return hostConfigurationSources{}, fmt.Errorf("APPDATA is not absolute: %q", roamingAppData)
 	}
 	sources := hostConfigurationSources{HerdrConfig: filepath.Join(roamingAppData, "herdr", "config.toml")}
+	sources.CodingAgents, err = defaultCodingAgentConfigurationSources(userHome, codingAgents)
+	if err != nil {
+		return hostConfigurationSources{}, err
+	}
 	if packages.enabled(packageGit) {
 		sources.GitConfig = filepath.Join(userHome, ".gitconfig")
 		sources.GitConfigDirectory = filepath.Join(userHome, ".config", "git")
@@ -1149,14 +1274,6 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 		if err != nil {
 			return hostConfigurationSources{}, err
 		}
-	}
-	if packages.enabled(packageOpenCode) {
-		openCodeConfiguration, openCodeData, openCodeErr := defaultOpenCodeDirectories(userHome)
-		if openCodeErr != nil {
-			return hostConfigurationSources{}, openCodeErr
-		}
-		sources.OpenCodeDirectory = openCodeConfiguration
-		sources.OpenCodeAuthentication = filepath.Join(openCodeData, "auth.json")
 	}
 	if packages.enabled(packageStarship) {
 		sources.StarshipPreset, err = starshipPresetForWindowsTerminalTheme(terminal.Theme)
@@ -1220,7 +1337,11 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	total := int64(0)
+	files := 0
 	addData := func(contents []byte, destination, description string) error {
+		if files >= maximumConfigurationFiles {
+			return fmt.Errorf("configuration archive exceeds file limit %d", maximumConfigurationFiles)
+		}
 		if len(contents) > maximumConfigurationFileSize || total+int64(len(contents)) > maximumConfigurationSize {
 			return fmt.Errorf("configuration source exceeds size limit: %s", description)
 		}
@@ -1232,6 +1353,7 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 			return err
 		}
 		total += int64(len(contents))
+		files++
 		return nil
 	}
 	add := func(source, destination string) error {
@@ -1269,11 +1391,7 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		if sources.WindowsTerminalEdition != windowsTerminalStableEdition && sources.WindowsTerminalEdition != windowsTerminalPreviewEdition {
 			return nil, fmt.Errorf("archive Windows Terminal edition: unsupported value %q", sources.WindowsTerminalEdition)
 		}
-		editionWriter, err := archive.Create(windowsTerminalEditionArchivePath)
-		if err != nil {
-			return nil, fmt.Errorf("archive Windows Terminal edition: %w", err)
-		}
-		if _, err := editionWriter.Write([]byte(sources.WindowsTerminalEdition + "\n")); err != nil {
+		if err := addData([]byte(sources.WindowsTerminalEdition+"\n"), windowsTerminalEditionArchivePath, "Windows Terminal edition"); err != nil {
 			return nil, fmt.Errorf("archive Windows Terminal edition: %w", err)
 		}
 	}
@@ -1329,45 +1447,8 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		}
 	}
 
-	if sources.OpenCodeDirectory != "" {
-		info, err := os.Stat(sources.OpenCodeDirectory)
-		if err != nil {
-			return nil, fmt.Errorf("inspect OpenCode config directory: %w", err)
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("OpenCode config path is not a directory: %s", sources.OpenCodeDirectory)
-		}
-		configFiles := []string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "package.json", "package-lock.json", "bun.lock", "bun.lockb"}
-		configFound := false
-		for _, name := range configFiles {
-			source := filepath.Join(sources.OpenCodeDirectory, name)
-			if info, err := os.Stat(source); err == nil && info.Mode().IsRegular() {
-				if err := add(source, filepath.Join("opencode", name)); err != nil {
-					return nil, fmt.Errorf("archive OpenCode config %s: %w", name, err)
-				}
-				if name == "opencode.json" || name == "opencode.jsonc" {
-					configFound = true
-				}
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("inspect OpenCode config %s: %w", name, err)
-			}
-		}
-		if !configFound {
-			return nil, errors.New("OpenCode config is missing opencode.json or opencode.jsonc")
-		}
-		for _, name := range []string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"} {
-			directory := filepath.Join(sources.OpenCodeDirectory, name)
-			if info, err := os.Stat(directory); err == nil && info.IsDir() {
-				if err := addConfigurationDirectory(directory, filepath.Join("opencode", name), add); err != nil {
-					return nil, err
-				}
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("inspect OpenCode directory %s: %w", name, err)
-			}
-		}
-		if err := add(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json")); err != nil {
-			return nil, fmt.Errorf("archive OpenCode authentication: %w", err)
-		}
+	if err := archiveCodingAgentConfiguration(sources.CodingAgents, add, addData); err != nil {
+		return nil, err
 	}
 	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig)
 	if err != nil {

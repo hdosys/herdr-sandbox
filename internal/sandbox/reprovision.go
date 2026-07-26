@@ -86,9 +86,9 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 			return Connection{}, err
 		}
 	}
-	fmt.Fprintf(options.Output, "Reapplying and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages))
+	fmt.Fprintf(options.Output, "Reapplying and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, provisioning.CodingAgentSync))
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, snapshot.Directory)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.Directory)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err
@@ -154,6 +154,7 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 		CacheDirectory:    cacheDirectory,
 		Tailscale:         active.Tailscale,
 		Packages:          provisioning.Packages,
+		CodingAgentSync:   provisioning.CodingAgentSync,
 		WindowsTerminal:   provisioning.WindowsTerminal,
 		ConfigPath:        active.ConfigPath,
 		PrivateKeyPath:    filepath.Join(dataDirectory, "identity", "id_ed25519"),

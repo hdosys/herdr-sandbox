@@ -57,6 +57,7 @@ type runPlan struct {
 	CacheDirectory             string
 	Tailscale                  bool
 	Packages                   wingetPackagePlan
+	CodingAgentSync            codingAgentSyncConfiguration
 	WindowsTerminal            windowsTerminalConfiguration
 	ConfigPath                 string
 	PrivateKeyPath             string
@@ -233,9 +234,9 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		}
 		fmt.Fprintln(options.Output, "Stable Tailscale identity restored, verified, and protected on the host.")
 	}
-	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages))
+	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, plan.CodingAgentSync))
 	syncContext, cancelSync := context.WithTimeout(waitContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, filepath.Join(plan.InputDirectory, "provisioning"))
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -387,6 +388,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		PublicKeyPath:     publicKey,
 		Tailscale:         provisioning.Tailscale,
 		Packages:          provisioning.Packages,
+		CodingAgentSync:   provisioning.CodingAgentSync,
 		Workspaces:        provisioning.Workspaces,
 		WindowsTerminal:   provisioning.WindowsTerminal,
 		SandboxExecutable: sandboxExecutable,
@@ -575,7 +577,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}, nil
 }
 
-func provisioningConfigurationSummary(packages wingetPackagePlan) string {
+func provisioningConfigurationSummary(packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) string {
 	selected := []string{"Herdr"}
 	for _, integration := range []struct {
 		id   string
@@ -583,7 +585,6 @@ func provisioningConfigurationSummary(packages wingetPackagePlan) string {
 	}{
 		{packageGit, "Git"},
 		{packageGitHubCLI, "GitHub CLI"},
-		{packageOpenCode, "OpenCode"},
 		{packageStarship, "Starship"},
 		{packageTerminalStable, "Windows Terminal"},
 		{packageTerminalPreview, "Windows Terminal"},
@@ -592,6 +593,7 @@ func provisioningConfigurationSummary(packages wingetPackagePlan) string {
 			selected = append(selected, integration.name)
 		}
 	}
+	selected = append(selected, codingAgentSyncNames(codingAgents)...)
 	return strings.Join(selected, ", ")
 }
 
