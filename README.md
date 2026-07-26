@@ -170,6 +170,22 @@ Example `config.json`:
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Unavailable versions fail. |
 
+`config.json` is strict JSON, so comments are not allowed. To install every coding agent that currently has a verified WinGet package, set `wingetPackages` to this copy-paste object:
+
+```json
+{
+  "remove": [],
+  "add": [
+    "Anthropic.ClaudeCode",
+    "OpenAI.Codex",
+    "GitHub.Copilot"
+  ],
+  "versions": {}
+}
+```
+
+OpenCode (`SST.opencode`) is already a Base default and must not be added again. Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
+
 The active project is added automatically and deduplicated against global workspaces. Workspace paths must exist, must not overlap, and must not contain reparse aliases.
 
 `base.ps1` is user-owned after it is seeded and is never silently overwritten. If a newer binary reports an unsupported Base contract, merge deliberate customizations into the current repository `provisioning\base.ps1` contract and retry.
