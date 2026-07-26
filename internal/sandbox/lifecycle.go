@@ -18,7 +18,7 @@ import (
 
 const (
 	activeSessionFileName      = "active.json"
-	activeSessionSchemaVersion = 1
+	activeSessionSchemaVersion = 2
 	maximumActiveSessionBytes  = 64 * 1024
 
 	SessionStopped   = "stopped"
@@ -62,6 +62,7 @@ type activeSession struct {
 	SchemaVersion  int    `json:"schemaVersion"`
 	RunID          string `json:"runID"`
 	ConfigPath     string `json:"configPath"`
+	Tailscale      bool   `json:"tailscale"`
 	PID            int    `json:"pid"`
 	ExecutablePath string `json:"executablePath"`
 	StartedAtUTC   string `json:"startedAtUTC"`
@@ -227,6 +228,69 @@ func downAt(ctx context.Context, dataDirectory string) (DownResult, error) {
 		}
 		return DownResult{AlreadyStopped: true}, nil
 	}
+	if active.Tailscale {
+		managed, err := classifyManagedSession(dataDirectory, active)
+		if err != nil {
+			return DownResult{}, err
+		}
+		var captureStatus connectionStatus
+		capture := false
+		switch managed.State {
+		case SessionReady:
+			ready, found, err := readOptionalStatus[readyStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", readyFileName))
+			if err != nil {
+				return DownResult{}, fmt.Errorf("read ready Sandbox status for Tailscale capture: %w", err)
+			}
+			if !found {
+				return DownResult{}, errors.New("ready Sandbox status disappeared before Tailscale capture")
+			}
+			if err := ready.validate(); err != nil {
+				return DownResult{}, fmt.Errorf("validate ready Sandbox status for Tailscale capture: %w", err)
+			}
+			captureStatus = connectionStatus(ready)
+			capture = true
+		case SessionFailed:
+			hostPhase := ""
+			handoff, handoffFound, err := readOptionalStatus[configurationHandoffStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", configurationHandoffFileName))
+			if err != nil {
+				return DownResult{}, fmt.Errorf("read failed Sandbox configuration handoff for Tailscale recovery: %w", err)
+			}
+			if handoffFound {
+				if err := handoff.validate(); err != nil {
+					return DownResult{}, fmt.Errorf("validate failed Sandbox configuration handoff for Tailscale recovery: %w", err)
+				}
+				if handoff.Outcome == configurationHandoffFailed {
+					hostPhase = handoff.Phase
+				}
+			}
+			if !tailscaleFailurePrecedesIdentity(hostPhase) {
+				connectable, found, err := readOptionalStatus[connectableStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", connectableFileName))
+				if err != nil {
+					return DownResult{}, fmt.Errorf("read failed Sandbox connection status for Tailscale recovery: %w", err)
+				}
+				if found {
+					if err := connectable.validate(); err != nil {
+						return DownResult{}, fmt.Errorf("validate failed Sandbox connection status for Tailscale recovery: %w", err)
+					}
+					captureStatus = connectionStatus(connectable)
+					capture = true
+				}
+			}
+		case SessionStarting:
+			_, connectable, err := readOptionalStatus[connectableStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", connectableFileName))
+			if err != nil {
+				return DownResult{}, fmt.Errorf("read starting Sandbox connection status before down: %w", err)
+			}
+			if connectable {
+				return DownResult{}, errors.New("refusing to close an opted-in Sandbox while Tailscale identity setup is still running; wait for `up` to finish or fail")
+			}
+		}
+		if capture {
+			if err := captureTailscaleBeforeDown(ctx, dataDirectory, active, captureStatus); err != nil {
+				return DownResult{}, fmt.Errorf("preserve stable Tailscale identity before down; no close request was sent: %w", err)
+			}
+		}
+	}
 
 	stopped, err := stopOwnedSandboxProcess(ctx, active)
 	if err != nil {
@@ -249,6 +313,42 @@ func downAt(ctx context.Context, dataDirectory string) (DownResult, error) {
 		return DownResult{}, err
 	}
 	return DownResult{RunID: active.RunID}, nil
+}
+
+func tailscaleFailurePrecedesIdentity(phase string) bool {
+	switch phase {
+	case "guest-identity", "ssh-material", "ssh-verification", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled":
+		return true
+	default:
+		return false
+	}
+}
+
+func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, active activeSession, status connectionStatus) error {
+	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
+	if err != nil {
+		return err
+	}
+	if !running {
+		return errors.New("recorded Windows Sandbox process is no longer running")
+	}
+	if err := active.matches(snapshot); err != nil {
+		return fmt.Errorf("refusing Tailscale capture from an unowned Sandbox process: %w", err)
+	}
+	runDirectory := filepath.Join(dataDirectory, "runs", active.RunID)
+	statusDirectory := filepath.Join(runDirectory, "status")
+	connection, err := writeRunConnection(runPlan{
+		ID:              active.RunID,
+		RunDirectory:    runDirectory,
+		StatusDirectory: statusDirectory,
+		PrivateKeyPath:  filepath.Join(dataDirectory, "identity", "id_ed25519"),
+	}, connectableStatus(status), "")
+	if err != nil {
+		return err
+	}
+	captureContext, cancel := context.WithTimeout(ctx, tailscaleIdentityTimeout)
+	defer cancel()
+	return recoverAndStoreTailscale(captureContext, connection, dataDirectory)
 }
 
 func cleanAt(ctx context.Context, dataDirectory string) (CleanResult, error) {
@@ -508,6 +608,7 @@ func recordActiveSession(ctx context.Context, plan runPlan, pid int) error {
 		SchemaVersion:  activeSessionSchemaVersion,
 		RunID:          plan.ID,
 		ConfigPath:     plan.ConfigPath,
+		Tailscale:      plan.Tailscale,
 		PID:            snapshot.PID,
 		ExecutablePath: snapshot.ExecutablePath,
 		StartedAtUTC:   snapshot.StartedAtUTC,
@@ -569,15 +670,27 @@ func loadActiveSession(dataDirectory, sandboxExecutable string) (activeSession, 
 }
 
 func validateActiveSessionShape(data []byte) error {
-	return validateJSONObjectShape(data, "identity", []string{
+	if err := validateExactJSONObjectShape(data, "identity", []string{
 		"schemaVersion",
 		"runID",
 		"configPath",
+		"tailscale",
 		"pid",
 		"executablePath",
 		"startedAtUTC",
 		"commandLine",
-	})
+	}); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tailscale := string(bytes.TrimSpace(fields["tailscale"]))
+	if tailscale != "true" && tailscale != "false" {
+		return errors.New("identity field \"tailscale\" must be a JSON boolean")
+	}
+	return nil
 }
 
 func removeActiveSession(dataDirectory string) error {
@@ -718,7 +831,7 @@ $client.Dispose()
 $process.Dispose()
 Write-Output 'HERDR_SANDBOX_STOPPED'`
 	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	command.Env = append(os.Environ(),
+	command.Env = append(childProcessEnvironment(os.Environ()),
 		"HERDR_SANDBOX_EXPECTED_PID="+strconv.Itoa(active.PID),
 		"HERDR_SANDBOX_EXPECTED_EXECUTABLE="+active.ExecutablePath,
 		"HERDR_SANDBOX_EXPECTED_STARTED="+active.StartedAtUTC,

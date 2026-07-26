@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -1127,6 +1128,9 @@ func TestResolveProvisioningRejectsInvalidConfiguredMemory(t *testing.T) {
 func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 	tests := map[string]string{
 		"null cache":               `{"cacheDirectory":null,"workspaces":{}}`,
+		"null tailscale":           `{"tailscale":null,"workspaces":{}}`,
+		"nonboolean tailscale":     `{"tailscale":"true","workspaces":{}}`,
+		"duplicate tailscale":      `{"tailscale":true,"tailscale":false,"workspaces":{}}`,
 		"null workspaces":          `{"workspaces":null}`,
 		"case variant field":       `{"MemoryMB":32768,"workspaces":{}}`,
 		"duplicate field":          `{"memoryMB":32768,"memoryMB":16384,"workspaces":{}}`,
@@ -1158,10 +1162,44 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB ||
+	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale ||
 		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 0 ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
+	}
+}
+
+func TestLoadGlobalConfigurationEnablesTailscaleOnlyForExactBoolean(t *testing.T) {
+	path := filepath.Join(t.TempDir(), globalConfigurationName)
+	if err := os.WriteFile(path, []byte(`{"tailscale":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadGlobalConfiguration(path)
+	if err != nil {
+		t.Fatalf("loadGlobalConfiguration: %v", err)
+	}
+	if !config.Tailscale {
+		t.Fatal("tailscale was not enabled")
+	}
+}
+
+func TestValidateTailscalePackageSelectionRequiresInstalledClient(t *testing.T) {
+	terminal := testStableWindowsTerminalConfiguration()
+	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTailscalePackageSelection(true, packages); err != nil {
+		t.Fatalf("enabled default package: %v", err)
+	}
+	packages.Defaults = slices.DeleteFunc(packages.Defaults, func(entry wingetPackagePlanEntry) bool {
+		return strings.EqualFold(entry.ID, packageTailscale)
+	})
+	if err := validateTailscalePackageSelection(true, packages); err == nil || !strings.Contains(err.Error(), packageTailscale) {
+		t.Fatalf("missing package error = %v", err)
+	}
+	if err := validateTailscalePackageSelection(false, packages); err != nil {
+		t.Fatalf("disabled integration: %v", err)
 	}
 }
 
@@ -1267,7 +1305,7 @@ func TestEnsureGlobalProvisioningSeedsWithoutOverwriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load seeded config: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB ||
+	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
 		config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)

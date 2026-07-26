@@ -101,6 +101,7 @@ type provisioningPlan struct {
 	StackScript          string
 	CacheDirectory       string
 	MemoryMB             int
+	Tailscale            bool
 	PackageConfiguration wingetPackageConfiguration
 	Packages             wingetPackagePlan
 	WindowsTerminal      windowsTerminalConfiguration
@@ -110,6 +111,7 @@ type provisioningPlan struct {
 type globalConfiguration struct {
 	CacheDirectory string                     `json:"cacheDirectory"`
 	MemoryMB       *int                       `json:"memoryMB,omitempty"`
+	Tailscale      bool                       `json:"tailscale"`
 	WingetPackages wingetPackageConfiguration `json:"wingetPackages"`
 	Workspaces     map[string]string          `json:"workspaces"`
 }
@@ -144,7 +146,17 @@ func resolveProvisioning(startDirectory string) (provisioningPlan, error) {
 	if err != nil {
 		return provisioningPlan{}, err
 	}
+	if err := validateTailscalePackageSelection(plan.Tailscale, plan.Packages); err != nil {
+		return provisioningPlan{}, err
+	}
 	return plan, nil
+}
+
+func validateTailscalePackageSelection(enabled bool, packages wingetPackagePlan) error {
+	if enabled && !packages.enabled(packageTailscale) {
+		return errors.New(`tailscale requires Tailscale.Tailscale to remain in the effective WinGet package plan`)
+	}
+	return nil
 }
 
 func validateBaseProvisioningContract(path string) error {
@@ -276,6 +288,7 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 		StackScript:          filepath.Join(defaultRoot, stackProvisioningName),
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             memoryMB,
+		Tailscale:            configuration.Tailscale,
 		PackageConfiguration: configuration.WingetPackages,
 		Workspaces:           workspaces,
 	}, nil
@@ -347,6 +360,14 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.MemoryMB = &memoryMB
+		case "tailscale":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.Tailscale); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
 		case "workspaces":
 			workspaces, err := decodeConfiguredWorkspaces(decoder)
 			if err != nil {
@@ -585,7 +606,7 @@ func ensureGlobalWorkspaceConfig(globalRoot string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect global workspace config: %w", err)
 	}
-	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaces\": {}\n}\n")
+	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaces\": {}\n}\n")
 	if err := writeFileAtomically(path, contents, 0o600); err != nil {
 		return fmt.Errorf("seed global workspace config %s: %w", path, err)
 	}

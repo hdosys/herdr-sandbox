@@ -135,8 +135,9 @@ The managed `sandbox` alias uses the verified guest IP, public host key, host-on
 4. Applies the selected Windows privacy/development baseline and project stacks.
 5. Installs and verifies WinGet, OpenSSH Server, PowerShell 7, Herdr, and selected development tools inside the guest.
 6. Verifies SSH and the guest Herdr server from the host.
-7. Transfers selected Git, GitHub CLI, OpenCode, Herdr, and Windows Terminal configuration without staging credentials in run files.
-8. Creates one Herdr workspace for each mapped project and attaches the host Herdr client.
+7. When opted in, restores or enrolls and captures the stable tagged Tailscale identity over verified SSH.
+8. Transfers selected Git, GitHub CLI, OpenCode, Herdr, and Windows Terminal configuration without staging credentials in run files.
+9. Creates one Herdr workspace for each mapped project and attaches the host Herdr client.
 
 The visible bootstrap console inside Windows Sandbox is intentional. It shows guest progress and does not require interaction.
 
@@ -196,7 +197,7 @@ Reads app-owned state without changing it. States are:
 
 ### `down`
 
-Stops only the exact app-owned Sandbox after revalidating its process identity. It does not force-kill changed, unrelated, or unmanaged processes.
+Stops only the exact app-owned Sandbox after revalidating its process identity. For a ready guest with stable Tailscale identity enabled, it captures and verifies the current identity before requesting close; a capture failure leaves the guest open. It does not force-kill changed, unrelated, or unmanaged processes.
 
 ### `clean`
 
@@ -217,6 +218,7 @@ Example `config.json`:
 {
   "cacheDirectory": "",
   "memoryMB": 32768,
+  "tailscale": false,
   "wingetPackages": {
     "remove": [],
     "add": [],
@@ -232,6 +234,7 @@ Fields:
 
 - `cacheDirectory`: absolute host directory for package/tool caches. Empty uses `<system-temp>\herdr-sandbox\cache`.
 - `memoryMB`: default Sandbox memory, minimum 2048.
+- `tailscale`: exact boolean opt-in for one stable tagged Tailscale device identity; omitted or `false` leaves Tailscale install-only.
 - `workspaces`: additional workspace names mapped to absolute host project roots.
 - `wingetPackages.remove`: known optional Base packages to omit.
 - `wingetPackages.add`: exact extra WinGet package IDs.
@@ -241,6 +244,36 @@ The nearest active project profile is added automatically and deduplicated again
 
 `base.ps1` is user-owned after it is first seeded and is not silently overwritten. If a newer binary reports an unsupported Base contract, merge the current repository `provisioning\base.ps1` changes into the global file before retrying.
 
+### Optional stable Tailscale identity
+
+> **Experimental:** the implementation is opt-in while the required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open.
+
+Set `"tailscale": true`, leave `Tailscale.Tailscale` in the effective Base package plan, and ensure MagicDNS is enabled for the tailnet. In the Tailscale admin console, create one auth key that is:
+
+- one-off, not reusable;
+- non-ephemeral;
+- pre-approved;
+- assigned at least one server tag whose access policy is intentionally narrow.
+
+Provide that key only to the first enrollment. This Windows PowerShell-compatible form avoids putting it in command history and removes the parent-shell copy after `up` returns:
+
+```powershell
+$keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
+    (Read-Host 'One-off tagged Tailscale auth key' -AsSecureString)
+)
+try {
+    $env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
+    herdr-sandbox up
+} finally {
+    Remove-Item Env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY -ErrorAction SilentlyContinue
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
+}
+```
+
+Do not put the key in `config.json`, a command argument, or a provisioning script. The CLI removes its inherited copy before launching any child process and does not need the key again after enrollment. It stores the complete identity only as current-user DPAPI ciphertext under the host identity directory, restores it before later fresh guests become ready, and verifies the same device ID, node key, IPv4 address, MagicDNS name, fixed `herdr-sandbox` hostname, tags, and Windows Sandbox user SID. The protected identity is bound to the current Windows host user and is not a portable backup for another account or machine.
+
+Tagged devices default to node-key expiry disabled; keep expiry disabled for this exact-identity path. A node-key rotation is treated as identity drift and fails closed rather than silently replacing the protected identity.
+
 ## Important paths
 
 Host:
@@ -248,7 +281,7 @@ Host:
 ```text
 %APPDATA%\herdr-sandbox\config.json       global settings
 %APPDATA%\herdr-sandbox\base.ps1         editable global Base profile
-%LOCALAPPDATA%\herdr-sandbox\identity\   app-owned SSH identity
+%LOCALAPPDATA%\herdr-sandbox\identity\   SSH identity and DPAPI-protected Tailscale identity
 %LOCALAPPDATA%\herdr-sandbox\runs\       per-run input, status, SSH, and .wsb files
 %LOCALAPPDATA%\herdr-sandbox\ssh\        stable managed SSH alias configuration
 <system-temp>\herdr-sandbox\cache\       default package/tool cache
@@ -274,6 +307,7 @@ C:\Workspaces\<name>\         explicitly selected writable projects
 - Only selected project roots are writable guest mappings.
 - The host home directory, general AppData, unrelated repositories, and private SSH/GPG keys are not mapped.
 - OpenCode and GitHub CLI credentials are streamed only through the verified SSH channel and are not written to host run state.
+- Tailscale auth-key and node-state bytes use only bounded verified SSH payloads; they never enter mappings, run status, diagnostics, command lines, or the package cache.
 - Guest OpenCode managed policy sets every resolved agent permission to `allow`; host permission settings remain unchanged.
 - Downloads and cache hits are validated against strict metadata, versions, hashes, signatures, or package identity as applicable.
 - An app-owned Sandbox is stopped only after exact process identity revalidation.
@@ -352,6 +386,10 @@ Merge deliberate local customizations into the current contract and retry.
 ### Initial provisioning is slow
 
 The first run may download WinGet payloads, Herdr/OpenSSH assets, Rust distributions, and a Visual Studio Build Tools layout. Confirm that the configured cache directory is writable and does not overlap a workspace or app-owned run state.
+
+### Stable Tailscale enrollment is refused
+
+For the first enrollment, confirm that `tailscale` is exactly `true`, the Tailscale Base package was not removed, and `HERDR_SANDBOX_TAILSCALE_AUTH_KEY` contains one current one-off, non-ephemeral, pre-approved tagged auth key. Later runs deliberately refuse a missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched protected state instead of silently creating another tailnet device.
 
 ### Old run diagnostics consume space
 

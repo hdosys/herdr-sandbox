@@ -55,6 +55,7 @@ type runPlan struct {
 	InputDirectory             string
 	StatusDirectory            string
 	CacheDirectory             string
+	Tailscale                  bool
 	Packages                   wingetPackagePlan
 	WindowsTerminal            windowsTerminalConfiguration
 	ConfigPath                 string
@@ -96,6 +97,11 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if options.Timeout <= 0 {
 		return Connection{}, errors.New("Sandbox timeout must be positive")
 	}
+	authKey, authKeyFound, err := consumeTailscaleAuthKeyEnvironment()
+	if err != nil {
+		return Connection{}, err
+	}
+	defer clear(authKey)
 
 	release, err := loadHerdrRelease()
 	if err != nil {
@@ -154,6 +160,11 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if err := ensureNoRunningSandbox(ctx); err != nil {
 		return Connection{}, err
 	}
+	tailscaleBootstrap, err := prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
+	if err != nil {
+		return Connection{}, err
+	}
+	defer tailscaleBootstrap.clear()
 	plan, err := prepareRun(ctx, dataDirectory, memoryMB, provisioning)
 	if err != nil {
 		return Connection{}, err
@@ -197,6 +208,30 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	if err := verifyGuestHerdr(waitContext, connection); err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-verification", err)
+	}
+	if plan.Tailscale {
+		fmt.Fprintln(options.Output, "Restoring or enrolling the stable Tailscale identity...")
+		releaseTailscale, lockErr := acquireLifecycleLock(waitContext)
+		if lockErr != nil {
+			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "tailscale-preflight", lockErr)
+		}
+		tailscaleContext, cancelTailscale := context.WithTimeout(waitContext, tailscaleIdentityTimeout)
+		err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap)
+		releaseErr := releaseTailscale()
+		cancelTailscale()
+		if err == nil {
+			err = releaseErr
+		} else if releaseErr != nil {
+			err = fmt.Errorf("%w; additionally release Tailscale lifecycle lock: %v", err, releaseErr)
+		}
+		if err != nil {
+			phase := "tailscale-identity"
+			if errors.Is(err, errTailscaleIdentityNotEstablished) {
+				phase = "tailscale-not-enrolled"
+			}
+			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, phase, err)
+		}
+		fmt.Fprintln(options.Output, "Stable Tailscale identity restored, verified, and protected on the host.")
 	}
 	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages))
 	syncContext, cancelSync := context.WithTimeout(waitContext, configurationSyncTimeout)
@@ -255,7 +290,7 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
-	command.Env = attachEnvironment(os.Environ())
+	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("attach to guest Herdr server: %w", err)
 	}
@@ -350,6 +385,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		RunDirectory:      filepath.Join(dataDirectory, "runs", id),
 		PrivateKeyPath:    privateKey,
 		PublicKeyPath:     publicKey,
+		Tailscale:         provisioning.Tailscale,
 		Packages:          provisioning.Packages,
 		Workspaces:        provisioning.Workspaces,
 		WindowsTerminal:   provisioning.WindowsTerminal,

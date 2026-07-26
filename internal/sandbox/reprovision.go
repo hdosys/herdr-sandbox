@@ -77,6 +77,15 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 	if err := runRetainedProvisioning(runContext, connection, snapshot); err != nil {
 		return Connection{}, err
 	}
+	if plan.Tailscale {
+		fmt.Fprintln(options.Output, "Capturing and verifying the retained Tailscale identity...")
+		tailscaleContext, cancelTailscale := context.WithTimeout(runContext, tailscaleIdentityTimeout)
+		err = captureAndStoreTailscale(tailscaleContext, connection, plan.DataDirectory)
+		cancelTailscale()
+		if err != nil {
+			return Connection{}, err
+		}
+	}
 	fmt.Fprintf(options.Output, "Reapplying and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages))
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, snapshot.Directory)
@@ -96,6 +105,9 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 }
 
 func retainedRunPlan(active activeSession, provisioning provisioningPlan, memoryMB int) (runPlan, error) {
+	if active.Tailscale != provisioning.Tailscale {
+		return runPlan{}, errors.New("current Tailscale identity selection differs from the ready Sandbox; run `herdr-sandbox down` before `up` to launch the changed plan")
+	}
 	dataDirectory := filepath.Dir(active.ConfigPath)
 	runDirectory := dataDirectory
 	dataDirectory = filepath.Dir(filepath.Dir(runDirectory))
@@ -140,6 +152,7 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 		InputDirectory:    inputDirectory,
 		StatusDirectory:   statusDirectory,
 		CacheDirectory:    cacheDirectory,
+		Tailscale:         active.Tailscale,
 		Packages:          provisioning.Packages,
 		WindowsTerminal:   provisioning.WindowsTerminal,
 		ConfigPath:        active.ConfigPath,

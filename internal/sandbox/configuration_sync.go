@@ -395,13 +395,14 @@ func exportGitHubCLIAuthentication(ctx context.Context, configurationDirectory s
 
 func githubCLICommandEnvironment(configurationDirectory string) []string {
 	removed := map[string]bool{
-		"GH_CONFIG_DIR":           true,
-		"GH_TOKEN":                true,
-		"GITHUB_TOKEN":            true,
-		"GH_ENTERPRISE_TOKEN":     true,
-		"GITHUB_ENTERPRISE_TOKEN": true,
-		"GH_PROMPT_DISABLED":      true,
-		"NO_COLOR":                true,
+		"GH_CONFIG_DIR":             true,
+		"GH_TOKEN":                  true,
+		"GITHUB_TOKEN":              true,
+		"GH_ENTERPRISE_TOKEN":       true,
+		"GITHUB_ENTERPRISE_TOKEN":   true,
+		"GH_PROMPT_DISABLED":        true,
+		"NO_COLOR":                  true,
+		tailscaleAuthKeyEnvironment: true,
 	}
 	environment := make([]string, 0, len(os.Environ())+3)
 	for _, entry := range os.Environ() {

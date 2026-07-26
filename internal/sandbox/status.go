@@ -229,13 +229,31 @@ func statusFields(value any) ([]string, error) {
 }
 
 func validateJSONObjectShape(data []byte, objectName string, allowedFields []string) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	opening, err := decoder.Token()
+	_, err := decodeJSONObjectShape(data, objectName, allowedFields)
+	return err
+}
+
+func validateExactJSONObjectShape(data []byte, objectName string, expectedFields []string) error {
+	seen, err := decodeJSONObjectShape(data, objectName, expectedFields)
 	if err != nil {
 		return err
 	}
+	for _, field := range expectedFields {
+		if !seen[field] {
+			return fmt.Errorf("%s is missing field %q", objectName, field)
+		}
+	}
+	return nil
+}
+
+func decodeJSONObjectShape(data []byte, objectName string, allowedFields []string) (map[string]bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
 	if opening != json.Delim('{') {
-		return fmt.Errorf("%s must be a JSON object", objectName)
+		return nil, fmt.Errorf("%s must be a JSON object", objectName)
 	}
 	allowed := make(map[string]bool, len(allowedFields))
 	for _, field := range allowedFields {
@@ -245,32 +263,34 @@ func validateJSONObjectShape(data []byte, objectName string, allowedFields []str
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		key, ok := token.(string)
 		if !ok || !allowed[key] {
-			return fmt.Errorf("unknown field %q", key)
+			return nil, fmt.Errorf("unknown field %q", key)
 		}
 		if seen[key] {
-			return fmt.Errorf("duplicate field %q", key)
+			return nil, fmt.Errorf("duplicate field %q", key)
 		}
 		seen[key] = true
 		var value json.RawMessage
 		if err := decoder.Decode(&value); err != nil {
-			return err
+			clear(value)
+			return nil, err
 		}
+		clear(value)
 	}
 	closing, err := decoder.Token()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if closing != json.Delim('}') {
-		return fmt.Errorf("%s object is not closed", objectName)
+		return nil, fmt.Errorf("%s object is not closed", objectName)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%s contains trailing JSON data", objectName)
+		return nil, fmt.Errorf("%s contains trailing JSON data", objectName)
 	}
-	return nil
+	return seen, nil
 }
 
 func (status progressStatus) validate() error {

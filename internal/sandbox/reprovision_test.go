@@ -76,6 +76,15 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
 		t.Fatalf("changed retained plan error = %v", err)
 	}
+	provisioning.Tailscale = true
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "Tailscale identity selection differs") {
+		t.Fatalf("changed retained Tailscale selection error = %v", err)
+	}
+	active.Tailscale = true
+	plan, err = retainedRunPlan(active, provisioning, 4096)
+	if err != nil || !plan.Tailscale {
+		t.Fatalf("matching retained Tailscale plan = %#v, error = %v", plan, err)
+	}
 }
 
 func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testing.T) {

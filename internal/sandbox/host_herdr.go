@@ -278,7 +278,7 @@ func downloadPinnedHostHerdrWithBITS(ctx context.Context, source, destination st
 Import-Module BitsTransfer -ErrorAction Stop
 Start-BitsTransfer -Source $env:HERDR_SANDBOX_BITS_SOURCE -Destination $env:HERDR_SANDBOX_BITS_DESTINATION -ErrorAction Stop`
 	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	command.Env = append(os.Environ(),
+	command.Env = append(childProcessEnvironment(os.Environ()),
 		"HERDR_SANDBOX_BITS_SOURCE="+source,
 		"HERDR_SANDBOX_BITS_DESTINATION="+destination,
 	)

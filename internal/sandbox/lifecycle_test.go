@@ -17,6 +17,7 @@ func TestActiveSessionRoundTrip(t *testing.T) {
 	runID := "20260724-123456-abcdef12"
 	executable := filepath.Join(root, "WindowsSandbox.exe")
 	active := testActiveSession(root, runID, executable)
+	active.Tailscale = true
 	data, err := json.Marshal(active)
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +100,19 @@ func TestActiveSessionMatchesExactProcessIdentity(t *testing.T) {
 				t.Fatalf("changed process error = %v", err)
 			}
 		})
+	}
+}
+
+func TestTailscaleFailurePhaseIdentifiesPreIdentityFailures(t *testing.T) {
+	for _, phase := range []string{"guest-identity", "ssh-material", "ssh-verification", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled"} {
+		if !tailscaleFailurePrecedesIdentity(phase) {
+			t.Fatalf("phase %q should precede Tailscale identity setup", phase)
+		}
+	}
+	for _, phase := range []string{"tailscale-identity", "configuration-sync", "ssh-alias", "configuration-timeout"} {
+		if tailscaleFailurePrecedesIdentity(phase) {
+			t.Fatalf("phase %q can follow or overlap Tailscale identity setup", phase)
+		}
 	}
 }
 
@@ -283,10 +297,12 @@ func TestLoadActiveSessionRejectsUnknownAndTrailingJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string][]byte{
-		"unknown":      []byte(strings.TrimSuffix(string(data), "}") + `,"extra":true}`),
-		"case variant": []byte(strings.Replace(string(data), `"runID"`, `"RunID"`, 1)),
-		"duplicate":    []byte(strings.TrimSuffix(string(data), "}") + `,"pid":5678}`),
-		"trailing":     append(append([]byte{}, data...), []byte(` {}`)...),
+		"unknown":       []byte(strings.TrimSuffix(string(data), "}") + `,"extra":true}`),
+		"case variant":  []byte(strings.Replace(string(data), `"runID"`, `"RunID"`, 1)),
+		"duplicate":     []byte(strings.TrimSuffix(string(data), "}") + `,"pid":5678}`),
+		"missing field": []byte(strings.Replace(string(data), `,"tailscale":false`, "", 1)),
+		"null boolean":  []byte(strings.Replace(string(data), `"tailscale":false`, `"tailscale":null`, 1)),
+		"trailing":      append(append([]byte{}, data...), []byte(` {}`)...),
 	}
 	for name, contents := range tests {
 		t.Run(name, func(t *testing.T) {
