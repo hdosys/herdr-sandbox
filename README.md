@@ -15,9 +15,9 @@ This is a contract-driven product rather than a loose bootstrap script: versione
 
 **Agent support:** OpenCode is currently the only coding agent whose configuration and authentication are transferred automatically. Other agents can be installed and configured in a project profile, but out-of-the-box migration for them is future work.
 
-**Herdr dependency:** `herdr-sandbox` uses a pinned build from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on both host and guest because official upstream Herdr builds do not yet provide the complete Windows SSH remote-attach path. This repository publishes only the Sandbox bundle; it does not republish `herdr.exe`. Until upstream merges that support, the `herdr-win` repository is intended to consume one exact Sandbox release and package the matching programs together. That future WinGet installer will contain the verified pair rather than relying on WinGet dependency resolution; it is not available yet. Today, install `herdr-win` first so `herdr.exe` is on `PATH`: Sandbox atomically aligns that existing host executable to its pin when necessary and installs the same pinned build in the guest.
+**Herdr dependency:** Install the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork first. Sandbox needs its Windows remote support, which official upstream builds do not provide yet, and keeps the host and guest Herdr versions aligned. A combined WinGet package is planned.
 
-This reduces risk and setup friction; it does not eliminate either. Mapped projects remain writable and networking is enabled, so backups, review, and normal supply-chain hygiene still matter. The current focus is a low-friction disposable workspace. Intelligent lifecycle and refresh management for durable Windows VMs is a planned future direction, not current behavior.
+**Limits:** This is practical isolation, not a complete security boundary. Mapped projects remain writable and networking is enabled, so keep backups and normal supply-chain controls. Durable VM management is planned; today the focus is disposable Windows environments.
 
 ## Quick start
 
