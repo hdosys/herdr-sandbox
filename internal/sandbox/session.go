@@ -18,7 +18,6 @@ import (
 
 const (
 	defaultMemoryMB          = 32768
-	defaultTimeout           = 20 * time.Minute
 	configurationSyncTimeout = 5 * time.Minute
 	sshTargetName            = "sandbox"
 	guestHerdrPath           = guestRootDirectory + `\runtime\herdr\herdr.exe`
@@ -79,7 +78,14 @@ type provisioningSnapshot struct {
 }
 
 func DefaultOptions() Options {
-	return Options{Timeout: defaultTimeout, Output: io.Discard}
+	return Options{Output: io.Discard}
+}
+
+func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func Up(ctx context.Context, options Options) (Connection, error) {
@@ -89,14 +95,11 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
-	if options.Timeout == 0 {
-		options.Timeout = defaultTimeout
-	}
 	if options.MemoryMB != 0 && options.MemoryMB < 2048 {
 		return Connection{}, fmt.Errorf("Sandbox memory must be at least 2048 MB, got %d", options.MemoryMB)
 	}
-	if options.Timeout <= 0 {
-		return Connection{}, errors.New("Sandbox timeout must be positive")
+	if options.Timeout < 0 {
+		return Connection{}, errors.New("Sandbox timeout must be positive when set")
 	}
 	authKey, authKeyFound, err := consumeTailscaleAuthKeyEnvironment()
 	if err != nil {
@@ -189,7 +192,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	fmt.Fprintln(options.Output, "Windows Sandbox started; waiting for guest provisioning...")
 
-	waitContext, cancel := context.WithTimeout(ctx, options.Timeout)
+	waitContext, cancel := withOptionalTimeout(ctx, options.Timeout)
 	defer cancel()
 	connectable, err := waitForConnectable(waitContext, plan.StatusDirectory, options.Output)
 	if err != nil {

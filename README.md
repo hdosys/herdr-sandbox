@@ -96,7 +96,7 @@ ssh sandbox
 
 | Command | Behavior |
 | --- | --- |
-| `herdr-sandbox up [--memory-mb MB] [--timeout 20m]` | Launches a fresh guest, or re-runs current provisioning and reattaches when the exact ready app-owned launch plan still matches. Changed workspace/cache mappings or memory require `down` first. |
+| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION]` | Launches a fresh guest, or re-runs current provisioning and reattaches when the exact ready app-owned launch plan still matches. There is no overall timeout by default; `--timeout` adds one. Changed workspace/cache mappings or memory require `down` first. |
 | `herdr-sandbox status` | Reports `starting`, `ready`, `failed`, `stale`, `stopped`, or `unmanaged` without changing state. |
 | `herdr-sandbox down` | Idempotently requests orderly close only for the exact revalidated app-owned Sandbox. It never force-kills any Sandbox; failed Tailscale preservation leaves an opted-in guest open. |
 | `herdr-sandbox clean` | Removes only strictly validated inactive run workspaces. A valid active or stale recorded run, identity, SSH configuration, and package caches are preserved. |

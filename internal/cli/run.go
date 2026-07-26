@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"herdr-sandbox/internal/sandbox"
 )
 
 const usage = `Usage:
-  herdr-sandbox up [--memory-mb MB] [--timeout 20m]
+  herdr-sandbox up [--memory-mb MB] [--timeout DURATION]
   herdr-sandbox status
   herdr-sandbox down
   herdr-sandbox clean
@@ -25,6 +24,7 @@ Commands:
   clean   remove inactive app-owned run workspaces
 
 Global workspaces, optional absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache), memoryMB (default 32768), codingAgentSync choices, and wingetPackages add/remove/version choices come from %APPDATA%\herdr-sandbox\config.json.
+The up command has no overall timeout unless --timeout is supplied.
 The nearest .herdr-sandbox\provision.ps1, when present, becomes the active workspace.
 `
 
@@ -83,7 +83,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	flags := flag.NewFlagSet("herdr-sandbox up", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
-	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout")
+	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "optional launch-to-terminal-ready timeout (no default)")
 	flags.Usage = func() { fmt.Fprint(stderr, usage) }
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -96,16 +96,20 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 2
 	}
 	memoryOverrideSet := false
+	timeoutSet := false
 	flags.Visit(func(visited *flag.Flag) {
-		if visited.Name == "memory-mb" {
+		switch visited.Name {
+		case "memory-mb":
 			memoryOverrideSet = true
+		case "timeout":
+			timeoutSet = true
 		}
 	})
 	if memoryOverrideSet && options.MemoryMB < 2048 {
 		fmt.Fprintln(stderr, "herdr-sandbox: --memory-mb must be at least 2048")
 		return 2
 	}
-	if options.Timeout <= 0*time.Second {
+	if timeoutSet && options.Timeout <= 0 {
 		fmt.Fprintln(stderr, "herdr-sandbox: --timeout must be positive")
 		return 2
 	}

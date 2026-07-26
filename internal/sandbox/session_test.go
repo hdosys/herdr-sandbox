@@ -1,11 +1,33 @@
 package sandbox
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
+
+func TestDefaultOptionsHasNoOverallTimeout(t *testing.T) {
+	if timeout := DefaultOptions().Timeout; timeout != 0 {
+		t.Fatalf("default timeout = %s, want no timeout", timeout)
+	}
+}
+
+func TestWithOptionalTimeoutAddsOnlyExplicitDeadline(t *testing.T) {
+	unbounded, cancelUnbounded := withOptionalTimeout(context.Background(), 0)
+	defer cancelUnbounded()
+	if _, found := unbounded.Deadline(); found {
+		t.Fatal("zero timeout added a deadline")
+	}
+
+	bounded, cancelBounded := withOptionalTimeout(context.Background(), time.Minute)
+	defer cancelBounded()
+	if _, found := bounded.Deadline(); !found {
+		t.Fatal("explicit timeout did not add a deadline")
+	}
+}
 
 func TestEffectiveCacheDirectoryUsesSystemTemporaryDefaultAndConfiguredOverride(t *testing.T) {
 	got, err := effectiveCacheDirectory("")

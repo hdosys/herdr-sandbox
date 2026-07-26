@@ -66,7 +66,7 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 		return Connection{}, err
 	}
 
-	runContext, cancel := context.WithTimeout(ctx, options.Timeout)
+	runContext, cancel := withOptionalTimeout(ctx, options.Timeout)
 	defer cancel()
 	if err := verifySSH(runContext, connection); err != nil {
 		return Connection{}, err
