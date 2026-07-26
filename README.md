@@ -1,8 +1,14 @@
 # herdr-sandbox
 
-`herdr-sandbox` creates a disposable Windows development environment in Windows Sandbox, provisions the tools required by selected projects, starts a persistent Herdr server in the guest, and connects the host Herdr client over SSH.
+> Move your coding-agent setup into a disposable Windows environment—without rebuilding it by hand or living in RDP.
 
-The host repositories remain on the host and are mapped into the guest. Private SSH keys, unrelated repositories, the host home directory, and general AppData are not mapped.
+Think of `herdr-sandbox` as a Windows-native cousin of a [dev container](https://containers.dev/): a repeatable, project-defined development environment, but backed by a real disposable Windows guest rather than a Linux container.
+
+Container-first tools make isolated Linux development straightforward. Native Windows work often leaves a worse choice: give agents, installers, and package scripts access to the host (or answer constant permission prompts), or maintain a full VM and drive it over RDP.
+
+`herdr-sandbox up` closes that gap. It maps only the projects you select, provisions their Windows toolchains, transfers selected configuration and authentication over verified SSH, starts Herdr in the guest, and connects your normal terminal. Source edits persist on the host; guest tools and processes can be discarded without an uninstall ritual. Private SSH keys, unrelated repositories, the host home directory, and general AppData stay out of the mapping.
+
+This reduces risk and setup friction; it does not eliminate either. Mapped projects remain writable and networking is enabled, so backups, review, and normal supply-chain hygiene still matter. The current focus is a low-friction disposable workspace, not a durable VM.
 
 ## What it does
 
