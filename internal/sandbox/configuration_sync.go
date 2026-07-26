@@ -594,12 +594,22 @@ function Copy-VerifiedConfigurationTree {
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
         throw "Configuration source directory is missing: $Source"
     }
+    $sourceItem = Get-Item -LiteralPath $Source -Force
+    if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Configuration source contains a reparse point: $Source"
+    }
     Assert-ConfigurationDestinationPath -Path $Destination
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $sourceRoot = (Resolve-Path -LiteralPath $Source).Path.TrimEnd('\')
-    foreach ($file in @(Get-ChildItem -LiteralPath $Source -File -Recurse)) {
-        $relative = $file.FullName.Substring($sourceRoot.Length).TrimStart('\')
-        Copy-VerifiedConfigurationFile -Source $file.FullName -Destination (Join-Path $Destination $relative)
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Source -Force)) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Configuration source contains a reparse point: $($entry.FullName)"
+        }
+        $destinationEntry = Join-Path $Destination $entry.Name
+        if ($entry.PSIsContainer) {
+            Copy-VerifiedConfigurationTree -Source $entry.FullName -Destination $destinationEntry
+        } else {
+            Copy-VerifiedConfigurationFile -Source $entry.FullName -Destination $destinationEntry
+        }
     }
 }
 function Sync-VerifiedConfigurationRoot {
