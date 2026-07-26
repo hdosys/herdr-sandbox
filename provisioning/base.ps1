@@ -1343,7 +1343,7 @@ function Install-ProvisioningCachedPackage {
                 -GuestPayloadPath $guestPayload -Metadata $metadata
         }
         foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
-            if ($directory.FullName -ine $entryDirectory) {
+            if ($directory.Name -ine $entryName) {
                 Assert-ProvisioningCachePath -Path $directory.FullName
                 Remove-Item -LiteralPath $directory.FullName -Recurse -Force
             }

@@ -124,21 +124,46 @@ func resolveHostHerdrTargetDirectory(directory string) (string, error) {
 		return "", fmt.Errorf("resolve user home for host Herdr executable: %w", err)
 	}
 	standardJunction := filepath.Join(localAppData, "Programs", "Herdr", "bin")
-	if strings.EqualFold(filepath.Clean(directory), filepath.Clean(standardJunction)) {
+	isStandardDirectory := false
+	if strings.EqualFold(filepath.Base(directory), filepath.Base(standardJunction)) {
+		directoryParent := filepath.Dir(directory)
+		standardParent := filepath.Dir(standardJunction)
+		directoryParentInfo, err := os.Stat(directoryParent)
+		if err != nil {
+			return "", fmt.Errorf("inspect installed Herdr parent directory: %w", err)
+		}
+		standardParentInfo, err := os.Stat(standardParent)
+		if err == nil && os.SameFile(directoryParentInfo, standardParentInfo) {
+			if _, err := canonicalMappedDirectory(directoryParent); err != nil {
+				return "", fmt.Errorf("validate installed Herdr parent directory: %w", err)
+			}
+			if _, err := canonicalMappedDirectory(standardParent); err != nil {
+				return "", fmt.Errorf("validate standard host Herdr parent directory: %w", err)
+			}
+			isStandardDirectory = true
+		} else if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect standard host Herdr parent directory: %w", err)
+		}
+	}
+	if isStandardDirectory {
 		resolved, err := resolvedDirectoryPath(directory)
 		if err != nil {
 			return "", fmt.Errorf("resolve standard host Herdr junction: %w", err)
 		}
 		releasesRoot := filepath.Join(userHome, ".herdr", "packages", "standalone", "releases")
-		relative, err := filepath.Rel(releasesRoot, resolved)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || strings.Contains(relative, string(os.PathSeparator)) {
-			return "", fmt.Errorf("standard host Herdr junction has unexpected target: %s", resolved)
+		validatedReleasesRoot, err := canonicalMappedDirectory(releasesRoot)
+		if err != nil {
+			return "", fmt.Errorf("validate standard host Herdr releases root: %w", err)
 		}
-		validated, err := canonicalMappedDirectory(resolved)
+		validatedTarget, err := canonicalMappedDirectory(resolved)
 		if err != nil {
 			return "", fmt.Errorf("validate standard host Herdr release directory: %w", err)
 		}
-		return validated, nil
+		relative, err := filepath.Rel(validatedReleasesRoot, validatedTarget)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || strings.Contains(relative, string(os.PathSeparator)) {
+			return "", fmt.Errorf("standard host Herdr junction has unexpected target: %s", validatedTarget)
+		}
+		return validatedTarget, nil
 	}
 	validated, err := canonicalMappedDirectory(directory)
 	if err != nil {

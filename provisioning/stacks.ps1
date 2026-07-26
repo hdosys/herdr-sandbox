@@ -984,7 +984,7 @@ try {
             -GuestMirrorRoot $rustGuestMirror -Payloads $rustPayloads
     }
     foreach ($directory in @(Get-ChildItem -LiteralPath $rustCacheRoot -Directory -Force)) {
-        if ($directory.FullName -ine $rustEntryDirectory) {
+        if ($directory.Name -ine $rustEntryName) {
             Assert-ProvisioningCachePath -Path $directory.FullName
             Remove-Item -LiteralPath $directory.FullName -Recurse -Force
         }

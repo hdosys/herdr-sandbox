@@ -88,8 +88,12 @@ func TestCanonicalMappedDirectoryAcceptsPhysicalDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("canonicalMappedDirectory: %v", err)
 	}
-	if !strings.EqualFold(canonical, filepath.Clean(directory)) {
-		t.Fatalf("canonical directory = %q, want %q", canonical, directory)
+	expected, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatalf("resolve expected directory: %v", err)
+	}
+	if !strings.EqualFold(canonical, filepath.Clean(expected)) {
+		t.Fatalf("canonical directory = %q, want %q", canonical, expected)
 	}
 }
 

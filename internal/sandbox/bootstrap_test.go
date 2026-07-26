@@ -160,6 +160,9 @@ $cacheRoot = Join-Path $trustRoot 'bootstrap'
 $stageRoot = '%s'
 New-Item -ItemType Directory -Path $trustRoot, $stageRoot -Force | Out-Null
 $destination = Join-Path $stageRoot 'payload.bin'
+$staleDirectory = Join-Path $cacheRoot 'test-asset\stale'
+New-Item -ItemType Directory -Path $staleDirectory -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $staleDirectory 'stale.bin'), 'stale')
 $arguments = @{
     Role = 'Test asset'
     CacheKey = 'test-asset'
@@ -173,6 +176,9 @@ $arguments = @{
 $first = Get-PinnedBootstrapAsset @arguments
 if ($first -cne $destination -or (Get-BootstrapFileSHA256 -Path $first) -cne '%s') {
     throw 'Initial cached asset result is invalid.'
+}
+if (Test-Path -LiteralPath $staleDirectory) {
+    throw 'Stale bootstrap cache entry was not pruned.'
 }
 $cached = Join-Path $cacheRoot 'test-asset\%s\payload.bin'
 [IO.File]::WriteAllText($cached, 'corrupt')

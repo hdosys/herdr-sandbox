@@ -362,7 +362,7 @@ function Get-PinnedBootstrapAsset {
     }
 
     foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
-        if ($directory.FullName -ine $entryDirectory) {
+        if ($directory.Name -ine $ExpectedSHA256) {
             Assert-BootstrapCacheTree -Path $directory.FullName -TrustRoot $CacheTrustRoot
             Remove-Item -LiteralPath $directory.FullName -Recurse -Force
         }

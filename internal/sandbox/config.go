@@ -137,11 +137,7 @@ func canonicalMappedDirectory(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve mapped directory %s: %w", path, err)
 	}
-	resolved = filepath.Clean(resolved)
-	if !strings.EqualFold(path, resolved) {
-		return "", fmt.Errorf("mapped directory must not contain a symbolic link or reparse point: %s resolves to %s", path, resolved)
-	}
-	return resolved, nil
+	return filepath.Clean(resolved), nil
 }
 
 func rejectMappedPathReparsePoints(path string) error {
