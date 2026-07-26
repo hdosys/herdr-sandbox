@@ -160,6 +160,7 @@ $cacheRoot = Join-Path $trustRoot 'bootstrap'
 $stageRoot = '%s'
 New-Item -ItemType Directory -Path $trustRoot, $stageRoot -Force | Out-Null
 $destination = Join-Path $stageRoot 'payload.bin'
+$expectedDestination = [IO.Path]::GetFullPath($destination)
 $staleDirectory = Join-Path $cacheRoot 'test-asset\stale'
 New-Item -ItemType Directory -Path $staleDirectory -Force | Out-Null
 [IO.File]::WriteAllText((Join-Path $staleDirectory 'stale.bin'), 'stale')
@@ -173,8 +174,9 @@ $arguments = @{
     CacheRoot = $cacheRoot
     CacheTrustRoot = $trustRoot
 }
-$first = Get-PinnedBootstrapAsset @arguments
-if ($first -cne $destination -or (Get-BootstrapFileSHA256 -Path $first) -cne '%s') {
+$first = @(Get-PinnedBootstrapAsset @arguments)
+if ($first.Count -ne 1 -or [string]$first[0] -cne $expectedDestination -or
+    (Get-BootstrapFileSHA256 -Path ([string]$first[0])) -cne '%s') {
     throw 'Initial cached asset result is invalid.'
 }
 if (Test-Path -LiteralPath $staleDirectory) {
@@ -182,12 +184,14 @@ if (Test-Path -LiteralPath $staleDirectory) {
 }
 $cached = Join-Path $cacheRoot 'test-asset\%s\payload.bin'
 [IO.File]::WriteAllText($cached, 'corrupt')
-$second = Get-PinnedBootstrapAsset @arguments
-if ($second -cne $destination -or (Get-BootstrapFileSHA256 -Path $second) -cne '%s') {
+$second = @(Get-PinnedBootstrapAsset @arguments)
+if ($second.Count -ne 1 -or [string]$second[0] -cne $expectedDestination -or
+    (Get-BootstrapFileSHA256 -Path ([string]$second[0])) -cne '%s') {
     throw 'Repaired cached asset result is invalid.'
 }
-$third = Get-PinnedBootstrapAsset @arguments
-if ($third -cne $destination -or (Get-BootstrapFileSHA256 -Path $third) -cne '%s') {
+$third = @(Get-PinnedBootstrapAsset @arguments)
+if ($third.Count -ne 1 -or [string]$third[0] -cne $expectedDestination -or
+    (Get-BootstrapFileSHA256 -Path ([string]$third[0])) -cne '%s') {
     throw 'Cache-hit staged asset result is invalid.'
 }
 exit 0
