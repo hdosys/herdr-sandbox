@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v0.0.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Windows release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Validate release tag
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v0\.0\.(0|[1-9][0-9]*)$') {
+              throw "Release tag must match v0.0.RELEASE_ID without leading zeroes: $env:RELEASE_TAG"
+          }
+      - name: Run checked build
+        shell: powershell
+        run: go run ./cmd/task check
+      - name: Package Windows release
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseName = "herdr-sandbox_$($env:RELEASE_TAG)_windows_amd64"
+          $stage = Join-Path $env:RUNNER_TEMP $baseName
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          foreach ($file in @(
+              'build\bin\herdr-sandbox.exe',
+              'build\bin\base.ps1',
+              'build\bin\stacks.ps1'
+          )) {
+              Copy-Item -LiteralPath $file -Destination $stage
+          }
+          $archive = Join-Path $dist "$baseName.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
+          $checksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = "$checksum  $([IO.Path]::GetFileName($archive))`n"
+          [IO.File]::WriteAllText("$archive.sha256", $checksumLine, [Text.Encoding]::ASCII)
+      - name: Publish GitHub release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseName = "herdr-sandbox_$($env:RELEASE_TAG)_windows_amd64"
+          $assets = @(
+              "dist\$baseName.zip",
+              "dist\$baseName.zip.sha256"
+          )
+          $arguments = @('release', 'create', $env:RELEASE_TAG) + $assets + @(
+              '--verify-tag',
+              '--generate-notes',
+              '--title', "herdr-sandbox $env:RELEASE_TAG"
+          )
+          & gh.exe @arguments
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub release creation failed with exit code $LASTEXITCODE."
+          }

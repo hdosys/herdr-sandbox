@@ -1,6 +1,9 @@
 # herdr-sandbox
 
-> Move your coding-agent setup into a disposable Windows environment—without rebuilding it by hand or living in RDP.
+**Move your coding-agent setup into a disposable Windows environment—without rebuilding it by hand or living in RDP.**
+
+[![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml)
+[![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml)
 
 Think of `herdr-sandbox` as a Windows-native cousin of a [dev container](https://containers.dev/): a repeatable, project-defined development environment, but backed by a real disposable Windows guest rather than a Linux container.
 
@@ -8,7 +11,119 @@ Container-first tools make isolated Linux development straightforward. Native Wi
 
 `herdr-sandbox up` closes that gap. It maps only the projects you select, provisions their Windows toolchains, transfers selected configuration and authentication over verified SSH, starts Herdr in the guest, and connects your normal terminal. Source edits persist on the host; guest tools and processes can be discarded without an uninstall ritual. Private SSH keys, unrelated repositories, the host home directory, and general AppData stay out of the mapping.
 
-This reduces risk and setup friction; it does not eliminate either. Mapped projects remain writable and networking is enabled, so backups, review, and normal supply-chain hygiene still matter. The current focus is a low-friction disposable workspace, not a durable VM.
+This is a contract-driven product rather than a loose bootstrap script: versioned provisioning contracts, validated mappings and downloads, bounded phases, explicit status, and fail-closed handoffs make runs repeatable and failures diagnosable.
+
+**Agent support:** OpenCode is currently the only coding agent whose configuration and authentication are transferred automatically. Other agents can be installed and configured in a project profile, but out-of-the-box migration for them is future work.
+
+**Herdr dependency:** `herdr-sandbox` uses a pinned build from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on both host and guest because official upstream Herdr builds do not yet provide the complete Windows SSH remote-attach path. This repository publishes only the Sandbox bundle; it does not republish `herdr.exe`. Until upstream merges that support, the `herdr-win` repository is intended to consume one exact Sandbox release and package the matching programs together. That future WinGet installer will contain the verified pair rather than relying on WinGet dependency resolution; it is not available yet. Today, install `herdr-win` first so `herdr.exe` is on `PATH`: Sandbox atomically aligns that existing host executable to its pin when necessary and installs the same pinned build in the guest.
+
+This reduces risk and setup friction; it does not eliminate either. Mapped projects remain writable and networking is enabled, so backups, review, and normal supply-chain hygiene still matter. The current focus is a low-friction disposable workspace. Intelligent lifecycle and refresh management for durable Windows VMs is a planned future direction, not current behavior.
+
+## Quick start
+
+You need a supported Windows edition with Windows Sandbox enabled, an existing `herdr-win` `herdr.exe` on `PATH`, Windows PowerShell 5.1, OpenSSH Client, Windows Terminal, and Go. See [Requirements](#requirements) for the complete list.
+
+### 1. Build the CLI
+
+Clone the repository and run its checked build from the repository root:
+
+```powershell
+go run ./cmd/task check
+```
+
+This verifies the repository and writes the executable with its editable provisioning assets to:
+
+```text
+build\bin\herdr-sandbox.exe
+build\bin\base.ps1
+build\bin\stacks.ps1
+```
+
+For a build without the full verification gate:
+
+```powershell
+go run ./cmd/task build
+```
+
+### 2. Add a project profile
+
+Create this file in the project you want to open in the Sandbox:
+
+```text
+<project>\.herdr-sandbox\provision.ps1
+```
+
+Minimal Go example:
+
+```powershell
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ProjectDirectory
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+
+Install-GoStack -ProjectDirectory $ProjectDirectory
+```
+
+Choose and combine built-ins by calling them directly from the profile:
+
+| Development need | Direct profile call |
+| --- | --- |
+| Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
+| Node.js LTS | `Install-NodeStack` |
+| Python (3.13 by default) | `Install-PythonStack` |
+| Zig | `Install-ZigStack` |
+| Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
+| Cargo Nextest | `Install-CargoNextest` |
+| Just | `Install-Just` |
+
+Keep built-in calls direct—not behind aliases or dynamic invocation—so the host can inspect requirements without executing project code. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1); unavailable versions fail instead of silently falling back. TypeScript and other application libraries remain project dependencies owned by the project's manifest and lockfile.
+
+**Rust/MSVC host window:** The first Rust-stack run may show Microsoft Visual Studio Installer on the host. This is expected: the signed bootstrapper runs in [layout mode](https://learn.microsoft.com/visualstudio/install/create-an-offline-installation-of-visual-studio) to download and verify only the required C++ Build Tools and Windows SDK files in the app-owned cache; it does not install Visual Studio or Build Tools on the host. Complete layout creation was not reliable inside a Windows 10 Sandbox, and keeping the layout in the persistent cache avoids downloading it for every disposable guest. The guest revalidates and copies the layout locally, then installs from it with networking disabled for that installer.
+
+Need something not listed?
+
+- Add an exact WinGet package needed in every guest through [`wingetPackages.add`](#global-configuration).
+- Add idempotent, fail-fast Windows PowerShell 5.1 commands needed by one project directly to its profile and verify the resulting tool.
+- Contribute a reusable built-in as one concrete `Install-*` function in `provisioning\stacks.ps1`, with project-plan recognition and tests. There is intentionally no plugin registry to maintain.
+
+The nearest ancestor containing the profile becomes the active project when `up` is run. Do not put project scripts in this repository's `provisioning` directory; run-local copies are generated automatically.
+
+### 3. Start from the project
+
+Run the built application with the project as the current directory:
+
+```powershell
+& "D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe" up
+```
+
+The first run can take longer because package and Visual Studio layout caches are empty. Later cache-hit runs reuse verified payloads.
+
+When provisioning completes, the application prints:
+
+```text
+herdr --remote sandbox
+```
+
+and attaches automatically when stdin, stdout, and stderr are connected to a real interactive terminal.
+
+### 4. Reattach later
+
+The guest Herdr server remains running after a normal detach. Reattach from any normal host terminal:
+
+```powershell
+herdr --remote sandbox
+```
+
+Plain SSH is also available for noninteractive diagnostics:
+
+```powershell
+ssh sandbox
+```
+
+The managed `sandbox` alias uses the verified guest IP, public host key, host-only private key, and strict host-key checking. Reuse here means reconnecting to the same ready guest and persistent Herdr server. The managed target disables OpenSSH `ControlMaster` multiplexing because native Win32 OpenSSH does not support its required Unix socket/file-descriptor path.
 
 ## What it does
 
@@ -37,6 +152,7 @@ Host requirements:
 - Windows PowerShell 5.1.
 - OpenSSH Client (`ssh.exe` and `ssh-keygen.exe`).
 - Windows Terminal Stable or Preview.
+- An existing standard `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) on `PATH`.
 - Internet access for initial cache misses.
 - Go 1.26.4 or newer to build this repository.
 
@@ -48,90 +164,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 Windows may require a restart after enabling the feature.
 
-The application installs or updates its pinned host `herdr.exe` automatically. Do not install Rust tooling on the host for this project.
-
-## Build
-
-Clone the repository and run the checked build task from its root:
-
-```powershell
-go run ./cmd/task check
-```
-
-The stable application and its editable provisioning assets are written to:
-
-```text
-build\bin\herdr-sandbox.exe
-build\bin\base.ps1
-build\bin\stacks.ps1
-```
-
-For a build without the full verification gate:
-
-```powershell
-go run ./cmd/task build
-```
-
-## Quick start
-
-### 1. Add a project profile
-
-Create this file in the project you want to open in the Sandbox:
-
-```text
-<project>\.herdr-sandbox\provision.ps1
-```
-
-Minimal Go example:
-
-```powershell
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$ProjectDirectory
-)
-
-$ErrorActionPreference = 'Stop'
-Set-StrictMode -Version 2.0
-
-Install-GoStack -ProjectDirectory $ProjectDirectory
-```
-
-The nearest ancestor containing this file becomes the active project when `up` is run. Project profiles call shared stack functions and may add project-specific Windows PowerShell 5.1 commands. Do not put project scripts in the repository's `provisioning` directory; run-local copies are generated automatically.
-
-### 2. Start from the project
-
-Run the built application with the project as the current directory:
-
-```powershell
-& "D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe" up
-```
-
-The first run can take longer because package and Visual Studio layout caches are empty. Later cache-hit runs reuse verified payloads.
-
-When provisioning completes, the application prints:
-
-```text
-herdr --remote sandbox
-```
-
-and attaches automatically when stdin, stdout, and stderr are connected to a real interactive terminal.
-
-### 3. Reattach later
-
-The guest Herdr server remains running after a normal detach. Reattach from any normal host terminal:
-
-```powershell
-herdr --remote sandbox
-```
-
-Plain SSH is also available for noninteractive diagnostics:
-
-```powershell
-ssh sandbox
-```
-
-The managed `sandbox` alias uses the verified guest IP, public host key, host-only private key, and strict host-key checking.
-Reuse here means reconnecting to the same ready guest and persistent Herdr server. The managed target disables OpenSSH `ControlMaster` multiplexing because native Win32 OpenSSH does not support its required Unix socket/file-descriptor path.
+The application does not perform the initial host Herdr installation. Once `herdr.exe` exists on `PATH`, it verifies and, when necessary, atomically updates that existing command to the pinned `herdr-win` build used by the guest. Do not install Rust tooling on the host for this project.
 
 ## Commands
 
@@ -208,24 +241,6 @@ The nearest active project profile is added automatically and deduplicated again
 
 `base.ps1` is user-owned after it is first seeded and is not silently overwritten. If a newer binary reports an unsupported Base contract, merge the current repository `provisioning\base.ps1` changes into the global file before retrying.
 
-## Built-in project stacks
-
-Project profiles may call:
-
-```powershell
-Install-GoStack -ProjectDirectory $ProjectDirectory
-Install-NodeStack
-Install-PythonStack
-Install-ZigStack
-Install-RustMSVCStack -ProjectDirectory $ProjectDirectory
-Install-CargoNextest
-Install-Just
-```
-
-Stacks install only the concrete tools they own. Optional versions are supported by the functions that expose a version parameter; unavailable versions fail instead of falling back silently.
-
-TypeScript and other application libraries remain project dependencies owned by the project's package manifest and lockfile.
-
 ## Important paths
 
 Host:
@@ -278,6 +293,21 @@ go run ./cmd/task check
 `check` covers Go formatting, Windows PowerShell 5.1 syntax, all Go tests, `go vet`, and the stable build.
 
 Repository-owned Windows scripting uses Windows PowerShell 5.1. PowerShell 7 is installed as interactive guest tooling, not as a provisioning interpreter.
+
+### Nightly checks and releases
+
+GitHub Actions runs the same `check` task nightly and on manual request. It intentionally does not run on every push; run the checked build locally before pushing.
+
+Early releases deliberately use `v0.0.N`, beginning with `v0.0.0`. `N` is a monotonically increasing release ID, not a semantic feature version: increment it by one for each manually created release and leave the first two components at zero.
+
+To publish, start from a clean, synchronized `main` that has passed `check`, then push the next annotated tag:
+
+```powershell
+git tag -a v0.0.0 -m "v0.0.0"
+git push origin v0.0.0
+```
+
+The release workflow accepts only that version shape, reruns `check`, packages the Sandbox executable with its required editable `base.ps1` and `stacks.ps1` provisioning assets in a Windows amd64 ZIP, writes its SHA-256 checksum, and publishes both with generated release notes. It never bundles `herdr.exe`; combined distribution belongs to the `herdr-win` repository. The tag owns the release ID, and no release is created by ordinary pushes or the nightly check.
 
 ## Troubleshooting
 
