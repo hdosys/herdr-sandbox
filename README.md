@@ -15,6 +15,8 @@ This is a contract-driven product rather than a loose bootstrap script: versione
 
 **Agent support:** OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi configuration are copied automatically when present. Portable saved credentials come with them; Copilot reuses the transferred GitHub CLI login. Machine-bound Windows credentials still require one guest login. This copies setup only—the four additional agent CLIs are installed separately or by a project profile.
 
+**Stable Tailscale identity (experimental):** Opt in once with a tagged auth key and later fresh Sandboxes restore the same tailnet device, node key, IPv4 address, and MagicDNS name without another login. The tailnet and its access policy remain user-owned in Tailscale's web admin console. See [Stable Tailscale tailnet identity](#stable-tailscale-tailnet-identity-experimental) before the first opted-in `up`.
+
 **Herdr dependency:** Install the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork first. Sandbox needs its Windows remote support, which official upstream builds do not provide yet, and keeps the host and guest Herdr versions aligned. A combined WinGet package is planned.
 
 **Limits:** This is practical isolation, not a complete security boundary. Mapped projects remain writable and networking is enabled, so keep backups and normal supply-chain controls. Durable VM management is planned; today the focus is disposable Windows environments.
@@ -266,35 +268,102 @@ The nearest active project profile is added automatically and deduplicated again
 
 `base.ps1` is user-owned after it is first seeded and is not silently overwritten. If a newer binary reports an unsupported Base contract, merge the current repository `provisioning\base.ps1` changes into the global file before retrying.
 
-### Optional stable Tailscale identity
+## Stable Tailscale tailnet identity (experimental)
 
 > **Experimental:** the implementation is opt-in while the required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open.
 
-Set `"tailscale": true`, leave `Tailscale.Tailscale` in the effective Base package plan, and ensure MagicDNS is enabled for the tailnet. In the Tailscale admin console, create one auth key that is:
+`herdr-sandbox` joins an existing user-owned tailnet; it does not create a tailnet, change its DNS settings, or invent an access policy. Initial administration happens in the [Tailscale admin console](https://login.tailscale.com/admin), not in the disposable guest.
 
-- one-off, not reusable;
-- non-ephemeral;
-- pre-approved;
-- assigned at least one server tag whose access policy is intentionally narrow.
+The Tailscale UI is not removed or globally disabled. The MSI's `TS_NOLAUNCH` setting only suppresses automatically opening the guest tray application after installation, and unattended enrollment keeps the service usable without a GUI session. `CRYPTPROTECT_UI_FORBIDDEN` applies only to background DPAPI calls and prevents Windows credential prompts; it does not affect Tailscale. The web admin console remains available. If you prefer an interactive, disposable Tailscale login, leave `"tailscale": false` and launch the installed guest application yourself; `herdr-sandbox` will not preserve that manually managed identity.
 
-Provide that key only to the first enrollment. This Windows PowerShell-compatible form avoids putting it in command history and removes the parent-shell copy after `up` returns:
+### 1. Prepare the tailnet
+
+In the Tailscale admin console:
+
+1. Sign in to create or open the tailnet that should own the Sandbox device.
+2. Enable MagicDNS under DNS settings.
+3. Define a dedicated tag and only the access that the Sandbox requires.
+
+For example, merge the following entries into the existing tailnet policy; do not replace unrelated policy rules. This example lets only tailnet administrators reach SSH on the Sandbox:
+
+```json
+{
+  "tagOwners": {
+    "tag:herdr-sandbox": ["autogroup:admin"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": ["autogroup:admin"],
+      "dst": ["tag:herdr-sandbox:22"]
+    }
+  ]
+}
+```
+
+Replace the source with the intended user or group and add only required ports. See Tailscale's [tag](https://tailscale.com/docs/features/tags) and [access-control](https://tailscale.com/docs/features/access-control) documentation for an existing production policy.
+
+### 2. Create the one-time auth key
+
+Create one auth key from the admin console's Keys page with:
+
+- **Reusable:** off;
+- **Ephemeral:** off;
+- **Pre-approved/pre-authorized:** on when device approval is enabled;
+- **Tags:** `tag:herdr-sandbox`.
+
+Use the key for only this enrollment. If Tailnet Lock is enabled, sign the pre-approved key from an existing trusted node as described in the [Tailnet Lock documentation](https://tailscale.com/docs/features/tailnet-lock) before continuing. Do not put the key in `config.json`, a provisioning script, shell history, or an argument to `herdr-sandbox up` or `tailscale up`.
+
+### 3. Enable the feature
+
+In `%APPDATA%\herdr-sandbox\config.json`, set:
+
+```json
+{
+  "tailscale": true
+}
+```
+
+The minimal object above is valid because omitted settings retain their defaults. If this is the very first `up`, create the directory and file with an editor before starting; otherwise edit the file already seeded by the CLI. Leave `Tailscale.Tailscale` in the effective Base package plan.
+
+### 4. Run the first enrollment
+
+From the intended project directory, use this Windows PowerShell-compatible form so the key does not enter command history. Replace the executable path with the checked build or installed command you use:
 
 ```powershell
+$herdrSandbox = 'D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe'
 $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
     (Read-Host 'One-off tagged Tailscale auth key' -AsSecureString)
 )
 try {
     $env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-    herdr-sandbox up
+    & $herdrSandbox up
 } finally {
     Remove-Item Env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY -ErrorAction SilentlyContinue
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
 }
 ```
 
-Do not put the key in `config.json`, a command argument, or a provisioning script. The CLI removes its inherited copy before launching any child process and does not need the key again after enrollment. It stores the complete identity only as current-user DPAPI ciphertext under the host identity directory, restores it before later fresh guests become ready, and verifies the same device ID, node key, IPv4 address, MagicDNS name, fixed `herdr-sandbox` hostname, tags, and Windows Sandbox user SID. The protected identity is bound to the current Windows host user and is not a portable backup for another account or machine.
+The CLI removes its inherited environment copy before launching child processes, enrolls the fixed `herdr-sandbox` hostname without opening the guest UI, verifies the tagged running identity, and stores the complete state only as current-user DPAPI ciphertext under `%LOCALAPPDATA%\herdr-sandbox\identity`.
 
-Tagged devices default to node-key expiry disabled; keep expiry disabled for this exact-identity path. A node-key rotation is treated as identity drift and fails closed rather than silently replacing the protected identity.
+After readiness, confirm in the admin console that exactly one tagged `herdr-sandbox` device exists with the expected IP and MagicDNS name. From an allowed peer, verify reachability with:
+
+```powershell
+tailscale ping herdr-sandbox
+```
+
+### 5. Use later Sandboxes
+
+Do not set `HERDR_SANDBOX_TAILSCALE_AUTH_KEY` again. Normal lifecycle commands are enough:
+
+```powershell
+& 'D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe' down
+& 'D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe' up
+```
+
+`down` captures and verifies the current state before closing a ready opted-in guest. A later fresh `up` decrypts the host copy and restores it over verified SSH before the guest becomes ready. It fails closed if the device ID, node key, IPv4 address, MagicDNS name, fixed hostname, tags, or Windows Sandbox user SID changes.
+
+Keep node-key expiry disabled for this tagged device. Do not delete the tailnet device or `%LOCALAPPDATA%\herdr-sandbox\identity\tailscale-identity.json` while expecting restoration. The DPAPI-protected identity is bound to the current Windows host user and is not a portable backup for another account or machine.
 
 ## Important paths
 
