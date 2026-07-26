@@ -173,7 +173,7 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
 	}
-	if err := runCommand(ctx, stdout, stderr, "go", "build", "-trimpath", "-o", output, "./cmd/herdr-sandbox"); err != nil {
+	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output)...); err != nil {
 		return err
 	}
 	for _, name := range []string{"base.ps1", "stacks.ps1"} {
@@ -186,6 +186,17 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func goBuildArgs(output string) []string {
+	return []string{
+		"build",
+		"-trimpath",
+		"-buildvcs=false",
+		"-ldflags", "-s -w",
+		"-o", output,
+		"./cmd/herdr-sandbox",
+	}
 }
 
 func runCommand(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
