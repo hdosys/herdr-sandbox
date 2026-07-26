@@ -34,7 +34,7 @@ Enable Windows Sandbox from an elevated Windows PowerShell session when necessar
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-The application does not perform the initial host Herdr installation. Once present, it keeps the host command aligned with the pinned guest Herdr release. Do not install Rust tooling on the host for this project.
+**Herdr setup:** Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on `PATH`; `herdr-sandbox` does not perform that first installation. Later runs verify that the host and guest use the same pinned Herdr release and update the existing host executable when required.
 
 ### 1. Build
 
