@@ -1,6 +1,6 @@
 # herdr-sandbox
 
-**Move your coding-agent setup into a disposable Windows environment—without rebuilding it by hand or living in RDP.**
+**Move your agents into a disposable Windows environment—without rebuilding it by hand or living in RDP.**
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml)
 [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml)
