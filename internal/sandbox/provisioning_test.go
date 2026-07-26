@@ -467,9 +467,11 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 	for _, required := range []string{
 		"function Test-ProvisioningWinGetPackageInstalled",
 		"function Test-ProvisioningPortablePackageInstalled",
+		"function Test-ProvisioningRustupInstalled",
 		"function Test-ProvisioningGeistMonoFontInstalled",
 		"if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName)",
 		"already matches requested version:",
+		"installed package does not match resolved version",
 		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
 		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
 		"if (($existingSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|'))",
@@ -484,6 +486,8 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 	text := readDefaultStackProvisioning(t)
 	for _, required := range []string{
 		stackProvisioningContract,
+		"function Resolve-StackPythonPackage",
+		"function Resolve-StackRustDistribution",
 		"function Install-GoStack",
 		"function Install-NodeStack",
 		"function Install-PythonStack",
@@ -492,12 +496,15 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 		"function Install-CargoNextest",
 		"function Install-Just",
 		"function Install-StackVisualStudioBuildTools",
-		"Rust toolchain $Toolchain has no app-owned verified distribution mirror",
+		"Get-StackRustManifestSnapshot -Channel 'stable'",
 		"-Id 'OpenJS.NodeJS.LTS'",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("stack library is missing %q", required)
 		}
+	}
+	if strings.Contains(text, "1.96.1") || strings.Contains(text, "[string]$Series = '3.13'") {
+		t.Fatal("stack library retains a hard-coded omitted-version default")
 	}
 	for _, forbidden := range []string{
 		"function Install-Herdr",
@@ -537,6 +544,330 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 	}
 }
 
+func TestLatestStackResolversInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 resolver regression")
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+trap { Write-Output ($_ | Out-String); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('Resolve-StackPythonPackage', 'Get-StackRustSHA256', 'ConvertFrom-StackRustManifest')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+function Search-ProvisioningWinGetPackages {
+    param($Role, $IdQuery, [switch]$Exact)
+    if ($Exact) { return @([pscustomobject]@{ Name='Python 3.10'; Id='Python.Python.3.10'; Version='3.10.18' }) }
+    return @(
+        [pscustomobject]@{ Name='Python 2'; Id='Python.Python.2'; Version='2.7.18150' },
+        [pscustomobject]@{ Name='Python 3.9'; Id='Python.Python.3.9'; Version='3.9.23' },
+        [pscustomobject]@{ Name='Python 3.14'; Id='Python.Python.3.14'; Version='3.14.6' },
+        [pscustomobject]@{ Name='Python 3.10'; Id='Python.Python.3.10'; Version='3.10.18' }
+    )
+}
+$latestPython = Resolve-StackPythonPackage -Series '' -Version ''
+if ($latestPython.Series -cne '3.14' -or $latestPython.Version -cne '3.14.6') { throw 'Latest Python selection failed.' }
+$seriesPython = Resolve-StackPythonPackage -Series '3.10' -Version ''
+if ($seriesPython.Version -cne '3.10.18') { throw 'Python series selection failed.' }
+$explicitPython = Resolve-StackPythonPackage -Series '' -Version '3.12.9'
+if ($explicitPython.Series -cne '3.12') { throw 'Python version-derived series failed.' }
+$accepted = $false
+try { $null = Resolve-StackPythonPackage -Series '3.11' -Version '3.12.9'; $accepted = $true } catch { }
+if ($accepted) { throw 'Conflicting Python series and version were accepted.' }
+
+$hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$manifest = @"
+manifest-version = "2"
+date = "2026-07-16"
+
+[pkg.rust]
+version = "1.97.1 (123456789 2026-07-16)"
+git_commit_hash = "1234567890123456789012345678901234567890"
+
+"@
+foreach ($package in @('cargo', 'clippy-preview', 'rust-std', 'rustc', 'rustfmt-preview')) {
+    $stem = if ($package -ceq 'clippy-preview') { 'clippy' } elseif ($package -ceq 'rustfmt-preview') { 'rustfmt' } else { $package }
+    $newline = [Environment]::NewLine
+    $manifest += '[pkg.' + $package + '.target.x86_64-pc-windows-msvc]' + $newline
+    $manifest += 'available = true' + $newline
+    $manifest += 'zst_url = "https://static.rust-lang.org/dist/2026-07-16/' + $stem + '-1.97.1-x86_64-pc-windows-msvc.tar.zst"' + $newline
+    $manifest += 'zst_hash = "' + $hash + '"' + $newline
+    $manifest += 'xz_url = "https://static.rust-lang.org/dist/2026-07-16/' + $stem + '-1.97.1-x86_64-pc-windows-msvc.tar.xz"' + $newline
+    $manifest += 'xz_hash = "' + $hash + '"' + $newline + $newline
+}
+$utf8 = New-Object Text.UTF8Encoding($false, $true)
+$selection = ConvertFrom-StackRustManifest -ManifestBytes $utf8.GetBytes($manifest) -ExpectedChannel 'stable' -Target 'x86_64-pc-windows-msvc'
+if ($selection.Version -cne '1.97.1' -or @($selection.Payloads).Count -ne 5) { throw 'Rust stable manifest selection failed.' }
+if (@($selection.Payloads | Where-Object { -not ([string]$_.RelativePath).EndsWith('.tar.zst', [StringComparison]::Ordinal) }).Count -ne 0) { throw 'Rust manifest did not select rustup preferred zstd payloads.' }
+$accepted = $false
+try { $null = ConvertFrom-StackRustManifest -ManifestBytes $utf8.GetBytes($manifest) -ExpectedChannel '1.96.1' -Target 'x86_64-pc-windows-msvc'; $accepted = $true } catch { }
+if ($accepted) { throw 'Mismatched exact Rust manifest was accepted.' }
+`, quote(stackPath))
+	scriptPath := filepath.Join(t.TempDir(), "latest-stack-resolver.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("latest stack resolver regression: %v: %s", err, output)
+	}
+}
+
+func TestRustMirrorCacheUsesResolvedIdentityInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 Rust cache regression")
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	root := t.TempDir()
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+trap { Write-Output ($_ | Out-String); exit 1 }
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('Assert-StackRustMirrorPayloads', 'Test-StackRustMirrorCacheEntry')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$entry = '%s'
+$mirror = Join-Path $entry 'mirror'
+New-Item -ItemType Directory -Path $mirror -Force | Out-Null
+$utf8 = New-Object Text.UTF8Encoding($false, $true)
+$script:payloads = @()
+function Add-TestPayload {
+    param([string]$RelativePath, [byte[]]$Bytes)
+    $path = Join-Path $mirror $RelativePath
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    [IO.File]::WriteAllBytes($path, $Bytes)
+    $script:payloads += [pscustomobject]@{
+        RelativePath = $RelativePath
+        Sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
+    }
+}
+$manifestName = 'channel-rust-1.97.1.toml'
+$manifestPath = "dist\$manifestName"
+Add-TestPayload -RelativePath $manifestPath -Bytes $utf8.GetBytes('synthetic manifest')
+$manifestHash = [string]$script:payloads[0].Sha256
+Add-TestPayload -RelativePath ($manifestPath + '.sha256') -Bytes $utf8.GetBytes($manifestHash.ToLowerInvariant() + "  $manifestName" + [Environment]::NewLine)
+$componentPath = ''
+foreach ($component in @('cargo', 'clippy', 'rust-std', 'rustc', 'rustfmt')) {
+    $relativePath = "dist\2026-07-16\$component-1.97.1-x86_64-pc-windows-msvc.tar.zst"
+    Add-TestPayload -RelativePath $relativePath -Bytes $utf8.GetBytes("payload:$component")
+    if ($component -ceq 'cargo') { $componentPath = $relativePath }
+}
+$metadata = [pscustomobject][ordered]@{
+    schemaVersion = 1
+    toolchain = '1.97.1'
+    target = 'x86_64-pc-windows-msvc'
+    manifestSha256 = $manifestHash
+}
+$descriptor = [ordered]@{
+    schemaVersion = 1
+    toolchain = '1.97.1'
+    target = 'x86_64-pc-windows-msvc'
+    manifestSha256 = $manifestHash
+} | ConvertTo-Json -Compress
+[IO.File]::WriteAllText((Join-Path $entry 'complete.json'), $descriptor, $utf8)
+if (-not (Test-StackRustMirrorCacheEntry -EntryDirectory $entry -Payloads $script:payloads -Metadata $metadata)) {
+    throw 'Resolved Rust cache identity was rejected.'
+}
+[IO.File]::WriteAllText((Join-Path $mirror $componentPath), 'tampered', $utf8)
+if (Test-StackRustMirrorCacheEntry -EntryDirectory $entry -Payloads $script:payloads -Metadata $metadata) {
+    throw 'Tampered Rust cache payload was accepted.'
+}
+`, quote(stackPath), quote(filepath.Join(root, "entry")))
+	scriptPath := filepath.Join(root, "rust-cache-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Rust cache regression: %v: %s", err, output)
+	}
+}
+
+func TestWinGetSearchParserInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 WinGet parser regression")
+	}
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+trap { Write-Output ($_ | Out-String); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Search-ProvisioningWinGetPackages' }, $true)
+Invoke-Expression $definition.Extent.Text
+function Invoke-ProvisioningNative {
+    return @('Name        Id                 Version', '----------------------------------------', 'Python 3.14 Python.Python.3.14 3.14.6')
+}
+$rows = @(Search-ProvisioningWinGetPackages -Role 'Python' -IdQuery 'Python.Python.')
+if ($rows.Count -ne 1 -or $rows[0].Id -cne 'Python.Python.3.14' -or $rows[0].Version -cne '3.14.6') { throw 'Canonical WinGet search output failed.' }
+function Invoke-ProvisioningNative { return @('Nombre Id Version', '-----------------', 'Python Python.Python.3.14 3.14.6') }
+$accepted = $false
+try { $null = Search-ProvisioningWinGetPackages -Role 'Python' -IdQuery 'Python.Python.'; $accepted = $true } catch { }
+if ($accepted) { throw 'Localized WinGet search output was accepted.' }
+`, quote(basePath))
+	scriptPath := filepath.Join(t.TempDir(), "winget-search-parser.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("WinGet search parser regression: %v: %s", err, output)
+	}
+}
+
+func TestOnlineWinGetPackageConcretizesLatestInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 online WinGet regression")
+	}
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+trap { Write-Output ($_ | Out-String); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Install-ProvisioningOnlineWinGetPackage' }, $true)
+if ($null -eq $definition) { throw 'Missing online WinGet installer function.' }
+Invoke-Expression $definition.Extent.Text
+$script:searchCalls = 0
+$script:installArguments = @()
+$script:verifiedVersion = ''
+function Search-ProvisioningWinGetPackages {
+    param($Role, $IdQuery, [switch]$Exact)
+    $script:searchCalls += 1
+    if (-not $Exact) { throw 'Latest package search was not exact.' }
+    return @([pscustomobject]@{ Name='Example'; Id='Example.Package'; Version='9.8.7' })
+}
+function Invoke-ProvisioningNative {
+    param($Role, $FilePath, [object[]]$ArgumentList)
+    $script:installArguments = @($ArgumentList)
+    return @()
+}
+function Update-ProvisioningPath { }
+function Test-ProvisioningWinGetPackageInstalled {
+    param($Metadata)
+    $script:verifiedVersion = [string]$Metadata.Version
+    return $true
+}
+Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
+$versionIndex = [Array]::IndexOf($script:installArguments, '--version')
+if ($script:searchCalls -ne 1 -or $versionIndex -lt 0 -or $script:installArguments[$versionIndex + 1] -cne '9.8.7' -or $script:verifiedVersion -cne '9.8.7') {
+    throw 'Latest online WinGet package was not concretized through install and readback.'
+}
+$script:searchCalls = 0
+Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -Version '1.2.3'
+$versionIndex = [Array]::IndexOf($script:installArguments, '--version')
+if ($script:searchCalls -ne 0 -or $versionIndex -lt 0 -or $script:installArguments[$versionIndex + 1] -cne '1.2.3' -or $script:verifiedVersion -cne '1.2.3') {
+    throw 'Exact online WinGet package version was not preserved.'
+}
+`, quote(basePath))
+	scriptPath := filepath.Join(t.TempDir(), "online-winget-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("online WinGet regression: %v: %s", err, output)
+	}
+}
+
+func TestLiveWinGetPythonMetadataResolution(t *testing.T) {
+	if runtime.GOOS != "windows" || os.Getenv("HERDR_SANDBOX_LIVE_WINGET_METADATA") != "1" {
+		t.Skip("opt-in installed WinGet metadata boundary")
+	}
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$definitions = @(
+    [pscustomobject]@{ Path='%s'; Names=@('Get-ProvisioningBoundedDiagnosticText', 'Invoke-ProvisioningNative', 'Search-ProvisioningWinGetPackages') },
+    [pscustomobject]@{ Path='%s'; Names=@('Resolve-StackPythonPackage') }
+)
+foreach ($source in $definitions) {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($source.Path, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -ne 0) { throw $errors[0].Message }
+    foreach ($name in $source.Names) {
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+        if ($null -eq $definition) { throw "Missing function $name" }
+        Invoke-Expression $definition.Extent.Text
+    }
+}
+function Write-ProvisioningProgress { param($Message) }
+function Write-ProvisioningTiming { param($Role, $Seconds) }
+$resolved = Resolve-StackPythonPackage -Series '' -Version ''
+[Console]::Out.Write(([string]$resolved.Series + '|' + [string]$resolved.Version))
+`, quote(basePath), quote(stackPath))
+	scriptPath := filepath.Join(t.TempDir(), "live-winget-metadata.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("live WinGet Python metadata resolution: %v: %s", err, output)
+	}
+	fields := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(fields) != 2 || fields[0] == "" || !strings.HasPrefix(fields[1], fields[0]+".") {
+		t.Fatalf("live WinGet Python metadata result = %q", output)
+	}
+}
+
+func TestLiveRustStableMetadataResolution(t *testing.T) {
+	if runtime.GOOS != "windows" || os.Getenv("HERDR_SANDBOX_LIVE_RUST_METADATA") != "1" {
+		t.Skip("opt-in official Rust metadata boundary")
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('Get-StackRustSHA256', 'Invoke-StackRustMetadataDownload', 'ConvertFrom-StackRustManifest', 'Get-StackRustManifestSnapshot', 'Resolve-StackRustDistribution')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$resolved = Resolve-StackRustDistribution -RequestedChannel 'stable'
+[Console]::Out.Write(([string]$resolved.Toolchain + '|' + @($resolved.Payloads).Count + '|' + [string]$resolved.CacheEntryName))
+`, quote(stackPath))
+	scriptPath := filepath.Join(t.TempDir(), "live-rust-metadata.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("live Rust metadata resolution: %v: %s", err, output)
+	}
+	fields := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(fields) != 3 || fields[0] == "" || fields[1] != "7" || !strings.HasPrefix(fields[2], fields[0]+"-x86_64-pc-windows-msvc-") || len(fields[2]) < 64 {
+		t.Fatalf("live Rust metadata result = %q", output)
+	}
+}
+
 func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -552,6 +883,9 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 		"foreach ($package in @($provisioningPackagePlan.Data.additions))",
 		"Install-ProvisioningOnlineWinGetPackage -Role \"additional WinGet package $packageID\"",
 		"-Id $packageID -Version ([string]$package.version)",
+		"Search-ProvisioningWinGetPackages -Role $Role -IdQuery $Id -Exact",
+		"'--version', $resolvedVersion",
+		"Test-ProvisioningWinGetPackageInstalled -Metadata $metadata",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing resolved package-plan contract %q", required)

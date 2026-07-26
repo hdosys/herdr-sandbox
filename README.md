@@ -113,13 +113,13 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | --- | --- |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
 | Node.js LTS | `Install-NodeStack` |
-| Python (3.13 by default) | `Install-PythonStack` |
+| Python (latest stable) | `Install-PythonStack` |
 | Zig | `Install-ZigStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
 | Cargo Nextest | `Install-CargoNextest` |
 | Just | `Install-Just` |
 
-Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1); unsupported versions fail instead of silently falling back. TypeScript and other application libraries remain project dependencies owned by their manifests and lockfiles.
+Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. Release/bootstrap artifacts such as WinGet, Herdr, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins. TypeScript and other application libraries remain project dependencies owned by their manifests and lockfiles.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is intentionally no plugin registry.
 
@@ -168,7 +168,7 @@ Example `config.json`:
 | `workspaces` | Additional unique workspace names mapped to absolute host project roots. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
-| `wingetPackages.versions` | Exact versions for retained or added packages. Unavailable versions fail. |
+| `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. |
 
 `config.json` is strict JSON, so comments are not allowed. To install every coding agent that currently has a verified WinGet package, set `wingetPackages` to this copy-paste object:
 

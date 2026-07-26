@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 30
+# herdr-sandbox-base-contract: 31
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -437,6 +437,64 @@ function Get-ProvisioningMetadataValue {
         throw "WinGet metadata field $Name resolved to $($values.Count) values; expected exactly one."
     }
     return $values[0].Trim()
+}
+
+function Search-ProvisioningWinGetPackages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [Parameter(Mandatory = $true)]
+        [string]$IdQuery,
+        [switch]$Exact
+    )
+
+    $arguments = @(
+        'search', '--id', $IdQuery, '--source', 'winget', '--count', '1000',
+        '--accept-source-agreements', '--disable-interactivity', '--no-progress'
+    )
+    if ($Exact) { $arguments += '--exact' }
+    $lines = @(Invoke-ProvisioningNative -Role "$Role package search" -FilePath 'winget.exe' -ArgumentList $arguments |
+        ForEach-Object { ([string]$_).TrimEnd() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $header = if ($lines.Count -gt 0) { [string]$lines[0] } else { '' }
+    $idColumn = $header.IndexOf('Id', [StringComparison]::Ordinal)
+    $versionColumn = $header.IndexOf('Version', [StringComparison]::Ordinal)
+    if ($lines.Count -lt 3 -or -not $header.StartsWith('Name', [StringComparison]::Ordinal) -or
+        $idColumn -le 4 -or $versionColumn -le ($idColumn + 2) -or
+        $header.Substring(4, $idColumn - 4).Trim().Length -ne 0 -or
+        $header.Substring($idColumn + 2, $versionColumn - ($idColumn + 2)).Trim().Length -ne 0 -or
+        $lines[1].Length -lt ($versionColumn + 'Version'.Length) -or $lines[1] -cnotmatch '^-+$') {
+        throw "$Role WinGet search output header is unsupported: lines=$($lines.Count) header=[$header]"
+    }
+    $results = @()
+    $seen = @{}
+    foreach ($line in @($lines | Select-Object -Skip 2)) {
+        if ($line -match '[^\x20-\x7E]') {
+            throw "$Role WinGet search output contains a control or non-ASCII character."
+        }
+        if ($line.Length -le $versionColumn) {
+            throw "$Role WinGet search output row is unsupported: $line"
+        }
+        $name = $line.Substring(0, $idColumn).Trim()
+        $id = $line.Substring($idColumn, $versionColumn - $idColumn).Trim()
+        $version = $line.Substring($versionColumn).Trim()
+        if ([string]::IsNullOrWhiteSpace($name) -or $id -notmatch '^[A-Za-z0-9._-]+$' -or
+            [string]::IsNullOrWhiteSpace($version) -or $version -match '\s') {
+            throw "$Role WinGet search output row is unsupported: $line"
+        }
+        if ($seen.ContainsKey($id)) {
+            throw "$Role WinGet search returned duplicate package $id."
+        }
+        $seen[$id] = $true
+        $results += [pscustomobject]@{
+            Name = $name
+            Id = $id
+            Version = $version
+        }
+    }
+    if ($results.Count -eq 0) {
+        throw "$Role WinGet search returned no packages."
+    }
+    return @($results)
 }
 
 function Get-ProvisioningWinGetMetadata {
@@ -899,6 +957,40 @@ function Test-ProvisioningPortablePackageInstalled {
     }
 }
 
+function Test-ProvisioningRustupInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
+    )
+
+    if ([string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+        return $false
+    }
+    $executable = Join-Path $env:CARGO_HOME 'bin\rustup.exe'
+    try {
+        if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+            return $false
+        }
+        $file = Get-Item -LiteralPath $executable -Force
+        if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            return $false
+        }
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $versionOutput = @(& $executable --version 2>&1 | ForEach-Object { [string]$_ })
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $versionPattern = '^rustup ' + [Regex]::Escape([string]$Metadata.Version) +
+            ' \([0-9a-f]{7,40} [0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
+        return $exitCode -eq 0 -and @($versionOutput | Where-Object { $_ -match $versionPattern }).Count -eq 1
+    } catch {
+        return $false
+    }
+}
+
 function Get-ProvisioningGeistMonoExpectedFontNames {
     return @(
         'GeistMonoNerdFont-Black.otf',
@@ -1066,6 +1158,9 @@ function Test-ProvisioningPackageInstalled {
         }
         'GeistMonoFont' {
             return Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata
+        }
+        'Rustup' {
+            return Test-ProvisioningRustupInstalled -Metadata $Metadata
         }
         { $_ -in @('Inno', 'MSI', 'Burn', 'MSIX') } {
             return Test-ProvisioningWinGetPackageInstalled -Metadata $Metadata
@@ -1340,6 +1435,10 @@ function Install-ProvisioningCachedPackage {
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
             -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
+        if (-not (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
+                -ExecutableName $ExecutableName)) {
+            throw "$Role installed package does not match resolved version $($metadata.Version)."
+        }
         if (-not $cacheHit) {
             Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
                 -GuestPayloadPath $guestPayload -Metadata $metadata
@@ -1444,18 +1543,29 @@ function Install-ProvisioningOnlineWinGetPackage {
         [string]$Override = ''
     )
 
+    $resolvedVersion = $Version
+    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
+        $matches = @(Search-ProvisioningWinGetPackages -Role $Role -IdQuery $Id -Exact)
+        if ($matches.Count -ne 1 -or [string]$matches[0].Id -cne $Id -or
+            [string]::IsNullOrWhiteSpace([string]$matches[0].Version)) {
+            throw "$Role latest WinGet version did not resolve one exact package $Id."
+        }
+        $resolvedVersion = [string]$matches[0].Version
+    }
     $arguments = @(
         'install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
+        '--version', $resolvedVersion,
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     )
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $arguments += @('--version', $Version)
-    }
     if (-not [string]::IsNullOrWhiteSpace($Override)) {
         $arguments += @('--override', $Override)
     }
     Invoke-ProvisioningNative -Role "$Role online installation" -FilePath 'winget.exe' -ArgumentList $arguments | Out-Null
     Update-ProvisioningPath
+    $metadata = [pscustomobject]@{ Id = $Id; Version = $resolvedVersion }
+    if (-not (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata)) {
+        throw "$Role installed package does not match resolved version $resolvedVersion."
+    }
 }
 
 function Assert-ProvisioningCommand {

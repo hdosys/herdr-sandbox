@@ -22,8 +22,8 @@ const (
 	workspaceManifestName     = "workspaces.json"
 	globalConfigurationName   = "config.json"
 	guestWorkspacesDirectory  = `C:\Workspaces`
-	baseProvisioningContract  = "# herdr-sandbox-base-contract: 30"
-	stackProvisioningContract = "# herdr-sandbox-stacks-contract: 2"
+	baseProvisioningContract  = "# herdr-sandbox-base-contract: 31"
+	stackProvisioningContract = "# herdr-sandbox-stacks-contract: 3"
 	userProvisioningContract  = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema   = 1
 	maximumBaseScriptSize     = 1024 * 1024

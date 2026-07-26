@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 2
+# herdr-sandbox-stacks-contract: 3
 
 function Get-StackWebResponseText {
     param(
@@ -519,14 +519,197 @@ function Install-StackVisualStudioBuildTools {
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
 }
 
+function Get-StackRustSHA256 {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha256.ComputeHash($Bytes)).Replace('-', '').ToUpperInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Invoke-StackRustMetadataDownload {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 4194304)][int]$MaximumBytes
+    )
+
+    $parsed = [Uri]$Uri
+    if (-not $parsed.IsAbsoluteUri -or $parsed.Scheme -cne 'https' -or
+        $parsed.Host -cne 'static.rust-lang.org' -or $parsed.Port -ne 443 -or
+        -not [string]::IsNullOrEmpty($parsed.UserInfo) -or
+        -not [string]::IsNullOrEmpty($parsed.Query) -or
+        -not [string]::IsNullOrEmpty($parsed.Fragment) -or $parsed.AbsoluteUri -cne $Uri) {
+        throw "Rust metadata URL is not canonical: $Uri"
+    }
+    $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -ErrorAction Stop
+    if ([int]$response.StatusCode -ne 200 -or $response.BaseResponse.ResponseUri.AbsoluteUri -cne $Uri -or
+        $response.Content -isnot [byte[]]) {
+        throw "Rust metadata response is unexpected: $Uri"
+    }
+    $bytes = [byte[]]$response.Content
+    if ($bytes.Length -le 0 -or $bytes.Length -gt $MaximumBytes) {
+        throw "Rust metadata response size is invalid: $Uri"
+    }
+    return ,$bytes
+}
+
+function ConvertFrom-StackRustManifest {
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$ManifestBytes,
+        [Parameter(Mandatory = $true)][string]$ExpectedChannel,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $versionPattern = '(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
+    if (($ExpectedChannel -cne 'stable' -and $ExpectedChannel -notmatch ('^' + $versionPattern + '$')) -or
+        $Target -cne 'x86_64-pc-windows-msvc') {
+        throw "Rust channel or target is unsupported: $ExpectedChannel $Target"
+    }
+    $utf8 = New-Object Text.UTF8Encoding($false, $true)
+    try { $text = $utf8.GetString($ManifestBytes) } catch { throw 'Rust manifest is not strict UTF-8.' }
+    if ($text.IndexOf([char]0) -ge 0 -or $text.Contains("'''") -or $text.Contains('"""')) {
+        throw 'Rust manifest uses an unsupported text shape.'
+    }
+    $header = [regex]::Match($text, '\Amanifest-version = "2"\r?\ndate = "(?<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"\r?\n')
+    if (-not $header.Success) { throw 'Rust manifest header is unexpected.' }
+    $date = $header.Groups['date'].Value
+    $parsedDate = [DateTime]::MinValue
+    if (-not [DateTime]::TryParseExact($date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$parsedDate)) {
+        throw "Rust manifest date is invalid: $date"
+    }
+    $rustTable = [regex]::Match($text, '(?ms)^\[pkg\.rust\]\r?\n(?<body>.*?)(?=^\[|\z)')
+    if (-not $rustTable.Success) { throw 'Rust manifest is missing [pkg.rust].' }
+    $versionMatches = @([regex]::Matches($rustTable.Groups['body'].Value,
+        ('(?m)^version = "(?<version>' + $versionPattern + ') \([0-9a-f]{9,40} [0-9]{4}-[0-9]{2}-[0-9]{2}\)"\r?$')))
+    if ($versionMatches.Count -ne 1) { throw 'Rust manifest version identity is unexpected.' }
+    $version = $versionMatches[0].Groups['version'].Value
+    if ($ExpectedChannel -cne 'stable' -and $version -cne $ExpectedChannel) {
+        throw "Rust manifest resolved $version instead of $ExpectedChannel."
+    }
+
+    $payloads = @()
+    foreach ($package in @('cargo', 'clippy-preview', 'rust-std', 'rustc', 'rustfmt-preview')) {
+        $tableName = "pkg.$package.target.$Target"
+        $table = [regex]::Match($text, ('(?ms)^\[' + [regex]::Escape($tableName) + '\]\r?\n(?<body>.*?)(?=^\[|\z)'))
+        if (-not $table.Success) { throw "Rust manifest is missing [$tableName]." }
+        $fields = @{}
+        foreach ($line in @([regex]::Split($table.Groups['body'].Value.Trim(), '\r?\n'))) {
+            $match = [regex]::Match($line, '^(?<name>available|url|hash|xz_url|xz_hash|zst_url|zst_hash) = (?:(?<bool>true|false)|"(?<text>[^"\r\n]+)")$')
+            if (-not $match.Success -or $fields.ContainsKey($match.Groups['name'].Value)) {
+                throw "Rust manifest field is unsupported in [$tableName]: $line"
+            }
+            $fields[$match.Groups['name'].Value] = if ($match.Groups['bool'].Success) { $match.Groups['bool'].Value } else { $match.Groups['text'].Value }
+        }
+        if (-not $fields.ContainsKey('available') -or $fields['available'] -cne 'true') {
+            throw "Rust package $package is unavailable for $Target."
+        }
+        $stem = if ($package -ceq 'clippy-preview') { 'clippy' } elseif ($package -ceq 'rustfmt-preview') { 'rustfmt' } else { $package }
+        $selected = $null
+        foreach ($format in @(
+            [pscustomobject]@{ Url = 'zst_url'; Hash = 'zst_hash'; Suffix = 'tar.zst' },
+            [pscustomobject]@{ Url = 'xz_url'; Hash = 'xz_hash'; Suffix = 'tar.xz' },
+            [pscustomobject]@{ Url = 'url'; Hash = 'hash'; Suffix = 'tar.gz' }
+        )) {
+            $hasURL = $fields.ContainsKey($format.Url)
+            if ($hasURL -ne $fields.ContainsKey($format.Hash)) { throw "Rust $package has incomplete $($format.Suffix) metadata." }
+            if ($null -eq $selected -and $hasURL) {
+                $fileName = "$stem-$version-$Target.$($format.Suffix)"
+                $expectedURL = "https://static.rust-lang.org/dist/$date/$fileName"
+                $hash = [string]$fields[$format.Hash]
+                if ([string]$fields[$format.Url] -cne $expectedURL -or $hash -notmatch '^[0-9a-f]{64}$') {
+                    throw "Rust $package has unsafe $($format.Suffix) metadata."
+                }
+                $selected = [pscustomobject]@{ RelativePath = "dist\$date\$fileName"; Url = $expectedURL; Sha256 = $hash.ToUpperInvariant() }
+            }
+        }
+        if ($null -eq $selected) { throw "Rust package $package has no supported payload." }
+        $payloads += $selected
+    }
+    return [pscustomobject]@{ Version = $version; Date = $date; Target = $Target; Payloads = @($payloads) }
+}
+
+function Get-StackRustManifestSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Channel,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $manifestName = "channel-rust-$Channel.toml"
+    $manifestURL = "https://static.rust-lang.org/dist/$manifestName"
+    $sidecarURL = "$manifestURL.sha256"
+    $sidecarBytes = Invoke-StackRustMetadataDownload -Uri $sidecarURL -MaximumBytes 256
+    $utf8 = New-Object Text.UTF8Encoding($false, $true)
+    try { $sidecar = $utf8.GetString($sidecarBytes) } catch { throw 'Rust manifest sidecar is not strict UTF-8.' }
+    $sidecarMatch = [regex]::Match($sidecar, ('\A(?<hash>[0-9a-f]{64})  ' + [regex]::Escape($manifestName) + '\r?\n\z'))
+    if (-not $sidecarMatch.Success) { throw "Rust manifest sidecar is invalid: $sidecarURL" }
+    $manifestBytes = Invoke-StackRustMetadataDownload -Uri $manifestURL -MaximumBytes 4194304
+    $manifestHash = Get-StackRustSHA256 -Bytes $manifestBytes
+    if ($manifestHash -cne $sidecarMatch.Groups['hash'].Value.ToUpperInvariant()) {
+        throw "Rust manifest hash mismatch: $manifestURL"
+    }
+    $selection = ConvertFrom-StackRustManifest -ManifestBytes $manifestBytes -ExpectedChannel $Channel -Target $Target
+    return [pscustomobject]@{
+        Version = $selection.Version; Date = $selection.Date; Target = $selection.Target
+        ManifestURL = $manifestURL; ManifestBytes = [byte[]]$manifestBytes; ManifestSha256 = $manifestHash
+        SidecarURL = $sidecarURL; SidecarBytes = [byte[]]$sidecarBytes; SidecarSha256 = Get-StackRustSHA256 -Bytes $sidecarBytes
+        ComponentPayloads = @($selection.Payloads)
+    }
+}
+
+function Resolve-StackRustDistribution {
+    param(
+        [Parameter(Mandatory = $true)][string]$RequestedChannel,
+        [string]$Target = 'x86_64-pc-windows-msvc'
+    )
+
+    if ($RequestedChannel -ceq 'stable') {
+        $stable = Get-StackRustManifestSnapshot -Channel 'stable' -Target $Target
+        $concrete = Get-StackRustManifestSnapshot -Channel $stable.Version -Target $Target
+        $stablePayloads = @($stable.ComponentPayloads | ForEach-Object { "$($_.RelativePath)|$($_.Sha256)" }) -join "`n"
+        $concretePayloads = @($concrete.ComponentPayloads | ForEach-Object { "$($_.RelativePath)|$($_.Sha256)" }) -join "`n"
+        if ($stable.Version -cne $concrete.Version -or $stable.Date -cne $concrete.Date -or $stablePayloads -cne $concretePayloads) {
+            throw "Rust stable and concrete manifests disagree for $($stable.Version)."
+        }
+    } else {
+        $concrete = Get-StackRustManifestSnapshot -Channel $RequestedChannel -Target $Target
+    }
+    $manifestPath = "dist\channel-rust-$($concrete.Version).toml"
+    $sidecarPath = "$manifestPath.sha256"
+    $payloads = @(
+        [pscustomobject]@{ RelativePath = $manifestPath; Url = $concrete.ManifestURL; Sha256 = $concrete.ManifestSha256 },
+        [pscustomobject]@{ RelativePath = $sidecarPath; Url = $concrete.SidecarURL; Sha256 = $concrete.SidecarSha256 }
+    ) + @($concrete.ComponentPayloads)
+    return [pscustomobject]@{
+        Toolchain = $concrete.Version; Target = $Target; Payloads = @($payloads)
+        ManifestRelativePath = $manifestPath; ManifestBytes = [byte[]]$concrete.ManifestBytes
+        SidecarRelativePath = $sidecarPath; SidecarBytes = [byte[]]$concrete.SidecarBytes
+        Metadata = [pscustomobject][ordered]@{ schemaVersion = 1; toolchain = $concrete.Version; target = $Target; manifestSha256 = $concrete.ManifestSha256 }
+        CacheEntryName = "$($concrete.Version)-$Target-$($concrete.ManifestSha256.ToLowerInvariant())"
+    }
+}
+
 function Assert-StackRustMirrorPayloads {
     param(
         [Parameter(Mandatory = $true)]
         [string]$MirrorRoot,
         [Parameter(Mandatory = $true)]
-        [object[]]$Payloads
+        [object[]]$Payloads,
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
     )
 
+    $metadataProperties = @($Metadata.PSObject.Properties.Name | Sort-Object)
+    if (($metadataProperties -join '|') -cne 'manifestSha256|schemaVersion|target|toolchain' -or
+        [int]$Metadata.schemaVersion -ne 1 -or
+        [string]$Metadata.toolchain -notmatch '^\d+\.\d+\.\d+$' -or
+        [string]$Metadata.target -cne 'x86_64-pc-windows-msvc' -or
+        [string]$Metadata.manifestSha256 -cnotmatch '^[A-F0-9]{64}$' -or $Payloads.Count -ne 7) {
+        throw 'Rust mirror metadata is unexpected.'
+    }
     if (-not (Test-Path -LiteralPath $MirrorRoot -PathType Container)) {
         throw "Rust mirror directory is missing: $MirrorRoot"
     }
@@ -543,7 +726,16 @@ function Assert-StackRustMirrorPayloads {
     if ($files.Count -ne $Payloads.Count) {
         throw "Rust mirror contains $($files.Count) files; expected $($Payloads.Count)."
     }
+    $seenPaths = @{}
     foreach ($payload in $Payloads) {
+        $relativePath = [string]$payload.RelativePath
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or [IO.Path]::IsPathRooted($relativePath) -or
+            $relativePath.Contains('/') -or -not $relativePath.StartsWith('dist\', [StringComparison]::Ordinal) -or
+            @($relativePath -split '\\' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0 -or
+            [string]$payload.Sha256 -cnotmatch '^[A-F0-9]{64}$' -or $seenPaths.ContainsKey($relativePath)) {
+            throw "Rust mirror payload metadata is unsafe: $relativePath"
+        }
+        $seenPaths[$relativePath] = $true
         $path = Join-Path $MirrorRoot $payload.RelativePath
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Rust mirror payload is missing: $($payload.RelativePath)"
@@ -557,8 +749,18 @@ function Assert-StackRustMirrorPayloads {
             throw "Rust mirror payload hash mismatch: $($payload.RelativePath)"
         }
     }
-    $sidecar = [IO.File]::ReadAllText((Join-Path $MirrorRoot 'dist\channel-rust-1.96.1.toml.sha256')).Trim()
-    if (-not $sidecar.StartsWith('87eb76c53073e72b766083bed5530820694253b832a762d8385bda5759f03975  channel-rust-1.96.1.toml', [StringComparison]::OrdinalIgnoreCase)) {
+    $manifestName = "channel-rust-$($Metadata.toolchain).toml"
+    $manifestPath = "dist\$manifestName"
+    $sidecarPath = "$manifestPath.sha256"
+    $manifestPayload = @($Payloads | Where-Object { [string]$_.RelativePath -ceq $manifestPath })
+    $sidecarPayload = @($Payloads | Where-Object { [string]$_.RelativePath -ceq $sidecarPath })
+    if ($manifestPayload.Count -ne 1 -or $sidecarPayload.Count -ne 1 -or
+        [string]$manifestPayload[0].Sha256 -cne [string]$Metadata.manifestSha256) {
+        throw 'Rust mirror manifest payload metadata is unexpected.'
+    }
+    $sidecar = [IO.File]::ReadAllText((Join-Path $MirrorRoot $sidecarPath))
+    $expectedSidecar = ([string]$Metadata.manifestSha256).ToLowerInvariant() + "  $manifestName"
+    if ($sidecar -cne ($expectedSidecar + "`n") -and $sidecar -cne ($expectedSidecar + "`r`n")) {
         throw 'Rust channel manifest sidecar content is unexpected.'
     }
 }
@@ -568,7 +770,9 @@ function Test-StackRustMirrorCacheEntry {
         [Parameter(Mandatory = $true)]
         [string]$EntryDirectory,
         [Parameter(Mandatory = $true)]
-        [object[]]$Payloads
+        [object[]]$Payloads,
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
     )
 
     try {
@@ -596,13 +800,13 @@ function Test-StackRustMirrorCacheEntry {
         $expectedProperties = @('manifestSha256', 'schemaVersion', 'target', 'toolchain')
         $actualProperties = @($descriptor.PSObject.Properties.Name | Sort-Object)
         if (($actualProperties -join '|') -cne ($expectedProperties -join '|') -or
-            [int]$descriptor.schemaVersion -ne 1 -or
-            [string]$descriptor.toolchain -cne '1.96.1' -or
-            [string]$descriptor.target -cne 'x86_64-pc-windows-msvc' -or
-            [string]$descriptor.manifestSha256 -cne '87EB76C53073E72B766083BED5530820694253B832A762D8385BDA5759F03975') {
+            [int]$descriptor.schemaVersion -ne [int]$Metadata.schemaVersion -or
+            [string]$descriptor.toolchain -cne [string]$Metadata.toolchain -or
+            [string]$descriptor.target -cne [string]$Metadata.target -or
+            [string]$descriptor.manifestSha256 -cne [string]$Metadata.manifestSha256) {
             return $false
         }
-        Assert-StackRustMirrorPayloads -MirrorRoot (Join-Path $EntryDirectory 'mirror') -Payloads $Payloads
+        Assert-StackRustMirrorPayloads -MirrorRoot (Join-Path $EntryDirectory 'mirror') -Payloads $Payloads -Metadata $Metadata
         return $true
     } catch {
         return $false
@@ -618,7 +822,9 @@ function Publish-StackRustMirrorCacheEntry {
         [Parameter(Mandatory = $true)]
         [string]$GuestMirrorRoot,
         [Parameter(Mandatory = $true)]
-        [object[]]$Payloads
+        [object[]]$Payloads,
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
     )
 
     Assert-ProvisioningCachePath -Path $PackageRoot
@@ -637,15 +843,15 @@ function Publish-StackRustMirrorCacheEntry {
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
             Copy-Item -LiteralPath $source -Destination $destination -Force
         }
-        Assert-StackRustMirrorPayloads -MirrorRoot $stagedMirror -Payloads $Payloads
+        Assert-StackRustMirrorPayloads -MirrorRoot $stagedMirror -Payloads $Payloads -Metadata $Metadata
         $descriptor = [ordered]@{
-            schemaVersion = 1
-            toolchain = '1.96.1'
-            target = 'x86_64-pc-windows-msvc'
-            manifestSha256 = '87EB76C53073E72B766083BED5530820694253B832A762D8385BDA5759F03975'
+            schemaVersion = [int]$Metadata.schemaVersion
+            toolchain = [string]$Metadata.toolchain
+            target = [string]$Metadata.target
+            manifestSha256 = [string]$Metadata.manifestSha256
         } | ConvertTo-Json -Compress
         [IO.File]::WriteAllText((Join-Path $staging 'complete.json'), $descriptor, (New-Object Text.UTF8Encoding($false)))
-        if (-not (Test-StackRustMirrorCacheEntry -EntryDirectory $staging -Payloads $Payloads)) {
+        if (-not (Test-StackRustMirrorCacheEntry -EntryDirectory $staging -Payloads $Payloads -Metadata $Metadata)) {
             throw 'Staged Rust mirror validation failed.'
         }
         if (Test-Path -LiteralPath $EntryDirectory) {
@@ -673,7 +879,7 @@ function Publish-StackRustMirrorCacheEntry {
             }
             throw $promotionFailure
         }
-        if (-not (Test-StackRustMirrorCacheEntry -EntryDirectory $EntryDirectory -Payloads $Payloads)) {
+        if (-not (Test-StackRustMirrorCacheEntry -EntryDirectory $EntryDirectory -Payloads $Payloads -Metadata $Metadata)) {
             throw 'Published Rust mirror validation failed.'
         }
         $promotionSucceeded = $true
@@ -716,7 +922,7 @@ function Install-GoStack {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ProjectDirectory,
-        [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
         [string]$Version = ''
     )
 
@@ -757,23 +963,92 @@ function Install-NodeStack {
     Write-Output "Node.js ready: $nodeVersion"
 }
 
+function Resolve-StackPythonPackage {
+    param(
+        [AllowEmptyString()]
+        [string]$Series,
+        [AllowEmptyString()]
+        [string]$Version
+    )
+
+    $seriesPattern = '^(?<major>[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)$'
+    $versionPattern = '^(?<major>[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?:\.(?<revision>0|[1-9][0-9]*))?$'
+    if (-not [string]::IsNullOrWhiteSpace($Series) -and $Series -notmatch $seriesPattern) {
+        throw "Python series is invalid: $Series"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $versionMatch = [regex]::Match($Version, $versionPattern)
+        if (-not $versionMatch.Success) {
+            throw "Python version is invalid: $Version"
+        }
+        $derivedSeries = $versionMatch.Groups['major'].Value + '.' + $versionMatch.Groups['minor'].Value
+        if (-not [string]::IsNullOrWhiteSpace($Series) -and $Series -cne $derivedSeries) {
+            throw "Python version $Version conflicts with series $Series."
+        }
+        return [pscustomobject]@{ Series = $derivedSeries; Version = $Version }
+    }
+
+    $query = if ([string]::IsNullOrWhiteSpace($Series)) { 'Python.Python.' } else { "Python.Python.$Series" }
+    $rows = @(Search-ProvisioningWinGetPackages -Role 'Python' -IdQuery $query -Exact:(-not [string]::IsNullOrWhiteSpace($Series)))
+    $candidates = @()
+    foreach ($row in $rows) {
+        $idMatch = [regex]::Match([string]$row.Id, '^Python\.Python\.(?<major>[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)$')
+        $versionMatch = [regex]::Match([string]$row.Version, $versionPattern)
+        if (-not $idMatch.Success) {
+            $majorOnlyID = [regex]::Match([string]$row.Id, '^Python\.Python\.(?<major>[1-9][0-9]*)$')
+            if ($majorOnlyID.Success -and $versionMatch.Success -and
+                $majorOnlyID.Groups['major'].Value -ceq $versionMatch.Groups['major'].Value) {
+                continue
+            }
+            throw "Python WinGet search returned an unsupported package identity: $($row.Id) $($row.Version)"
+        }
+        if (-not $versionMatch.Success -or
+            $idMatch.Groups['major'].Value -cne $versionMatch.Groups['major'].Value -or
+            $idMatch.Groups['minor'].Value -cne $versionMatch.Groups['minor'].Value) {
+            throw "Python WinGet search returned an unsupported package identity: $($row.Id) $($row.Version)"
+        }
+        $candidateSeries = $idMatch.Groups['major'].Value + '.' + $idMatch.Groups['minor'].Value
+        if (-not [string]::IsNullOrWhiteSpace($Series) -and $candidateSeries -cne $Series) {
+            throw "Python WinGet exact search returned $($row.Id) instead of Python.Python.$Series."
+        }
+        $candidates += [pscustomobject]@{
+            Series = $candidateSeries
+            Version = [string]$row.Version
+            Major = [int64]$idMatch.Groups['major'].Value
+            Minor = [int64]$idMatch.Groups['minor'].Value
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Series) -and $candidates.Count -ne 1) {
+        throw "Python series $Series resolved $($candidates.Count) WinGet packages; expected one."
+    }
+    $selected = @($candidates | Sort-Object -Property @{ Expression = 'Major'; Descending = $true }, @{ Expression = 'Minor'; Descending = $true } | Select-Object -First 1)
+    if ($selected.Count -ne 1) {
+        throw 'Python latest stable package could not be resolved.'
+    }
+    return [pscustomobject]@{ Series = $selected[0].Series; Version = $selected[0].Version }
+}
+
 function Install-PythonStack {
     [CmdletBinding()]
     param(
-        [ValidatePattern('^\d+\.\d+$')]
-        [string]$Series = '3.13',
-        [ValidatePattern('^$|^\d+(?:\.\d+){2,3}$')]
+        [ValidatePattern('^$|^[1-9][0-9]*\.(?:0|[1-9][0-9]*)$')]
+        [string]$Series = '',
+        [ValidatePattern('^$|^[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$')]
         [string]$Version = ''
     )
 
-    Write-Output "Installing Python $Series..."
+    $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
+    $Series = [string]$pythonSelection.Series
+    $Version = [string]$pythonSelection.Version
+    Write-Output "Installing Python $Version..."
     Install-ProvisioningWinGetPackage -Role 'Python' -Id "Python.Python.$Series" -Version $Version `
         -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' -DeferCommandReadiness `
         -RequireAuthenticodeSignature
     Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' | Out-Null
-    $pythonPattern = '^Python ' + [regex]::Escape($Series) + '\.\d+$'
+    $runtimeVersion = ($Version -split '\.')[0..2] -join '\.'
+    $pythonPattern = '^Python ' + [regex]::Escape($runtimeVersion) + '$'
     $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
         -VersionArguments @('--version') -ExpectedPattern $pythonPattern
     Write-Output "Python ready: $pythonVersion"
@@ -829,18 +1104,23 @@ function Install-RustMSVCStack {
         }
         $projectToolchain = [string]$channelMatches[0].Groups[1].Value
     }
+    $exactToolchainPattern = '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$'
+    if (-not [string]::IsNullOrWhiteSpace($projectToolchain) -and $projectToolchain -notmatch $exactToolchainPattern) {
+        throw "Rust project toolchain must pin one exact x.y.z channel: $projectToolchain"
+    }
     if ([string]::IsNullOrWhiteSpace($Toolchain)) {
-        $Toolchain = $projectToolchain
+        $requestedChannel = if ([string]::IsNullOrWhiteSpace($projectToolchain)) { 'stable' } else { $projectToolchain }
     } elseif (-not [string]::IsNullOrWhiteSpace($projectToolchain) -and $Toolchain -cne $projectToolchain) {
         throw "Requested Rust toolchain $Toolchain conflicts with project toolchain $projectToolchain."
-    }
-    if ($Toolchain -cne '1.96.1') {
-        throw "Rust toolchain $Toolchain has no app-owned verified distribution mirror; supported: 1.96.1."
+    } else {
+        $requestedChannel = $Toolchain
     }
 
-    Write-Output "Installing Rust $Toolchain for MSVC..."
 $rustTriple = 'x86_64-pc-windows-msvc'
+$rustDistribution = Resolve-StackRustDistribution -RequestedChannel $requestedChannel -Target $rustTriple
+$Toolchain = [string]$rustDistribution.Toolchain
 $rustToolchain = "$Toolchain-$rustTriple"
+Write-Output "Installing Rust $Toolchain for MSVC..."
 $env:RUSTUP_HOME = 'C:\HerdrSandbox\toolchains\rustup'
 $env:CARGO_HOME = 'C:\HerdrSandbox\toolchains\cargo'
 $env:CARGO_TARGET_DIR = 'C:\HerdrSandbox\build\cargo-target'
@@ -862,17 +1142,12 @@ Install-ProvisioningWinGetPackage -Role 'Rustup' -Id 'Rustlang.Rustup' -Installe
         '--default-toolchain', 'none', '--profile', 'minimal')
 $cargoDirectory = Join-Path $env:CARGO_HOME 'bin'
 Add-ProvisioningMachinePath -Directory $cargoDirectory
-$rustPayloads = @(
-    [pscustomobject]@{ RelativePath = 'dist\channel-rust-1.96.1.toml'; Sha256 = '87EB76C53073E72B766083BED5530820694253B832A762D8385BDA5759F03975' },
-    [pscustomobject]@{ RelativePath = 'dist\channel-rust-1.96.1.toml.sha256'; Sha256 = '221E9F5B196762DC5E34B757A19F614A829B094185F3A7762836EB5D88C3C515' },
-    [pscustomobject]@{ RelativePath = 'dist\2026-06-30\cargo-1.96.1-x86_64-pc-windows-msvc.tar.xz'; Sha256 = 'E2C271F65AE10A2B40AEBE483A2E7C0C566557F6BAB8AB718BE32AC9383A5081' },
-    [pscustomobject]@{ RelativePath = 'dist\2026-06-30\clippy-1.96.1-x86_64-pc-windows-msvc.tar.xz'; Sha256 = '9422A02A2936F433400F1581BC0F9406211FB2271722BFD18C668F719D3BE943' },
-    [pscustomobject]@{ RelativePath = 'dist\2026-06-30\rust-std-1.96.1-x86_64-pc-windows-msvc.tar.xz'; Sha256 = 'F77BEF11E2C032F8AAFCDC60B4E50D21BECF06D05C027FA87D7F45BF9BD146BB' },
-    [pscustomobject]@{ RelativePath = 'dist\2026-06-30\rustc-1.96.1-x86_64-pc-windows-msvc.tar.xz'; Sha256 = 'D226A2E142B4CD796DF9DB527F4F3FF79BC9CE4118B36DCD7C82B7ECA557D0B8' },
-    [pscustomobject]@{ RelativePath = 'dist\2026-06-30\rustfmt-1.96.1-x86_64-pc-windows-msvc.tar.xz'; Sha256 = '016402149CB21DD57D0A12A0EA28958DC010B2F22095C922AB981C6C912CE33A' }
-)
+$rustupVersion = Assert-ProvisioningCommand -Role 'Rustup' -Name 'rustup.exe' `
+    -VersionArguments @('--version') -ExpectedPattern '^rustup \d+\.\d+\.\d+ '
+$rustPayloads = @($rustDistribution.Payloads)
+$rustCacheMetadata = $rustDistribution.Metadata
 $rustCacheRoot = 'C:\HerdrSandbox\cache\rust'
-$rustEntryName = '1.96.1-x86_64-pc-windows-msvc-87eb76c53073e72b'
+$rustEntryName = [string]$rustDistribution.CacheEntryName
 $rustEntryDirectory = Join-Path $rustCacheRoot $rustEntryName
 $rustGuestStage = Join-Path 'C:\HerdrSandbox\staging\rust-mirror' ([Guid]::NewGuid().ToString('N'))
 $rustGuestMirror = Join-Path $rustGuestStage 'mirror'
@@ -893,9 +1168,10 @@ try {
     if (Test-Path -LiteralPath $rustEntryDirectory) {
         Assert-ProvisioningCachePath -Path $rustEntryDirectory
     }
-    $rustCacheHit = Test-StackRustMirrorCacheEntry -EntryDirectory $rustEntryDirectory -Payloads $rustPayloads
+    $rustCacheHit = Test-StackRustMirrorCacheEntry -EntryDirectory $rustEntryDirectory `
+        -Payloads $rustPayloads -Metadata $rustCacheMetadata
     if ($rustCacheHit) {
-        Write-Output 'Rust distribution mirror cache hit: 1.96.1'
+        Write-Output "Rust distribution mirror cache hit: $Toolchain"
         $cachedMirrorRoot = Join-Path $rustEntryDirectory 'mirror'
         foreach ($payload in $rustPayloads) {
             $source = Join-Path $cachedMirrorRoot $payload.RelativePath
@@ -903,22 +1179,29 @@ try {
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
             Copy-Item -LiteralPath $source -Destination $destination -Force
         }
-        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads
+        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads `
+            -Metadata $rustCacheMetadata
         $rustMirrorRoot = $rustGuestMirror
     } else {
-        Write-Output 'Rust distribution mirror cache miss: 1.96.1'
+        Write-Output "Rust distribution mirror cache miss: $Toolchain"
         foreach ($payload in $rustPayloads) {
             $destination = Join-Path $rustGuestMirror $payload.RelativePath
             New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-            $relativeURL = $payload.RelativePath.Replace('\', '/')
-            Invoke-WebRequest -Uri "https://static.rust-lang.org/$relativeURL" -OutFile $destination `
-                -UseBasicParsing -ErrorAction Stop
+            if ([string]$payload.RelativePath -ceq [string]$rustDistribution.ManifestRelativePath) {
+                [IO.File]::WriteAllBytes($destination, [byte[]]$rustDistribution.ManifestBytes)
+            } elseif ([string]$payload.RelativePath -ceq [string]$rustDistribution.SidecarRelativePath) {
+                [IO.File]::WriteAllBytes($destination, [byte[]]$rustDistribution.SidecarBytes)
+            } else {
+                Invoke-WebRequest -Uri ([string]$payload.Url) -OutFile $destination `
+                    -UseBasicParsing -ErrorAction Stop
+            }
             $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToUpperInvariant()
             if ($actualHash -cne $payload.Sha256) {
                 throw "Downloaded Rust mirror payload hash mismatch: $($payload.RelativePath)"
             }
         }
-        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads
+        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads `
+            -Metadata $rustCacheMetadata
         $rustMirrorRoot = $rustGuestMirror
     }
 
@@ -932,14 +1215,16 @@ try {
     Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' | Out-Null
     $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^Python 3\.13\.\d+$'
+        -VersionArguments @('--version') -ExpectedPattern '^Python 3\.\d+\.\d+$'
     $pythonCommand = Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $rustServerOutput = Join-Path $rustGuestStage 'server.stdout.log'
     $rustServerError = Join-Path $rustGuestStage 'server.stderr.log'
     $rustServer = Start-Process -FilePath $pythonCommand.Source -ArgumentList @(
         '-I', '-u', '-m', 'http.server', '--bind', '127.0.0.1', '--directory', $rustMirrorRoot, [string]$rustPort
     ) -WindowStyle Hidden -RedirectStandardOutput $rustServerOutput -RedirectStandardError $rustServerError -PassThru
-    $probeURI = "$rustDistServer/dist/channel-rust-1.96.1.toml.sha256"
+    $probeURI = "$rustDistServer/$($rustDistribution.SidecarRelativePath.Replace('\', '/'))"
+    $probeUTF8 = New-Object Text.UTF8Encoding($false, $true)
+    $expectedProbeBody = $probeUTF8.GetString([byte[]]$rustDistribution.SidecarBytes)
     $probeDeadline = [DateTime]::UtcNow.AddSeconds(10)
     $serverReady = $false
     $lastProbeError = ''
@@ -951,8 +1236,7 @@ try {
         try {
             $response = Invoke-WebRequest -Uri $probeURI -UseBasicParsing -TimeoutSec 1
             $body = Get-StackWebResponseText -Response $response
-            if ($response.StatusCode -eq 200 -and $body.Length -ge 64 -and
-                $body.Substring(0, 64) -ieq '87eb76c53073e72b766083bed5530820694253b832a762d8385bda5759f03975') {
+            if ($response.StatusCode -eq 200 -and $body -ceq $expectedProbeBody) {
                 $serverReady = $true
             } else {
                 $lastProbeError = "unexpected HTTP response status=$($response.StatusCode) characters=$($body.Length)"
@@ -981,7 +1265,7 @@ try {
 
     if (-not $rustCacheHit) {
         Publish-StackRustMirrorCacheEntry -PackageRoot $rustCacheRoot -EntryDirectory $rustEntryDirectory `
-            -GuestMirrorRoot $rustGuestMirror -Payloads $rustPayloads
+            -GuestMirrorRoot $rustGuestMirror -Payloads $rustPayloads -Metadata $rustCacheMetadata
     }
     foreach ($directory in @(Get-ChildItem -LiteralPath $rustCacheRoot -Directory -Force)) {
         if ($directory.Name -ine $rustEntryName) {
@@ -1053,6 +1337,7 @@ $cargoVersion = Assert-ProvisioningCommand -Role 'Cargo' -Name 'cargo.exe' `
 
 Write-Output 'Installing Visual Studio C++ Build Tools...'
 Install-StackVisualStudioBuildTools
+Write-Output "Rustup ready: $rustupVersion"
 Write-Output "Rust ready: $rustVersion"
 Write-Output "Cargo ready: $cargoVersion"
 }
