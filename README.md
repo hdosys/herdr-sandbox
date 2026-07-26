@@ -12,7 +12,7 @@ Highlights:
 - Project-owned, repeatable Windows PowerShell 5.1 provisioning.
 - Persistent Herdr server with native terminal attach and reattach.
 - Default-on configuration sync for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi.
-- Optional [stable Tailscale tailnet identity](#stable-tailscale-tailnet-identity-experimental) across fresh Sandboxes.
+- Optional [stable Tailscale tailnet identity](#stable-tailscale-tailnet-identity-experimental), giving approved phones, tablets, and laptops a stable private route to deliberately exposed guest services across fresh Sandboxes.
 - Narrow project mappings, bounded status, verified downloads, and fail-closed lifecycle handling.
 
 > **Safety:** this is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable guest profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
@@ -201,7 +201,9 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 
 > The required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open. Use this opt-in only with a tailnet prepared for a dedicated tagged device.
 
-`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage its policy. The web admin console remains available. Installation only suppresses automatically opening the guest tray app; noninteractive DPAPI protection does not disable the Tailscale UI. Leave `"tailscale": false` if you prefer a manually managed disposable login; that identity will not be preserved.
+`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage its policy. The stable address lets an approved phone, tablet, or another computer reach services in the running Sandbox without publishing them to the internet. The web admin console remains available. Installation only suppresses automatically opening the guest tray app; noninteractive DPAPI protection does not disable the Tailscale UI. Leave `"tailscale": false` if you prefer a manually managed disposable login; that identity will not be preserved.
+
+Tailscale supplies the private network path, not a terminal UI or automatic service authorization. To control the guest from a phone, install Tailscale plus a compatible SSH/terminal client on the phone and deliberately authorize that client's public key in guest provisioning—or expose another authenticated guest service. The default OpenSSH endpoint authorizes only the app-owned host-side client identity; never copy that private key to the phone.
 
 <details>
 <summary><strong>First-time tailnet and enrollment setup</strong></summary>
@@ -262,7 +264,7 @@ try {
 }
 ```
 
-The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores the complete node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify reachability from an intended peer with `tailscale ping herdr-sandbox`.
+The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores the complete node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify the private route from the phone or another intended peer with `tailscale ping herdr-sandbox`; service login still requires the separately authorized credential described above.
 
 ### 4. Later Sandboxes
 
