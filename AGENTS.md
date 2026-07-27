@@ -36,6 +36,12 @@ Do not invent additional active memory files without explicit approval. Do not c
 
 ## Default Workflow
 
+Reusable OpenCode configuration, agent definitions, skills, and plugins are
+globally owned under `~/.config/opencode` and intentionally are not copied into
+this repository. This file remains the owner of every herdr-sandbox-specific
+workflow, PowerShell, native-evidence, and safety rule. Fix missing generic
+capabilities globally instead of recreating `.opencode/` here.
+
 `direct-builder` owns normal work from discovery through implementation, verification, durable-decision routing, commit, and push. `worker` is for bounded discovery or isolated preparation. `verifier` is for independent read-only checks, slow test suites, and native evidence. Delegated work replaces duplicate inline work.
 
 Background-agent completion notifications are not a scheduler or wake-up mechanism. Never delegate a critical-path native run, terminal gate, status-file transition, or final delivery blocker to the background and then wait for notification. Keep direct ownership with foreground execution or a bounded OS/file-event wait, inspect terminal state immediately when it changes, and continue without requiring a user prompt. Background agents are allowed only for independent, non-gating work that cannot stall the next action.
