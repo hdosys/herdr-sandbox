@@ -23,7 +23,7 @@ Commands:
   down    stop only the exact app-owned Sandbox
   clean   remove inactive app-owned run workspaces
 
-Global workspaces, optional absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache), memoryMB (default 32768), codingAgentSync choices, and wingetPackages add/remove/version choices come from %APPDATA%\herdr-sandbox\config.json.
+Explicit workspaces, optional workspaceDiscovery, absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache), memoryMB (default 32768), codingAgentSync choices, and wingetPackages add/remove/version choices come from %APPDATA%\herdr-sandbox\config.json.
 The up command has no overall timeout unless --timeout is supplied.
 The nearest .herdr-sandbox\provision.ps1, when present, becomes the active workspace.
 `

@@ -41,6 +41,30 @@ func TestCanonicalMappedDirectoryAcceptsDOSShortPath(t *testing.T) {
 	}
 }
 
+func TestResolveProvisioningDeduplicatesDOSShortWorkspacePath(t *testing.T) {
+	root := t.TempDir()
+	projects := filepath.Join(root, "Projects With Long Name")
+	project := createWorkspaceFixture(t, projects, "Workspace With Long Name")
+	shortProject, err := windowsShortPathForTest(project)
+	if err != nil || strings.EqualFold(shortProject, project) {
+		t.Skipf("no distinct DOS short path is available: %v", err)
+	}
+	defaults := filepath.Join(root, "defaults")
+	global := filepath.Join(root, "global")
+	if err := os.MkdirAll(defaults, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceDiscoveryConfig(t, global, &workspaceDiscoveryConfiguration{Root: projects, Exclude: []string{}}, map[string]string{"custom": shortProject})
+
+	plan, err := resolveProvisioningAt(filepath.Join(project, "src"), global, defaults)
+	if err != nil {
+		t.Fatalf("resolveProvisioningAt: %v", err)
+	}
+	if len(plan.Workspaces) != 1 || plan.Workspaces[0].Name != "custom" || !plan.Workspaces[0].Active {
+		t.Fatalf("DOS short-path workspaces = %#v", plan.Workspaces)
+	}
+}
+
 func windowsShortPathForTest(path string) (string, error) {
 	pointer, err := syscall.UTF16PtrFromString(path)
 	if err != nil {

@@ -13,23 +13,26 @@ import (
 )
 
 const (
-	applicationName           = "herdr-sandbox"
-	projectConfigurationName  = ".herdr-sandbox"
-	projectProvisioningName   = "provision.ps1"
-	baseProvisioningName      = "base.ps1"
-	stackProvisioningName     = "stacks.ps1"
-	userProvisioningName      = "user.ps1"
-	workspaceManifestName     = "workspaces.json"
-	globalConfigurationName   = "config.json"
-	guestWorkspacesDirectory  = `C:\Workspaces`
-	baseProvisioningContract  = "# herdr-sandbox-base-contract: 31"
-	stackProvisioningContract = "# herdr-sandbox-stacks-contract: 3"
-	userProvisioningContract  = "# herdr-sandbox-user-contract: 1"
-	workspaceManifestSchema   = 1
-	maximumBaseScriptSize     = 1024 * 1024
-	maximumStackScriptSize    = 2 * 1024 * 1024
-	maximumUserScriptSize     = 1024 * 1024
-	maximumProjectScriptSize  = 1024 * 1024
+	applicationName                    = "herdr-sandbox"
+	projectConfigurationName           = ".herdr-sandbox"
+	projectProvisioningName            = "provision.ps1"
+	baseProvisioningName               = "base.ps1"
+	stackProvisioningName              = "stacks.ps1"
+	userProvisioningName               = "user.ps1"
+	workspaceManifestName              = "workspaces.json"
+	globalConfigurationName            = "config.json"
+	guestWorkspacesDirectory           = `C:\Workspaces`
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 31"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 3"
+	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
+	workspaceManifestSchema            = 1
+	maximumBaseScriptSize              = 1024 * 1024
+	maximumStackScriptSize             = 2 * 1024 * 1024
+	maximumUserScriptSize              = 1024 * 1024
+	maximumProjectScriptSize           = 1024 * 1024
+	maximumWorkspaceDiscoveryEntries   = 4096
+	maximumWorkspaceExcludePatterns    = 64
+	maximumWorkspaceExcludePatternSize = 1024
 )
 
 var defaultUserProvisioningScript = []byte(userProvisioningContract + `
@@ -121,12 +124,18 @@ type provisioningPlan struct {
 }
 
 type globalConfiguration struct {
-	CacheDirectory  string                       `json:"cacheDirectory"`
-	MemoryMB        *int                         `json:"memoryMB,omitempty"`
-	Tailscale       bool                         `json:"tailscale"`
-	CodingAgentSync codingAgentSyncConfiguration `json:"codingAgentSync"`
-	WingetPackages  wingetPackageConfiguration   `json:"wingetPackages"`
-	Workspaces      map[string]string            `json:"workspaces"`
+	CacheDirectory     string                           `json:"cacheDirectory"`
+	MemoryMB           *int                             `json:"memoryMB,omitempty"`
+	Tailscale          bool                             `json:"tailscale"`
+	CodingAgentSync    codingAgentSyncConfiguration     `json:"codingAgentSync"`
+	WingetPackages     wingetPackageConfiguration       `json:"wingetPackages"`
+	WorkspaceDiscovery *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
+	Workspaces         map[string]string                `json:"workspaces"`
+}
+
+type workspaceDiscoveryConfiguration struct {
+	Root    string   `json:"root"`
+	Exclude []string `json:"exclude"`
 }
 
 type codingAgentSyncConfiguration struct {
@@ -294,6 +303,32 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 		}
 		workspaces = append(workspaces, workspace)
 	}
+	discovered, err := discoverWorkspacePlans(configuration.WorkspaceDiscovery)
+	if err != nil {
+		return provisioningPlan{}, err
+	}
+	for _, candidate := range discovered {
+		duplicatePath := false
+		for _, workspace := range workspaces {
+			equal, err := workspaceDirectoriesEqual(workspace.HostDirectory, candidate.HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare discovered workspace %s with workspace %s: %w", candidate.HostDirectory, workspace.HostDirectory, err)
+			}
+			if equal {
+				duplicatePath = true
+				break
+			}
+		}
+		if duplicatePath {
+			continue
+		}
+		for _, workspace := range workspaces {
+			if strings.EqualFold(workspace.Name, candidate.Name) {
+				return provisioningPlan{}, fmt.Errorf("discovered workspace name %q for %s conflicts with workspace %s", candidate.Name, candidate.HostDirectory, workspace.HostDirectory)
+			}
+		}
+		workspaces = append(workspaces, candidate)
+	}
 
 	activeRoot, activeScript, found, err := findProjectProvisioning(startDirectory)
 	if err != nil {
@@ -302,7 +337,11 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 	if found {
 		activeIndex := -1
 		for index := range workspaces {
-			if strings.EqualFold(workspaces[index].HostDirectory, activeRoot) {
+			equal, compareErr := workspaceDirectoriesEqual(workspaces[index].HostDirectory, activeRoot)
+			if compareErr != nil {
+				return provisioningPlan{}, fmt.Errorf("compare active project %s with workspace %s: %w", activeRoot, workspaces[index].HostDirectory, compareErr)
+			}
+			if equal {
 				activeIndex = index
 				break
 			}
@@ -445,6 +484,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.Workspaces = workspaces
+		case "workspaceDiscovery":
+			discovery, err := decodeWorkspaceDiscoveryConfiguration(decoder)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.WorkspaceDiscovery = &discovery
 		case "wingetPackages":
 			packages, err := decodeWingetPackageConfiguration(decoder)
 			if err != nil {
@@ -469,6 +514,117 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 		return errors.New("configuration object is not closed")
 	}
 	return nil
+}
+
+func decodeWorkspaceDiscoveryConfiguration(decoder *json.Decoder) (workspaceDiscoveryConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return workspaceDiscoveryConfiguration{}, err
+	}
+	if opening != json.Delim('{') {
+		return workspaceDiscoveryConfiguration{}, errors.New("must be a JSON object")
+	}
+	configuration := workspaceDiscoveryConfiguration{Exclude: []string{}}
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return workspaceDiscoveryConfiguration{}, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return workspaceDiscoveryConfiguration{}, errors.New("workspace-discovery field name must be a string")
+		}
+		if seen[name] {
+			return workspaceDiscoveryConfiguration{}, fmt.Errorf("duplicate field %q", name)
+		}
+		seen[name] = true
+		switch name {
+		case "root":
+			raw, err := decodeNonNullJSONValue(decoder, name)
+			if err != nil {
+				return workspaceDiscoveryConfiguration{}, err
+			}
+			if err := json.Unmarshal(raw, &configuration.Root); err != nil {
+				return workspaceDiscoveryConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+			}
+		case "exclude":
+			patterns, err := decodeWorkspaceExcludePatterns(decoder)
+			if err != nil {
+				return workspaceDiscoveryConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+			}
+			configuration.Exclude = patterns
+		default:
+			return workspaceDiscoveryConfiguration{}, fmt.Errorf("unknown field %q", name)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return workspaceDiscoveryConfiguration{}, err
+	}
+	if closing != json.Delim('}') {
+		return workspaceDiscoveryConfiguration{}, errors.New("workspace-discovery object is not closed")
+	}
+	if _, err := compileWorkspaceExcludePatterns(configuration.Exclude); err != nil {
+		return workspaceDiscoveryConfiguration{}, err
+	}
+	return configuration, nil
+}
+
+func decodeWorkspaceExcludePatterns(decoder *json.Decoder) ([]string, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if opening != json.Delim('[') {
+		return nil, errors.New("must be a JSON array")
+	}
+	patterns := []string{}
+	for decoder.More() {
+		if len(patterns) >= maximumWorkspaceExcludePatterns {
+			return nil, fmt.Errorf("pattern count exceeds limit %d", maximumWorkspaceExcludePatterns)
+		}
+		raw, err := decodeNonNullJSONValue(decoder, fmt.Sprintf("exclude[%d]", len(patterns)))
+		if err != nil {
+			return nil, err
+		}
+		var pattern string
+		if err := json.Unmarshal(raw, &pattern); err != nil {
+			return nil, fmt.Errorf("exclude[%d]: %w", len(patterns), err)
+		}
+		patterns = append(patterns, pattern)
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if closing != json.Delim(']') {
+		return nil, errors.New("exclude array is not closed")
+	}
+	return patterns, nil
+}
+
+func compileWorkspaceExcludePatterns(patterns []string) ([]*regexp.Regexp, error) {
+	if len(patterns) > maximumWorkspaceExcludePatterns {
+		return nil, fmt.Errorf("exclude pattern count %d exceeds limit %d", len(patterns), maximumWorkspaceExcludePatterns)
+	}
+	compiled := make([]*regexp.Regexp, 0, len(patterns))
+	seen := map[string]bool{}
+	for index, pattern := range patterns {
+		if len(pattern) > maximumWorkspaceExcludePatternSize {
+			return nil, fmt.Errorf("exclude[%d] exceeds length limit %d", index, maximumWorkspaceExcludePatternSize)
+		}
+		if seen[pattern] {
+			return nil, fmt.Errorf("exclude contains duplicate pattern %q", pattern)
+		}
+		seen[pattern] = true
+		expression, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("exclude[%d] is not a valid Go regular expression: %w", index, err)
+		}
+		compiled = append(compiled, expression)
+	}
+	return compiled, nil
 }
 
 func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncConfiguration, error) {
@@ -619,6 +775,114 @@ func validateConfiguredCacheDirectory(directory string) (string, error) {
 	return directory, nil
 }
 
+func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]workspacePlan, error) {
+	if configuration == nil {
+		return nil, nil
+	}
+	patterns, err := compileWorkspaceExcludePatterns(configuration.Exclude)
+	if err != nil {
+		return nil, fmt.Errorf("workspaceDiscovery: %w", err)
+	}
+	root := strings.TrimSpace(configuration.Root)
+	if root == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(root) {
+		return nil, fmt.Errorf("workspaceDiscovery.root is not absolute: %q", configuration.Root)
+	}
+	root, err = canonicalMappedDirectory(root)
+	if err != nil {
+		return nil, fmt.Errorf("workspaceDiscovery.root: %w", err)
+	}
+	rootIdentity, err := physicalMappedDirectory(root)
+	if err != nil {
+		return nil, fmt.Errorf("workspaceDiscovery.root: %w", err)
+	}
+	for _, protected := range []string{os.Getenv("USERPROFILE"), os.Getenv("APPDATA"), os.Getenv("LOCALAPPDATA")} {
+		protected = strings.TrimSpace(protected)
+		if protected == "" || !filepath.IsAbs(protected) {
+			continue
+		}
+		protectedIdentity, err := physicalMappedDirectory(filepath.Clean(protected))
+		if err != nil {
+			return nil, fmt.Errorf("workspaceDiscovery.root: resolve protected directory %s: %w", protected, err)
+		}
+		if hostPathContains(rootIdentity, protectedIdentity) {
+			return nil, fmt.Errorf("workspaceDiscovery.root must not contain a user profile or AppData root: %s", root)
+		}
+	}
+
+	directory, err := os.Open(root)
+	if err != nil {
+		return nil, fmt.Errorf("open workspaceDiscovery.root: %w", err)
+	}
+	entries, readErr := directory.ReadDir(maximumWorkspaceDiscoveryEntries + 1)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, fmt.Errorf("read workspaceDiscovery.root: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close workspaceDiscovery.root: %w", closeErr)
+	}
+	if len(entries) > maximumWorkspaceDiscoveryEntries {
+		return nil, fmt.Errorf("workspaceDiscovery.root contains more than %d direct entries", maximumWorkspaceDiscoveryEntries)
+	}
+	sort.Slice(entries, func(left, right int) bool {
+		leftName := strings.ToLower(entries[left].Name())
+		rightName := strings.ToLower(entries[right].Name())
+		if leftName == rightName {
+			return entries[left].Name() < entries[right].Name()
+		}
+		return leftName < rightName
+	})
+
+	workspaces := []workspacePlan{}
+	for _, entry := range entries {
+		name := entry.Name()
+		excluded := false
+		for _, pattern := range patterns {
+			if pattern.MatchString(name) {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+		}
+		directoryEntry, err := fileInfoIsDirectory(info)
+		if err != nil {
+			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+		}
+		if !directoryEntry {
+			continue
+		}
+		reparse, err := fileInfoIsReparsePoint(info)
+		if err != nil {
+			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+		}
+		if reparse {
+			return nil, fmt.Errorf("workspaceDiscovery child must not be a reparse point: %s", filepath.Join(root, name))
+		}
+		child, err := canonicalMappedDirectory(filepath.Join(root, name))
+		if err != nil {
+			return nil, fmt.Errorf("workspaceDiscovery child %q: %w", name, err)
+		}
+		workspace, err := newWorkspacePlan(deriveWorkspaceName(child), child)
+		if err != nil {
+			return nil, fmt.Errorf("workspaceDiscovery child %q: %w", name, err)
+		}
+		workspaces = append(workspaces, workspace)
+		if len(workspaces) > 16 {
+			return nil, fmt.Errorf("workspaceDiscovery selects more than 16 direct child directories")
+		}
+	}
+	return workspaces, nil
+}
+
 func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 	if !workspaceNamePattern.MatchString(name) {
 		return workspacePlan{}, errors.New("name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -760,7 +1024,7 @@ func ensureGlobalWorkspaceConfig(globalRoot string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect global workspace config: %w", err)
 	}
-	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaces\": {}\n}\n")
+	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
 	if err := writeFileAtomically(path, contents, 0o600); err != nil {
 		return fmt.Errorf("seed global workspace config %s: %w", path, err)
 	}
@@ -785,6 +1049,18 @@ func guestWorkspaceDirectory(name string) string {
 
 func hostPathsOverlap(left, right string) bool {
 	return hostPathContains(left, right) || hostPathContains(right, left)
+}
+
+func workspaceDirectoriesEqual(left, right string) (bool, error) {
+	leftIdentity, err := physicalMappedDirectory(left)
+	if err != nil {
+		return false, err
+	}
+	rightIdentity, err := physicalMappedDirectory(right)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(leftIdentity, rightIdentity), nil
 }
 
 func hostPathContains(directory, path string) bool {

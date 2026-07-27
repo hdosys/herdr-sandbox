@@ -151,6 +151,25 @@ func TestPhysicalMappedDirectoryDetectsSubstAlias(t *testing.T) {
 	if !hostPathsOverlap(targetIdentity, aliasIdentity) {
 		t.Fatalf("SUBST identities do not overlap: target %q, alias %q", targetIdentity, aliasIdentity)
 	}
+	project := createWorkspaceFixture(t, target, "project")
+	stateRoot := t.TempDir()
+	defaults := filepath.Join(stateRoot, "defaults")
+	global := filepath.Join(stateRoot, "global")
+	if err := os.MkdirAll(defaults, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceDiscoveryConfig(t, global, &workspaceDiscoveryConfiguration{Root: target, Exclude: []string{}}, map[string]string{"custom": filepath.Join(drive+`\`, "project")})
+	plan, err := resolveProvisioningAt(filepath.Join(project, "src"), global, defaults)
+	if err != nil {
+		t.Fatalf("resolve SUBST workspace plan: %v", err)
+	}
+	if len(plan.Workspaces) != 1 || plan.Workspaces[0].Name != "custom" || !plan.Workspaces[0].Active {
+		t.Fatalf("SUBST workspace plan = %#v", plan.Workspaces)
+	}
+	t.Setenv("USERPROFILE", target)
+	if _, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: drive + `\`, Exclude: []string{}}); err == nil || !strings.Contains(err.Error(), "must not contain a user profile") {
+		t.Fatalf("SUBST-protected discovery root error = %v", err)
+	}
 }
 
 func TestRenderConfigRejectsUnsafeLayout(t *testing.T) {

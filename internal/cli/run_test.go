@@ -15,7 +15,7 @@ func TestRunPrintsHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "herdr-sandbox up") || !strings.Contains(stdout.String(), "herdr-sandbox status") || !strings.Contains(stdout.String(), "herdr-sandbox down") || !strings.Contains(stdout.String(), "herdr-sandbox clean") || !strings.Contains(stdout.String(), "cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)") || !strings.Contains(stdout.String(), "memoryMB (default 32768)") || !strings.Contains(stdout.String(), "no overall timeout unless --timeout is supplied") || !strings.Contains(stdout.String(), "wingetPackages") || strings.Contains(stdout.String(), "--timeout 20m") {
+	if !strings.Contains(stdout.String(), "herdr-sandbox up") || !strings.Contains(stdout.String(), "herdr-sandbox status") || !strings.Contains(stdout.String(), "herdr-sandbox down") || !strings.Contains(stdout.String(), "herdr-sandbox clean") || !strings.Contains(stdout.String(), "cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)") || !strings.Contains(stdout.String(), "memoryMB (default 32768)") || !strings.Contains(stdout.String(), "no overall timeout unless --timeout is supplied") || !strings.Contains(stdout.String(), "workspaceDiscovery") || !strings.Contains(stdout.String(), "wingetPackages") || strings.Contains(stdout.String(), "--timeout 20m") {
 		t.Fatalf("help = %q", stdout.String())
 	}
 }

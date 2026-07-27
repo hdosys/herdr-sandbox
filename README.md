@@ -153,8 +153,15 @@ Example `config.json`:
     "add": [],
     "versions": {}
   },
+  "workspaceDiscovery": {
+    "root": "D:\\Projects",
+    "exclude": [
+      "^(archive|scratch)$",
+      "(?i)^temp-"
+    ]
+  },
   "workspaces": {
-    "herdr": "D:\\Projects\\herdr"
+    "external": "E:\\Clients\\external"
   }
 }
 ```
@@ -165,6 +172,7 @@ Example `config.json`:
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
+| `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
 | `workspaces` | Additional unique workspace names mapped to absolute host project roots. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
@@ -186,7 +194,7 @@ Example `config.json`:
 
 OpenCode (`SST.opencode`) is already a Base default and must not be added again. Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
 
-The active project is added automatically and deduplicated against global workspaces. Workspace paths must exist, must not overlap, and must not contain reparse aliases.
+`workspaceDiscovery` tests each Go/RE2 expression against the original direct-child directory name; matching is case-sensitive unless the expression uses `(?i)`, and any match excludes the directory. Discovery does not recurse or map the root itself. Every remaining child must contain `.herdr-sandbox\provision.ps1`; its workspace name is derived from the folder name. Use `workspaces` for projects outside the root or to give a discovered path an explicit name. The explicit entry wins when both select the same path. The active project is added automatically and deduplicated against the combined selection. The final maximum is 16 workspaces; paths must exist, must not overlap, and must not contain reparse aliases. Changing the discovered child set requires `down` before an existing guest can be replaced with the new mappings.
 
 `base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable run snapshot remains with diagnostics until `clean`.
 

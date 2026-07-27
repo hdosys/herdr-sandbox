@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1424,6 +1425,187 @@ func TestResolveProvisioningCombinesGlobalAndActiveWorkspaces(t *testing.T) {
 	}
 }
 
+func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
+	root := t.TempDir()
+	defaults := filepath.Join(root, "defaults")
+	global := filepath.Join(root, "global")
+	projects := filepath.Join(root, "projects")
+	for _, directory := range []string{defaults, projects} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	explicit := createWorkspaceFixture(t, projects, "Alpha Project")
+	external := createWorkspaceFixture(t, root, "external")
+	active := createWorkspaceFixture(t, projects, "zeta")
+	_ = createWorkspaceFixture(t, active, "nested")
+	for _, excluded := range []string{"archive", "Scratch-Temp"} {
+		if err := os.MkdirAll(filepath.Join(projects, excluded), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(projects, "notes.txt"), "not a workspace")
+	writeWorkspaceDiscoveryConfig(t, global, &workspaceDiscoveryConfiguration{
+		Root:    projects,
+		Exclude: []string{`^archive$`, `(?i)^scratch`},
+	}, map[string]string{"Alpha-Project": external, "custom-alpha": explicit})
+
+	plan, err := resolveProvisioningAt(filepath.Join(active, "src"), global, defaults)
+	if err != nil {
+		t.Fatalf("resolveProvisioningAt: %v", err)
+	}
+	if len(plan.Workspaces) != 3 || !plan.Workspaces[0].Active || plan.Workspaces[0].Name != "zeta" ||
+		plan.Workspaces[0].HostDirectory != active || plan.Workspaces[1].Name != "Alpha-Project" ||
+		plan.Workspaces[1].HostDirectory != external || plan.Workspaces[2].Name != "custom-alpha" ||
+		plan.Workspaces[2].HostDirectory != explicit {
+		t.Fatalf("discovered workspaces = %#v", plan.Workspaces)
+	}
+	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB)
+	if err != nil {
+		t.Fatalf("render discovered workspace mappings: %v", err)
+	}
+	var sandboxConfig wsbConfiguration
+	if err := xml.Unmarshal(encoded, &sandboxConfig); err != nil {
+		t.Fatalf("decode discovered workspace mappings: %v", err)
+	}
+	if len(sandboxConfig.MappedFolders.Folders) != len(plan.Workspaces)+3 {
+		t.Fatalf("mapped folders = %#v", sandboxConfig.MappedFolders.Folders)
+	}
+	for index, workspace := range plan.Workspaces {
+		mapping := sandboxConfig.MappedFolders.Folders[index+1]
+		if mapping.HostFolder != workspace.HostDirectory || mapping.SandboxFolder != workspace.GuestDirectory || mapping.ReadOnly {
+			t.Fatalf("workspace %q mapping = %#v", workspace.Name, mapping)
+		}
+	}
+}
+
+func TestDiscoverWorkspacePlansRejectsInvalidRootsChildrenAndCollisions(t *testing.T) {
+	t.Run("relative root", func(t *testing.T) {
+		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: "projects", Exclude: []string{}})
+		if err == nil || !strings.Contains(err.Error(), "not absolute") {
+			t.Fatalf("relative root error = %v", err)
+		}
+	})
+
+	t.Run("user profile root", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("USERPROFILE", root)
+		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err == nil || !strings.Contains(err.Error(), "must not contain a user profile") {
+			t.Fatalf("user profile root error = %v", err)
+		}
+	})
+
+	t.Run("unprofiled child", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "not-a-project"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err == nil || !strings.Contains(err.Error(), "not-a-project") || !strings.Contains(err.Error(), "provisioning script") {
+			t.Fatalf("unprofiled child error = %v", err)
+		}
+	})
+
+	t.Run("derived name collision", func(t *testing.T) {
+		root := t.TempDir()
+		projects := filepath.Join(root, "projects")
+		defaults := filepath.Join(root, "defaults")
+		global := filepath.Join(root, "global")
+		if err := os.MkdirAll(defaults, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_ = createWorkspaceFixture(t, projects, "alpha space")
+		_ = createWorkspaceFixture(t, projects, "alpha@space")
+		writeWorkspaceDiscoveryConfig(t, global, &workspaceDiscoveryConfiguration{Root: projects, Exclude: []string{}}, nil)
+		_, err := resolveProvisioningAt(root, global, defaults)
+		if err == nil || !strings.Contains(err.Error(), "discovered workspace name") {
+			t.Fatalf("derived name collision error = %v", err)
+		}
+	})
+
+	t.Run("workspace limit", func(t *testing.T) {
+		root := t.TempDir()
+		for index := 0; index < 17; index++ {
+			_ = createWorkspaceFixture(t, root, fmt.Sprintf("project-%02d", index))
+		}
+		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err == nil || !strings.Contains(err.Error(), "more than 16") {
+			t.Fatalf("workspace limit error = %v", err)
+		}
+	})
+
+	t.Run("reparse child", func(t *testing.T) {
+		root := t.TempDir()
+		targetRoot := t.TempDir()
+		target := createWorkspaceFixture(t, targetRoot, "target")
+		createTestDirectoryLink(t, filepath.Join(root, "linked"), target)
+		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if runtime.GOOS != "windows" {
+			if err != nil {
+				t.Fatalf("non-Windows directory symlink should be ignored without following it: %v", err)
+			}
+			return
+		}
+		if err == nil || !strings.Contains(err.Error(), "reparse point") {
+			t.Fatalf("reparse child error = %v", err)
+		}
+	})
+
+	t.Run("reparse file ignored", func(t *testing.T) {
+		root := t.TempDir()
+		project := createWorkspaceFixture(t, root, "project")
+		target := filepath.Join(t.TempDir(), "target.txt")
+		writeTestFile(t, target, "target")
+		if err := os.Symlink(target, filepath.Join(root, "linked.txt")); err != nil {
+			t.Skipf("file symlink unavailable: %v", err)
+		}
+		workspaces, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err != nil {
+			t.Fatalf("discoverWorkspacePlans: %v", err)
+		}
+		if len(workspaces) != 1 || workspaces[0].HostDirectory != project {
+			t.Fatalf("workspaces with reparse file = %#v", workspaces)
+		}
+	})
+}
+
+func TestLoadGlobalConfigurationRejectsInvalidWorkspaceDiscovery(t *testing.T) {
+	tooMany := make([]string, maximumWorkspaceExcludePatterns+1)
+	for index := range tooMany {
+		tooMany[index] = fmt.Sprintf("^project-%d$", index)
+	}
+	tooManyJSON, err := json.Marshal(map[string]any{"workspaceDiscovery": map[string]any{"root": "", "exclude": tooMany}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]string{
+		"null object":       `{"workspaceDiscovery":null}`,
+		"nonobject":         `{"workspaceDiscovery":[]}`,
+		"unknown field":     `{"workspaceDiscovery":{"path":"C:\\Projects"}}`,
+		"duplicate root":    `{"workspaceDiscovery":{"root":"","root":"C:\\Projects"}}`,
+		"null root":         `{"workspaceDiscovery":{"root":null}}`,
+		"nonstring root":    `{"workspaceDiscovery":{"root":42}}`,
+		"null exclude":      `{"workspaceDiscovery":{"exclude":null}}`,
+		"nonarray exclude":  `{"workspaceDiscovery":{"exclude":{}}}`,
+		"null pattern":      `{"workspaceDiscovery":{"exclude":[null]}}`,
+		"nonstring pattern": `{"workspaceDiscovery":{"exclude":[1]}}`,
+		"invalid pattern":   `{"workspaceDiscovery":{"exclude":["["]}}`,
+		"duplicate pattern": `{"workspaceDiscovery":{"exclude":["^a$","^a$"]}}`,
+		"long pattern":      `{"workspaceDiscovery":{"exclude":["` + strings.Repeat("a", maximumWorkspaceExcludePatternSize+1) + `"]}}`,
+		"too many patterns": string(tooManyJSON),
+	}
+	for name, contents := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), globalConfigurationName)
+			writeTestFile(t, path, contents)
+			if _, err := loadGlobalConfiguration(path); err == nil {
+				t.Fatalf("invalid workspaceDiscovery unexpectedly succeeded: %s", contents)
+			}
+		})
+	}
+}
+
 func TestResolveProvisioningUsesConfiguredMemory(t *testing.T) {
 	root := t.TempDir()
 	defaults := filepath.Join(root, "defaults")
@@ -1513,7 +1695,7 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale ||
+	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale || config.WorkspaceDiscovery != nil ||
 		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 0 ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
@@ -1634,6 +1816,24 @@ func createWorkspaceFixture(t *testing.T, root, name string) string {
 	return directory
 }
 
+func writeWorkspaceDiscoveryConfig(t *testing.T, global string, discovery *workspaceDiscoveryConfiguration, workspaces map[string]string) {
+	t.Helper()
+	if err := os.MkdirAll(global, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if workspaces == nil {
+		workspaces = map[string]string{}
+	}
+	contents, err := json.Marshal(struct {
+		WorkspaceDiscovery *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
+		Workspaces         map[string]string                `json:"workspaces"`
+	}{WorkspaceDiscovery: discovery, Workspaces: workspaces})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(global, globalConfigurationName), string(contents))
+}
+
 func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	root := t.TempDir()
 	global := filepath.Join(root, "global")
@@ -1649,7 +1849,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
-		config.Workspaces == nil {
+		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
 	}
 	user := filepath.Join(global, userProvisioningName)

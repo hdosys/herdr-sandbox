@@ -21,6 +21,14 @@ func fileInfoIsReparsePoint(info os.FileInfo) (bool, error) {
 	return attributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0, nil
 }
 
+func fileInfoIsDirectory(info os.FileInfo) (bool, error) {
+	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	if !ok {
+		return false, fmt.Errorf("unexpected Windows file information type %T", info.Sys())
+	}
+	return attributes.FileAttributes&syscall.FILE_ATTRIBUTE_DIRECTORY != 0, nil
+}
+
 func mappedDirectoryPhysicalIdentity(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
