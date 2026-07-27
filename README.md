@@ -336,4 +336,4 @@ go run ./cmd/task check
 - Stable user-visible behavior: [`PRODUCT.md`](PRODUCT.md)
 - Technical boundaries: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Open work: [`BACKLOG.md`](BACKLOG.md)
-- Agent/repository rules: [`AGENTS.md`](AGENTS.md)
+- Project-specific agent/repository rules: [`AGENTS.md`](AGENTS.md)
