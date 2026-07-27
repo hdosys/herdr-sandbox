@@ -1455,10 +1455,14 @@ func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 		t.Fatalf("resolveProvisioningAt: %v", err)
 	}
 	if len(plan.Workspaces) != 3 || !plan.Workspaces[0].Active || plan.Workspaces[0].Name != "zeta" ||
-		plan.Workspaces[0].HostDirectory != active || plan.Workspaces[1].Name != "Alpha-Project" ||
-		plan.Workspaces[1].HostDirectory != external || plan.Workspaces[2].Name != "custom-alpha" ||
-		plan.Workspaces[2].HostDirectory != explicit {
+		plan.Workspaces[1].Name != "Alpha-Project" || plan.Workspaces[2].Name != "custom-alpha" {
 		t.Fatalf("discovered workspaces = %#v", plan.Workspaces)
+	}
+	for index, expected := range []string{active, external, explicit} {
+		equal, err := workspaceDirectoriesEqual(plan.Workspaces[index].HostDirectory, expected)
+		if err != nil || !equal {
+			t.Fatalf("workspace %q path = %q, want physical path %q: %v", plan.Workspaces[index].Name, plan.Workspaces[index].HostDirectory, expected, err)
+		}
 	}
 	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB)
 	if err != nil {
@@ -1564,8 +1568,12 @@ func TestDiscoverWorkspacePlansRejectsInvalidRootsChildrenAndCollisions(t *testi
 		if err != nil {
 			t.Fatalf("discoverWorkspacePlans: %v", err)
 		}
-		if len(workspaces) != 1 || workspaces[0].HostDirectory != project {
+		if len(workspaces) != 1 {
 			t.Fatalf("workspaces with reparse file = %#v", workspaces)
+		}
+		equal, err := workspaceDirectoriesEqual(workspaces[0].HostDirectory, project)
+		if err != nil || !equal {
+			t.Fatalf("workspace with reparse file path = %q, want physical path %q: %v", workspaces[0].HostDirectory, project, err)
 		}
 	})
 }
