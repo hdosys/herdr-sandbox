@@ -134,7 +134,7 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 			return runPlan{}, fmt.Errorf("workspace %q: %w", workspaces[index].Name, err)
 		}
 	}
-	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB)
+	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB, provisioning.Audio)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -143,7 +143,7 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 		return runPlan{}, err
 	}
 	if !bytes.Equal(actualConfig, expectedConfig) {
-		return runPlan{}, errors.New("current memory, cache, or workspace mappings differ from the ready Sandbox; run `herdr-sandbox down` before `up` to launch the changed plan")
+		return runPlan{}, errors.New("current audio, memory, cache, or workspace mappings differ from the ready Sandbox; run `herdr-sandbox down` before `up` to launch the changed plan")
 	}
 	return runPlan{
 		ID:                active.RunID,

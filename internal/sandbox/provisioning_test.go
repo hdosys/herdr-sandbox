@@ -276,6 +276,67 @@ func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsE
 	}
 }
 
+func TestDefaultBaseDisablesPlaybackUnlessAudioIsEnabled(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"[switch]$AudioEnabled",
+		"function Initialize-ProvisioningAudioEndpointType",
+		"interface IMMDeviceEnumerator",
+		"interface IAudioEndpointVolume",
+		"SilenceDefaultRenderEndpoint",
+		"SetMasterVolumeLevelScalar(0.0f, IntPtr.Zero)",
+		"SetMute(true, IntPtr.Zero)",
+		"function Disable-ProvisioningAudioPlayback",
+		"AppEvents\\Schemes",
+		"-Name '' -Value '.None' -PropertyType 'String'",
+		"$serviceNames = @('Audiosrv', 'AudioEndpointBuilder')",
+		"Set-Service -Name $serviceName -StartupType Disabled",
+		"$controller.WaitForStatus(",
+		"[System.ServiceProcess.ServiceControllerStatus]::Stopped",
+		"Get-CimInstance -ClassName Win32_Service",
+		"Audio disable policy failed",
+		"if (-not $AudioEnabled)",
+		"Disable-ProvisioningAudioPlayback",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing audio policy contract %q", required)
+		}
+	}
+	if strings.LastIndex(text, "Disable-ProvisioningAudioPlayback") > strings.Index(text, "Restart-ProvisioningExplorerShell -Role 'registry changes'") {
+		t.Fatal("default-silent audio policy must complete in the early Registry phase")
+	}
+}
+
+func TestAudioEndpointInteropCompilesInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 audio interop regression")
+	}
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+trap { Write-Output ($_ | Out-String); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Initialize-ProvisioningAudioEndpointType' }, $true)
+if ($null -eq $definition) { throw 'Missing audio endpoint interop initializer.' }
+Invoke-Expression $definition.Extent.Text
+Initialize-ProvisioningAudioEndpointType
+if ($null -eq ('HerdrSandbox.AudioPolicy' -as [type])) {
+    throw 'Audio endpoint interop types were not compiled.'
+}
+`, quote(basePath))
+	scriptPath := filepath.Join(t.TempDir(), "audio-interop-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("audio endpoint interop regression: %v: %s", err, output)
+	}
+}
+
 func TestDefaultBasePrivacySetMatchesSelectedTypedProfile(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	normalized := strings.Join(strings.Fields(text), " ")
@@ -1464,7 +1525,7 @@ func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 			t.Fatalf("workspace %q path = %q, want physical path %q: %v", plan.Workspaces[index].Name, plan.Workspaces[index].HostDirectory, expected, err)
 		}
 	}
-	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB)
+	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB, plan.Audio)
 	if err != nil {
 		t.Fatalf("render discovered workspace mappings: %v", err)
 	}
@@ -1614,7 +1675,7 @@ func TestLoadGlobalConfigurationRejectsInvalidWorkspaceDiscovery(t *testing.T) {
 	}
 }
 
-func TestResolveProvisioningUsesConfiguredMemory(t *testing.T) {
+func TestResolveProvisioningUsesConfiguredMemoryAndAudio(t *testing.T) {
 	root := t.TempDir()
 	defaults := filepath.Join(root, "defaults")
 	global := filepath.Join(root, "global")
@@ -1627,7 +1688,7 @@ func TestResolveProvisioningUsesConfiguredMemory(t *testing.T) {
 	if err := os.MkdirAll(global, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(global, globalConfigurationName), []byte(`{"memoryMB":16384,"workspaces":{}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(global, globalConfigurationName), []byte(`{"memoryMB":16384,"audio":true,"workspaces":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1635,8 +1696,8 @@ func TestResolveProvisioningUsesConfiguredMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveProvisioningAt: %v", err)
 	}
-	if plan.MemoryMB != 16384 {
-		t.Fatalf("memory = %d, want 16384", plan.MemoryMB)
+	if plan.MemoryMB != 16384 || !plan.Audio {
+		t.Fatalf("resolved runtime config = memory %d, audio %t", plan.MemoryMB, plan.Audio)
 	}
 }
 
@@ -1669,6 +1730,9 @@ func TestResolveProvisioningRejectsInvalidConfiguredMemory(t *testing.T) {
 func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 	tests := map[string]string{
 		"null cache":               `{"cacheDirectory":null,"workspaces":{}}`,
+		"null audio":               `{"audio":null,"workspaces":{}}`,
+		"nonboolean audio":         `{"audio":"true","workspaces":{}}`,
+		"duplicate audio":          `{"audio":true,"audio":false,"workspaces":{}}`,
 		"null tailscale":           `{"tailscale":null,"workspaces":{}}`,
 		"nonboolean tailscale":     `{"tailscale":"true","workspaces":{}}`,
 		"duplicate tailscale":      `{"tailscale":true,"tailscale":false,"workspaces":{}}`,
@@ -1703,10 +1767,24 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale || config.WorkspaceDiscovery != nil ||
+	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Audio || config.Tailscale || config.WorkspaceDiscovery != nil ||
 		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 0 ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
+	}
+}
+
+func TestLoadGlobalConfigurationEnablesAudioOnlyForExactBoolean(t *testing.T) {
+	path := filepath.Join(t.TempDir(), globalConfigurationName)
+	if err := os.WriteFile(path, []byte(`{"audio":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadGlobalConfiguration(path)
+	if err != nil {
+		t.Fatalf("loadGlobalConfiguration: %v", err)
+	}
+	if !config.Audio {
+		t.Fatal("audio playback was not enabled")
 	}
 }
 
@@ -1855,10 +1933,17 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load seeded config: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Tailscale ||
+	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.Audio || config.Tailscale ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
 		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
+	}
+	seededContents, err := os.ReadFile(filepath.Join(global, globalConfigurationName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(seededContents, []byte(`"audio": false`)) {
+		t.Fatalf("seeded config does not expose the default-silent audio setting: %s", seededContents)
 	}
 	user := filepath.Join(global, userProvisioningName)
 	custom := []byte(userProvisioningContract + "\nWrite-Output 'custom'\n")

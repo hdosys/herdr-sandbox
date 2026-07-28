@@ -22,7 +22,7 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = "config.json"
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 31"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 32"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 3"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema            = 1
@@ -115,6 +115,7 @@ type provisioningPlan struct {
 	UserScript           string
 	CacheDirectory       string
 	MemoryMB             int
+	Audio                bool
 	Tailscale            bool
 	CodingAgentSync      codingAgentSyncConfiguration
 	PackageConfiguration wingetPackageConfiguration
@@ -126,6 +127,7 @@ type provisioningPlan struct {
 type globalConfiguration struct {
 	CacheDirectory     string                           `json:"cacheDirectory"`
 	MemoryMB           *int                             `json:"memoryMB,omitempty"`
+	Audio              bool                             `json:"audio"`
 	Tailscale          bool                             `json:"tailscale"`
 	CodingAgentSync    codingAgentSyncConfiguration     `json:"codingAgentSync"`
 	WingetPackages     wingetPackageConfiguration       `json:"wingetPackages"`
@@ -396,6 +398,7 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 		UserScript:           filepath.Join(globalRoot, userProvisioningName),
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             memoryMB,
+		Audio:                configuration.Audio,
 		Tailscale:            configuration.Tailscale,
 		CodingAgentSync:      configuration.CodingAgentSync,
 		PackageConfiguration: configuration.WingetPackages,
@@ -470,6 +473,14 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.MemoryMB = &memoryMB
+		case "audio":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.Audio); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
 		case "tailscale":
 			raw, err := decodeNonNullJSONValue(decoder, key)
 			if err != nil {
@@ -1024,7 +1035,7 @@ func ensureGlobalWorkspaceConfig(globalRoot string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect global workspace config: %w", err)
 	}
-	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
+	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
 	if err := writeFileAtomically(path, contents, 0o600); err != nil {
 		return fmt.Errorf("seed global workspace config %s: %w", path, err)
 	}

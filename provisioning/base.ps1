@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 31
+# herdr-sandbox-base-contract: 32
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PackagePlanPath,
     [Parameter(Mandatory = $true)]
-    [string]$UserProvisioningPath
+    [string]$UserProvisioningPath,
+    [switch]$AudioEnabled
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1826,9 +1827,234 @@ function Ensure-ProvisioningWindowsTerminalTaskbarPin {
     Write-Host "Windows Terminal $Edition taskbar pin applied: $terminalAUMID"
 }
 
+function Initialize-ProvisioningAudioEndpointType {
+    if ($null -ne ('HerdrSandbox.AudioPolicy' -as [type])) { return }
+
+    $source = @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace HerdrSandbox
+{
+    [ComImport]
+    [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+    internal class MMDeviceEnumeratorComObject
+    {
+    }
+
+    [ComImport]
+    [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMMDeviceEnumerator
+    {
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, uint stateMask, out IntPtr devices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+        [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
+        [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr client);
+        [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr client);
+    }
+
+    [ComImport]
+    [Guid("D666063F-1587-4E43-81F1-B948E807363F")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMMDevice
+    {
+        [PreserveSig] int Activate(ref Guid interfaceId, uint classContext, IntPtr activationParameters,
+            [MarshalAs(UnmanagedType.IUnknown)] out object instance);
+        [PreserveSig] int OpenPropertyStore(uint storageAccess, out IntPtr properties);
+        [PreserveSig] int GetId(out IntPtr id);
+        [PreserveSig] int GetState(out uint state);
+    }
+
+    [ComImport]
+    [Guid("5CDF2C82-841E-4546-9722-0CF74078229A")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioEndpointVolume
+    {
+        [PreserveSig] int RegisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int UnregisterControlChangeNotify(IntPtr notify);
+        [PreserveSig] int GetChannelCount(out uint channelCount);
+        [PreserveSig] int SetMasterVolumeLevel(float levelDB, IntPtr eventContext);
+        [PreserveSig] int SetMasterVolumeLevelScalar(float level, IntPtr eventContext);
+        [PreserveSig] int GetMasterVolumeLevel(out float levelDB);
+        [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int SetChannelVolumeLevel(uint channel, float levelDB, IntPtr eventContext);
+        [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, IntPtr eventContext);
+        [PreserveSig] int GetChannelVolumeLevel(uint channel, out float levelDB);
+        [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool muted, IntPtr eventContext);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool muted);
+        [PreserveSig] int GetVolumeStepInfo(out uint step, out uint stepCount);
+        [PreserveSig] int VolumeStepUp(IntPtr eventContext);
+        [PreserveSig] int VolumeStepDown(IntPtr eventContext);
+        [PreserveSig] int QueryHardwareSupport(out uint hardwareSupportMask);
+        [PreserveSig] int GetVolumeRange(out float minimumDB, out float maximumDB, out float incrementDB);
+    }
+
+    public static class AudioPolicy
+    {
+        private const int ENotFound = unchecked((int)0x80070490);
+        private const uint ClassContextAll = 0x17;
+
+        public static bool SilenceDefaultRenderEndpoint()
+        {
+            IMMDeviceEnumerator enumerator = null;
+            IMMDevice device = null;
+            IAudioEndpointVolume endpointVolume = null;
+            try
+            {
+                enumerator = (IMMDeviceEnumerator)(object)new MMDeviceEnumeratorComObject();
+                int result = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+                if (result == ENotFound)
+                {
+                    return false;
+                }
+                Marshal.ThrowExceptionForHR(result);
+                if (device == null)
+                {
+                    throw new InvalidOperationException("Default render endpoint resolved to null.");
+                }
+
+                Guid endpointVolumeId = new Guid("5CDF2C82-841E-4546-9722-0CF74078229A");
+                object instance;
+                result = device.Activate(ref endpointVolumeId, ClassContextAll, IntPtr.Zero, out instance);
+                Marshal.ThrowExceptionForHR(result);
+                endpointVolume = instance as IAudioEndpointVolume;
+                if (endpointVolume == null)
+                {
+                    throw new InvalidOperationException("Default render endpoint volume interface is unavailable.");
+                }
+
+                Marshal.ThrowExceptionForHR(endpointVolume.SetMute(true, IntPtr.Zero));
+                Marshal.ThrowExceptionForHR(endpointVolume.SetMasterVolumeLevelScalar(0.0f, IntPtr.Zero));
+                bool muted;
+                float scalarVolume;
+                Marshal.ThrowExceptionForHR(endpointVolume.GetMute(out muted));
+                Marshal.ThrowExceptionForHR(endpointVolume.GetMasterVolumeLevelScalar(out scalarVolume));
+                if (!muted || scalarVolume != 0.0f)
+                {
+                    throw new InvalidOperationException("Default render endpoint mute/volume read-back did not match.");
+                }
+                return true;
+            }
+            finally
+            {
+                Release(endpointVolume);
+                Release(device);
+                Release(enumerator);
+            }
+        }
+
+        private static void Release(object value)
+        {
+            if (value != null && Marshal.IsComObject(value))
+            {
+                Marshal.FinalReleaseComObject(value);
+            }
+        }
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -Language CSharp -ErrorAction Stop
+    if ($null -eq ('HerdrSandbox.AudioPolicy' -as [type])) {
+        throw 'Core Audio endpoint type did not load.'
+    }
+}
+
+function Disable-ProvisioningAudioPlayback {
+    $failures = New-Object 'Collections.Generic.List[string]'
+    $schemeChanged = $false
+    try {
+        $schemeChanged = Set-ProvisioningRegistryValue -Path 'HKCU:\AppEvents\Schemes' `
+            -Name '' -Value '.None' -PropertyType 'String'
+    } catch {
+        [void]$failures.Add('No Sounds scheme: ' +
+            (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+    }
+
+    $endpointFound = $false
+    try {
+        Initialize-ProvisioningAudioEndpointType
+        $endpointFound = [bool][HerdrSandbox.AudioPolicy]::SilenceDefaultRenderEndpoint()
+    } catch {
+        [void]$failures.Add('default render endpoint: ' +
+            (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+    }
+
+    $serviceNames = @('Audiosrv', 'AudioEndpointBuilder')
+    foreach ($serviceName in $serviceNames) {
+        try {
+            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+        } catch {
+            [void]$failures.Add("disable $serviceName startup: " +
+                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+        }
+    }
+    foreach ($serviceName in $serviceNames) {
+        $controller = $null
+        try {
+            $controller = New-Object System.ServiceProcess.ServiceController -ArgumentList @($serviceName)
+            $controller.Refresh()
+            if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+                if (-not $controller.CanStop) {
+                    throw "$serviceName cannot be stopped."
+                }
+                $controller.Stop()
+                $controller.WaitForStatus(
+                    [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+                    [TimeSpan]::FromSeconds(15))
+                $controller.Refresh()
+            }
+            if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+                throw "$serviceName status is $($controller.Status), expected Stopped."
+            }
+        } catch {
+            [void]$failures.Add("stop ${serviceName}: " +
+                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+        } finally {
+            if ($null -ne $controller) { $controller.Dispose() }
+        }
+    }
+    foreach ($serviceName in $serviceNames) {
+        try {
+            $service = Get-Service -Name $serviceName -ErrorAction Stop
+            $wmiServices = @(Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop)
+            if ($wmiServices.Count -ne 1 -or
+                [string]$service.Status -cne 'Stopped' -or
+                [string]$service.StartType -cne 'Disabled' -or
+                [string]$wmiServices[0].State -cne 'Stopped' -or
+                [bool]$wmiServices[0].Started -or
+                [string]$wmiServices[0].StartMode -cne 'Disabled') {
+                throw "$serviceName service read-back did not match Disabled/Stopped."
+            }
+        } catch {
+            [void]$failures.Add("verify ${serviceName}: " +
+                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+        }
+    }
+
+    if ($failures.Count -ne 0) {
+        throw ('Audio disable policy failed: ' + ($failures -join '; '))
+    }
+    if ($endpointFound) {
+        Write-Host 'Audio playback disabled: default render endpoint muted at volume 0; services stopped.'
+    } else {
+        Write-Host 'Audio playback disabled: no default render endpoint was present; services stopped.'
+    }
+    return [bool]$schemeChanged
+}
+
 $provisioningStopwatch = [Diagnostics.Stopwatch]::StartNew()
 if ($Phase -eq 'Registry') {
 $registryStateChanged = $false
+if (-not $AudioEnabled) {
+    Write-Output 'Disabling Sandbox audio playback...'
+    if (Disable-ProvisioningAudioPlayback) {
+        $registryStateChanged = $true
+    }
+} else {
+    Write-Output 'Sandbox audio playback enabled by config; microphone input remains disabled.'
+}
 Write-Output 'Applying machine and selected per-user policies for Microsoft Edge...'
 # Policy values derived from Just the Browser, MIT License, copyright 2026 Corbin Davenport.
 # Source: https://github.com/corbindavenport/just-the-browser/tree/d80167f949947eed45b9b19b13e233f875ae9a6a/edge

@@ -162,6 +162,7 @@ Example `config.json`:
 {
   "cacheDirectory": "",
   "memoryMB": 32768,
+  "audio": false,
   "tailscale": false,
   "codingAgentSync": {
     "opencode": true,
@@ -192,6 +193,7 @@ Example `config.json`:
 | --- | --- |
 | `cacheDirectory` | Absolute persistent package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
+| `audio` | Exact boolean playback opt-in. Omitted or `false` keeps the guest silent; only `true` leaves playback enabled. Microphone input always remains disabled. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
@@ -199,6 +201,10 @@ Example `config.json`:
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. |
+
+With `audio` omitted or `false`, provisioning selects the Windows **No Sounds** scheme, mutes the default render endpoint at zero volume, and disables and stops the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback just by changing their own volume. This is not a security boundary against administrator code inside the guest. Set `"audio": true` only when playback is deliberate; microphone capture remains disabled either way. Changing `audio` requires `herdr-sandbox down` before the next `up` can launch the new fixed plan.
+
+Windows Sandbox exposes no supported per-instance CPU-priority setting, and Windows client Hyper-V scheduling does not support per-VM weights, caps, or reserves. The tool therefore does not offer an idle/low-priority option; changing the `WindowsSandbox.exe` launcher priority would not reliably control guest vCPU scheduling.
 
 `config.json` is strict JSON, so comments are not allowed. To install every coding agent that currently has a verified WinGet package, set `wingetPackages` to this copy-paste object:
 

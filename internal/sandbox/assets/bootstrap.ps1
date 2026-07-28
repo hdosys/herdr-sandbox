@@ -3,7 +3,11 @@ param(
     [string]$InputDirectory,
 
     [Parameter(Mandatory = $true)]
-    [string]$StatusDirectory
+    [string]$StatusDirectory,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Disabled', 'Enabled')]
+    [string]$AudioPlayback
 )
 
 Set-StrictMode -Version Latest
@@ -539,7 +543,7 @@ try {
     Write-ProgressStatus -Phase 'registry-customization' -Message 'Applying registry settings before package installation'
     & $baseProvisioning -Phase 'Registry' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning
+        -UserProvisioningPath $userProvisioning -AudioEnabled:($AudioPlayback -ceq 'Enabled')
 
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'

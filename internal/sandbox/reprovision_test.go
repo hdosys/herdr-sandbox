@@ -57,7 +57,7 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 			Active:           true,
 		}},
 	}
-	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Workspaces, 4096)
+	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Workspaces, 4096, provisioning.Audio)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,27 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	if plan.ID != runID || plan.DataDirectory != dataDirectory || len(plan.Workspaces) != 1 {
 		t.Fatalf("retained plan = %#v", plan)
 	}
+	legacyConfig := bytes.Replace(config, []byte(`,&#39;-AudioPlayback&#39;,&#39;Disabled&#39;`), nil, 1)
+	if bytes.Equal(legacyConfig, config) {
+		t.Fatal("current default-silent WSB has no explicit audio launch identity")
+	}
+	if err := os.WriteFile(configPath, legacyConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio") {
+		t.Fatalf("legacy retained audio plan error = %v", err)
+	}
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
 		t.Fatalf("changed retained plan error = %v", err)
 	}
+	provisioning.Audio = true
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio") {
+		t.Fatalf("changed retained audio selection error = %v", err)
+	}
+	provisioning.Audio = false
 	provisioning.Tailscale = true
 	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "Tailscale identity selection differs") {
 		t.Fatalf("changed retained Tailscale selection error = %v", err)

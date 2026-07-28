@@ -15,7 +15,6 @@ const (
 	guestRootDirectory   = `C:\HerdrSandbox`
 	guestCacheDirectory  = guestRootDirectory + `\cache`
 	guestBootstrapScript = guestInputDirectory + `\bootstrap.ps1`
-	guestBootstrapLaunch = `Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @('-NoLogo','-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File','C:\SandboxBootstrap\bootstrap.ps1','-InputDirectory','C:\SandboxBootstrap','-StatusDirectory','C:\SandboxStatus')`
 )
 
 type wsbConfiguration struct {
@@ -46,7 +45,23 @@ type wsbLogonCommand struct {
 	Command string `xml:"Command"`
 }
 
-func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan, memoryMB int) ([]byte, error) {
+func guestBootstrapLaunch(audioEnabled bool) string {
+	audioSelection := "'Disabled'"
+	if audioEnabled {
+		audioSelection = "'Enabled'"
+	}
+	arguments := []string{
+		"'-NoLogo'", "'-NoProfile'", "'-NoExit'", "'-ExecutionPolicy'", "'Bypass'",
+		"'-File'", "'C:\\SandboxBootstrap\\bootstrap.ps1'",
+		"'-InputDirectory'", "'C:\\SandboxBootstrap'",
+		"'-StatusDirectory'", "'C:\\SandboxStatus'",
+		"'-AudioPlayback'", audioSelection,
+	}
+	return "Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @(" +
+		strings.Join(arguments, ",") + ")"
+}
+
+func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan, memoryMB int, audioEnabled bool) ([]byte, error) {
 	if !filepath.IsAbs(inputDirectory) {
 		return nil, errors.New("Sandbox input directory must be absolute")
 	}
@@ -110,7 +125,7 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, worksp
 			"-NoProfile",
 			"-NonInteractive",
 			"-ExecutionPolicy Bypass",
-			`-Command "` + guestBootstrapLaunch + `"`,
+			`-Command "` + guestBootstrapLaunch(audioEnabled) + `"`,
 		}, " ")},
 	}
 

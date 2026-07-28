@@ -127,6 +127,26 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	}
 }
 
+func TestBootstrapPassesAudioSelectionOnlyToBaseRegistry(t *testing.T) {
+	script := string(bootstrapScript)
+	registryStart := strings.Index(script, "& $baseProvisioning -Phase 'Registry'")
+	developmentStart := strings.Index(script, "& $baseProvisioning -Phase 'Development'")
+	if !strings.Contains(script, "[ValidateSet('Disabled', 'Enabled')]") || !strings.Contains(script, "[string]$AudioPlayback") || registryStart < 0 || developmentStart <= registryStart {
+		t.Fatalf("bootstrap audio handoff boundaries are missing: registry=%d development=%d", registryStart, developmentStart)
+	}
+	registryCall := script[registryStart:developmentStart]
+	if strings.Count(registryCall, "-AudioEnabled:($AudioPlayback -ceq 'Enabled')") != 1 {
+		t.Fatalf("Base Registry audio handoff = %q", registryCall)
+	}
+	developmentEnd := strings.Index(script[developmentStart:], "$powerShell7 = Get-PowerShell7Installation")
+	if developmentEnd < 0 {
+		t.Fatal("Base Development call boundary is missing")
+	}
+	if strings.Contains(script[developmentStart:developmentStart+developmentEnd], "AudioPlayback") || strings.Contains(script[developmentStart:developmentStart+developmentEnd], "AudioEnabled") {
+		t.Fatal("Base Development unexpectedly owns the audio selection")
+	}
+}
+
 func TestPinnedBootstrapAssetCachesRepairsAndStagesInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")

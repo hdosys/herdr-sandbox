@@ -474,7 +474,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 			}
 		}
 	}
-	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB)
+	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB, provisioning.Audio)
 	if err != nil {
 		return runPlan{}, err
 	}
