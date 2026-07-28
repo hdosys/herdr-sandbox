@@ -121,7 +121,7 @@ ssh sandbox
 | `herdr-sandbox down` | Idempotently requests orderly close only for the exact revalidated app-owned Sandbox. It never force-kills any Sandbox; failed Tailscale preservation leaves an opted-in guest open. |
 | `herdr-sandbox clean` | Explicitly runs the same strict inactive-run cleanup used automatically at startup. Exact active state, identities, user configuration, workspaces, unknown entries, and package caches are preserved. |
 
-After command syntax is validated, every real command automatically removes validated inactive run directories. If process evidence proves that the Sandbox window was closed and no launcher/client remains, it also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help and invalid command lines do not run cleanup.
+After command syntax is validated, `up`, `status`, and `down` automatically remove validated inactive run directories; `clean` performs that same operation directly, not as an extra pre-step. If process evidence proves that the Sandbox window was closed and no launcher/client remains, cleanup also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help and invalid command lines do not run cleanup.
 
 `up` refuses starting, failed, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
 
@@ -347,7 +347,7 @@ Start with `herdr-sandbox status`; it never changes a running Sandbox and perfor
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, Rust, and Visual Studio layout payloads. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
-| Old diagnostics consume space | Every valid command removes validated inactive run workspaces; `clean` performs the same cleanup explicitly. Active/uncertain evidence and the persistent cache remain preserved. |
+| Old diagnostics consume space | `up`, `status`, and `down` remove validated inactive run workspaces automatically; `clean` invokes the same cleanup explicitly once. Active/uncertain evidence and the persistent cache remain preserved. |
 
 ## Development
 
