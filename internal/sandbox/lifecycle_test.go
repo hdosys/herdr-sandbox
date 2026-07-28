@@ -179,6 +179,246 @@ func TestCleanInactiveRunDirectoriesPreflightsEveryCandidateBeforeDeletion(t *te
 	}
 }
 
+func TestRemoveInactiveRunDirectoriesRejectsReplacedRootIdentity(t *testing.T) {
+	dataDirectory := t.TempDir()
+	runID := "20260720-101112-12345678"
+	writeRunDirectoryFixture(t, dataDirectory, runID)
+	plan, err := planInactiveRunDirectories(dataDirectory, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.close()
+	originalRoot := filepath.Join(dataDirectory, "runs-original")
+	if err := os.Rename(filepath.Join(dataDirectory, "runs"), originalRoot); err != nil {
+		if runtime.GOOS == "windows" {
+			return
+		}
+		t.Fatal(err)
+	}
+	writeRunDirectoryFixture(t, dataDirectory, runID)
+
+	removed, err := removeInactiveRunDirectories(plan)
+	if err == nil || !strings.Contains(err.Error(), "root identity changed") || removed != 0 {
+		t.Fatalf("removed = %d, error = %v", removed, err)
+	}
+	for _, path := range []string{
+		filepath.Join(originalRoot, runID),
+		filepath.Join(dataDirectory, "runs", runID),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("replaced-root evidence changed %s: %v", path, err)
+		}
+	}
+}
+
+func TestRemoveInactiveRunDirectoriesRejectsReplacedCandidateIdentity(t *testing.T) {
+	dataDirectory := t.TempDir()
+	runID := "20260720-101112-12345678"
+	writeRunDirectoryFixture(t, dataDirectory, runID)
+	plan, err := planInactiveRunDirectories(dataDirectory, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.close()
+	originalRun := filepath.Join(dataDirectory, "runs", "original")
+	if err := os.Rename(filepath.Join(dataDirectory, "runs", runID), originalRun); err != nil {
+		t.Fatal(err)
+	}
+	writeRunDirectoryFixture(t, dataDirectory, runID)
+
+	removed, err := removeInactiveRunDirectories(plan)
+	if err == nil || !strings.Contains(err.Error(), "identity changed") || removed != 0 {
+		t.Fatalf("removed = %d, error = %v", removed, err)
+	}
+	for _, path := range []string{originalRun, filepath.Join(dataDirectory, "runs", runID)} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("replaced-candidate evidence changed %s: %v", path, err)
+		}
+	}
+}
+
+func TestCleanupStaleStateRemovesGoneRunsAndManagedSSHConfig(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	inactiveRunID := "20260723-101112-12345678"
+	for _, runID := range []string{active.RunID, inactiveRunID} {
+		writeRunDirectoryFixture(t, dataDirectory, runID)
+	}
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	managedConfig := filepath.Join(dataDirectory, "ssh", "config")
+	writeLifecycleFixtureFile(t, managedConfig, "Host sandbox\n")
+	managedSibling := filepath.Join(dataDirectory, "ssh", "keep.txt")
+	writeLifecycleFixtureFile(t, managedSibling, "unrelated app-local file")
+	identity := filepath.Join(dataDirectory, "identity", "id_ed25519")
+	writeLifecycleFixtureFile(t, identity, "persistent identity")
+	persistentCache := filepath.Join(dataDirectory, "cache", "payload.bin")
+	writeLifecycleFixtureFile(t, persistentCache, "persistent cache")
+	unrelatedState := filepath.Join(dataDirectory, "notes", "keep.txt")
+	writeLifecycleFixtureFile(t, unrelatedState, "unrelated state")
+
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		return cleanupProtection{Active: active, Found: true, SandboxGone: true}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err != nil {
+		t.Fatalf("cleanupStaleStateWithInspector: %v", err)
+	}
+	if result.RemovedRuns != 2 || result.ActiveRunID != "" {
+		t.Fatalf("result = %#v", result)
+	}
+	for _, path := range []string{
+		filepath.Join(dataDirectory, "runs", active.RunID),
+		filepath.Join(dataDirectory, "runs", inactiveRunID),
+		filepath.Join(dataDirectory, activeSessionFileName),
+		managedConfig,
+	} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stale path still exists %s: %v", path, err)
+		}
+	}
+	for _, path := range []string{identity, persistentCache, unrelatedState, managedSibling} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("persistent or unrelated path changed %s: %v", path, err)
+		}
+	}
+}
+
+func TestCleanupStaleStatePreservesActiveRunAndSSHConfig(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	inactiveRunID := "20260723-101112-12345678"
+	for _, runID := range []string{active.RunID, inactiveRunID} {
+		writeRunDirectoryFixture(t, dataDirectory, runID)
+	}
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	managedConfig := filepath.Join(dataDirectory, "ssh", "config")
+	writeLifecycleFixtureFile(t, managedConfig, "Host sandbox\n")
+
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		return cleanupProtection{Active: active, Found: true}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err != nil {
+		t.Fatalf("cleanupStaleStateWithInspector: %v", err)
+	}
+	if result.RemovedRuns != 1 || result.ActiveRunID != active.RunID {
+		t.Fatalf("result = %#v", result)
+	}
+	for _, path := range []string{
+		filepath.Join(dataDirectory, "runs", active.RunID),
+		filepath.Join(dataDirectory, activeSessionFileName),
+		managedConfig,
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("active path changed %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dataDirectory, "runs", inactiveRunID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inactive run still exists: %v", err)
+	}
+}
+
+func TestCleanupStaleStatePreservesEvidenceWhenOwnershipIsUncertain(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	writeRunDirectoryFixture(t, dataDirectory, active.RunID)
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	managedConfig := filepath.Join(dataDirectory, "ssh", "config")
+	writeLifecycleFixtureFile(t, managedConfig, "Host sandbox\n")
+
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		return cleanupProtection{}, errors.New("process ownership is uncertain")
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err == nil || !strings.Contains(err.Error(), "ownership is uncertain") || result.RemovedRuns != 0 {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	for _, path := range []string{
+		filepath.Join(dataDirectory, "runs", active.RunID),
+		filepath.Join(dataDirectory, activeSessionFileName),
+		managedConfig,
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("evidence changed %s: %v", path, err)
+		}
+	}
+}
+
+func TestCleanupStaleStateRefusesChangedPreflight(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	writeRunDirectoryFixture(t, dataDirectory, active.RunID)
+	calls := 0
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		calls++
+		if calls == 1 {
+			return cleanupProtection{Active: active, Found: true}, nil
+		}
+		return cleanupProtection{SandboxGone: true}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err == nil || !strings.Contains(err.Error(), "identity changed during preflight") || result.RemovedRuns != 0 {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDirectory, "runs", active.RunID)); err != nil {
+		t.Fatalf("active evidence changed: %v", err)
+	}
+}
+
+func TestCleanupStaleStateRejectsUnsafeSSHBeforeRemovingRuns(t *testing.T) {
+	dataDirectory := t.TempDir()
+	runID := "20260724-123456-abcdef12"
+	writeRunDirectoryFixture(t, dataDirectory, runID)
+	sshTarget := filepath.Join(t.TempDir(), "ssh-target")
+	if err := os.MkdirAll(sshTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeLifecycleFixtureFile(t, filepath.Join(sshTarget, "config"), "Host sandbox\n")
+	createTestDirectoryLink(t, filepath.Join(dataDirectory, "ssh"), sshTarget)
+
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		return cleanupProtection{SandboxGone: true}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, filepath.Join(dataDirectory, "WindowsSandbox.exe"), inspect)
+	if err == nil || !strings.Contains(err.Error(), "unsafe managed SSH configuration") || result.RemovedRuns != 0 {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDirectory, "runs", runID)); err != nil {
+		t.Fatalf("run evidence changed before SSH preflight: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sshTarget, "config")); err != nil {
+		t.Fatalf("SSH reparse target changed: %v", err)
+	}
+}
+
+func TestCleanupStaleStateRejectsReparseDataRootBeforeActiveRemoval(t *testing.T) {
+	parent := t.TempDir()
+	dataDirectory := filepath.Join(parent, "data")
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	activePath := filepath.Join(target, activeSessionFileName)
+	writeLifecycleFixtureFile(t, activePath, "external identity")
+	createTestDirectoryLink(t, dataDirectory, target)
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", filepath.Join(parent, "WindowsSandbox.exe"))
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		return cleanupProtection{Active: active, Found: true, SandboxGone: true}, nil
+	}
+
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, active.ExecutablePath, inspect)
+	if err == nil || !strings.Contains(err.Error(), "unsafe cleanup data directory") || result.RemovedRuns != 0 {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+	if data, err := os.ReadFile(activePath); err != nil || string(data) != "external identity" {
+		t.Fatalf("external active identity changed: %q, %v", data, err)
+	}
+}
+
 func TestCleanInactiveRunDirectoriesRejectsNestedReparsePoint(t *testing.T) {
 	dataDirectory := t.TempDir()
 	runID := "20260720-101112-12345678"
@@ -410,6 +650,27 @@ func testActiveSession(root, runID, executable string) activeSession {
 		ExecutablePath: executable,
 		StartedAtUTC:   "2026-07-24T12:34:56.1234567Z",
 		CommandLine:    expectedWindowsSandboxCommandLine(executable, config),
+	}
+}
+
+func writeRunDirectoryFixture(t *testing.T, dataDirectory, runID string) {
+	t.Helper()
+	statusDirectory := filepath.Join(dataDirectory, "runs", runID, "status")
+	if err := os.MkdirAll(statusDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statusDirectory, "progress.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeLifecycleFixtureFile(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

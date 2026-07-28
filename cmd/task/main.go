@@ -21,6 +21,7 @@ Tasks:
   fmt              format Go source
   test [args...]   run go test ./... with optional extra arguments
   build            build build/bin/herdr-sandbox.exe
+  package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
 `
 
@@ -52,6 +53,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runCommand(ctx, stdout, stderr, "go", goArgs...)
 	case "build":
 		return build(ctx, stdout, stderr)
+	case "package":
+		if len(args) != 2 {
+			return errors.New("package requires one v0.0.RELEASE_ID version")
+		}
+		return packageWindowsRelease(ctx, args[1], stdout, stderr)
 	case "check":
 		if len(args) != 1 {
 			return errors.New("check accepts no arguments")
@@ -123,7 +129,7 @@ func checkGoFormat(ctx context.Context, stderr io.Writer) error {
 
 func checkPowerShell(ctx context.Context, stdout, stderr io.Writer) error {
 	scripts := []string{}
-	for _, pattern := range []string{filepath.Join("internal", "sandbox", "assets", "*.ps1"), filepath.Join("provisioning", "*.ps1"), filepath.Join(".herdr-sandbox", "*.ps1")} {
+	for _, pattern := range []string{filepath.Join("internal", "sandbox", "assets", "*.ps1"), filepath.Join("provisioning", "*.ps1"), filepath.Join(".herdr-sandbox", "*.ps1"), filepath.Join("packaging", "windows", "*.ps1")} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			return fmt.Errorf("find PowerShell scripts matching %s: %w", pattern, err)

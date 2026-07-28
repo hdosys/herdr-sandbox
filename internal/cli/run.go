@@ -29,6 +29,17 @@ The nearest .herdr-sandbox\provision.ps1, when present, becomes the active works
 `
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runWithDependencies(ctx, args, stdin, stdout, stderr, sandbox.CleanupStaleState, sandbox.InspectSession)
+}
+
+type staleCleanup func(context.Context) (sandbox.CleanResult, error)
+type sessionInspector func(context.Context) (sandbox.SessionStatus, error)
+
+func runWithCleanup(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cleanup staleCleanup) int {
+	return runWithDependencies(ctx, args, stdin, stdout, stderr, cleanup, sandbox.InspectSession)
+}
+
+func runWithDependencies(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cleanup staleCleanup, inspect sessionInspector) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -39,7 +50,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			fmt.Fprintf(stderr, "herdr-sandbox: status does not accept arguments\n\n%s", usage)
 			return 2
 		}
-		status, err := sandbox.InspectSession(ctx)
+		if result, err := cleanup(ctx); err != nil {
+			reportIncompleteCleanup(stderr, result, err)
+		}
+		status, err := inspect(ctx)
 		if err != nil {
 			fmt.Fprintln(stderr, "herdr-sandbox:", err)
 			return 1
@@ -50,6 +64,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "herdr-sandbox: down does not accept arguments\n\n%s", usage)
 			return 2
+		}
+		if !cleanupBeforeCommand(ctx, stderr, cleanup) {
+			return 1
 		}
 		result, err := sandbox.Down(ctx)
 		if err != nil {
@@ -63,12 +80,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			fmt.Fprintf(stderr, "herdr-sandbox: clean does not accept arguments\n\n%s", usage)
 			return 2
 		}
-		result, err := sandbox.Clean(ctx)
+		result, err := cleanup(ctx)
 		if err != nil {
-			if result.RemovedRuns > 0 {
-				printCleanResult(stderr, result)
-			}
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			reportIncompleteCleanup(stderr, result, err)
 			return 1
 		}
 		printCleanResult(stdout, result)
@@ -114,6 +128,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 2
 	}
 	options.Output = stdout
+	if !cleanupBeforeCommand(ctx, stderr, cleanup) {
+		return 1
+	}
 
 	connection, err := sandbox.Up(ctx, options)
 	if err != nil {
@@ -126,6 +143,21 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 1
 	}
 	return 0
+}
+
+func cleanupBeforeCommand(ctx context.Context, stderr io.Writer, cleanup staleCleanup) bool {
+	if result, err := cleanup(ctx); err != nil {
+		reportIncompleteCleanup(stderr, result, err)
+		return false
+	}
+	return true
+}
+
+func reportIncompleteCleanup(stderr io.Writer, result sandbox.CleanResult, err error) {
+	if result.RemovedRuns > 0 {
+		printCleanResult(stderr, result)
+	}
+	fmt.Fprintln(stderr, "herdr-sandbox: stale-state cleanup incomplete:", err)
 }
 
 func printDownResult(output io.Writer, result sandbox.DownResult) {

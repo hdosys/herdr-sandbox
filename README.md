@@ -17,9 +17,29 @@ Highlights:
 
 > **Safety:** this is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable guest profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
+## Install a release
+
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) includes both a per-user installer and a ZIP, with a matching `.sha256` file for each. Both contain the same three application files: `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`.
+
+### Installer (temporary direct testing path)
+
+1. Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` file from the same release.
+2. Verify the downloaded installer against that checksum, then run it as your normal Windows user. Administrator access is not required.
+3. Open a new terminal and run `herdr-sandbox --help`.
+
+The temporary installer is currently unsigned, so Windows may show a SmartScreen warning. Continue only after its SHA-256 matches the sidecar from the same release.
+
+Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`, updates the three runtime files together with rollback on replacement failure, adds that exact directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall. Setup installs no Herdr/Herdr-Win binary, updater, agent integration, runtime bundle, or Windows prerequisite; complete the requirements below separately.
+
+To uninstall, use **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. Uninstall removes only the installed executable/assets, its exact user `PATH` entry, and installer registration. It preserves `%APPDATA%\herdr-sandbox`, selected workspaces, `%LOCALAPPDATA%\herdr-sandbox` identity/state, and package/tool caches.
+
+### ZIP (permanent portable option)
+
+Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all three files into one directory. Keep `base.ps1` and `stacks.ps1` beside `herdr-sandbox.exe`. Run `.\herdr-sandbox.exe` from that directory or add the directory to your user `PATH`. The ZIP remains available on every release for portable use and future `herdr-win` packaging.
+
 ## Quick start
 
-Commands below assume `herdr-sandbox.exe` is on `PATH`; otherwise use its full `build\bin` path.
+Commands below assume the installer or your ZIP/build directory placed `herdr-sandbox.exe` on `PATH`; otherwise use the executable's full path.
 
 ### Requirements
 
@@ -36,7 +56,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 **Herdr setup:** Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on `PATH`; `herdr-sandbox` does not perform that first installation. Later runs verify that the host and guest use the same pinned Herdr release and update the existing host executable when required.
 
-### 1. Build
+### 1. Build from source (skip for a downloaded release)
 
 From the repository root:
 
@@ -97,11 +117,13 @@ ssh sandbox
 | Command | Behavior |
 | --- | --- |
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION]` | Launches a fresh guest, or re-runs current provisioning and reattaches when the exact ready app-owned launch plan still matches. There is no overall timeout by default; `--timeout` adds one. Changed workspace/cache mappings or memory require `down` first. |
-| `herdr-sandbox status` | Reports `starting`, `ready`, `failed`, `stale`, `stopped`, or `unmanaged` without changing state. |
+| `herdr-sandbox status` | Reports `starting`, `ready`, `failed`, `stale`, `stopped`, or `unmanaged` without changing a running Sandbox. |
 | `herdr-sandbox down` | Idempotently requests orderly close only for the exact revalidated app-owned Sandbox. It never force-kills any Sandbox; failed Tailscale preservation leaves an opted-in guest open. |
-| `herdr-sandbox clean` | Removes only strictly validated inactive run workspaces. A valid active or stale recorded run, identity, SSH configuration, and package caches are preserved. |
+| `herdr-sandbox clean` | Explicitly runs the same strict inactive-run cleanup used automatically at startup. Exact active state, identities, user configuration, workspaces, unknown entries, and package caches are preserved. |
 
-`up` refuses starting, failed, stale, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
+After command syntax is validated, every real command automatically removes validated inactive run directories. If process evidence proves that the Sandbox window was closed and no launcher/client remains, it also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help and invalid command lines do not run cleanup.
+
+`up` refuses starting, failed, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
 
 ## Customize the guest
 
@@ -196,7 +218,7 @@ OpenCode (`SST.opencode`) is already a Base default and must not be added again.
 
 `workspaceDiscovery` tests each Go/RE2 expression against the original direct-child directory name; matching is case-sensitive unless the expression uses `(?i)`, and any match excludes the directory. Discovery does not recurse or map the root itself. Every remaining child must contain `.herdr-sandbox\provision.ps1`; its workspace name is derived from the folder name. Use `workspaces` for projects outside the root or to give a discovered path an explicit name. The explicit entry wins when both select the same path. The active project is added automatically and deduplicated against the combined selection. The final maximum is 16 workspaces; paths must exist, must not overlap, and must not contain reparse aliases. Changing the discovered child set requires `down` before an existing guest can be replaced with the new mappings.
 
-`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable run snapshot remains with diagnostics until `clean`.
+`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable snapshot remains with active/uncertain run diagnostics until bounded automatic or explicit cleanup can safely remove that run.
 
 Older releases seeded a user-owned `%APPDATA%\herdr-sandbox\base.ps1`. The new ownership model never overwrites or executes that file: `up` stops with migration instructions. Review it, move only deliberate global extension commands into `user.ps1`, move package choices into `config.json`, keep project tools in project profiles, archive the complete legacy Base under a non-reserved name, and retry.
 
@@ -207,6 +229,7 @@ Persistent host state is split intentionally:
 | `%APPDATA%\herdr-sandbox` | User-owned global config and `user.ps1` extension. |
 | `%LOCALAPPDATA%\herdr-sandbox\identity` | Host SSH identity and optional DPAPI-protected Tailscale identity. |
 | `%LOCALAPPDATA%\herdr-sandbox\runs` | Per-run status, diagnostics, SSH material, and `.wsb` files. Do not edit an active run. |
+| `%LOCALAPPDATA%\herdr-sandbox\ssh\config` | App-owned `Host sandbox` target for the current guest; removed automatically only when no Sandbox is proven to remain. |
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
 
 ### Coding-agent sync
@@ -314,17 +337,17 @@ Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDAT
 
 ## Troubleshooting
 
-Start with `herdr-sandbox status`; it is read-only.
+Start with `herdr-sandbox status`; it never changes a running Sandbox and performs only the same bounded stale-state cleanup as other valid commands.
 
 | Symptom | Action |
 | --- | --- |
-| `up` refuses an existing Sandbox | A ready exact guest is reused automatically. For failed, stale, changed-plan, or unmanaged state, inspect the reported owner and use `herdr-sandbox down` only when it identifies the app-owned instance. |
+| `up` refuses an existing Sandbox | A ready exact guest is reused automatically. A normally closed window is cleaned on the next valid command. For failed, changed-plan, unmanaged, or ownership-uncertain state, inspect the reported evidence and use `herdr-sandbox down` only when it identifies the app-owned instance. |
 | Automatic attach fails in a headless process | Open a real terminal and run `herdr --remote sandbox`; the verified guest remains ready. |
-| `ssh sandbox` no longer connects | A `stale` status means the recorded process ended. Use `down` to clear safe stale ownership, then start again. |
+| `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, Rust, and Visual Studio layout payloads. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
-| Old diagnostics consume space | Run `clean`; it preserves active ownership and the persistent cache while removing only validated inactive run workspaces. |
+| Old diagnostics consume space | Every valid command removes validated inactive run workspaces; `clean` performs the same cleanup explicitly. Active/uncertain evidence and the persistent cache remain preserved. |
 
 ## Development
 
@@ -335,9 +358,10 @@ go run ./cmd/task fmt
 go run ./cmd/task test
 go run ./cmd/task build
 go run ./cmd/task check
+go run ./cmd/task package v0.0.0
 ```
 
-`check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. Repository-owned provisioning runs exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
+`check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. `package` requires the pinned NSIS 3.12 compiler and writes the installer, ZIP, and both checksum files under `build\dist`; it never installs the resulting package. Repository-owned provisioning and installer helper scripts run exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
 
 ## Documentation
 

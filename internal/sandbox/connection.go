@@ -114,6 +114,81 @@ func installSSHHostAliasAt(dataDirectory, userHome, config string) error {
 	return nil
 }
 
+func removeManagedSSHConfig(dataDirectory string) error {
+	if !filepath.IsAbs(dataDirectory) {
+		return fmt.Errorf("SSH data directory is not absolute: %q", dataDirectory)
+	}
+	managedDirectory := filepath.Join(filepath.Clean(dataDirectory), "ssh")
+	directoryInfo, err := os.Lstat(managedDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect managed SSH directory: %w", err)
+	}
+	if err := rejectMappedPathReparsePoints(managedDirectory); err != nil {
+		return fmt.Errorf("refusing to remove unsafe managed SSH configuration: %w", err)
+	}
+	if !directoryInfo.IsDir() {
+		return errors.New("managed SSH path is not a directory")
+	}
+	managedPath := filepath.Join(managedDirectory, "config")
+	configInfo, err := os.Lstat(managedPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect managed SSH configuration: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(configInfo)
+	if err != nil {
+		return fmt.Errorf("inspect managed SSH configuration reparse state: %w", err)
+	}
+	if reparse || !configInfo.Mode().IsRegular() {
+		return errors.New("managed SSH configuration is not a regular non-reparse file")
+	}
+	managedRoot, err := os.OpenRoot(managedDirectory)
+	if err != nil {
+		return fmt.Errorf("open managed SSH directory for cleanup: %w", err)
+	}
+	defer managedRoot.Close()
+	openedDirectoryInfo, err := managedRoot.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspect opened managed SSH directory: %w", err)
+	}
+	currentDirectoryInfo, err := openedPathInfo(managedDirectory)
+	if err != nil {
+		return fmt.Errorf("inspect managed SSH directory identity: %w", err)
+	}
+	if err := rejectMappedPathReparsePoints(managedDirectory); err != nil {
+		return fmt.Errorf("managed SSH directory changed before cleanup: %w", err)
+	}
+	if !os.SameFile(currentDirectoryInfo, openedDirectoryInfo) {
+		return errors.New("managed SSH directory identity changed before cleanup")
+	}
+	openedConfigInfo, err := managedRoot.Lstat("config")
+	if err != nil {
+		return fmt.Errorf("inspect opened managed SSH configuration: %w", err)
+	}
+	openedReparse, err := fileInfoIsReparsePoint(openedConfigInfo)
+	if err != nil {
+		return fmt.Errorf("inspect opened managed SSH configuration reparse state: %w", err)
+	}
+	if openedReparse || !openedConfigInfo.Mode().IsRegular() {
+		return errors.New("managed SSH configuration changed before cleanup")
+	}
+	if err := managedRoot.Remove("config"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove managed SSH configuration: %w", err)
+	}
+	if _, err := managedRoot.Lstat("config"); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return errors.New("remove managed SSH configuration: path still exists")
+		}
+		return fmt.Errorf("verify managed SSH configuration removal: %w", err)
+	}
+	return nil
+}
+
 func updateManagedSSHInclude(existing, managedPath string) (string, error) {
 	startCount := strings.Count(existing, managedSSHIncludeStart)
 	endCount := strings.Count(existing, managedSSHIncludeEnd)

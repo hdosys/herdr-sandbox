@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+env:
+  NSIS_VERSION: "3.12"
+  NSIS_URL: https://sourceforge.net/projects/nsis/files/NSIS%203/3.12/nsis-3.12.zip/download
+  NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f
+
 jobs:
   release:
     name: Windows release
@@ -34,29 +39,32 @@ jobs:
       - name: Run checked build
         shell: powershell
         run: go run ./cmd/task check
+      - name: Prepare pinned NSIS compiler
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP "nsis-$($env:NSIS_VERSION).zip"
+          $destination = Join-Path $env:RUNNER_TEMP 'nsis'
+          Invoke-WebRequest -UseBasicParsing -Uri $env:NSIS_URL -OutFile $archive
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -cne $env:NSIS_SHA256) {
+              throw "NSIS archive SHA-256 = $actualHash, expected $($env:NSIS_SHA256)"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $compiler = Join-Path $destination "nsis-$($env:NSIS_VERSION)\makensis.exe"
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+              throw "Pinned NSIS compiler was not found at $compiler"
+          }
+          $actualVersion = (& $compiler /VERSION).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne "v$($env:NSIS_VERSION)") {
+              throw "NSIS compiler version = '$actualVersion', expected v$($env:NSIS_VERSION)"
+          }
+          "MAKENSIS=$compiler" | Add-Content -Path $env:GITHUB_ENV
       - name: Package Windows release
         shell: powershell
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $baseName = "herdr-sandbox_$($env:RELEASE_TAG)_windows_amd64"
-          $stage = Join-Path $env:RUNNER_TEMP $baseName
-          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          New-Item -ItemType Directory -Path $dist -Force | Out-Null
-          foreach ($file in @(
-              'build\bin\herdr-sandbox.exe',
-              'build\bin\base.ps1',
-              'build\bin\stacks.ps1'
-          )) {
-              Copy-Item -LiteralPath $file -Destination $stage
-          }
-          $archive = Join-Path $dist "$baseName.zip"
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
-          $checksum = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $checksumLine = "$checksum  $([IO.Path]::GetFileName($archive))`n"
-          [IO.File]::WriteAllText("$archive.sha256", $checksumLine, [Text.Encoding]::ASCII)
+        run: go run ./cmd/task package $env:RELEASE_TAG
       - name: Publish GitHub release
         shell: powershell
         env:
@@ -66,8 +74,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $baseName = "herdr-sandbox_$($env:RELEASE_TAG)_windows_amd64"
           $assets = @(
-              "dist\$baseName.zip",
-              "dist\$baseName.zip.sha256"
+              "build\dist\$baseName.zip",
+              "build\dist\$baseName.zip.sha256",
+              "build\dist\$($baseName)_setup.exe",
+              "build\dist\$($baseName)_setup.exe.sha256"
           )
           $arguments = @('release', 'create', $env:RELEASE_TAG) + $assets + @(
               '--verify-tag',

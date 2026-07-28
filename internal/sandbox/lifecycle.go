@@ -54,8 +54,112 @@ type CleanResult struct {
 
 type inactiveRunCleanupPlan struct {
 	RunsDirectory string
-	RootIdentity  string
-	Candidates    []string
+	Root          *os.Root
+	RootInfo      os.FileInfo
+	Candidates    []inactiveRunCleanupCandidate
+}
+
+type inactiveRunCleanupCandidate struct {
+	Name string
+	Path string
+	Info os.FileInfo
+}
+
+type cleanupDataRoot struct {
+	Directory string
+	Root      *os.Root
+	Info      os.FileInfo
+}
+
+func openCleanupDataRoot(dataDirectory string) (*cleanupDataRoot, error) {
+	if !filepath.IsAbs(dataDirectory) {
+		return nil, fmt.Errorf("cleanup data directory is not absolute: %q", dataDirectory)
+	}
+	dataDirectory = filepath.Clean(dataDirectory)
+	pathInfo, err := os.Lstat(dataDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return &cleanupDataRoot{Directory: dataDirectory}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect cleanup data directory: %w", err)
+	}
+	if err := rejectMappedPathReparsePoints(dataDirectory); err != nil {
+		return nil, fmt.Errorf("refusing unsafe cleanup data directory: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(pathInfo)
+	if err != nil {
+		return nil, fmt.Errorf("inspect cleanup data directory reparse state: %w", err)
+	}
+	if reparse || !pathInfo.IsDir() {
+		return nil, errors.New("cleanup data directory is not a regular non-reparse directory")
+	}
+	root, err := os.OpenRoot(dataDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("open cleanup data directory: %w", err)
+	}
+	result := &cleanupDataRoot{Directory: dataDirectory, Root: root}
+	result.Info, err = root.Stat(".")
+	if err != nil {
+		result.close()
+		return nil, fmt.Errorf("inspect opened cleanup data directory: %w", err)
+	}
+	if err := result.validate(); err != nil {
+		result.close()
+		return nil, err
+	}
+	return result, nil
+}
+
+func (root *cleanupDataRoot) validate() error {
+	if root.Root == nil {
+		if _, err := os.Lstat(root.Directory); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("inspect absent cleanup data directory: %w", err)
+		}
+		return errors.New("cleanup data directory appeared during cleanup")
+	}
+	if err := rejectMappedPathReparsePoints(root.Directory); err != nil {
+		return fmt.Errorf("cleanup data directory changed: %w", err)
+	}
+	currentInfo, err := openedPathInfo(root.Directory)
+	if err != nil {
+		return fmt.Errorf("inspect cleanup data directory identity: %w", err)
+	}
+	if root.Info == nil || !os.SameFile(root.Info, currentInfo) {
+		return errors.New("cleanup data directory identity changed")
+	}
+	return nil
+}
+
+func (root *cleanupDataRoot) close() {
+	if root == nil {
+		return
+	}
+	if root.Root != nil {
+		_ = root.Root.Close()
+	}
+	root.Root = nil
+}
+
+func (plan *inactiveRunCleanupPlan) close() {
+	if plan.Root != nil {
+		_ = plan.Root.Close()
+		plan.Root = nil
+	}
+}
+
+type cleanupProtection struct {
+	Active      activeSession
+	Found       bool
+	SandboxGone bool
+}
+
+func (protection cleanupProtection) activeRunID() string {
+	if !protection.Found {
+		return ""
+	}
+	return protection.Active.RunID
 }
 
 type activeSession struct {
@@ -82,7 +186,19 @@ func InspectSession(ctx context.Context) (SessionStatus, error) {
 	if err != nil {
 		return SessionStatus{}, err
 	}
-	return inspectSessionAt(ctx, dataDirectory)
+	release, err := acquireLifecycleLock(ctx)
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	status, inspectErr := inspectSessionAt(ctx, dataDirectory)
+	releaseErr := release()
+	if inspectErr != nil {
+		return SessionStatus{}, inspectErr
+	}
+	if releaseErr != nil {
+		return SessionStatus{}, releaseErr
+	}
+	return status, nil
 }
 
 func Down(ctx context.Context) (DownResult, error) {
@@ -105,7 +221,10 @@ func Down(ctx context.Context) (DownResult, error) {
 	return result, nil
 }
 
-func Clean(ctx context.Context) (CleanResult, error) {
+// CleanupStaleState removes only app-owned ephemeral state that is no longer
+// associated with a running Windows Sandbox. It owns both automatic and explicit
+// cleanup under the lifecycle lock.
+func CleanupStaleState(ctx context.Context) (CleanResult, error) {
 	dataDirectory, err := defaultDataDirectory()
 	if err != nil {
 		return CleanResult{}, err
@@ -114,10 +233,10 @@ func Clean(ctx context.Context) (CleanResult, error) {
 	if err != nil {
 		return CleanResult{}, err
 	}
-	result, cleanErr := cleanAt(ctx, dataDirectory)
+	result, cleanupErr := cleanupStaleStateAt(ctx, dataDirectory)
 	releaseErr := release()
-	if cleanErr != nil {
-		return result, cleanErr
+	if cleanupErr != nil {
+		return result, cleanupErr
 	}
 	if releaseErr != nil {
 		return result, releaseErr
@@ -351,53 +470,89 @@ func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, activ
 	return recoverAndStoreTailscale(captureContext, connection, dataDirectory)
 }
 
-func cleanAt(ctx context.Context, dataDirectory string) (CleanResult, error) {
+func cleanupStaleStateAt(ctx context.Context, dataDirectory string) (CleanResult, error) {
 	executable, err := windowsSandboxExecutable()
 	if err != nil {
 		return CleanResult{}, err
 	}
-	activeRunID, err := cleanupProtectedRunID(ctx, dataDirectory, executable)
+	return cleanupStaleStateWithInspector(ctx, dataDirectory, executable, inspectCleanupProtection)
+}
+
+type cleanupProtectionInspector func(context.Context, string, string) (cleanupProtection, error)
+
+func cleanupStaleStateWithInspector(ctx context.Context, dataDirectory, executable string, inspect cleanupProtectionInspector) (CleanResult, error) {
+	dataRoot, err := openCleanupDataRoot(dataDirectory)
 	if err != nil {
 		return CleanResult{}, err
 	}
-	plan, err := planInactiveRunDirectories(dataDirectory, activeRunID)
+	defer dataRoot.close()
+	protection, err := inspect(ctx, dataDirectory, executable)
 	if err != nil {
-		return CleanResult{ActiveRunID: activeRunID}, err
+		return CleanResult{}, err
 	}
-	revalidatedRunID, err := cleanupProtectedRunID(ctx, dataDirectory, executable)
+	protectedRunID := protection.activeRunID()
+	if protection.SandboxGone {
+		protectedRunID = ""
+	}
+	if err := dataRoot.validate(); err != nil {
+		return CleanResult{ActiveRunID: protectedRunID}, err
+	}
+	plan, err := planInactiveRunDirectories(dataDirectory, protectedRunID)
 	if err != nil {
-		return CleanResult{ActiveRunID: activeRunID}, err
+		return CleanResult{ActiveRunID: protectedRunID}, err
 	}
-	if revalidatedRunID != activeRunID {
-		return CleanResult{ActiveRunID: activeRunID}, errors.New("refusing to clean because the active Sandbox identity changed during preflight")
+	defer plan.close()
+	revalidated, err := inspect(ctx, dataDirectory, executable)
+	if err != nil {
+		return CleanResult{ActiveRunID: protectedRunID}, err
+	}
+	if revalidated != protection {
+		return CleanResult{ActiveRunID: protectedRunID}, errors.New("refusing automatic cleanup because the Sandbox identity changed during preflight")
+	}
+	if err := dataRoot.validate(); err != nil {
+		return CleanResult{ActiveRunID: protectedRunID}, err
+	}
+	if protection.SandboxGone {
+		if err := removeManagedSSHConfig(dataDirectory); err != nil {
+			return CleanResult{}, fmt.Errorf("remove stale managed SSH configuration: %w", err)
+		}
 	}
 	removed, err := removeInactiveRunDirectories(plan)
-	return CleanResult{RemovedRuns: removed, ActiveRunID: activeRunID}, err
+	result := CleanResult{RemovedRuns: removed, ActiveRunID: protectedRunID}
+	if err != nil || !protection.SandboxGone {
+		return result, err
+	}
+	if protection.Found {
+		if err := removeActiveSessionFromCleanupRoot(dataRoot); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
 }
 
-func cleanupProtectedRunID(ctx context.Context, dataDirectory, executable string) (string, error) {
+func inspectCleanupProtection(ctx context.Context, dataDirectory, executable string) (cleanupProtection, error) {
 	active, found, err := loadActiveSession(dataDirectory, executable)
 	if err != nil {
-		return "", err
+		return cleanupProtection{}, err
 	}
 	processes, err := runningSandboxProcesses(ctx)
 	if err != nil {
-		return "", err
+		return cleanupProtection{}, err
 	}
 	if !found {
 		if len(processes) > 0 {
-			return "", fmt.Errorf("refusing to clean while unmanaged Windows Sandbox process(es) are running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
+			return cleanupProtection{}, fmt.Errorf("refusing to clean while unmanaged Windows Sandbox process(es) are running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
 		}
-		return "", nil
+		return cleanupProtection{SandboxGone: true}, nil
 	}
 	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
 	if err != nil {
-		return "", err
+		return cleanupProtection{}, err
 	}
 	if err := validateCleanupProcessOwnership(active, snapshot, running, processes); err != nil {
-		return "", err
+		return cleanupProtection{}, err
 	}
-	return active.RunID, nil
+	return cleanupProtection{Active: active, Found: true, SandboxGone: !running}, nil
 }
 
 func validateCleanupProcessOwnership(active activeSession, snapshot sandboxProcessSnapshot, running bool, processes []runningSandboxProcess) error {
@@ -437,6 +592,7 @@ func cleanInactiveRunDirectories(dataDirectory, activeRunID string) (int, error)
 	if err != nil {
 		return 0, err
 	}
+	defer plan.close()
 	return removeInactiveRunDirectories(plan)
 }
 
@@ -449,7 +605,7 @@ func planInactiveRunDirectories(dataDirectory, activeRunID string) (inactiveRunC
 	}
 
 	runsDirectory := filepath.Join(filepath.Clean(dataDirectory), "runs")
-	rootInfo, err := os.Lstat(runsDirectory)
+	pathInfo, err := os.Lstat(runsDirectory)
 	if errors.Is(err, os.ErrNotExist) {
 		return inactiveRunCleanupPlan{RunsDirectory: runsDirectory}, nil
 	}
@@ -459,26 +615,46 @@ func planInactiveRunDirectories(dataDirectory, activeRunID string) (inactiveRunC
 	if err := rejectMappedPathReparsePoints(runsDirectory); err != nil {
 		return inactiveRunCleanupPlan{}, fmt.Errorf("refusing to clean unsafe run directory root: %w", err)
 	}
-	rootReparse, err := fileInfoIsReparsePoint(rootInfo)
+	rootReparse, err := fileInfoIsReparsePoint(pathInfo)
 	if err != nil {
 		return inactiveRunCleanupPlan{}, fmt.Errorf("inspect run directory root reparse state: %w", err)
 	}
 	if rootReparse {
 		return inactiveRunCleanupPlan{}, errors.New("refusing to clean because the run directory root is a reparse point")
 	}
-	if !rootInfo.IsDir() {
+	if !pathInfo.IsDir() {
 		return inactiveRunCleanupPlan{}, errors.New("refusing to clean because the run directory root is not a directory")
 	}
-	rootIdentity, err := physicalMappedDirectory(runsDirectory)
+	runsRoot, err := os.OpenRoot(runsDirectory)
 	if err != nil {
-		return inactiveRunCleanupPlan{}, fmt.Errorf("resolve run directory root identity: %w", err)
+		return inactiveRunCleanupPlan{}, fmt.Errorf("open run directory root: %w", err)
 	}
-
-	entries, err := os.ReadDir(runsDirectory)
+	plan := inactiveRunCleanupPlan{RunsDirectory: runsDirectory, Root: runsRoot}
+	fail := func(err error) (inactiveRunCleanupPlan, error) {
+		plan.close()
+		return inactiveRunCleanupPlan{}, err
+	}
+	plan.RootInfo, err = runsRoot.Stat(".")
 	if err != nil {
-		return inactiveRunCleanupPlan{}, fmt.Errorf("read run directory root: %w", err)
+		return fail(fmt.Errorf("inspect opened run directory root: %w", err))
 	}
-	candidates := make([]string, 0, len(entries))
+	currentPathInfo, err := openedPathInfo(runsDirectory)
+	if err != nil {
+		return fail(fmt.Errorf("inspect run directory root identity: %w", err))
+	}
+	if !os.SameFile(plan.RootInfo, currentPathInfo) {
+		return fail(errors.New("run directory root identity changed during preflight"))
+	}
+	directory, err := runsRoot.Open(".")
+	if err != nil {
+		return fail(fmt.Errorf("open rooted run directory for enumeration: %w", err))
+	}
+	entries, readErr := directory.ReadDir(-1)
+	closeErr := directory.Close()
+	if readErr != nil || closeErr != nil {
+		return fail(fmt.Errorf("read rooted run directory: %w", errors.Join(readErr, closeErr)))
+	}
+	candidates := make([]inactiveRunCleanupCandidate, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == activeRunID || !runIDPattern.MatchString(name) {
@@ -486,34 +662,55 @@ func planInactiveRunDirectories(dataDirectory, activeRunID string) (inactiveRunC
 		}
 		path := filepath.Join(runsDirectory, name)
 		if err := validateCleanableRunDirectory(path, name); err != nil {
-			return inactiveRunCleanupPlan{}, err
+			return fail(err)
 		}
-		candidates = append(candidates, path)
+		info, err := runsRoot.Lstat(name)
+		if err != nil {
+			return fail(fmt.Errorf("inspect rooted inactive run %s: %w", name, err))
+		}
+		candidates = append(candidates, inactiveRunCleanupCandidate{Name: name, Path: path, Info: info})
 	}
-	return inactiveRunCleanupPlan{RunsDirectory: runsDirectory, RootIdentity: rootIdentity, Candidates: candidates}, nil
+	plan.Candidates = candidates
+	if err := validateRunCleanupRoot(plan); err != nil {
+		return fail(err)
+	}
+	return plan, nil
 }
 
 func removeInactiveRunDirectories(plan inactiveRunCleanupPlan) (int, error) {
+	if len(plan.Candidates) == 0 {
+		return 0, nil
+	}
+	if plan.Root == nil || plan.RootInfo == nil {
+		return 0, errors.New("run directory root handle is missing")
+	}
 	removed := 0
-	for _, path := range plan.Candidates {
+	for _, candidate := range plan.Candidates {
 		if err := validateRunCleanupRoot(plan); err != nil {
 			return removed, err
 		}
-		name := filepath.Base(path)
-		if filepath.Dir(path) != plan.RunsDirectory || !runIDPattern.MatchString(name) {
-			return removed, fmt.Errorf("refusing to clean invalid planned run path: %s", path)
+		if filepath.Dir(candidate.Path) != plan.RunsDirectory || filepath.Base(candidate.Path) != candidate.Name ||
+			!runIDPattern.MatchString(candidate.Name) {
+			return removed, fmt.Errorf("refusing to clean invalid planned run path: %s", candidate.Path)
 		}
-		if err := validateCleanableRunDirectory(path, name); err != nil {
+		if err := validateCleanableRunDirectory(candidate.Path, candidate.Name); err != nil {
 			return removed, err
 		}
-		if err := os.RemoveAll(path); err != nil {
-			return removed, fmt.Errorf("remove inactive run %s: %w", name, err)
+		rootedInfo, err := plan.Root.Lstat(candidate.Name)
+		if err != nil {
+			return removed, fmt.Errorf("inspect rooted inactive run %s: %w", candidate.Name, err)
 		}
-		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if !os.SameFile(candidate.Info, rootedInfo) {
+			return removed, fmt.Errorf("refusing to clean inactive run %s because its identity changed", candidate.Name)
+		}
+		if err := plan.Root.RemoveAll(candidate.Name); err != nil {
+			return removed, fmt.Errorf("remove inactive run %s: %w", candidate.Name, err)
+		}
+		if _, err := plan.Root.Lstat(candidate.Name); !errors.Is(err, os.ErrNotExist) {
 			if err == nil {
-				return removed, fmt.Errorf("remove inactive run %s: path still exists", name)
+				return removed, fmt.Errorf("remove inactive run %s: path still exists", candidate.Name)
 			}
-			return removed, fmt.Errorf("verify inactive run %s removal: %w", name, err)
+			return removed, fmt.Errorf("verify inactive run %s removal: %w", candidate.Name, err)
 		}
 		removed++
 		if err := validateRunCleanupRoot(plan); err != nil {
@@ -524,17 +721,17 @@ func removeInactiveRunDirectories(plan inactiveRunCleanupPlan) (int, error) {
 }
 
 func validateRunCleanupRoot(plan inactiveRunCleanupPlan) error {
-	if len(plan.Candidates) == 0 && plan.RootIdentity == "" {
+	if len(plan.Candidates) == 0 && plan.RootInfo == nil {
 		return nil
 	}
 	if err := rejectMappedPathReparsePoints(plan.RunsDirectory); err != nil {
 		return fmt.Errorf("run directory root changed during cleanup: %w", err)
 	}
-	identity, err := physicalMappedDirectory(plan.RunsDirectory)
+	info, err := openedPathInfo(plan.RunsDirectory)
 	if err != nil {
-		return fmt.Errorf("resolve run directory root during cleanup: %w", err)
+		return fmt.Errorf("inspect run directory root during cleanup: %w", err)
 	}
-	if !strings.EqualFold(identity, plan.RootIdentity) {
+	if plan.RootInfo == nil || !os.SameFile(plan.RootInfo, info) {
 		return errors.New("run directory root identity changed during cleanup")
 	}
 	return nil
@@ -581,6 +778,15 @@ func validateCleanableRunDirectory(path, runID string) error {
 		return fmt.Errorf("refusing to clean inactive run %s: %w", runID, err)
 	}
 	return nil
+}
+
+func openedPathInfo(path string) (os.FileInfo, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return file.Stat()
 }
 
 func recordActiveSession(ctx context.Context, plan runPlan, pid int) error {
@@ -696,6 +902,39 @@ func validateActiveSessionShape(data []byte) error {
 func removeActiveSession(dataDirectory string) error {
 	if err := os.Remove(filepath.Join(dataDirectory, activeSessionFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove active Sandbox identity: %w", err)
+	}
+	return nil
+}
+
+func removeActiveSessionFromCleanupRoot(dataRoot *cleanupDataRoot) error {
+	if err := dataRoot.validate(); err != nil {
+		return err
+	}
+	if dataRoot.Root == nil {
+		return nil
+	}
+	info, err := dataRoot.Root.Lstat(activeSessionFileName)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect rooted active Sandbox identity: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect rooted active Sandbox identity reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() {
+		return errors.New("rooted active Sandbox identity is not a regular non-reparse file")
+	}
+	if err := dataRoot.Root.Remove(activeSessionFileName); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove rooted active Sandbox identity: %w", err)
+	}
+	if _, err := dataRoot.Root.Lstat(activeSessionFileName); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return errors.New("remove rooted active Sandbox identity: path still exists")
+		}
+		return fmt.Errorf("verify rooted active Sandbox identity removal: %w", err)
 	}
 	return nil
 }

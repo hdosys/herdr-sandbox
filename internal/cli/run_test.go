@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -120,5 +121,82 @@ func TestRunRejectsInvalidUpOptionsBeforeNativeWork(t *testing.T) {
 				t.Fatalf("exit code = %d", code)
 			}
 		})
+	}
+}
+
+func TestRunInformationalAndInvalidInputDoesNotCleanup(t *testing.T) {
+	tests := [][]string{
+		nil,
+		{"help"},
+		{"--help"},
+		{"up", "--help"},
+		{"unknown"},
+		{"status", "extra"},
+		{"up", "--memory-mb", "1024"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			called := false
+			cleanup := func(context.Context) (sandbox.CleanResult, error) {
+				called = true
+				return sandbox.CleanResult{}, nil
+			}
+			runWithCleanup(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, cleanup)
+			if called {
+				t.Fatalf("cleanup ran for args %v", args)
+			}
+		})
+	}
+}
+
+func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
+	for _, args := range [][]string{{"down"}, {"clean"}, {"up"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			called := false
+			cleanup := func(context.Context) (sandbox.CleanResult, error) {
+				called = true
+				return sandbox.CleanResult{RemovedRuns: 1}, errors.New("cleanup fixture")
+			}
+			var stderr bytes.Buffer
+			code := runWithCleanup(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, cleanup)
+			if !called || code != 1 || !strings.Contains(stderr.String(), "removed 1 inactive run workspace") ||
+				!strings.Contains(stderr.String(), "stale-state cleanup incomplete: cleanup fixture") {
+				t.Fatalf("called = %t, code = %d, stderr = %q", called, code, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunStatusReportsPreservedStateWhenCleanupIsIncomplete(t *testing.T) {
+	cleanup := func(context.Context) (sandbox.CleanResult, error) {
+		return sandbox.CleanResult{}, errors.New("ownership is uncertain")
+	}
+	inspect := func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{
+			State:   sandbox.SessionStale,
+			RunID:   "20260724-123456-abcdef12",
+			Message: "recorded Windows Sandbox process identity changed",
+		}, nil
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithDependencies(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr, cleanup, inspect)
+	if code != 0 || !strings.Contains(stderr.String(), "stale-state cleanup incomplete: ownership is uncertain") ||
+		!strings.Contains(stdout.String(), "state: stale") || !strings.Contains(stdout.String(), "recorded Windows Sandbox process identity changed") {
+		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunCleanUsesOneCanonicalCleanupResult(t *testing.T) {
+	calls := 0
+	cleanup := func(context.Context) (sandbox.CleanResult, error) {
+		calls++
+		return sandbox.CleanResult{RemovedRuns: 2}, nil
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runWithCleanup(context.Background(), []string{"clean"}, &bytes.Buffer{}, &stdout, &stderr, cleanup)
+	if code != 0 || calls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "removed 2 inactive run workspaces") {
+		t.Fatalf("code = %d, calls = %d, stdout = %q, stderr = %q", code, calls, stdout.String(), stderr.String())
 	}
 }
