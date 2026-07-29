@@ -18,6 +18,8 @@ func TestVisualStudioLayoutAssetIsEmbedded(t *testing.T) {
 		"Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
 		"Microsoft.VisualStudio.Component.Windows11SDK.26100",
 		`bootstrapper\vs_BuildTools.exe`,
+		"function Assert-HerdrHostCacheTree",
+		"Assert-HerdrHostCacheTree -Path $selectedSlot",
 		"complete.json",
 	} {
 		if !strings.Contains(string(visualStudioLayoutScript), required) {

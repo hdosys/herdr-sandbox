@@ -288,7 +288,12 @@ if ([string]$request.mode -ceq 'restore') {
         if (-not $enrollmentAttempted) { $identityNotEstablished = $true } else { throw }
     } finally {
         $authBytes = $null
-        Remove-Item -LiteralPath $authPath -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $authPath) {
+            Remove-Item -LiteralPath $authPath -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $authPath) {
+            throw 'Tailscale auth-key staging cleanup did not remove the credential file.'
+        }
     }
 } else {
     throw 'Tailscale identity input mode is invalid.'
@@ -377,7 +382,12 @@ function Set-TailscaleState {
         if (Test-Path -LiteralPath $target) { [IO.File]::Replace($temporary, $target, $null) } else { [IO.File]::Move($temporary, $target) }
         Assert-RegularNonReparseFile -Path $target -Maximum %d
     } finally {
-        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $temporary) {
+            throw 'Tailscale plaintext state staging cleanup did not remove the credential file.'
+        }
     }
 }
 function Read-TailscaleIdentity {

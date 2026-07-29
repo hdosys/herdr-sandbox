@@ -3,22 +3,13 @@ package sandbox
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 
 	"herdr-sandbox/internal/hiddenprocess"
 )
 
-func hiddenCommand(name string, args ...string) *exec.Cmd {
-	command := exec.Command(name, args...)
-	hiddenprocess.Configure(command)
-	command.Env = childProcessEnvironment(os.Environ())
-	return command
-}
-
-func hiddenCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	command := exec.CommandContext(ctx, name, args...)
-	hiddenprocess.Configure(command)
+func hiddenCommandContext(ctx context.Context, name string, args ...string) *hiddenprocess.Command {
+	command := hiddenprocess.CommandContext(ctx, name, args...)
 	command.Env = childProcessEnvironment(os.Environ())
 	return command
 }

@@ -27,19 +27,31 @@ const (
 	SessionReady     = "ready"
 	SessionFailed    = "failed"
 	SessionStale     = "stale"
+
+	statusLifecycleLockTimeout = time.Second
 )
 
 var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{8}$`)
 
 type SessionStatus struct {
-	State        string
-	RunID        string
-	PID          int
-	Phase        string
-	Message      string
-	GuestIP      string
-	HerdrVersion string
-	Processes    []string
+	State              string
+	RunID              string
+	PID                int
+	StartedAtUTC       string
+	Phase              string
+	Message            string
+	GuestIP            string
+	WinGetVersion      string
+	HerdrVersion       string
+	HerdrProtocol      int
+	Workspaces         []SessionWorkspace
+	Operation          *SessionOperation
+	DiagnosticsPath    string
+	Timings            []SessionTiming
+	Warnings           []string
+	NextAction         string
+	CleanupRemovedRuns int
+	Processes          []string
 }
 
 type DownResult struct {
@@ -186,11 +198,22 @@ func InspectSession(ctx context.Context) (SessionStatus, error) {
 	if err != nil {
 		return SessionStatus{}, err
 	}
-	release, err := acquireLifecycleLock(ctx)
+	lockContext, cancelLock := context.WithTimeout(ctx, statusLifecycleLockTimeout)
+	release, err := acquireLifecycleLock(lockContext)
+	cancelLock()
 	if err != nil {
-		return SessionStatus{}, err
+		if ctx.Err() != nil {
+			return SessionStatus{}, err
+		}
+		return inspectSessionDuringOperation(ctx, dataDirectory, err)
 	}
+	cleanup, cleanupErr := cleanupStaleStateAt(ctx, dataDirectory)
 	status, inspectErr := inspectSessionAt(ctx, dataDirectory)
+	status.CleanupRemovedRuns = cleanup.RemovedRuns
+	if cleanupErr != nil {
+		status.Warnings = append(status.Warnings, "Stale-state cleanup incomplete: "+cleanupErr.Error())
+	}
+	status.NextAction = sessionNextAction(status)
 	releaseErr := release()
 	if inspectErr != nil {
 		return SessionStatus{}, inspectErr
@@ -271,18 +294,25 @@ func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus,
 	status := SessionStatus{State: SessionStale, RunID: active.RunID, PID: active.PID}
 	if !running {
 		status.Message = "recorded Windows Sandbox process is no longer running"
+		enrichSessionStatus(dataDirectory, active, &status)
 		return status, nil
 	}
 	if err := active.matches(snapshot); err != nil {
 		status.Message = err.Error()
+		enrichSessionStatus(dataDirectory, active, &status)
 		return status, nil
 	}
 
-	return classifyManagedSession(dataDirectory, active)
+	status, err = classifyManagedSession(dataDirectory, active)
+	if err != nil {
+		return SessionStatus{}, err
+	}
+	enrichSessionStatus(dataDirectory, active, &status)
+	return status, nil
 }
 
 func classifyManagedSession(dataDirectory string, active activeSession) (SessionStatus, error) {
-	status := SessionStatus{State: SessionStarting, RunID: active.RunID, PID: active.PID}
+	status := SessionStatus{State: SessionStarting, RunID: active.RunID, PID: active.PID, StartedAtUTC: active.StartedAtUTC}
 	statusDirectory := filepath.Join(dataDirectory, "runs", active.RunID, "status")
 	if failure, ok, err := readOptionalStatus[failureStatus](filepath.Join(statusDirectory, failureFileName)); err != nil {
 		return SessionStatus{}, fmt.Errorf("read active Sandbox failure status: %w", err)
@@ -303,7 +333,9 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 		}
 		status.State = SessionReady
 		status.GuestIP = ready.IP
+		status.WinGetVersion = ready.WinGetVersion
 		status.HerdrVersion = ready.HerdrVersion
+		status.HerdrProtocol = ready.HerdrProtocol
 		return status, nil
 	}
 	if connectable, ok, err := readOptionalStatus[connectableStatus](filepath.Join(statusDirectory, connectableFileName)); err != nil {
@@ -314,6 +346,10 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 		}
 		status.Phase = "connectable"
 		status.Message = "SSH and Herdr server are ready; applying verified host configuration"
+		status.GuestIP = connectable.IP
+		status.WinGetVersion = connectable.WinGetVersion
+		status.HerdrVersion = connectable.HerdrVersion
+		status.HerdrProtocol = connectable.HerdrProtocol
 		return status, nil
 	}
 	if progress, ok, err := readOptionalStatus[progressStatus](filepath.Join(statusDirectory, progressFileName)); err != nil {
@@ -332,6 +368,13 @@ func downAt(ctx context.Context, dataDirectory string) (DownResult, error) {
 	executable, err := windowsSandboxExecutable()
 	if err != nil {
 		return DownResult{}, err
+	}
+	return downAtWithExecutable(ctx, dataDirectory, executable)
+}
+
+func downAtWithExecutable(ctx context.Context, dataDirectory, executable string) (DownResult, error) {
+	if _, _, err := interruptAbandonedActiveOperationWithExecutable(dataDirectory, executable); err != nil {
+		return DownResult{}, fmt.Errorf("reconcile previous retained operation before down: %w", err)
 	}
 	active, found, err := loadActiveSession(dataDirectory, executable)
 	if err != nil {
@@ -486,6 +529,9 @@ func cleanupStaleStateWithInspector(ctx context.Context, dataDirectory, executab
 		return CleanResult{}, err
 	}
 	defer dataRoot.close()
+	if _, _, err := interruptAbandonedActiveOperationWithExecutable(dataDirectory, executable); err != nil {
+		return CleanResult{}, fmt.Errorf("reconcile previous retained operation before cleanup: %w", err)
+	}
 	protection, err := inspect(ctx, dataDirectory, executable)
 	if err != nil {
 		return CleanResult{}, err

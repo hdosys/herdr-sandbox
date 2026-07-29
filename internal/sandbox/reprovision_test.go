@@ -18,10 +18,17 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	statusDirectory := filepath.Join(runDirectory, "status")
 	cacheDirectory := filepath.Join(root, "cache")
 	workspaceDirectory := filepath.Join(root, "workspace")
-	for _, directory := range []string{inputDirectory, statusDirectory, cacheDirectory, workspaceDirectory} {
+	for _, directory := range []string{inputDirectory, statusDirectory, filepath.Join(dataDirectory, "identity"), cacheDirectory, workspaceDirectory} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	configurationDirectory := filepath.Join(workspaceDirectory, projectConfigurationName)
+	if err := os.MkdirAll(configurationDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configurationDirectory, projectProvisioningName), []byte("Write-Output 'fixture'\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	inputDirectory, err := canonicalMappedDirectory(inputDirectory)
 	if err != nil {
@@ -86,7 +93,7 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	if err := os.WriteFile(configPath, config, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
+	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "memory") || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
 		t.Fatalf("changed retained plan error = %v", err)
 	}
 	provisioning.Audio = true
@@ -177,7 +184,11 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		"[Console]::OpenStandardInput()",
 		"$expectedArchiveLength = [long]1234",
 		"Retained provisioning archive SHA-256 mismatch",
+		"function Remove-GuestArchiveStaging",
+		"staging cleanup did not remove all input",
 		`C:\HerdrSandbox\staging`,
+		"reprovision-aaaaaaaaaaaaaaaa",
+		"Assert-GuestArchiveTree",
 		`$env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'`,
 		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
 		"*>&1",
@@ -185,5 +196,12 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		if !strings.Contains(launcher, required) {
 			t.Fatalf("retained provisioning launcher is missing %q", required)
 		}
+	}
+	if strings.Contains(launcher, "Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue") ||
+		strings.Contains(launcher, "Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue") {
+		t.Fatal("retained provisioning launcher silently ignores staging cleanup")
+	}
+	if strings.Contains(launcher, "$env:TEMP") {
+		t.Fatal("retained provisioning launcher stages input outside the canonical guest root")
 	}
 }

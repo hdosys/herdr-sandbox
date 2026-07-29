@@ -5,9 +5,43 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestPrepareHostStateDirectoriesRejectsIdentityReparseBeforeMutation(t *testing.T) {
+	dataDirectory := t.TempDir()
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createTestDirectoryLink(t, filepath.Join(dataDirectory, "identity"), outside)
+	if _, err := prepareHostStateDirectories(dataDirectory); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
+		t.Fatalf("reparse identity root error = %v", err)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
+		t.Fatalf("outside identity target changed: %q, %v", contents, err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDirectory, "runs")); !os.IsNotExist(err) {
+		t.Fatalf("run state was created after unsafe identity detection: %v", err)
+	}
+}
+
+func TestEnsurePhysicalDirectoryRejectsReparseAncestorBeforeCreation(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	alias := filepath.Join(root, "cache-alias")
+	createTestDirectoryLink(t, alias, outside)
+	target := filepath.Join(alias, "new-cache")
+	if _, err := ensurePhysicalDirectory(target, "cache"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
+		t.Fatalf("reparse cache ancestor error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new-cache")); !os.IsNotExist(err) {
+		t.Fatalf("cache directory was created through a reparse ancestor: %v", err)
+	}
+}
 
 func TestDefaultOptionsHasNoOverallTimeout(t *testing.T) {
 	if timeout := DefaultOptions().Timeout; timeout != 0 {
@@ -26,6 +60,13 @@ func TestWithOptionalTimeoutAddsOnlyExplicitDeadline(t *testing.T) {
 	defer cancelBounded()
 	if _, found := bounded.Deadline(); !found {
 		t.Fatal("explicit timeout did not add a deadline")
+	}
+}
+
+func TestConfigurationHandoffTimeoutCoversBoundedHostPhases(t *testing.T) {
+	minimum := tailscaleIdentityTimeout + configurationSyncTimeout + time.Minute
+	if configurationHandoffTimeout < minimum {
+		t.Fatalf("configuration handoff timeout = %s, want at least %s", configurationHandoffTimeout, minimum)
 	}
 }
 

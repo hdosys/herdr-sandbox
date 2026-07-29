@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -297,11 +298,11 @@ func (status progressStatus) validate() error {
 	if status.SchemaVersion != statusSchemaVersion {
 		return fmt.Errorf("schemaVersion = %d, want %d", status.SchemaVersion, statusSchemaVersion)
 	}
-	if strings.TrimSpace(status.Phase) == "" {
-		return errors.New("phase is empty")
+	if err := validateTerminalText("phase", status.Phase, 128); err != nil {
+		return err
 	}
-	if strings.TrimSpace(status.Message) == "" {
-		return errors.New("message is empty")
+	if err := validateTerminalText("message", status.Message, 4096); err != nil {
+		return err
 	}
 	return nil
 }
@@ -310,15 +311,11 @@ func (status failureStatus) validate() error {
 	if status.SchemaVersion != statusSchemaVersion {
 		return fmt.Errorf("schemaVersion = %d, want %d", status.SchemaVersion, statusSchemaVersion)
 	}
-	if strings.TrimSpace(status.Phase) == "" {
-		return errors.New("phase is empty")
+	if err := validateTerminalText("phase", status.Phase, 128); err != nil {
+		return err
 	}
-	message := strings.TrimSpace(status.Message)
-	if message == "" {
-		return errors.New("message is empty")
-	}
-	if len(message) > 4096 {
-		return errors.New("message exceeds 4096 characters")
+	if err := validateTerminalText("message", status.Message, 4096); err != nil {
+		return err
 	}
 	return nil
 }
@@ -349,11 +346,11 @@ func validateConnectionStatus(status connectionStatus, expectedSchemaVersion int
 	if _, err := base64.StdEncoding.DecodeString(fields[1]); err != nil {
 		return fmt.Errorf("decode sshHostKey: %w", err)
 	}
-	if strings.TrimSpace(status.WinGetVersion) == "" {
-		return errors.New("wingetVersion is empty")
+	if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); err != nil {
+		return err
 	}
-	if strings.TrimSpace(status.HerdrVersion) == "" {
-		return errors.New("herdrVersion is empty")
+	if err := validateTerminalText("herdrVersion", status.HerdrVersion, 256); err != nil {
+		return err
 	}
 	if status.HerdrProtocol < 1 {
 		return fmt.Errorf("herdrProtocol = %d, want a positive value", status.HerdrProtocol)
@@ -371,20 +368,35 @@ func (status configurationHandoffStatus) validate() error {
 			return errors.New("verified configuration handoff must not contain failure details")
 		}
 	case configurationHandoffFailed:
-		if strings.TrimSpace(status.Phase) == "" {
-			return errors.New("failed configuration handoff phase is empty")
+		if err := validateTerminalText("failed configuration handoff phase", status.Phase, 128); err != nil {
+			return err
 		}
-		message := strings.TrimSpace(status.Message)
-		if message == "" {
-			return errors.New("failed configuration handoff message is empty")
-		}
-		if len(message) > 4096 {
-			return errors.New("failed configuration handoff message exceeds 4096 characters")
+		if err := validateTerminalText("failed configuration handoff message", status.Message, 4096); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("configuration handoff outcome = %q", status.Outcome)
 	}
 	return nil
+}
+
+func validateTerminalText(role, value string, maximumBytes int) error {
+	if value == "" || strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s is empty or has surrounding whitespace", role)
+	}
+	if len([]byte(value)) > maximumBytes {
+		return fmt.Errorf("%s exceeds %d UTF-8 bytes", role, maximumBytes)
+	}
+	for _, character := range value {
+		if isUnsafeTerminalRune(character) {
+			return fmt.Errorf("%s contains a non-printing terminal control", role)
+		}
+	}
+	return nil
+}
+
+func isUnsafeTerminalRune(value rune) bool {
+	return !unicode.IsPrint(value)
 }
 
 func sameConnectionIdentity(connectable connectableStatus, ready readyStatus) bool {

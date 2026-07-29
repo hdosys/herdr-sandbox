@@ -431,9 +431,16 @@ func runBoundedGitHubCLI(ctx context.Context, executable string, environment []s
 	}
 	output, readErr := io.ReadAll(io.LimitReader(stdout, maximumBytes+1))
 	if int64(len(output)) > maximumBytes {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		return nil, fmt.Errorf("GitHub CLI output exceeds %d bytes", maximumBytes)
+		terminateErr := command.Terminate()
+		waitErr := command.Wait()
+		errs := []error{fmt.Errorf("GitHub CLI output exceeds %d bytes", maximumBytes)}
+		if terminateErr != nil {
+			errs = append(errs, fmt.Errorf("terminate GitHub CLI Job Object: %w", terminateErr))
+		}
+		if waitErr != nil {
+			errs = append(errs, fmt.Errorf("wait for terminated GitHub CLI: %w", waitErr))
+		}
+		return nil, errors.Join(errs...)
 	}
 	waitErr := command.Wait()
 	if readErr != nil {
@@ -527,6 +534,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 			return err
 		}
 		sources.GitHubCLIAuthentication = authenticationPayload
+		defer clear(sources.GitHubCLIAuthentication)
 		expectedGitHubAccounts = accountCount
 	}
 	remoteScript := `$ErrorActionPreference = 'Stop'
@@ -750,8 +758,7 @@ function Assert-OpenCodeAllowAll {
         }
     }
 }
-try {
-    $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+$digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $packagePlanPath = Join-Path $expanded 'herdr-sandbox\winget-packages.json'
     if (-not (Test-Path -LiteralPath $packagePlanPath -PathType Leaf)) {
@@ -1144,26 +1151,23 @@ try {
         Copy-VerifiedConfigurationTree -Source $fragmentsSource -Destination $fragmentsDestination
     }
     }
-    Write-Output ([ordered]@{
-        schemaVersion = 6
-        archiveSha256 = $digest
-        copiedFiles = $script:CopiedConfigurationFiles
-        openCodePermissionVerified = $openCodePermissionVerified
-        windowsTerminalEdition = $terminalEdition
-        starshipPreset = $starshipPreset
-        starshipConfigured = $starshipConfigured
-        githubAuthenticatedAccounts = $githubAccounts.Count
-        githubAuthenticationVerified = $githubAuthenticationVerified
-        herdrConfigurationReloaded = $true
-    } | ConvertTo-Json -Compress)
-} finally {
-    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
-}`
+Write-Output ([ordered]@{
+    schemaVersion = 6
+    archiveSha256 = $digest
+    copiedFiles = $script:CopiedConfigurationFiles
+    openCodePermissionVerified = $openCodePermissionVerified
+    windowsTerminalEdition = $terminalEdition
+    starshipPreset = $starshipPreset
+    starshipConfigured = $starshipConfigured
+    githubAuthenticatedAccounts = $githubAccounts.Count
+    githubAuthenticationVerified = $githubAuthenticationVerified
+    herdrConfigurationReloaded = $true
+} | ConvertTo-Json -Compress)`
 	archive, err := buildDevelopmentConfigurationArchive(sources, []byte(remoteScript))
 	if err != nil {
 		return err
 	}
+	defer clear(archive)
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	expectedCopiedFiles, err := configurationArchivePayloadFileCount(archive)
 	if err != nil {
@@ -1210,13 +1214,11 @@ try {
 }
 
 func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int) string {
+	staging := guestArchiveStagingPowerShell("configuration-"+expectedDigest[:16], "Development configuration")
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$archive = Join-Path $env:TEMP 'herdr-sandbox-configuration.zip'
-$expanded = Join-Path $env:TEMP 'herdr-sandbox-configuration'
+%s
 $expectedArchiveLength = [long]%d
-Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
 try {
     [Console]::Error.WriteLine('[config-sync] receive-archive')
     $inputStream = [Console]::OpenStandardInput()
@@ -1239,6 +1241,7 @@ try {
     $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($digest -cne '%s') { throw 'Development configuration archive SHA-256 mismatch.' }
     Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+    Assert-GuestArchiveTree
     $applyScript = Join-Path $expanded 'herdr-sandbox\apply.ps1'
     if (-not (Test-Path -LiteralPath $applyScript -PathType Leaf)) {
         throw 'Development configuration apply script is missing.'
@@ -1250,10 +1253,9 @@ try {
 } finally {
     Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE -ErrorAction SilentlyContinue
     Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_EXPANDED -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-GuestArchiveStaging
 }
-exit 0`, expectedArchiveLength, expectedDigest)
+exit 0`, staging, expectedArchiveLength, expectedDigest)
 }
 
 func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) (hostConfigurationSources, error) {
@@ -1419,7 +1421,7 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 			return nil, fmt.Errorf("archive global Git config: %w", err)
 		}
 		if info, err := os.Stat(sources.GitConfigDirectory); err == nil && info.IsDir() {
-			if err := addConfigurationDirectory(sources.GitConfigDirectory, filepath.Join("git", "config"), add); err != nil {
+			if err := addConfigurationTree(sources.GitConfigDirectory, filepath.Join("git", "config"), nil, add); err != nil {
 				return nil, err
 			}
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1478,7 +1480,7 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 	}
 	if sources.WindowsTerminalEdition != "" && sources.WindowsTerminalFragments != "" {
 		if info, err := os.Stat(sources.WindowsTerminalFragments); err == nil && info.IsDir() {
-			if err := addConfigurationDirectory(sources.WindowsTerminalFragments, filepath.Join("windows-terminal", "Fragments"), add); err != nil {
+			if err := addConfigurationTree(sources.WindowsTerminalFragments, filepath.Join("windows-terminal", "Fragments"), nil, add); err != nil {
 				return nil, err
 			}
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1677,25 +1679,6 @@ func configureGuestPowerShellProfile(profile map[string]any) {
 	profile["commandline"] = powerShellCommandLine
 	profile["source"] = "Windows.Terminal.PowershellCore"
 	delete(profile, "startingDirectory")
-}
-
-func addConfigurationDirectory(directory, archiveRoot string, add func(string, string) error) error {
-	return filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("configuration directory contains a symbolic link: %s", path)
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		relative, err := filepath.Rel(directory, path)
-		if err != nil {
-			return err
-		}
-		return add(path, filepath.Join(archiveRoot, relative))
-	})
 }
 
 func encodePowerShell(script string) string {

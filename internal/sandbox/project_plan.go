@@ -28,6 +28,7 @@ type projectStack string
 
 const (
 	stackCargoNextest projectStack = "cargo-nextest"
+	stackDotNet       projectStack = "dotnet"
 	stackGo           projectStack = "go"
 	stackJust         projectStack = "just"
 	stackNode         projectStack = "node"
@@ -49,7 +50,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackCargoNextest, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
+	case stackCargoNextest, stackDotNet, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
 		return true
 	default:
 		return false
@@ -60,7 +61,7 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScrip
 	if !filepath.IsAbs(runDirectory) || !filepath.IsAbs(userScript) || !filepath.IsAbs(projectsDirectory) {
 		return nil, nil, errors.New("provisioning inspection requires absolute paths")
 	}
-	if len(workspaces) == 0 || len(workspaces) > 16 {
+	if len(workspaces) > 16 {
 		return nil, nil, fmt.Errorf("project provisioning inspection workspace count is invalid: %d", len(workspaces))
 	}
 	powerShell, err := windowsPowerShellExecutable()

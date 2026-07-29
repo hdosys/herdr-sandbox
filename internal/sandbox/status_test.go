@@ -152,6 +152,8 @@ func TestReadyStatusValidatesBoundaryFields(t *testing.T) {
 		{name: "IPv6", mutate: func(value *readyStatus) { value.IP = "::1" }},
 		{name: "user", mutate: func(value *readyStatus) { value.SSHUser = "other" }},
 		{name: "host key", mutate: func(value *readyStatus) { value.SSHHostKey = "ssh-rsa AAAA" }},
+		{name: "winget terminal control", mutate: func(value *readyStatus) { value.WinGetVersion = "1\x1b[2J" }},
+		{name: "herdr terminal control", mutate: func(value *readyStatus) { value.HerdrVersion = "1\x1b]8;;https://example.test\a" }},
 		{name: "protocol", mutate: func(value *readyStatus) { value.HerdrProtocol = 0 }},
 	}
 	for _, test := range tests {
@@ -160,6 +162,26 @@ func TestReadyStatusValidatesBoundaryFields(t *testing.T) {
 			test.mutate(&value)
 			if err := value.validate(); err == nil {
 				t.Fatal("validate unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestGuestDisplayStatusRejectsTerminalControls(t *testing.T) {
+	for name, validate := range map[string]func() error{
+		"progress phase": func() error {
+			return (progressStatus{SchemaVersion: 1, Phase: "phase\x1b[2J", Message: "message"}).validate()
+		},
+		"progress message": func() error {
+			return (progressStatus{SchemaVersion: 1, Phase: "phase", Message: "message\x1b]8;;https://example.test\a"}).validate()
+		},
+		"failure message": func() error {
+			return (failureStatus{SchemaVersion: 1, Phase: "phase", Message: "message\bhidden"}).validate()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validate(); err == nil || !strings.Contains(err.Error(), "terminal control") {
+				t.Fatalf("validation error = %v", err)
 			}
 		})
 	}

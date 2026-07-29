@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -56,6 +57,7 @@ func guestBootstrapLaunch(audioEnabled bool) string {
 		"'-InputDirectory'", "'C:\\SandboxBootstrap'",
 		"'-StatusDirectory'", "'C:\\SandboxStatus'",
 		"'-AudioPlayback'", audioSelection,
+		"'-ConfigurationHandoffTimeoutMinutes'", fmt.Sprintf("'%d'", configurationHandoffTimeout/time.Minute),
 	}
 	return "Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @(" +
 		strings.Join(arguments, ",") + ")"
@@ -153,6 +155,42 @@ func canonicalMappedDirectory(path string) (string, error) {
 		return "", fmt.Errorf("resolve mapped directory %s: %w", path, err)
 	}
 	return filepath.Clean(resolved), nil
+}
+
+func ensurePhysicalDirectory(path, role string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s directory is not absolute: %q", role, path)
+	}
+	path = filepath.Clean(path)
+	existing := path
+	for {
+		info, err := os.Lstat(existing)
+		if err == nil {
+			if err := rejectMappedPathReparsePoints(existing); err != nil {
+				return "", fmt.Errorf("refusing unsafe %s directory: %w", role, err)
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("%s path component is not a directory: %s", role, existing)
+			}
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect %s path component %s: %w", role, existing, err)
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return "", fmt.Errorf("find existing parent for %s directory: %s", role, path)
+		}
+		existing = parent
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return "", fmt.Errorf("create %s directory: %w", role, err)
+	}
+	physical, err := canonicalMappedDirectory(path)
+	if err != nil {
+		return "", fmt.Errorf("validate %s directory: %w", role, err)
+	}
+	return physical, nil
 }
 
 func rejectMappedPathReparsePoints(path string) error {

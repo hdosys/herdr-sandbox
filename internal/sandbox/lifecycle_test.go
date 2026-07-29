@@ -284,6 +284,57 @@ func TestCleanupStaleStateRemovesGoneRunsAndManagedSSHConfig(t *testing.T) {
 	}
 }
 
+func TestCleanupReconcilesRunningOperationBeforeGoneRunDeletion(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	writeRunDirectoryFixture(t, dataDirectory, active.RunID)
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	if _, err := startSessionOperation(filepath.Join(dataDirectory, "runs", active.RunID), active.RunID,
+		operationKindReprovision, "configuration-sync", "Copying configuration"); err != nil {
+		t.Fatal(err)
+	}
+	inspections := 0
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		inspections++
+		operation, found, err := readSessionOperation(filepath.Join(dataDirectory, "runs", active.RunID))
+		if err != nil || !found || operation.State != operationStateInterrupted {
+			t.Fatalf("operation before cleanup inspection = %#v, found = %t, error = %v", operation, found, err)
+		}
+		return cleanupProtection{Active: active, Found: true, SandboxGone: true}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err != nil || result.RemovedRuns != 1 || inspections != 2 {
+		t.Fatalf("result = %#v, inspections = %d, error = %v", result, inspections, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dataDirectory, "runs", active.RunID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("gone run was not removed: %v", err)
+	}
+}
+
+func TestDownReconcilesRunningOperationBeforeProcessInspection(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows Sandbox lifecycle regression")
+	}
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	active.PID = 2147483646
+	writeRunDirectoryFixture(t, dataDirectory, active.RunID)
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	if _, err := startSessionOperation(filepath.Join(dataDirectory, "runs", active.RunID), active.RunID,
+		operationKindReprovision, "configuration-sync", "Copying configuration"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, _ = downAtWithExecutable(ctx, dataDirectory, executable)
+	operation, found, err := readSessionOperation(filepath.Join(dataDirectory, "runs", active.RunID))
+	if err != nil || !found || operation.State != operationStateInterrupted {
+		t.Fatalf("operation before down = %#v, found = %t, error = %v", operation, found, err)
+	}
+}
+
 func TestCleanupStaleStatePreservesActiveRunAndSSHConfig(t *testing.T) {
 	dataDirectory := t.TempDir()
 	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
@@ -511,14 +562,18 @@ func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	connectable := connectableStatus{SchemaVersion: statusSchemaVersion, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZha2VwdWJsaWNrZXlieXRlcw==", WinGetVersion: "v1", HerdrVersion: "herdr 1.0.0", HerdrProtocol: 18}
 	writeJSON(t, filepath.Join(statusDirectory, connectableFileName), connectable)
 	status, err = classifyManagedSession(root, active)
-	if err != nil || status.State != SessionStarting || status.Phase != "connectable" || status.GuestIP != "" || status.HerdrVersion != "" {
+	if err != nil || status.State != SessionStarting || status.Phase != "connectable" || status.GuestIP != connectable.IP ||
+		status.WinGetVersion != connectable.WinGetVersion || status.HerdrVersion != connectable.HerdrVersion ||
+		status.HerdrProtocol != connectable.HerdrProtocol {
 		t.Fatalf("connectable status = %#v, %v", status, err)
 	}
 	ready := readyStatus(connectionStatus(connectable))
 	ready.SchemaVersion = readyStatusSchemaVersion
 	writeJSON(t, filepath.Join(statusDirectory, readyFileName), ready)
 	status, err = classifyManagedSession(root, active)
-	if err != nil || status.State != SessionReady || status.GuestIP != ready.IP || status.HerdrVersion != ready.HerdrVersion {
+	if err != nil || status.State != SessionReady || status.GuestIP != ready.IP ||
+		status.WinGetVersion != ready.WinGetVersion || status.HerdrVersion != ready.HerdrVersion ||
+		status.HerdrProtocol != ready.HerdrProtocol {
 		t.Fatalf("ready status = %#v, %v", status, err)
 	}
 	writeJSON(t, filepath.Join(statusDirectory, failureFileName), failureStatus{SchemaVersion: 1, Phase: "attach", Message: "failed"})

@@ -28,6 +28,7 @@ Invoke-Expression 'Install-RustMSVCStack'
 . '.\hidden.ps1'
 Install-GoStack
 Install-GoStack -Version '1.26.5'
+Install-DotNetStack
 throw 'the AST adapter must not execute project code'
 `)
 	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `function Install-ProjectTools {
@@ -42,7 +43,7 @@ Install-Just
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
 	}
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "go" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "cargo-nextest|just|rust-msvc|zig" {

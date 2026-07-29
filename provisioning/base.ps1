@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 32
+# herdr-sandbox-base-contract: 33
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -107,8 +107,33 @@ function Write-ProvisioningTiming {
             elapsedMilliseconds = [long][Math]::Round($Seconds * 1000)
             recordedAtUTC = [DateTime]::UtcNow.ToString('o')
         } | ConvertTo-Json -Compress
-        [IO.File]::AppendAllText((Join-Path $statusDirectory 'timings.jsonl'),
-            $record + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
+        $timingPath = Join-Path $statusDirectory 'timings.jsonl'
+        $existing = @()
+        if (Test-Path -LiteralPath $timingPath -PathType Leaf) {
+            $timingInfo = Get-Item -LiteralPath $timingPath -Force
+            if (($timingInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $timingInfo.Length -gt 262144) {
+                throw "Provisioning timing file is unsafe or exceeds 262144 bytes: $timingPath"
+            }
+            $existing = @([IO.File]::ReadAllLines($timingPath) | Select-Object -Last 127)
+        }
+        $temporaryTimingPath = $timingPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+        $backupTimingPath = $timingPath + '.' + [Guid]::NewGuid().ToString('N') + '.bak'
+        try {
+            [IO.File]::WriteAllLines($temporaryTimingPath, [string[]](@($existing) + $record),
+                (New-Object Text.UTF8Encoding($false)))
+            if (Test-Path -LiteralPath $timingPath -PathType Leaf) {
+                [IO.File]::Replace($temporaryTimingPath, $timingPath, $backupTimingPath, $true)
+            } else {
+                [IO.File]::Move($temporaryTimingPath, $timingPath)
+            }
+        } finally {
+            foreach ($temporaryPath in @($temporaryTimingPath, $backupTimingPath)) {
+                if (Test-Path -LiteralPath $temporaryPath) {
+                    [IO.File]::Delete($temporaryPath)
+                }
+            }
+        }
     } catch {
         Write-Warning "Provisioning timing persistence failed: $($_.Exception.Message)"
     }
@@ -169,7 +194,7 @@ function Read-ProvisioningPackagePlan {
         $known[$id] = $true
     }
     $projectStackPackages = @{}
-    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS.LTS', 'zig.zig', 'Rustlang.Rustup',
+    foreach ($id in @('Microsoft.DotNet.SDK.10', 'GoLang.Go', 'OpenJS.NodeJS.LTS', 'zig.zig', 'Rustlang.Rustup',
         'nextest.cargo-nextest', 'Casey.Just')) {
         $projectStackPackages[$id] = $true
     }
@@ -243,8 +268,21 @@ function Invoke-ProvisioningNative {
         [object]$FilePath,
         [Parameter(Mandatory = $true)]
         [string[]]$ArgumentList,
+        [int[]]$SuccessExitCodes = @(0),
         [switch]$WaitForProcessTree
     )
+
+    $acceptedExitCodes = @{}
+    foreach ($successExitCode in @($SuccessExitCodes)) {
+        if ($successExitCode -lt 0 -or $successExitCode -gt 65535 -or
+            $acceptedExitCodes.ContainsKey([int]$successExitCode)) {
+            throw "$Role success exit-code contract is empty, duplicate, or out of bounds."
+        }
+        $acceptedExitCodes[[int]$successExitCode] = $true
+    }
+    if ($acceptedExitCodes.Count -eq 0 -or $acceptedExitCodes.Count -gt 8) {
+        throw "$Role success exit-code contract is empty, duplicate, or out of bounds."
+    }
 
     $pathValues = @($FilePath)
     if ($pathValues.Count -ne 1) {
@@ -281,7 +319,10 @@ function Invoke-ProvisioningNative {
         $stopwatch.Stop()
     }
     Write-ProvisioningTiming -Role $Role -Seconds $stopwatch.Elapsed.TotalSeconds
-    if ($exitCode -ne 0) {
+    if ($null -eq $exitCode) {
+        throw "$Role did not return a process exit code."
+    }
+    if (-not $acceptedExitCodes.ContainsKey([int]$exitCode)) {
         $details = Get-ProvisioningBoundedDiagnosticText `
             -Text (($output -join [Environment]::NewLine).Trim()) -MaximumBytes 3000
         throw "$Role failed with exit code $exitCode. $details"
@@ -371,6 +412,34 @@ function Assert-ProvisioningCachePath {
             throw "Cache path parent resolution failed: $fullPath"
         }
         $current = $parent.TrimEnd('\')
+    }
+}
+
+function Assert-ProvisioningCacheTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Assert-ProvisioningCachePath -Path $Path
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+    $pending = New-Object 'System.Collections.Generic.List[string]'
+    $pending.Add([IO.Path]::GetFullPath($Path)) | Out-Null
+    while ($pending.Count -gt 0) {
+        $index = $pending.Count - 1
+        $directory = $pending[$index]
+        $pending.RemoveAt($index)
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            Assert-ProvisioningCachePath -Path $item.FullName
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Cache tree contains a reparse point: $($item.FullName)"
+            }
+            if ($item.PSIsContainer) {
+                $pending.Add($item.FullName) | Out-Null
+            }
+        }
     }
 }
 
@@ -831,7 +900,7 @@ function Publish-ProvisioningPackageCacheEntry {
     } finally {
         try {
             if (Test-Path -LiteralPath $staging) {
-                Assert-ProvisioningCachePath -Path $staging
+                Assert-ProvisioningCacheTree -Path $staging
                 Remove-Item -LiteralPath $staging -Recurse -Force
             }
         } catch {
@@ -840,7 +909,7 @@ function Publish-ProvisioningPackageCacheEntry {
         try {
             if ($promotionSucceeded -and -not [string]::IsNullOrWhiteSpace($displaced) -and
                 (Test-Path -LiteralPath $displaced)) {
-                Assert-ProvisioningCachePath -Path $displaced
+                Assert-ProvisioningCacheTree -Path $displaced
                 Remove-Item -LiteralPath $displaced -Recurse -Force
             }
         } catch {
@@ -1257,6 +1326,7 @@ function Install-ProvisioningPackagePayload {
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
+        [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature
@@ -1280,8 +1350,14 @@ function Install-ProvisioningPackagePayload {
                 -WaitForProcessTree | Out-Null
         }
         'Burn' {
+            $burnArguments = if ($InstallerArguments.Count -eq 0) {
+                @('/quiet', '/norestart', 'InstallAllUsers=1', 'PrependPath=1')
+            } else {
+                @($InstallerArguments)
+            }
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
-                -ArgumentList @('/quiet', '/norestart', 'InstallAllUsers=1', 'PrependPath=1') `
+                -ArgumentList $burnArguments `
+                -SuccessExitCodes $InstallerSuccessExitCodes `
                 -WaitForProcessTree | Out-Null
         }
         'MSIX' {
@@ -1377,6 +1453,7 @@ function Install-ProvisioningCachedPackage {
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
+        [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature
@@ -1435,6 +1512,7 @@ function Install-ProvisioningCachedPackage {
         Write-ProvisioningProgress -Message "$Role cached installation"
         Install-ProvisioningPackagePayload -Role $Role -Metadata $metadata -PayloadPath $guestPayload `
             -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
+            -InstallerSuccessExitCodes $InstallerSuccessExitCodes `
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
             -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
@@ -1448,7 +1526,7 @@ function Install-ProvisioningCachedPackage {
         }
         foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
             if ($directory.Name -ine $entryName) {
-                Assert-ProvisioningCachePath -Path $directory.FullName
+                Assert-ProvisioningCacheTree -Path $directory.FullName
                 Remove-Item -LiteralPath $directory.FullName -Recurse -Force
             }
         }
@@ -2633,27 +2711,10 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
         throw "OpenCode managed plugin path is not a local absolute path: $openCodeManagedPluginPath"
     }
     $openCodeManagedPluginURI = 'file:///' + $openCodeManagedPluginPath.Replace('\', '/')
-    $openCodeManagedPlugin = @'
-const allowAll = () => ({
-  "*": "allow",
-  read: "allow",
-  edit: "allow",
-  glob: "allow",
-  grep: "allow",
-  list: "allow",
-  bash: "allow",
-  task: "allow",
-  external_directory: "allow",
-  todowrite: "allow",
-  question: "allow",
-  webfetch: "allow",
-  websearch: "allow",
-  lsp: "allow",
-  doom_loop: "allow",
-  skill: "allow",
-  plan_enter: "allow",
-  plan_exit: "allow",
-})
+    $openCodeAllowAllJSON = $openCodeAllowAllPermissions | ConvertTo-Json -Compress
+    $openCodeManagedPlugin = @"
+const permissions = $openCodeAllowAllJSON
+const allowAll = () => ({ ...permissions })
 
 export default async () => ({
   config: async (config) => {
@@ -2663,7 +2724,7 @@ export default async () => ({
     }
   },
 })
-'@
+"@
     $openCodeManagedConfig = ([ordered]@{
         '$schema' = 'https://opencode.ai/config.json'
         permission = $openCodeAllowAllPermissions

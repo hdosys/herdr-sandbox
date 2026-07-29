@@ -45,6 +45,7 @@ var basePackageIDs = []string{
 }
 
 var projectStackPackageIDs = []string{
+	"Microsoft.DotNet.SDK.10",
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
 	"zig.zig",

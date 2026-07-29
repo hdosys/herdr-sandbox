@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"herdr-sandbox/internal/sandbox"
 )
+
+func runWithCleanup(ctx context.Context, args []string, stdin *bytes.Buffer, stdout, stderr *bytes.Buffer, cleanup staleCleanup) int {
+	return runWithDependencies(ctx, args, stdin, stdout, stderr, cleanup, sandbox.InspectSession)
+}
 
 func TestRunPrintsHelp(t *testing.T) {
 	var stdout bytes.Buffer
@@ -16,13 +21,23 @@ func TestRunPrintsHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "herdr-sandbox up") || !strings.Contains(stdout.String(), "herdr-sandbox status") || !strings.Contains(stdout.String(), "herdr-sandbox down") || !strings.Contains(stdout.String(), "herdr-sandbox clean") || !strings.Contains(stdout.String(), "cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)") || !strings.Contains(stdout.String(), "memoryMB (default 32768)") || !strings.Contains(stdout.String(), "no overall timeout unless --timeout is supplied") || !strings.Contains(stdout.String(), "workspaceDiscovery") || !strings.Contains(stdout.String(), "wingetPackages") || strings.Contains(stdout.String(), "--timeout 20m") {
+	for _, required := range []string{
+		"herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
+		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox down", "herdr-sandbox clean",
+		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "wingetPackages", "audio", "tailscale",
+	} {
+		if !strings.Contains(stdout.String(), required) {
+			t.Fatalf("help is missing %q: %q", required, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "--timeout 20m") {
 		t.Fatalf("help = %q", stdout.String())
 	}
 }
 
 func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
-	for _, command := range []string{"status", "down", "clean"} {
+	for _, command := range []string{"plan", "attach", "status", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
 		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
@@ -129,6 +144,12 @@ func TestRunInformationalAndInvalidInputDoesNotCleanup(t *testing.T) {
 		nil,
 		{"help"},
 		{"--help"},
+		{"plan", "--help"},
+		{"init", "--help"},
+		{"attach", "--help"},
+		{"status", "--help"},
+		{"down", "--help"},
+		{"clean", "--help"},
 		{"up", "--help"},
 		{"unknown"},
 		{"status", "extra"},
@@ -150,7 +171,7 @@ func TestRunInformationalAndInvalidInputDoesNotCleanup(t *testing.T) {
 }
 
 func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
-	for _, args := range [][]string{{"down"}, {"clean"}, {"up"}} {
+	for _, args := range [][]string{{"down"}, {"clean"}, {"up", "--no-attach"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			called := false
 			cleanup := func(context.Context) (sandbox.CleanResult, error) {
@@ -169,19 +190,21 @@ func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
 
 func TestRunStatusReportsPreservedStateWhenCleanupIsIncomplete(t *testing.T) {
 	cleanup := func(context.Context) (sandbox.CleanResult, error) {
-		return sandbox.CleanResult{}, errors.New("ownership is uncertain")
+		t.Fatal("status called the separate cleanup owner")
+		return sandbox.CleanResult{}, nil
 	}
 	inspect := func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{
-			State:   sandbox.SessionStale,
-			RunID:   "20260724-123456-abcdef12",
-			Message: "recorded Windows Sandbox process identity changed",
+			State:    sandbox.SessionStale,
+			RunID:    "20260724-123456-abcdef12",
+			Message:  "recorded Windows Sandbox process identity changed",
+			Warnings: []string{"Stale-state cleanup incomplete: ownership is uncertain"},
 		}, nil
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithDependencies(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr, cleanup, inspect)
-	if code != 0 || !strings.Contains(stderr.String(), "stale-state cleanup incomplete: ownership is uncertain") ||
+	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "warning: Stale-state cleanup incomplete: ownership is uncertain") ||
 		!strings.Contains(stdout.String(), "state: stale") || !strings.Contains(stdout.String(), "recorded Windows Sandbox process identity changed") {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
@@ -198,5 +221,174 @@ func TestRunCleanUsesOneCanonicalCleanupResult(t *testing.T) {
 	code := runWithCleanup(context.Background(), []string{"clean"}, &bytes.Buffer{}, &stdout, &stderr, cleanup)
 	if code != 0 || calls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "removed 2 inactive run workspaces") {
 		t.Fatalf("code = %d, calls = %d, stdout = %q, stderr = %q", code, calls, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	cleanupCalled := false
+	upCalled := false
+	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error { return errors.New("console streams required") }
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+		cleanupCalled = true
+		return sandbox.CleanResult{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+		upCalled = true
+		return sandbox.Connection{}, nil
+	}
+	var stderr bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"up"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
+	if code != 1 || cleanupCalled || upCalled || !strings.Contains(stderr.String(), "--no-attach") {
+		t.Fatalf("code = %d, cleanup = %t, up = %t, stderr = %q", code, cleanupCalled, upCalled, stderr.String())
+	}
+}
+
+func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	validated := false
+	attached := false
+	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error {
+		validated = true
+		return errors.New("unexpected validation")
+	}
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
+	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+		return sandbox.Connection{}, nil
+	}
+	dependencies.attach = func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error {
+		attached = true
+		return nil
+	}
+	var stdout bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
+	if code != 0 || validated || attached || !strings.Contains(stdout.String(), "Sandbox is ready") {
+		t.Fatalf("code = %d, validated = %t, attached = %t, stdout = %q", code, validated, attached, stdout.String())
+	}
+}
+
+func TestRunAttachOpensExactReadyConnectionWithoutProvisioning(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	opened := false
+	attached := false
+	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error { return nil }
+	dependencies.openReady = func(context.Context, io.Writer) (sandbox.Connection, error) {
+		opened = true
+		return sandbox.Connection{}, nil
+	}
+	dependencies.attach = func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error {
+		attached = true
+		return nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+		t.Fatal("attach invoked provisioning")
+		return sandbox.Connection{}, nil
+	}
+	code := runWithCommandDependencies(context.Background(), []string{"attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
+	if code != 0 || !opened || !attached {
+		t.Fatalf("code = %d, opened = %t, attached = %t", code, opened, attached)
+	}
+}
+
+func TestRunPlanUsesOnlyReadOnlyResolver(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	resolved := false
+	dependencies.resolvePlan = func(context.Context, string) (sandbox.EffectivePlan, error) {
+		resolved = true
+		return sandbox.EffectivePlan{MemoryMB: 32768, CacheDirectory: `C:\cache`, NextAction: "Run up."}, nil
+	}
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+		t.Fatal("plan invoked cleanup")
+		return sandbox.CleanResult{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+		t.Fatal("plan invoked up")
+		return sandbox.Connection{}, nil
+	}
+	var stdout bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"plan"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
+	if code != 0 || !resolved || !strings.Contains(stdout.String(), "memory-mb: 32768") || !strings.Contains(stdout.String(), "next: Run up.") {
+		t.Fatalf("code = %d, resolved = %t, stdout = %q", code, resolved, stdout.String())
+	}
+}
+
+func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		input string
+		want  string
+	}{
+		{name: "flags", args: []string{"init", "--stack", "go", "--stack", "dotnet"}, want: "go|dotnet"},
+		{name: "guided", args: []string{"init"}, input: "python, rust\n", want: "python|rust"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dependencies := defaultCommandDependencies()
+			got := ""
+			dependencies.initialize = func(_ string, stacks []string) (sandbox.ProjectInitResult, error) {
+				got = strings.Join(stacks, "|")
+				return sandbox.ProjectInitResult{Path: `C:\project\.herdr-sandbox\provision.ps1`, Stacks: stacks}, nil
+			}
+			var stdout bytes.Buffer
+			code := runWithCommandDependencies(context.Background(), test.args, bytes.NewBufferString(test.input), &stdout, &bytes.Buffer{}, dependencies)
+			if code != 0 || got != test.want || !strings.Contains(stdout.String(), "Created project profile") {
+				t.Fatalf("code = %d, stacks = %q, stdout = %q", code, got, stdout.String())
+			}
+		})
+	}
+}
+
+func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *testing.T) {
+	status := sandbox.SessionStatus{
+		State:           sandbox.SessionReady,
+		RunID:           "20260729-120000-abcdef12",
+		StartedAtUTC:    "2026-07-29T12:00:00Z",
+		WinGetVersion:   "v1.29.0",
+		HerdrVersion:    "herdr 1.0.0",
+		HerdrProtocol:   18,
+		DiagnosticsPath: `C:\state\status`,
+		Workspaces: []sandbox.SessionWorkspace{{
+			Name: "project", Directory: `C:\Workspaces\project`, Active: true,
+		}},
+		Operation: &sandbox.SessionOperation{
+			Kind: "reprovision", State: "failed", Phase: "configuration-sync",
+			Message: "copy failed", UpdatedAtUTC: "2026-07-29T12:05:00Z",
+		},
+		Timings:    []sandbox.SessionTiming{{Role: "Go package total", ElapsedMilliseconds: 1250}},
+		Warnings:   []string{"diagnostic warning"},
+		NextAction: "Run `herdr-sandbox attach`.",
+	}
+	var output bytes.Buffer
+	printSessionStatus(&output, status)
+	for _, required := range []string{
+		"started: 2026-07-29T12:00:00Z", "winget: v1.29.0", "herdr-protocol: 18",
+		"workspace: * project", "operation: reprovision failed", "operation-phase: configuration-sync",
+		"diagnostics: C:\\state\\status", "timing: Go package total = 1.25s",
+		"warning: diagnostic warning", "next: Run `herdr-sandbox attach`.",
+	} {
+		if !strings.Contains(output.String(), required) {
+			t.Fatalf("status is missing %q: %q", required, output.String())
+		}
+	}
+}
+
+func TestPrintSessionStatusDoesNotAdvertiseAttachUntilReadyAndIdle(t *testing.T) {
+	for name, status := range map[string]sandbox.SessionStatus{
+		"connectable": {
+			State: sandbox.SessionStarting, HerdrVersion: "herdr 1.0.0", HerdrProtocol: 18,
+		},
+		"reprovisioning": {
+			State: sandbox.SessionReady, HerdrVersion: "herdr 1.0.0", HerdrProtocol: 18,
+			Operation: &sandbox.SessionOperation{Kind: "reprovision", State: "running", Phase: "configuration-sync", Message: "Copying", UpdatedAtUTC: "2026-07-29T12:00:00Z"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var output bytes.Buffer
+			printSessionStatus(&output, status)
+			if strings.Contains(output.String(), "attach: herdr --remote sandbox") {
+				t.Fatalf("nonattachable status advertised attach: %q", output.String())
+			}
+		})
 	}
 }

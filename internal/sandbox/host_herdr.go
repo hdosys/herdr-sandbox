@@ -18,9 +18,14 @@ import (
 const (
 	maximumHostHerdrArchiveSize = 256 * 1024 * 1024
 	maximumHostHerdrBinarySize  = 128 * 1024 * 1024
+	hostHerdrOperationTimeout   = 10 * time.Minute
 )
 
 func ensurePinnedHostHerdr(ctx context.Context, release herdrRelease, dataDirectory string, output io.Writer) (string, string, error) {
+	operationContext, cancel := context.WithTimeout(ctx, hostHerdrOperationTimeout)
+	defer cancel()
+	ctx = operationContext
+
 	target, err := resolveInstalledHostHerdrPath()
 	if err != nil {
 		return "", "", err
@@ -30,6 +35,9 @@ func ensurePinnedHostHerdr(ctx context.Context, release herdrRelease, dataDirect
 		_ = cleanupReplacedHostHerdrBackup(target + ".herdr-sandbox-previous")
 		_ = cleanupReplacedHostHerdrBackup(target + ".herdr-sandbox-atomic-previous")
 		return target, version, nil
+	}
+	if errors.Is(inspectErr, errUnsafeHostHerdrInspection) {
+		return "", "", inspectErr
 	}
 	if output != nil {
 		fmt.Fprintf(output, "Updating the standard host Herdr executable to %s...\n", strings.TrimPrefix(release.Version, "herdr "))
@@ -108,8 +116,8 @@ func recoverStandardHostHerdrBackup() (bool, error) {
 		}
 		return false, fmt.Errorf("inspect host Herdr recovery backup: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return false, fmt.Errorf("host Herdr recovery backup is not a regular file: %s", backup)
+	if err := validateHostHerdrRegularFile(info, backup, "host Herdr recovery backup"); err != nil {
+		return false, err
 	}
 	if err := os.Rename(backup, target); err != nil {
 		return false, fmt.Errorf("restore host Herdr atomic backup: %w", err)
@@ -174,13 +182,15 @@ func resolveHostHerdrTargetDirectory(directory string) (string, error) {
 
 func ensurePinnedHostHerdrArchive(ctx context.Context, release herdrRelease, dataDirectory string, output io.Writer) (string, error) {
 	directory := filepath.Join(dataDirectory, "downloads")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return "", fmt.Errorf("create host download cache: %w", err)
+	var err error
+	directory, err = ensurePhysicalDirectory(directory, "host download cache")
+	if err != nil {
+		return "", err
 	}
 	archivePath := filepath.Join(directory, "herdr-"+release.ArchiveSHA256+".zip")
 	if info, err := os.Lstat(archivePath); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("host Herdr archive cache is not a regular file: %s", archivePath)
+		if err := validateHostHerdrRegularFile(info, archivePath, "host Herdr archive cache"); err != nil {
+			return "", err
 		}
 		if digest, err := sha256File(archivePath); err == nil && digest == release.ArchiveSHA256 {
 			return archivePath, nil
@@ -349,8 +359,8 @@ func replacePinnedHostHerdr(ctx context.Context, source, target, requiredVersion
 	if err != nil {
 		return "", fmt.Errorf("inspect installed host Herdr executable: %w", err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("installed host Herdr executable is not a regular file: %s", target)
+	if err := validateHostHerdrRegularFile(info, target, "installed host Herdr executable"); err != nil {
+		return "", err
 	}
 	backup := target + ".herdr-sandbox-atomic-previous"
 	if err := cleanupReplacedHostHerdrBackup(backup); err != nil {
@@ -397,8 +407,8 @@ func replacePinnedHostHerdr(ctx context.Context, source, target, requiredVersion
 
 func recoverFailedAtomicReplacement(target, replacement, backup string) error {
 	if info, err := os.Lstat(target); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return fmt.Errorf("host Herdr target became unsafe during atomic replacement: %s", target)
+		if err := validateHostHerdrRegularFile(info, target, "host Herdr target after atomic replacement"); err != nil {
+			return err
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
@@ -412,7 +422,7 @@ func recoverFailedAtomicReplacement(target, replacement, backup string) error {
 			}
 			return fmt.Errorf("inspect host Herdr recovery candidate: %w", err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		if err := validateHostHerdrRegularFile(info, candidate, "host Herdr recovery candidate"); err != nil {
 			continue
 		}
 		if err := os.Rename(candidate, target); err != nil {
@@ -434,6 +444,17 @@ func cleanupReplacedHostHerdrBackup(backup string) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return lastErr
+}
+
+func validateHostHerdrRegularFile(info os.FileInfo, path, role string) error {
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect %s reparse state: %w", role, err)
+	}
+	if reparse || !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular non-reparse file: %s", role, path)
+	}
+	return nil
 }
 
 func sha256File(path string) (string, error) {

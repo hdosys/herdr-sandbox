@@ -164,6 +164,9 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 		"Join-Path $env:ProgramData 'Tailscale\\server-state.conf'",
 		"Stop-TailscaleService",
 		"Start-TailscaleService",
+		"Remove-Item -LiteralPath $authPath -Force -ErrorAction Stop",
+		"auth-key staging cleanup did not remove the credential file",
+		"plaintext state staging cleanup did not remove the credential file",
 	} {
 		if !strings.Contains(apply, required) {
 			t.Fatalf("Tailscale apply launcher is missing %q", required)
@@ -171,6 +174,9 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	}
 	if strings.Contains(apply, tailscaleAuthKeyEnvironment) || strings.Contains(apply, "tskey-") || strings.Contains(capture, tailscaleAuthKeyEnvironment) {
 		t.Fatal("Tailscale launcher embeds an auth-key value or environment contract")
+	}
+	if strings.Contains(apply, "Remove-Item -LiteralPath $authPath -Force -ErrorAction SilentlyContinue") {
+		t.Fatal("Tailscale launcher silently ignores auth-key staging cleanup")
 	}
 	declaration := strings.Index(apply, "function Assert-ExactProperties")
 	use := strings.Index(apply, "Assert-ExactProperties $request")

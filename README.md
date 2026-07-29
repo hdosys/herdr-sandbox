@@ -17,6 +17,7 @@
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
 - **Fail-closed lifecycle:** exact process, path, launch-plan, and download identities are revalidated before reuse or cleanup.
+- **Observable current path:** read-only planning, guided project initialization, retained-operation progress, rich status, and exact reattach use the same strict owners as provisioning.
 
 ## How it works
 
@@ -74,7 +75,7 @@ Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once
 
 ### Install herdr-sandbox
 
-Current [GitHub releases](https://github.com/hdosys/herdr-sandbox/releases) provide a portable ZIP and matching `.sha256` sidecar. Release packaging in the current source also produces a per-user installer from the same verified three-file layout: `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`.
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both packages use the same verified three-file layout: `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`.
 
 #### Portable ZIP
 
@@ -90,9 +91,9 @@ go run ./cmd/task check
 
 The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets. Use that executable directly or add `build\bin` to your user `PATH`.
 
-#### Installer preview
+#### Installer
 
-An installer-enabled release will publish `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access and adds the application to Windows Installed Apps.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access and adds the application to Windows Installed Apps.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches the sidecar from the same release.
@@ -110,9 +111,17 @@ Setup does not install Herdr, an updater, agent integrations, a runtime bundle, 
 
 Commands below assume `herdr-sandbox.exe` is on `PATH`; otherwise use its full path.
 
-#### 1. Add a project profile
+#### 1. Initialize a project profile
 
-Create `<project>\.herdr-sandbox\provision.ps1`. Minimal Go example:
+From the project root, select one or more stacks explicitly:
+
+```powershell
+herdr-sandbox init --stack go
+```
+
+Repeat `--stack` to combine `go`, `node`, `python`, `rust`, `zig`, and `dotnet`, or omit the flag for a guided prompt. `init` validates every selection before writing, never guesses from repository contents, and refuses to replace an existing profile or create a nested profile beneath an ancestor-owned project.
+
+The Go command above creates `<project>\.herdr-sandbox\provision.ps1` with the equivalent direct-call profile:
 
 ```powershell
 param(
@@ -128,7 +137,15 @@ Install-GoStack -ProjectDirectory $ProjectDirectory
 
 The nearest ancestor containing this file becomes the active project. Profiles must be idempotent and fail fast.
 
-#### 2. Start from the project
+#### 2. Inspect the effective plan
+
+```powershell
+herdr-sandbox plan
+```
+
+`plan` validates and prints the effective configuration, workspaces, global and project stacks, package owners, agent-sync choices, fixed Sandbox settings, and exact differences from a ready guest. It does not seed configuration, create app state, update host tools, download packages, consume a Tailscale key, or execute project scripts.
+
+#### 3. Start from the project
 
 ```powershell
 herdr-sandbox up
@@ -137,19 +154,21 @@ herdr-sandbox up
 The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. A successful run creates a usable guest workspace and attaches the host Herdr client—not merely SSH or an installed toolchain.
 
 > [!NOTE]
-> Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller fails explicitly, leaves the verified guest ready, and prints the reusable command instead of sending a TUI into logs:
+> Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
 
 ```powershell
-herdr --remote sandbox
+herdr-sandbox up --no-attach
 ```
 
-#### 3. Reattach
+#### 4. Reattach
 
 After a normal detach, the guest Herdr server remains running:
 
 ```powershell
-herdr --remote sandbox
+herdr-sandbox attach
 ```
+
+The verified `herdr --remote sandbox` alias remains available for direct Herdr use.
 
 Plain SSH is available for noninteractive diagnostics:
 
@@ -161,15 +180,18 @@ ssh sandbox
 
 | Command | Behavior |
 | --- | --- |
-| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION]` | Launches a fresh guest, or reprovisions and reattaches when the exact ready app-owned launch plan still matches. There is no overall timeout by default; `--timeout` adds one. |
-| `herdr-sandbox status` | Reports `starting`, `ready`, `failed`, `stale`, `stopped`, or `unmanaged` without changing a running Sandbox. |
+| `herdr-sandbox plan` | Validates and prints the effective plan without seeding configuration or changing app, host-tool, or Sandbox state. |
+| `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile without guessing or replacing an existing/ancestor-owned profile. With no flag, prompts for stacks. |
+| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches a fresh guest, or reprovisions when the exact ready app-owned launch plan still matches. It attaches unless `--no-attach` intentionally stops at terminal ready. There is no overall timeout by default. |
+| `herdr-sandbox attach` | Reconstructs and verifies the exact ready app-owned connection, then starts the interactive Herdr client without reprovisioning. |
+| `herdr-sandbox status` | Reports guest health, retained-operation state, safe workspace identities, versions, bounded timings/diagnostics, warnings, and the next action. It may clean only proven stale app-owned state. |
 | `herdr-sandbox down` | Idempotently requests orderly close only for the exact revalidated app-owned Sandbox. It never force-kills any Sandbox; failed Tailscale preservation leaves an opted-in guest open. |
 | `herdr-sandbox clean` | Explicitly runs the same strict inactive-run cleanup used automatically at startup. Exact active state, identities, user configuration, workspaces, unknown entries, and package caches are preserved. |
 
 <details>
 <summary><strong>Lifecycle and automatic cleanup</strong></summary>
 
-After command syntax is validated, `up`, `status`, and `down` automatically remove validated inactive run directories; `clean` performs that same operation directly, not as an extra pre-step. If process evidence proves that the Sandbox window was closed and no launcher/client remains, cleanup also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help and invalid command lines do not run cleanup.
+After command syntax is validated, `up`, `status`, and `down` automatically remove validated inactive run directories; `clean` performs that same operation directly, not as an extra pre-step. A freely acquired lifecycle lock first marks any abandoned retained operation as interrupted. If process evidence proves that the Sandbox window was closed and no launcher/client remains, cleanup also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help, `plan`, and invalid command lines do not run cleanup.
 
 `up` refuses starting, failed, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
 
@@ -185,6 +207,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 
 | Development need | Direct profile call |
 | --- | --- |
+| Modern .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
 | Node.js LTS | `Install-NodeStack` |
 | Python (latest stable) | `Install-PythonStack` |
@@ -193,7 +216,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Cargo Nextest | `Install-CargoNextest` |
 | Just | `Install-Just` |
 
-Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. Release/bootstrap artifacts such as WinGet, Herdr, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins. TypeScript and other application libraries remain project dependencies owned by their manifests and lockfiles.
+Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. `Install-DotNetStack` owns only `Microsoft.DotNet.SDK.10`, the current modern LTS SDK family; it does not install .NET Framework, an older/preview SDK, Visual Studio, MSBuild compatibility, or `dotnet-install.ps1`. TypeScript, .NET target frameworks, and other application libraries remain project dependencies owned by their manifests and lockfiles. Release/bootstrap artifacts such as WinGet, Herdr, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is intentionally no plugin registry.
 
@@ -201,7 +224,7 @@ For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profil
 
 ### Global configuration
 
-The first run creates:
+The first mutating `up` creates:
 
 ```text
 %APPDATA%\herdr-sandbox\config.json
@@ -310,7 +333,7 @@ Persistent host state is split intentionally:
 | --- | --- |
 | `%APPDATA%\herdr-sandbox` | User-owned global config and `user.ps1` extension. |
 | `%LOCALAPPDATA%\herdr-sandbox\identity` | Host SSH identity and optional DPAPI-protected Tailscale identity. |
-| `%LOCALAPPDATA%\herdr-sandbox\runs` | Per-run status, diagnostics, SSH material, and `.wsb` files. Do not edit an active run. |
+| `%LOCALAPPDATA%\herdr-sandbox\runs` | Per-run status, diagnostics, host-owned retained-operation state, SSH material, and `.wsb` files. Do not edit an active run. |
 | `%LOCALAPPDATA%\herdr-sandbox\ssh\config` | App-owned `Host sandbox` target for the current guest; removed automatically only when no Sandbox is proven to remain. |
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
 
@@ -412,11 +435,11 @@ Start with `herdr-sandbox status`; it never changes a running Sandbox and perfor
 | --- | --- |
 | Windows Sandbox is unavailable | Enable `Containers-DisposableClientVM` from elevated Windows PowerShell, restart Windows, and confirm hardware virtualization is enabled. |
 | `up` refuses an existing Sandbox | A ready exact guest is reused automatically. A normally closed window is cleaned on the next valid command. For failed, changed-plan, unmanaged, or ownership-uncertain state, inspect the reported evidence and use `herdr-sandbox down` only when it identifies the app-owned instance. |
-| Automatic attach fails in a headless process | Open a real terminal and run `herdr --remote sandbox`; the verified guest remains ready. |
+| Automatic attach is unavailable in a headless process | Provision intentionally with `herdr-sandbox up --no-attach`, then open a real terminal and run `herdr-sandbox attach`; a verified ready guest remains reusable. |
 | The guest has no playback audio | Silence is the default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Microphone input remains disabled. |
 | `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
-| Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, Rust, and Visual Studio layout payloads. Confirm that the cache is writable and does not overlap a workspace or run state. |
+| Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
 | Old diagnostics consume space | `up`, `status`, and `down` remove validated inactive run workspaces automatically; `clean` invokes the same cleanup explicitly once. Active/uncertain evidence and the persistent cache remain preserved. |
 

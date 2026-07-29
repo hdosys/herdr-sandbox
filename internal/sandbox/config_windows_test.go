@@ -15,29 +15,27 @@ import (
 var getShortPathNameForTest = syscall.NewLazyDLL("kernel32.dll").NewProc("GetShortPathNameW")
 
 func TestCanonicalMappedDirectoryAcceptsDOSShortPath(t *testing.T) {
-	var expected string
-	var shortPath string
-	for _, candidate := range []string{t.TempDir(), os.Getenv("ProgramFiles")} {
-		resolved, err := filepath.EvalSymlinks(candidate)
-		if err != nil {
-			continue
-		}
-		short, err := windowsShortPathForTest(resolved)
-		if err == nil && !strings.EqualFold(short, resolved) {
-			expected = resolved
-			shortPath = short
-			break
-		}
-	}
-	if shortPath == "" {
-		t.Skip("no directory with a distinct DOS short path is available")
-	}
+	expected, shortPath := distinctWindowsShortPath(t)
 	canonical, err := canonicalMappedDirectory(shortPath)
 	if err != nil {
 		t.Fatalf("canonicalMappedDirectory(%q): %v", shortPath, err)
 	}
 	if !strings.EqualFold(canonical, filepath.Clean(expected)) {
 		t.Fatalf("canonical short directory = %q, want %q", canonical, expected)
+	}
+}
+
+func TestProtectedRootMappingRejectsDOSShortPathAlias(t *testing.T) {
+	expected, shortPath := distinctWindowsShortPath(t)
+	for _, name := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(name, expected)
+	}
+	identity, err := physicalMappedDirectory(shortPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspace", identity); err == nil || !strings.Contains(err.Error(), "must not contain") {
+		t.Fatalf("DOS short-path protected root error = %v", err)
 	}
 }
 
@@ -85,4 +83,20 @@ func windowsShortPathForTest(path string) (string, error) {
 		}
 		buffer = make([]uint16, int(length)+1)
 	}
+}
+
+func distinctWindowsShortPath(t *testing.T) (string, string) {
+	t.Helper()
+	for _, candidate := range []string{t.TempDir(), os.Getenv("ProgramFiles")} {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		short, err := windowsShortPathForTest(resolved)
+		if err == nil && !strings.EqualFold(short, resolved) {
+			return resolved, short
+		}
+	}
+	t.Skip("no directory with a distinct DOS short path is available")
+	return "", ""
 }

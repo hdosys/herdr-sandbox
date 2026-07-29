@@ -14,13 +14,16 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"herdr-sandbox/internal/hiddenprocess"
 )
 
 const (
-	defaultMemoryMB          = 32768
-	configurationSyncTimeout = 5 * time.Minute
-	sshTargetName            = "sandbox"
-	guestHerdrPath           = guestRootDirectory + `\runtime\herdr\herdr.exe`
+	defaultMemoryMB             = 32768
+	configurationSyncTimeout    = 5 * time.Minute
+	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + 2*time.Minute
+	sshTargetName               = "sandbox"
+	guestHerdrPath              = guestRootDirectory + `\runtime\herdr\herdr.exe`
 )
 
 //go:embed assets/bootstrap.ps1
@@ -101,6 +104,9 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if options.Timeout < 0 {
 		return Connection{}, errors.New("Sandbox timeout must be positive when set")
 	}
+	runContext, cancelRun := withOptionalTimeout(ctx, options.Timeout)
+	defer cancelRun()
+
 	authKey, authKeyFound, err := consumeTailscaleAuthKeyEnvironment()
 	if err != nil {
 		return Connection{}, err
@@ -118,16 +124,26 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 			return Connection{}, err
 		}
 	}
+	releaseLifecycle, err := acquireLifecycleLock(runContext)
+	if err != nil {
+		return Connection{}, err
+	}
+	defer releaseLifecycle()
+	_, interruptedOperation, err := interruptAbandonedActiveOperation(dataDirectory)
+	if err != nil {
+		return Connection{}, fmt.Errorf("reconcile previous retained operation before up: %w", err)
+	}
+	if interruptedOperation {
+		fmt.Fprintln(options.Output, "The previous retained reprovision ended without a terminal result and is now recorded as interrupted.")
+	}
+
 	provisioning, err := resolveProvisioning("")
 	if err != nil {
 		return Connection{}, err
 	}
-	herdrExecutable, hostVersion, err := ensurePinnedHostHerdr(ctx, release, dataDirectory, options.Output)
+	dataDirectory, err = prepareHostStateDirectories(dataDirectory)
 	if err != nil {
 		return Connection{}, err
-	}
-	if hostVersion != release.Version {
-		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, release.Version)
 	}
 	memoryMB := options.MemoryMB
 	if memoryMB == 0 {
@@ -135,15 +151,16 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	fmt.Fprintf(options.Output, "Windows Terminal host edition: %s\n", provisioning.WindowsTerminal.Edition)
 	fmt.Fprintf(options.Output, "Sandbox memory: %d MB\n", memoryMB)
-	releaseLifecycle, err := acquireLifecycleLock(ctx)
+	sessionStatus, err := inspectSessionAt(runContext, dataDirectory)
 	if err != nil {
 		return Connection{}, err
 	}
-	defer releaseLifecycle()
-	sessionStatus, err := inspectSessionAt(ctx, dataDirectory)
-	if err != nil {
-		return Connection{}, err
+	if !interruptedOperation && sessionStatus.Operation != nil && sessionStatus.Operation.State == operationStateInterrupted {
+		fmt.Fprintln(options.Output, "The previous retained reprovision ended without a terminal result and is recorded as interrupted.")
 	}
+	var retainedPlan runPlan
+	var retainedReady readyStatus
+	var tailscaleBootstrap tailscaleBootstrap
 	if sessionStatus.State == SessionReady {
 		sandboxExecutable, err := windowsSandboxExecutable()
 		if err != nil {
@@ -156,35 +173,63 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		if !found {
 			return Connection{}, errors.New("ready Sandbox lost its active-session identity")
 		}
-		return reprovisionReadySession(ctx, options, active, provisioning, memoryMB, herdrExecutable, release)
-	}
-	if sessionStatus.State != SessionStopped {
+		retainedPlan, err = retainedRunPlan(active, provisioning, memoryMB)
+		if err != nil {
+			return Connection{}, err
+		}
+		retainedReady, found, err = readOptionalStatus[readyStatus](filepath.Join(retainedPlan.StatusDirectory, readyFileName))
+		if err != nil {
+			return Connection{}, fmt.Errorf("read retained Sandbox ready status: %w", err)
+		}
+		if !found {
+			return Connection{}, errors.New("retained Sandbox ready status is missing")
+		}
+		if err := retainedReady.validate(); err != nil {
+			return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
+		}
+		if retainedReady.HerdrVersion != release.Version || retainedReady.HerdrProtocol != release.Protocol {
+			return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, required %q protocol %d", retainedReady.HerdrVersion, retainedReady.HerdrProtocol, release.Version, release.Protocol)
+		}
+	} else if sessionStatus.State != SessionStopped {
 		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `herdr-sandbox status` and use `herdr-sandbox down` before a fresh launch", sessionStatus.State)
+	} else {
+		if err := ensureNoRunningSandbox(runContext); err != nil {
+			return Connection{}, err
+		}
+		tailscaleBootstrap, err = prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
+		if err != nil {
+			return Connection{}, err
+		}
+		defer tailscaleBootstrap.clear()
 	}
-	if err := ensureNoRunningSandbox(ctx); err != nil {
-		return Connection{}, err
-	}
-	tailscaleBootstrap, err := prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
+
+	herdrExecutable, hostVersion, err := ensurePinnedHostHerdr(runContext, release, dataDirectory, options.Output)
 	if err != nil {
 		return Connection{}, err
 	}
-	defer tailscaleBootstrap.clear()
-	plan, err := prepareRun(ctx, dataDirectory, memoryMB, provisioning)
+	if hostVersion != release.Version {
+		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, release.Version)
+	}
+	if sessionStatus.State == SessionReady {
+		return reprovisionReadySession(runContext, options, retainedPlan, retainedReady, provisioning, herdrExecutable)
+	}
+
+	plan, err := prepareRun(runContext, dataDirectory, memoryMB, provisioning)
 	if err != nil {
 		return Connection{}, err
 	}
 	fmt.Fprintf(options.Output, "Run workspace: %s\n", plan.RunDirectory)
 	if plan.RequiresVisualStudioLayout {
 		fmt.Fprintln(options.Output, "Preparing the required Visual Studio Build Tools layout on the host...")
-		if err := prepareVisualStudioLayout(ctx, plan, options.Output); err != nil {
+		if err := prepareVisualStudioLayout(runContext, plan, options.Output); err != nil {
 			return Connection{}, err
 		}
 	}
 
-	if err := ensureNoRunningSandbox(ctx); err != nil {
+	if err := ensureNoRunningSandbox(runContext); err != nil {
 		return Connection{}, err
 	}
-	if err := launchSandbox(ctx, plan); err != nil {
+	if err := launchSandbox(runContext, plan); err != nil {
 		return Connection{}, err
 	}
 	if err := releaseLifecycle(); err != nil {
@@ -192,9 +237,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	fmt.Fprintln(options.Output, "Windows Sandbox started; waiting for guest provisioning...")
 
-	waitContext, cancel := withOptionalTimeout(ctx, options.Timeout)
-	defer cancel()
-	connectable, err := waitForConnectable(waitContext, plan.StatusDirectory, options.Output)
+	connectable, err := waitForConnectable(runContext, plan.StatusDirectory, options.Output)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -207,19 +250,19 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-material", err)
 	}
-	if err := verifySSH(waitContext, connection); err != nil {
+	if err := verifySSH(runContext, connection); err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-verification", err)
 	}
-	if err := verifyGuestHerdr(waitContext, connection); err != nil {
+	if err := verifyGuestHerdr(runContext, connection); err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-verification", err)
 	}
 	if plan.Tailscale {
 		fmt.Fprintln(options.Output, "Restoring or enrolling the stable Tailscale identity...")
-		releaseTailscale, lockErr := acquireLifecycleLock(waitContext)
+		releaseTailscale, lockErr := acquireLifecycleLock(runContext)
 		if lockErr != nil {
 			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "tailscale-preflight", lockErr)
 		}
-		tailscaleContext, cancelTailscale := context.WithTimeout(waitContext, tailscaleIdentityTimeout)
+		tailscaleContext, cancelTailscale := context.WithTimeout(runContext, tailscaleIdentityTimeout)
 		err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap)
 		releaseErr := releaseTailscale()
 		cancelTailscale()
@@ -238,7 +281,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		fmt.Fprintln(options.Output, "Stable Tailscale identity restored, verified, and protected on the host.")
 	}
 	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, plan.CodingAgentSync))
-	syncContext, cancelSync := context.WithTimeout(waitContext, configurationSyncTimeout)
+	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
@@ -254,7 +297,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		return Connection{}, err
 	}
 	fmt.Fprintln(options.Output, "Development configuration transferred and verified; waiting for final workspace creation...")
-	ready, err := waitForReady(waitContext, plan.StatusDirectory, options.Output)
+	ready, err := waitForReady(runContext, plan.StatusDirectory, options.Output)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -270,7 +313,10 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 }
 
 func publishConfigurationFailure(statusDirectory, phase string, cause error) error {
-	message := boundedText([]byte(cause.Error()))
+	message := sanitizeTerminalText(boundedText([]byte(cause.Error())), 4096)
+	if message == "" {
+		message = "Configuration failed without printable diagnostics."
+	}
 	handoffErr := writeConfigurationHandoff(statusDirectory, configurationHandoffStatus{
 		SchemaVersion: statusSchemaVersion,
 		Outcome:       configurationHandoffFailed,
@@ -284,8 +330,8 @@ func publishConfigurationFailure(statusDirectory, phase string, cause error) err
 }
 
 func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout, stderr io.Writer) error {
-	if connection.herdrExecutable == "" || connection.RunDirectory == "" || connection.SSHTarget == "" {
-		return errors.New("Herdr connection is incomplete")
+	if err := connection.validate(); err != nil {
+		return err
 	}
 	if err := validateInteractiveAttachStreams(stdin, stdout, stderr); err != nil {
 		return err
@@ -302,6 +348,12 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 		return fmt.Errorf("verify guest Herdr persistence after detach: %w", err)
 	}
 	return nil
+}
+
+// ValidateInteractiveAttachStreams lets the CLI reject an implicit interactive
+// attach before provisioning performs expensive or mutating work.
+func ValidateInteractiveAttachStreams(stdin io.Reader, stdout, stderr io.Writer) error {
+	return validateInteractiveAttachStreams(stdin, stdout, stderr)
 }
 
 func attachEnvironment(parent []string) []string {
@@ -350,11 +402,28 @@ func effectiveCacheDirectory(configured string) (string, error) {
 	return filepath.Join(temporaryDirectory, applicationName, "cache"), nil
 }
 
-func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisioning provisioningPlan) (runPlan, error) {
-	if !filepath.IsAbs(dataDirectory) {
-		return runPlan{}, errors.New("data directory must be absolute")
+func prepareHostStateDirectories(dataDirectory string) (string, error) {
+	physicalDataDirectory, err := ensurePhysicalDirectory(dataDirectory, "app data")
+	if err != nil {
+		return "", err
 	}
-	dataDirectory = filepath.Clean(dataDirectory)
+	for _, child := range []struct {
+		name string
+		role string
+	}{{"identity", "private identity"}, {"runs", "run state"}} {
+		if _, err := ensurePhysicalDirectory(filepath.Join(physicalDataDirectory, child.name), child.role); err != nil {
+			return "", err
+		}
+	}
+	return physicalDataDirectory, nil
+}
+
+func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisioning provisioningPlan) (runPlan, error) {
+	var err error
+	dataDirectory, err = prepareHostStateDirectories(dataDirectory)
+	if err != nil {
+		return runPlan{}, err
+	}
 	if err := provisioning.WindowsTerminal.validate(); err != nil {
 		return runPlan{}, err
 	}
@@ -400,7 +469,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	plan.InputDirectory = filepath.Join(plan.RunDirectory, "input")
 	plan.StatusDirectory = filepath.Join(plan.RunDirectory, "status")
 	plan.ConfigPath = filepath.Join(plan.RunDirectory, "herdr-sandbox.wsb")
-	for _, directory := range []string{plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory} {
+	for _, directory := range []string{plan.InputDirectory, plan.StatusDirectory} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return runPlan{}, fmt.Errorf("create mapped directory %s: %w", directory, err)
 		}
@@ -413,67 +482,18 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
-	plan.CacheDirectory, err = canonicalMappedDirectory(plan.CacheDirectory)
+	plan.CacheDirectory, err = ensurePhysicalDirectory(plan.CacheDirectory, "cache")
 	if err != nil {
 		return runPlan{}, err
 	}
-	for index := range plan.Workspaces {
-		plan.Workspaces[index].HostDirectory, err = canonicalMappedDirectory(plan.Workspaces[index].HostDirectory)
-		if err != nil {
-			return runPlan{}, fmt.Errorf("workspace %q: %w", plan.Workspaces[index].Name, err)
-		}
+	plan.Workspaces, err = canonicalWorkspacePlans(plan.Workspaces)
+	if err != nil {
+		return runPlan{}, err
 	}
-	type physicalMapping struct {
-		role     string
-		identity string
+	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces); err != nil {
+		return runPlan{}, err
 	}
-	mappings := make([]physicalMapping, 0, len(plan.Workspaces)+3)
-	for _, mapped := range []struct {
-		role string
-		path string
-	}{{"bootstrap input", plan.InputDirectory}, {"status", plan.StatusDirectory}, {"cache", plan.CacheDirectory}} {
-		identity, identityErr := physicalMappedDirectory(mapped.path)
-		if identityErr != nil {
-			return runPlan{}, identityErr
-		}
-		mappings = append(mappings, physicalMapping{role: mapped.role, identity: identity})
-	}
-	for _, workspace := range plan.Workspaces {
-		identity, identityErr := physicalMappedDirectory(workspace.HostDirectory)
-		if identityErr != nil {
-			return runPlan{}, fmt.Errorf("workspace %q: %w", workspace.Name, identityErr)
-		}
-		mappings = append(mappings, physicalMapping{role: "workspace " + workspace.Name, identity: identity})
-	}
-	for left := range mappings {
-		for right := left + 1; right < len(mappings); right++ {
-			if hostPathsOverlap(mappings[left].identity, mappings[right].identity) {
-				return runPlan{}, fmt.Errorf("physical mapped paths overlap: %s and %s", mappings[left].role, mappings[right].role)
-			}
-		}
-	}
-	protected := make([]physicalMapping, 0, 2)
-	for _, protectedPath := range []struct {
-		role string
-		path string
-	}{{"SSH identity", filepath.Join(dataDirectory, "identity")}, {"run state", filepath.Join(dataDirectory, "runs")}} {
-		canonical, canonicalErr := canonicalMappedDirectory(protectedPath.path)
-		if canonicalErr != nil {
-			return runPlan{}, canonicalErr
-		}
-		identity, identityErr := physicalMappedDirectory(canonical)
-		if identityErr != nil {
-			return runPlan{}, identityErr
-		}
-		protected = append(protected, physicalMapping{role: protectedPath.role, identity: identity})
-	}
-	for _, mapped := range mappings[2:] {
-		for _, private := range protected {
-			if hostPathsOverlap(mapped.identity, private.identity) {
-				return runPlan{}, fmt.Errorf("%s physically overlaps private %s", mapped.role, private.role)
-			}
-		}
-	}
+	provisioning.Workspaces = plan.Workspaces
 	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB, provisioning.Audio)
 	if err != nil {
 		return runPlan{}, err
@@ -510,6 +530,65 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	return plan, nil
 }
 
+type physicalMapping struct {
+	role     string
+	identity string
+}
+
+func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan) error {
+	mappings := make([]physicalMapping, 0, len(workspaces)+3)
+	for _, mapped := range []struct {
+		role string
+		path string
+	}{{"bootstrap input", inputDirectory}, {"status", statusDirectory}, {"cache", cacheDirectory}} {
+		identity, err := physicalMappedDirectory(mapped.path)
+		if err != nil {
+			return err
+		}
+		mappings = append(mappings, physicalMapping{role: mapped.role, identity: identity})
+	}
+	for _, workspace := range workspaces {
+		identity, err := physicalMappedDirectory(workspace.HostDirectory)
+		if err != nil {
+			return fmt.Errorf("workspace %q: %w", workspace.Name, err)
+		}
+		mappings = append(mappings, physicalMapping{role: "workspace " + workspace.Name, identity: identity})
+	}
+	for left := range mappings {
+		for right := left + 1; right < len(mappings); right++ {
+			if hostPathsOverlap(mappings[left].identity, mappings[right].identity) {
+				return fmt.Errorf("physical mapped paths overlap: %s and %s", mappings[left].role, mappings[right].role)
+			}
+		}
+	}
+	protected := make([]physicalMapping, 0, 2)
+	for _, protectedPath := range []struct {
+		role string
+		path string
+	}{{"SSH identity", filepath.Join(dataDirectory, "identity")}, {"run state", filepath.Join(dataDirectory, "runs")}} {
+		canonical, err := canonicalMappedDirectory(protectedPath.path)
+		if err != nil {
+			return err
+		}
+		identity, err := physicalMappedDirectory(canonical)
+		if err != nil {
+			return err
+		}
+		protected = append(protected, physicalMapping{role: protectedPath.role, identity: identity})
+	}
+	for _, mapped := range mappings[2:] {
+		for _, private := range protected {
+			if hostPathsOverlap(mapped.identity, private.identity) {
+				return fmt.Errorf("%s physically overlaps private %s", mapped.role, private.role)
+			}
+		}
+		if err := validatePhysicalMappingDoesNotContainProtectedRoot(mapped.role, mapped.identity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snapshotDirectory string, provisioning provisioningPlan) (provisioningSnapshot, error) {
 	if !filepath.IsAbs(inspectionDirectory) || !filepath.IsAbs(snapshotDirectory) {
 		return provisioningSnapshot{}, errors.New("provisioning snapshot directories must be absolute")
@@ -526,15 +605,16 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		return provisioningSnapshot{}, fmt.Errorf("write WinGet package plan: %w", err)
 	}
 	for _, source := range []struct {
-		path string
-		name string
-		role string
+		path        string
+		name        string
+		role        string
+		maximumSize int64
 	}{
-		{path: provisioning.BaseScript, name: baseProvisioningName, role: "base"},
-		{path: provisioning.StackScript, name: stackProvisioningName, role: "stack"},
-		{path: provisioning.UserScript, name: userProvisioningName, role: "user"},
+		{path: provisioning.BaseScript, name: baseProvisioningName, role: "base", maximumSize: maximumBaseScriptSize},
+		{path: provisioning.StackScript, name: stackProvisioningName, role: "stack", maximumSize: maximumStackScriptSize},
+		{path: provisioning.UserScript, name: userProvisioningName, role: "user", maximumSize: maximumUserScriptSize},
 	} {
-		data, readErr := os.ReadFile(source.path)
+		data, readErr := readProvisioningScript(source.path, source.role+" provisioning script", source.maximumSize)
 		if readErr != nil {
 			return provisioningSnapshot{}, fmt.Errorf("read %s provisioning script %s: %w", source.role, source.path, readErr)
 		}
@@ -547,7 +627,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		return provisioningSnapshot{}, fmt.Errorf("create project provisioning snapshot directory: %w", err)
 	}
 	for _, workspace := range provisioning.Workspaces {
-		data, readErr := os.ReadFile(workspace.ProvisioningPath)
+		data, readErr := readProvisioningScript(workspace.ProvisioningPath, "project provisioning script", maximumProjectScriptSize)
 		if readErr != nil {
 			return provisioningSnapshot{}, fmt.Errorf("read provisioning script %s: %w", workspace.ProvisioningPath, readErr)
 		}
@@ -647,20 +727,20 @@ func windowsSandboxExecutable() (string, error) {
 		return "", errors.New("WINDIR is not set")
 	}
 	path := filepath.Join(windowsDirectory, "System32", "WindowsSandbox.exe")
-	info, err := os.Stat(path)
+	exists, err := regularFileExists(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errors.New("Windows Sandbox is unavailable; enable Containers-DisposableClientVM and reboot")
-		}
 		return "", fmt.Errorf("inspect Windows Sandbox executable: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("Windows Sandbox executable is not a regular file: %s", path)
+	if !exists {
+		return "", errors.New("Windows Sandbox is unavailable; enable Containers-DisposableClientVM and reboot")
 	}
 	return path, nil
 }
 
 func launchSandbox(ctx context.Context, plan runPlan) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("launch Windows Sandbox: %w", err)
+	}
 	command := exec.Command(plan.SandboxExecutable, plan.ConfigPath)
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("launch Windows Sandbox: %w", err)
@@ -669,15 +749,29 @@ func launchSandbox(ctx context.Context, plan runPlan) error {
 		return errors.New("launch Windows Sandbox: process identity is unavailable")
 	}
 	if err := recordActiveSession(ctx, plan, command.Process.Pid); err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
+		if cleanupErr := terminateUnpublishedSandbox(command); cleanupErr != nil {
+			return errors.Join(err, cleanupErr)
+		}
 		return err
 	}
 	if err := command.Process.Release(); err != nil {
 		_ = removeActiveSession(plan.DataDirectory)
-		_ = command.Process.Kill()
-		_ = command.Wait()
+		if cleanupErr := terminateUnpublishedSandbox(command); cleanupErr != nil {
+			return errors.Join(fmt.Errorf("release Windows Sandbox launcher process: %w", err), cleanupErr)
+		}
 		return fmt.Errorf("release Windows Sandbox launcher process: %w", err)
 	}
+	return nil
+}
+
+func terminateUnpublishedSandbox(command *exec.Cmd) error {
+	cleanupContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := hiddenprocess.TerminateTree(cleanupContext, command.Process); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return fmt.Errorf("terminate unpublished Windows Sandbox process tree: %w", err)
+	}
+	_ = command.Wait()
 	return nil
 }

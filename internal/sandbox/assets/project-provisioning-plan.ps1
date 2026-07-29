@@ -15,6 +15,7 @@ if (-not (Test-Path -LiteralPath $ProjectsDirectory -PathType Container)) {
 
 $knownStacks = @{
     'Install-CargoNextest' = 'cargo-nextest'
+    'Install-DotNetStack' = 'dotnet'
     'Install-GoStack' = 'go'
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
@@ -70,7 +71,7 @@ if (-not $userText.Contains('# herdr-sandbox-user-contract: 1')) {
 $userStacks = @(Get-SelectedProvisioningStacks -Script $userScript -Role 'User provisioning' -RejectParamBlock)
 
 $scripts = @(Get-ChildItem -LiteralPath $ProjectsDirectory -File -Filter '*.ps1' | Sort-Object Name)
-if ($scripts.Count -eq 0 -or $scripts.Count -gt 16) {
+if ($scripts.Count -gt 16) {
     throw "Project provisioning script count is invalid: $($scripts.Count)"
 }
 

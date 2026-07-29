@@ -44,7 +44,7 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	if !strings.HasPrefix(config.LogonCommand.Command, "powershell.exe ") {
 		t.Fatalf("logon command = %q", config.LogonCommand.Command)
 	}
-	for _, required := range []string{"Start-Process", "-WindowStyle Normal", "-Wait", "'-NoExit'", guestBootstrapScript} {
+	for _, required := range []string{"Start-Process", "-WindowStyle Normal", "-Wait", "'-NoExit'", "'-ConfigurationHandoffTimeoutMinutes'", guestBootstrapScript} {
 		if !strings.Contains(config.LogonCommand.Command, required) {
 			t.Fatalf("visible bootstrap command is missing %q: %s", required, config.LogonCommand.Command)
 		}
