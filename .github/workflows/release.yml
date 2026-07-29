@@ -45,7 +45,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $archive = Join-Path $env:RUNNER_TEMP "nsis-$($env:NSIS_VERSION).zip"
           $destination = Join-Path $env:RUNNER_TEMP 'nsis'
-          Invoke-WebRequest -UseBasicParsing -Uri $env:NSIS_URL -OutFile $archive
+          $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+          if (-not (Test-Path -LiteralPath $curl -PathType Leaf)) {
+              throw "System curl.exe was not found at $curl"
+          }
+          & $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL
+          if ($LASTEXITCODE -ne 0) {
+              throw "NSIS archive download failed with exit code $LASTEXITCODE."
+          }
           $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualHash -cne $env:NSIS_SHA256) {
               throw "NSIS archive SHA-256 = $actualHash, expected $($env:NSIS_SHA256)"

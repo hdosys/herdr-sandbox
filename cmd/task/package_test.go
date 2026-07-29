@@ -347,6 +347,8 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 		`NSIS_VERSION: "` + installerEngineVersion + `"`,
 		`NSIS_URL: https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip`,
 		`NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f`,
+		`$curl = Join-Path $env:SystemRoot 'System32\curl.exe'`,
+		`& $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL`,
 		`go run ./cmd/task package $env:RELEASE_TAG`,
 		`$baseName.zip`,
 		`$baseName.zip.sha256`,
@@ -357,7 +359,7 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 			t.Fatalf("release workflow is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Compress-Archive", "choco install", "cargo", "herdr.exe'"} {
+	for _, forbidden := range []string{"Compress-Archive", "Invoke-WebRequest", "choco install", "cargo", "herdr.exe'"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow contains duplicate or out-of-scope packaging %q", forbidden)
 		}
