@@ -140,6 +140,24 @@ func TestDefaultBaseInstallsTailscaleWithoutAuthentication(t *testing.T) {
 	}
 }
 
+func TestDefaultBaseInstallsWinDirStatAndFilePilot(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"-Role 'WinDirStat' -Id 'WinDirStat.WinDirStat'",
+		"-InstallerType 'wix' -Scope 'machine' -Adapter 'MSI'",
+		"Join-Path $env:ProgramFiles 'WinDirStat\\WinDirStat.exe'",
+		"-Role 'File Pilot' -Id 'Voidstar.FilePilot'",
+		"function Ensure-ProvisioningFilePilotStartShortcut",
+		`Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe`,
+		"New-Object -ComObject WScript.Shell",
+		"File Pilot Start shortcut read-back did not match",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing GUI utility contract %q", required)
+		}
+	}
+}
+
 func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -498,20 +516,22 @@ func TestDefaultBasePreservesAdditionalSelectedPrivacyPolicies(t *testing.T) {
 	}
 }
 
-func TestDefaultBaseUsesSupportedIdempotentTerminalTaskbarPolicy(t *testing.T) {
+func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
-		"function Ensure-ProvisioningWindowsTerminalTaskbarPin",
+		"function Ensure-ProvisioningTaskbarPins",
 		"MDM_Policy_User_Config01_Start02",
 		`root\cimv2\mdm\dmmap`,
 		"./Vendor/MSFT/Policy/Config",
 		"<CustomTaskbarLayoutCollection>",
 		"<taskbar:UWA AppUserModelID=\"",
+		"<taskbar:DesktopApp DesktopApplicationID=\"WinDirStat\" />",
+		`<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />`,
 		"[Net.WebUtility]::HtmlEncode($layout)",
 		"StartLayout -ceq $layout",
-		"taskbar policy read-back did not match the canonical decoded layout",
-		"Restart-ProvisioningExplorerShell -Role 'Windows Terminal taskbar policy change'",
-		"Ensure-ProvisioningWindowsTerminalTaskbarPin -Edition $WindowsTerminalEdition",
+		"Taskbar policy read-back did not match the canonical decoded layout",
+		"Restart-ProvisioningExplorerShell -Role 'taskbar policy change'",
+		"Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing supported taskbar contract %q", required)
@@ -532,7 +552,9 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"function Test-ProvisioningRustupInstalled",
 		"function Test-ProvisioningGeistMonoFontInstalled",
 		"if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName)",
+		"if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata)",
 		"already matches requested version:",
+		"online package already matches requested version:",
 		"installed package does not match resolved version",
 		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
 		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
@@ -811,6 +833,8 @@ if ($null -eq $definition) { throw 'Missing online WinGet installer function.' }
 Invoke-Expression $definition.Extent.Text
 $script:searchCalls = 0
 $script:installArguments = @()
+$script:installCalls = 0
+$script:installedVersion = ''
 $script:verifiedVersion = ''
 function Search-ProvisioningWinGetPackages {
     param($Role, $IdQuery, [switch]$Exact)
@@ -821,13 +845,16 @@ function Search-ProvisioningWinGetPackages {
 function Invoke-ProvisioningNative {
     param($Role, $FilePath, [object[]]$ArgumentList)
     $script:installArguments = @($ArgumentList)
+    $script:installCalls += 1
+    $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
+    $script:installedVersion = [string]$script:installArguments[$versionIndex + 1]
     return @()
 }
 function Update-ProvisioningPath { }
 function Test-ProvisioningWinGetPackageInstalled {
     param($Metadata)
     $script:verifiedVersion = [string]$Metadata.Version
-    return $true
+    return $script:installedVersion -ceq [string]$Metadata.Version
 }
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
 $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
@@ -839,6 +866,11 @@ Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -V
 $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
 if ($script:searchCalls -ne 0 -or $versionIndex -lt 0 -or $script:installArguments[$versionIndex + 1] -cne '1.2.3' -or $script:verifiedVersion -cne '1.2.3') {
     throw 'Exact online WinGet package version was not preserved.'
+}
+$installCalls = $script:installCalls
+Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -Version '1.2.3'
+if ($script:installCalls -ne $installCalls) {
+    throw 'Matching online WinGet package was reinstalled.'
 }
 `, quote(basePath))
 	scriptPath := filepath.Join(t.TempDir(), "online-winget-regression.ps1")

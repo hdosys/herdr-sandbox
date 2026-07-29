@@ -21,6 +21,8 @@ const (
 	packageGitHubCLI       = "GitHub.cli"
 	packageTailscale       = "Tailscale.Tailscale"
 	packageOpenCode        = "SST.opencode"
+	packageWinDirStat      = "WinDirStat.WinDirStat"
+	packageFilePilot       = "Voidstar.FilePilot"
 	packageTerminalXAML    = "Microsoft.UI.Xaml.2.8"
 	packageTerminalStable  = "Microsoft.WindowsTerminal"
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
@@ -35,6 +37,8 @@ var basePackageIDs = []string{
 	packageGitHubCLI,
 	packageTailscale,
 	packageOpenCode,
+	packageWinDirStat,
+	packageFilePilot,
 	packageTerminalXAML,
 	packageTerminalStable,
 	packageTerminalPreview,
@@ -86,6 +90,8 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 		packageGitHubCLI,
 		packageTailscale,
 		packageOpenCode,
+		packageWinDirStat,
+		packageFilePilot,
 		packageTerminalXAML,
 		terminalID,
 	} {

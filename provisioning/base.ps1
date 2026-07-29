@@ -147,7 +147,7 @@ function Read-ProvisioningPackagePlan {
         $plan.schemaVersion -isnot [int] -or $plan.windowsTerminalEdition -isnot [string] -or
         [int]$plan.schemaVersion -ne 1 -or
         [string]$plan.windowsTerminalEdition -notin @('stable', 'preview') -or
-        $defaults.Count -eq 0 -or $defaults.Count -gt 11 -or $additions.Count -gt 64) {
+        $defaults.Count -eq 0 -or $defaults.Count -gt 13 -or $additions.Count -gt 64) {
         throw 'WinGet package plan has an unsupported contract.'
     }
     $known = @{}
@@ -160,6 +160,8 @@ function Read-ProvisioningPackagePlan {
         'GitHub.cli',
         'Tailscale.Tailscale',
         'SST.opencode',
+        'WinDirStat.WinDirStat',
+        'Voidstar.FilePilot',
         'Microsoft.UI.Xaml.2.8',
         'Microsoft.WindowsTerminal',
         'Microsoft.WindowsTerminal.Preview'
@@ -1553,6 +1555,11 @@ function Install-ProvisioningOnlineWinGetPackage {
         }
         $resolvedVersion = [string]$matches[0].Version
     }
+    $metadata = [pscustomobject]@{ Id = $Id; Version = $resolvedVersion }
+    if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata) {
+        Write-Host "$Role online package already matches requested version: $resolvedVersion"
+        return
+    }
     $arguments = @(
         'install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
         '--version', $resolvedVersion,
@@ -1563,7 +1570,6 @@ function Install-ProvisioningOnlineWinGetPackage {
     }
     Invoke-ProvisioningNative -Role "$Role online installation" -FilePath 'winget.exe' -ArgumentList $arguments | Out-Null
     Update-ProvisioningPath
-    $metadata = [pscustomobject]@{ Id = $Id; Version = $resolvedVersion }
     if (-not (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata)) {
         throw "$Role installed package does not match resolved version $resolvedVersion."
     }
@@ -1761,19 +1767,94 @@ function Restart-ProvisioningExplorerShell {
     Write-Host "Explorer shell restarted: $($stoppedExplorerProcessIDs -join ', ') -> $($newExplorerProcesses.Id -join ', ')"
 }
 
-function Ensure-ProvisioningWindowsTerminalTaskbarPin {
+function Ensure-ProvisioningFilePilotStartShortcut {
+    $filePilotExecutable = Join-Path $env:LOCALAPPDATA `
+        'Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe'
+    if (-not (Test-Path -LiteralPath $filePilotExecutable -PathType Leaf)) {
+        throw "File Pilot portable executable is missing: $filePilotExecutable"
+    }
+    $filePilotExecutableInfo = Get-Item -LiteralPath $filePilotExecutable -Force
+    if (($filePilotExecutableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "File Pilot portable executable is a reparse point: $filePilotExecutable"
+    }
+
+    $shortcutDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    New-Item -ItemType Directory -Path $shortcutDirectory -Force | Out-Null
+    $shortcutDirectoryInfo = Get-Item -LiteralPath $shortcutDirectory -Force
+    if (($shortcutDirectoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "File Pilot Start shortcut directory is a reparse point: $shortcutDirectory"
+    }
+    $shortcutPath = Join-Path $shortcutDirectory 'File Pilot.lnk'
+    $workingDirectory = Split-Path -Parent $filePilotExecutable
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $matches = (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -and
+        [string]$shortcut.TargetPath -ieq $filePilotExecutable -and
+        [string]$shortcut.WorkingDirectory -ieq $workingDirectory -and
+        [string]::IsNullOrEmpty([string]$shortcut.Arguments)
+    if (-not $matches) {
+        $shortcut.TargetPath = $filePilotExecutable
+        $shortcut.WorkingDirectory = $workingDirectory
+        $shortcut.Arguments = ''
+        $shortcut.Description = 'File Pilot'
+        $shortcut.Save()
+    }
+    $shortcutInfo = Get-Item -LiteralPath $shortcutPath -Force
+    $verifiedShortcut = $shell.CreateShortcut($shortcutPath)
+    if (($shortcutInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        [string]$verifiedShortcut.TargetPath -ine $filePilotExecutable -or
+        [string]$verifiedShortcut.WorkingDirectory -ine $workingDirectory -or
+        -not [string]::IsNullOrEmpty([string]$verifiedShortcut.Arguments)) {
+        throw 'File Pilot Start shortcut read-back did not match the installed portable executable.'
+    }
+    Write-Host "File Pilot Start shortcut ready: $shortcutPath"
+}
+
+function Ensure-ProvisioningTaskbarPins {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('stable', 'preview')]
         [string]$Edition,
-        [Parameter(Mandatory = $true)]
-        [string]$PackageFamily
+        [string]$TerminalPackageFamily = ''
     )
 
-    $terminalAUMID = $PackageFamily + '!App'
-    $startApps = @(Get-StartApps -ErrorAction Stop | Where-Object { [string]$_.AppID -ceq $terminalAUMID })
-    if ($startApps.Count -ne 1) {
-        throw "Windows Terminal $Edition AUMID resolved to $($startApps.Count) Start applications: $terminalAUMID"
+    $pinElements = New-Object 'System.Collections.Generic.List[string]'
+    $pinNames = New-Object 'System.Collections.Generic.List[string]'
+    $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
+    if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
+        if ([string]::IsNullOrWhiteSpace($TerminalPackageFamily)) {
+            throw "Windows Terminal $Edition taskbar pin requires its package family."
+        }
+        $terminalAUMID = $TerminalPackageFamily + '!App'
+        $terminalStartApps = @(Get-StartApps -ErrorAction Stop |
+            Where-Object { [string]$_.AppID -ceq $terminalAUMID })
+        if ($terminalStartApps.Count -ne 1) {
+            throw "Windows Terminal $Edition AUMID resolved to $($terminalStartApps.Count) Start applications: $terminalAUMID"
+        }
+        $pinElements.Add('<taskbar:UWA AppUserModelID="' + $terminalAUMID + '" />') | Out-Null
+        $pinNames.Add("Windows Terminal $Edition") | Out-Null
+    }
+    if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
+        $winDirStatStartApps = @(Get-StartApps -ErrorAction Stop |
+            Where-Object { [string]$_.AppID -ceq 'WinDirStat' })
+        if ($winDirStatStartApps.Count -ne 1) {
+            throw "WinDirStat desktop application ID resolved to $($winDirStatStartApps.Count) Start applications."
+        }
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="WinDirStat" />') | Out-Null
+        $pinNames.Add('WinDirStat') | Out-Null
+    }
+    if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
+        $filePilotShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\File Pilot.lnk'
+        if (-not (Test-Path -LiteralPath $filePilotShortcut -PathType Leaf) -or
+            ((Get-Item -LiteralPath $filePilotShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "File Pilot taskbar shortcut is missing or unsafe: $filePilotShortcut"
+        }
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />') | Out-Null
+        $pinNames.Add('File Pilot') | Out-Null
+    }
+    if ($pinElements.Count -eq 0) {
+        Write-Host 'No selected taskbar applications; taskbar policy skipped.'
+        return
     }
     $layout = '<?xml version="1.0" encoding="utf-8"?>' +
         '<LayoutModificationTemplate xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification" ' +
@@ -1781,16 +1862,16 @@ function Ensure-ProvisioningWindowsTerminalTaskbarPin {
         'xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout" ' +
         'xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout" Version="1">' +
         '<CustomTaskbarLayoutCollection><defaultlayout:TaskbarLayout><taskbar:TaskbarPinList>' +
-        '<taskbar:UWA AppUserModelID="' + $terminalAUMID + '" />' +
+        ($pinElements -join '') +
         '</taskbar:TaskbarPinList></defaultlayout:TaskbarLayout></CustomTaskbarLayoutCollection>' +
         '</LayoutModificationTemplate>'
     try {
         [xml]$layoutDocument = $layout
     } catch {
-        throw "Windows Terminal taskbar layout XML is invalid: $($_.Exception.Message)"
+        throw "Taskbar layout XML is invalid: $($_.Exception.Message)"
     }
     if ($layoutDocument.DocumentElement.LocalName -cne 'LayoutModificationTemplate') {
-        throw 'Windows Terminal taskbar layout root is invalid.'
+        throw 'Taskbar layout root is invalid.'
     }
 
     $namespace = 'root\cimv2\mdm\dmmap'
@@ -1800,10 +1881,10 @@ function Ensure-ProvisioningWindowsTerminalTaskbarPin {
     $instances = @(Get-CimInstance -Namespace $namespace -ClassName $className -ErrorAction Stop |
         Where-Object { [string]$_.ParentID -ceq $parentID -and [string]$_.InstanceID -ceq $instanceID })
     if ($instances.Count -gt 1) {
-        throw "Windows Terminal taskbar policy resolved to $($instances.Count) matching instances."
+        throw "Taskbar policy resolved to $($instances.Count) matching instances."
     }
     if ($instances.Count -eq 1 -and [string]$instances[0].StartLayout -ceq $layout) {
-        Write-Host "Windows Terminal $Edition taskbar pin already matches: $terminalAUMID"
+        Write-Host "Taskbar pins already match: $($pinNames -join ', ')"
         return
     }
 
@@ -1821,10 +1902,10 @@ function Ensure-ProvisioningWindowsTerminalTaskbarPin {
     $verifiedInstances = @(Get-CimInstance -Namespace $namespace -ClassName $className -ErrorAction Stop |
         Where-Object { [string]$_.ParentID -ceq $parentID -and [string]$_.InstanceID -ceq $instanceID })
     if ($verifiedInstances.Count -ne 1 -or [string]$verifiedInstances[0].StartLayout -cne $layout) {
-        throw 'Windows Terminal taskbar policy read-back did not match the canonical decoded layout.'
+        throw 'Taskbar policy read-back did not match the canonical decoded layout.'
     }
-    Restart-ProvisioningExplorerShell -Role 'Windows Terminal taskbar policy change'
-    Write-Host "Windows Terminal $Edition taskbar pin applied: $terminalAUMID"
+    Restart-ProvisioningExplorerShell -Role 'taskbar policy change'
+    Write-Host "Taskbar pins applied: $($pinNames -join ', ')"
 }
 
 function Initialize-ProvisioningAudioEndpointType {
@@ -2639,7 +2720,29 @@ export default async () => ({
     Write-Output "OpenCode ready: $openCodeVersion"
 }
 
+if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
+    Write-Output 'Installing WinDirStat...'
+    Install-ProvisioningWinGetPackage -Role 'WinDirStat' -Id 'WinDirStat.WinDirStat' `
+        -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') `
+        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI'
+    $winDirStatExecutable = Join-Path $env:ProgramFiles 'WinDirStat\WinDirStat.exe'
+    if (-not (Test-Path -LiteralPath $winDirStatExecutable -PathType Leaf) -or
+        ((Get-Item -LiteralPath $winDirStatExecutable -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "WinDirStat executable is missing or unsafe: $winDirStatExecutable"
+    }
+    Write-Output "WinDirStat ready: $winDirStatExecutable"
+}
+
+if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
+    Write-Output 'Installing File Pilot...'
+    Install-ProvisioningOnlineWinGetPackage -Role 'File Pilot' -Id 'Voidstar.FilePilot' `
+        -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
+    Ensure-ProvisioningFilePilotStartShortcut
+    Write-Output 'File Pilot ready: FPilot.exe'
+}
+
 $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
+$terminalPackageFamily = ''
 if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     Write-Output 'Installing GeistMono Nerd Font...'
     Install-ProvisioningGeistMonoNerdFont
@@ -2671,11 +2774,12 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     if ($null -eq $terminalCommand) {
         throw 'Windows Terminal command is not available on PATH: wt.exe'
     }
-    Ensure-ProvisioningWindowsTerminalTaskbarPin -Edition $WindowsTerminalEdition `
-        -PackageFamily $terminalPackageFamily
     Write-Output 'GeistMono Nerd Font ready: GeistMono Nerd Font'
     Write-Output "Windows Terminal $WindowsTerminalEdition ready: $($terminalCommand.Source)"
 }
+
+Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
+    -TerminalPackageFamily $terminalPackageFamily
 
 foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     $packageID = [string]$package.id

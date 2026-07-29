@@ -15,7 +15,8 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 	for _, id := range []string{
 		packagePowerShell, packageStarship, packageFZF, packageRipgrep, packageGit,
-		packageGitHubCLI, packageTailscale, packageOpenCode, packageTerminalXAML, packageTerminalStable,
+		packageGitHubCLI, packageTailscale, packageOpenCode, packageWinDirStat, packageFilePilot,
+		packageTerminalXAML, packageTerminalStable,
 	} {
 		if !defaults.enabled(id) {
 			t.Fatalf("default plan is missing %s: %#v", id, defaults)
