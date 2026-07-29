@@ -96,11 +96,15 @@ func TestInitializeProjectRefusesNestedProfileUnderExistingOwner(t *testing.T) {
 	if err := os.WriteFile(profile, []byte("existing profile"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InitializeProject(nested, []string{"go"}); err == nil || !strings.Contains(err.Error(), profile) {
+	if _, err := InitializeProject(nested, []string{"go"}); err == nil ||
+		!strings.Contains(err.Error(), "already exists and was not changed") {
 		t.Fatalf("nested ownership error = %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(nested, projectConfigurationName)); !os.IsNotExist(err) {
 		t.Fatalf("nested configuration was created: %v", err)
+	}
+	if data, err := os.ReadFile(profile); err != nil || string(data) != "existing profile" {
+		t.Fatalf("ancestor profile changed: %q, %v", data, err)
 	}
 }
 
