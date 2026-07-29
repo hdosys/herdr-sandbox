@@ -374,6 +374,34 @@ function Assert-ProvisioningCachePath {
     }
 }
 
+function Assert-ProvisioningCacheTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Assert-ProvisioningCachePath -Path $Path
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+    $pending = New-Object 'System.Collections.Generic.List[string]'
+    $pending.Add([IO.Path]::GetFullPath($Path)) | Out-Null
+    while ($pending.Count -gt 0) {
+        $index = $pending.Count - 1
+        $directory = $pending[$index]
+        $pending.RemoveAt($index)
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            Assert-ProvisioningCachePath -Path $item.FullName
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Cache tree contains a reparse point: $($item.FullName)"
+            }
+            if ($item.PSIsContainer) {
+                $pending.Add($item.FullName) | Out-Null
+            }
+        }
+    }
+}
+
 function Remove-ProvisioningGuestPackageStage {
     param(
         [Parameter(Mandatory = $true)]
@@ -831,7 +859,7 @@ function Publish-ProvisioningPackageCacheEntry {
     } finally {
         try {
             if (Test-Path -LiteralPath $staging) {
-                Assert-ProvisioningCachePath -Path $staging
+                Assert-ProvisioningCacheTree -Path $staging
                 Remove-Item -LiteralPath $staging -Recurse -Force
             }
         } catch {
@@ -840,7 +868,7 @@ function Publish-ProvisioningPackageCacheEntry {
         try {
             if ($promotionSucceeded -and -not [string]::IsNullOrWhiteSpace($displaced) -and
                 (Test-Path -LiteralPath $displaced)) {
-                Assert-ProvisioningCachePath -Path $displaced
+                Assert-ProvisioningCacheTree -Path $displaced
                 Remove-Item -LiteralPath $displaced -Recurse -Force
             }
         } catch {
@@ -1448,7 +1476,7 @@ function Install-ProvisioningCachedPackage {
         }
         foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
             if ($directory.Name -ine $entryName) {
-                Assert-ProvisioningCachePath -Path $directory.FullName
+                Assert-ProvisioningCacheTree -Path $directory.FullName
                 Remove-Item -LiteralPath $directory.FullName -Recurse -Force
             }
         }
@@ -2633,27 +2661,10 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
         throw "OpenCode managed plugin path is not a local absolute path: $openCodeManagedPluginPath"
     }
     $openCodeManagedPluginURI = 'file:///' + $openCodeManagedPluginPath.Replace('\', '/')
-    $openCodeManagedPlugin = @'
-const allowAll = () => ({
-  "*": "allow",
-  read: "allow",
-  edit: "allow",
-  glob: "allow",
-  grep: "allow",
-  list: "allow",
-  bash: "allow",
-  task: "allow",
-  external_directory: "allow",
-  todowrite: "allow",
-  question: "allow",
-  webfetch: "allow",
-  websearch: "allow",
-  lsp: "allow",
-  doom_loop: "allow",
-  skill: "allow",
-  plan_enter: "allow",
-  plan_exit: "allow",
-})
+    $openCodeAllowAllJSON = $openCodeAllowAllPermissions | ConvertTo-Json -Compress
+    $openCodeManagedPlugin = @"
+const permissions = $openCodeAllowAllJSON
+const allowAll = () => ({ ...permissions })
 
 export default async () => ({
   config: async (config) => {
@@ -2663,7 +2674,7 @@ export default async () => ({
     }
   },
 })
-'@
+"@
     $openCodeManagedConfig = ([ordered]@{
         '$schema' = 'https://opencode.ai/config.json'
         permission = $openCodeAllowAllPermissions

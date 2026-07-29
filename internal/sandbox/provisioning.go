@@ -205,20 +205,9 @@ func validateTailscalePackageSelection(enabled bool, packages wingetPackagePlan)
 }
 
 func validateBaseProvisioningContract(path string) error {
-	info, err := os.Lstat(path)
+	contents, err := readProvisioningScript(path, "app-owned base provisioning script", maximumBaseScriptSize)
 	if err != nil {
-		return fmt.Errorf("inspect app-owned base provisioning script: %w", err)
-	}
-	reparse, err := fileInfoIsReparsePoint(info)
-	if err != nil {
-		return fmt.Errorf("inspect app-owned base provisioning reparse state: %w", err)
-	}
-	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumBaseScriptSize {
-		return fmt.Errorf("app-owned base provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumBaseScriptSize, path)
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read app-owned base provisioning script: %w", err)
+		return err
 	}
 	if !strings.Contains(string(contents), baseProvisioningContract) {
 		return fmt.Errorf("app-owned base provisioning script has an unsupported contract: %s", path)
@@ -227,20 +216,9 @@ func validateBaseProvisioningContract(path string) error {
 }
 
 func validateStackProvisioningContract(path string) error {
-	info, err := os.Lstat(path)
+	contents, err := readProvisioningScript(path, "app-owned stack provisioning script", maximumStackScriptSize)
 	if err != nil {
-		return fmt.Errorf("inspect app-owned stack provisioning script: %w", err)
-	}
-	reparse, err := fileInfoIsReparsePoint(info)
-	if err != nil {
-		return fmt.Errorf("inspect app-owned stack provisioning reparse state: %w", err)
-	}
-	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumStackScriptSize {
-		return fmt.Errorf("app-owned stack provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumStackScriptSize, path)
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read app-owned stack provisioning script: %w", err)
+		return err
 	}
 	if !strings.Contains(string(contents), stackProvisioningContract) {
 		return fmt.Errorf("app-owned stack provisioning script has an unsupported contract: %s", path)
@@ -249,20 +227,9 @@ func validateStackProvisioningContract(path string) error {
 }
 
 func validateUserProvisioningContract(path string) error {
-	info, err := os.Lstat(path)
+	contents, err := readProvisioningScript(path, "user provisioning script", maximumUserScriptSize)
 	if err != nil {
-		return fmt.Errorf("inspect user provisioning script: %w", err)
-	}
-	reparse, err := fileInfoIsReparsePoint(info)
-	if err != nil {
-		return fmt.Errorf("inspect user provisioning reparse state: %w", err)
-	}
-	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumUserScriptSize {
-		return fmt.Errorf("user provisioning script must be a nonempty regular non-reparse file no larger than %d bytes: %s", maximumUserScriptSize, path)
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read user provisioning script: %w", err)
+		return err
 	}
 	text := string(contents)
 	if !strings.Contains(text, userProvisioningContract) {
@@ -272,6 +239,42 @@ func validateUserProvisioningContract(path string) error {
 		return fmt.Errorf("user provisioning script must not contain an app-owned Base contract: %s", path)
 	}
 	return nil
+}
+
+func readProvisioningScript(path, role string, maximumSize int64) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", role, err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s reparse state: %w", role, err)
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumSize {
+		return nil, fmt.Errorf("%s must be a nonempty regular non-reparse file no larger than %d bytes: %s", role, maximumSize, path)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", role, err)
+	}
+	openedInfo, statErr := file.Stat()
+	if statErr != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("inspect opened %s: %w", role, statErr)
+	}
+	if !os.SameFile(info, openedInfo) {
+		_ = file.Close()
+		return nil, fmt.Errorf("%s changed while it was opened: %s", role, path)
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, maximumSize+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, fmt.Errorf("read %s: %w", role, errors.Join(readErr, closeErr))
+	}
+	if len(contents) == 0 || int64(len(contents)) > maximumSize {
+		return nil, fmt.Errorf("%s changed size while it was read: %s", role, path)
+	}
+	return contents, nil
 }
 
 func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (provisioningPlan, error) {
@@ -356,9 +359,6 @@ func resolveProvisioningAt(startDirectory, globalRoot, defaultRoot string) (prov
 				if strings.EqualFold(workspace.Name, name) {
 					return provisioningPlan{}, fmt.Errorf("active project name %q conflicts with global workspace %s", name, workspace.HostDirectory)
 				}
-			}
-			if validateErr := validateProjectProvisioningScript(activeScript); validateErr != nil {
-				return provisioningPlan{}, validateErr
 			}
 			workspaces = append(workspaces, workspacePlan{
 				Name:             name,
@@ -809,18 +809,8 @@ func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]w
 	if err != nil {
 		return nil, fmt.Errorf("workspaceDiscovery.root: %w", err)
 	}
-	for _, protected := range []string{os.Getenv("USERPROFILE"), os.Getenv("APPDATA"), os.Getenv("LOCALAPPDATA")} {
-		protected = strings.TrimSpace(protected)
-		if protected == "" || !filepath.IsAbs(protected) {
-			continue
-		}
-		protectedIdentity, err := physicalMappedDirectory(filepath.Clean(protected))
-		if err != nil {
-			return nil, fmt.Errorf("workspaceDiscovery.root: resolve protected directory %s: %w", protected, err)
-		}
-		if hostPathContains(rootIdentity, protectedIdentity) {
-			return nil, fmt.Errorf("workspaceDiscovery.root must not contain a user profile or AppData root: %s", root)
-		}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspaceDiscovery.root", rootIdentity); err != nil {
+		return nil, err
 	}
 
 	directory, err := os.Open(root)
@@ -910,13 +900,6 @@ func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 		return workspacePlan{}, fmt.Errorf("path is not a directory: %s", directory)
 	}
 	script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
-	scriptInfo, err := os.Stat(script)
-	if err != nil {
-		return workspacePlan{}, fmt.Errorf("inspect provisioning script: %w", err)
-	}
-	if !scriptInfo.Mode().IsRegular() {
-		return workspacePlan{}, fmt.Errorf("provisioning path is not a regular file: %s", script)
-	}
 	if err := validateProjectProvisioningScript(script); err != nil {
 		return workspacePlan{}, err
 	}
@@ -929,14 +912,28 @@ func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 }
 
 func validateProjectProvisioningScript(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("inspect project provisioning script: %w", err)
+	if err := rejectMappedPathReparsePoints(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("project provisioning script has an unsafe parent: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximumProjectScriptSize {
-		return fmt.Errorf("project provisioning script must be a nonempty regular file no larger than %d bytes: %s", maximumProjectScriptSize, path)
+	_, err := readProvisioningScript(path, "project provisioning script", maximumProjectScriptSize)
+	return err
+}
+
+func canonicalWorkspacePlans(workspaces []workspacePlan) ([]workspacePlan, error) {
+	result := append([]workspacePlan(nil), workspaces...)
+	for index := range result {
+		directory, err := canonicalMappedDirectory(result[index].HostDirectory)
+		if err != nil {
+			return nil, fmt.Errorf("workspace %q: %w", result[index].Name, err)
+		}
+		script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
+		if err := validateProjectProvisioningScript(script); err != nil {
+			return nil, fmt.Errorf("workspace %q: %w", result[index].Name, err)
+		}
+		result[index].HostDirectory = directory
+		result[index].ProvisioningPath = script
 	}
-	return nil
+	return result, nil
 }
 
 func findProjectProvisioning(startDirectory string) (string, string, bool, error) {
@@ -961,9 +958,9 @@ func findProjectProvisioning(startDirectory string) (string, string, bool, error
 
 	for directory := filepath.Clean(startDirectory); ; directory = filepath.Dir(directory) {
 		script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
-		if scriptInfo, statErr := os.Stat(script); statErr == nil {
-			if !scriptInfo.Mode().IsRegular() {
-				return "", "", false, fmt.Errorf("project provisioning path is not a regular file: %s", script)
+		if _, statErr := os.Lstat(script); statErr == nil {
+			if err := validateProjectProvisioningScript(script); err != nil {
+				return "", "", false, err
 			}
 			return directory, script, true, nil
 		} else if !errors.Is(statErr, os.ErrNotExist) {
@@ -1079,4 +1076,21 @@ func hostPathContains(directory, path string) bool {
 	path = strings.ToLower(filepath.Clean(path))
 	relative, err := filepath.Rel(directory, path)
 	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))))
+}
+
+func validatePhysicalMappingDoesNotContainProtectedRoot(role, identity string) error {
+	for _, protected := range []string{os.Getenv("USERPROFILE"), os.Getenv("APPDATA"), os.Getenv("LOCALAPPDATA")} {
+		protected = strings.TrimSpace(protected)
+		if protected == "" || !filepath.IsAbs(protected) {
+			continue
+		}
+		protectedIdentity, err := physicalMappedDirectory(filepath.Clean(protected))
+		if err != nil {
+			return fmt.Errorf("%s: resolve protected directory %s: %w", role, protected, err)
+		}
+		if hostPathContains(identity, protectedIdentity) {
+			return fmt.Errorf("%s must not contain a user profile or AppData root: %s", role, protected)
+		}
+	}
+	return nil
 }

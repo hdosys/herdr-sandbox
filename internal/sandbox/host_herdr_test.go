@@ -3,11 +3,30 @@ package sandbox
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestEnsurePinnedHostHerdrArchiveRejectsReparseDownloadRootBeforeNetwork(t *testing.T) {
+	dataDirectory := t.TempDir()
+	outside := t.TempDir()
+	marker := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createTestDirectoryLink(t, filepath.Join(dataDirectory, "downloads"), outside)
+	release := herdrRelease{ArchiveURL: "https://invalid.example/herdr.zip", ArchiveSHA256: strings.Repeat("a", 64)}
+	if _, err := ensurePinnedHostHerdrArchive(context.Background(), release, dataDirectory, io.Discard); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
+		t.Fatalf("reparse download root error = %v", err)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
+		t.Fatalf("outside download target changed: %q, %v", contents, err)
+	}
+}
 
 func TestExtractPinnedHostHerdrSelectsOneBoundedExecutable(t *testing.T) {
 	root := t.TempDir()

@@ -20,6 +20,10 @@ func Configure(command *exec.Cmd) {
 		arguments = append(arguments, command.Args[0], "-WindowStyle", "Hidden")
 		command.Args = append(arguments, command.Args[1:]...)
 	}
+	configureHiddenConsole(command)
+}
+
+func configureHiddenConsole(command *exec.Cmd) {
 	if command.SysProcAttr == nil {
 		command.SysProcAttr = &syscall.SysProcAttr{}
 	}

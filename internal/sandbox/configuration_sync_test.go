@@ -615,6 +615,11 @@ func TestDevelopmentConfigurationLauncherReadsExactLengthWithoutWaitingForEOF(t 
 		"$inputStream.Read($buffer, 0, $requested)",
 		"archive ended with $remaining bytes missing",
 		"[config-sync] invoke-apply-script",
+		"function Remove-GuestArchiveStaging",
+		`C:\HerdrSandbox\staging`,
+		"configuration-aaaaaaaaaaaaaaaa",
+		"Assert-GuestArchiveTree",
+		"staging tree contains a reparse point",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("launcher is missing %q", required)
@@ -622,6 +627,13 @@ func TestDevelopmentConfigurationLauncherReadsExactLengthWithoutWaitingForEOF(t 
 	}
 	if strings.Contains(script, ".CopyTo(") {
 		t.Fatal("launcher waits for SSH standard-input EOF")
+	}
+	if strings.Contains(script, "$env:TEMP") {
+		t.Fatal("launcher stages personal configuration outside the canonical guest root")
+	}
+	if strings.Contains(script, "Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue") ||
+		strings.Contains(script, "Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue") {
+		t.Fatal("launcher silently ignores credential-bearing staging cleanup")
 	}
 	if runtime.GOOS == "windows" {
 		parserScript := fmt.Sprintf(`$tokens = $null
@@ -678,6 +690,9 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		if !bytes.Contains(remoteScript, required) {
 			t.Fatalf("remote configuration script is missing %q", required)
 		}
+	}
+	if bytes.Contains(remoteScript, []byte("Remove-Item -LiteralPath $archive")) || bytes.Contains(remoteScript, []byte("Remove-Item -LiteralPath $expanded")) {
+		t.Fatal("remote apply script duplicates the launcher's staging cleanup owner")
 	}
 	remotePath := filepath.Join(t.TempDir(), "configuration-sync.ps1")
 	if err := os.WriteFile(remotePath, remoteScript, 0o600); err != nil {

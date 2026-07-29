@@ -113,6 +113,31 @@ function Assert-HerdrHostCachePath {
     }
 }
 
+function Assert-HerdrHostCacheTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    Assert-HerdrHostCachePath -Path $Path
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+    $pending = New-Object 'System.Collections.Generic.List[string]'
+    $pending.Add([IO.Path]::GetFullPath($Path)) | Out-Null
+    while ($pending.Count -gt 0) {
+        $index = $pending.Count - 1
+        $directory = $pending[$index]
+        $pending.RemoveAt($index)
+        foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
+            Assert-HerdrHostCachePath -Path $item.FullName
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Visual Studio cache tree contains a reparse point: $($item.FullName)"
+            }
+            if ($item.PSIsContainer) {
+                $pending.Add($item.FullName) | Out-Null
+            }
+        }
+    }
+}
+
 function Get-HerdrHostSHA256 {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -578,7 +603,7 @@ try {
             throw 'Both Visual Studio layout slots exist but neither matches the active component contract.'
         }
         if (Test-Path -LiteralPath $selectedSlot) {
-            Assert-HerdrHostCachePath -Path $selectedSlot
+            Assert-HerdrHostCacheTree -Path $selectedSlot
             Remove-Item -LiteralPath $selectedSlot -Recurse -Force
         }
         $layout = Join-Path $selectedSlot 'layout'

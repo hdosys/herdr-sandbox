@@ -25,6 +25,15 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 	}
 }
 
+func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
+	for _, task := range []string{"fmt", "build", "check"} {
+		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
+			t.Fatalf("run %s error = %v", task, err)
+		}
+	}
+}
+
 func TestCommandTextQuotesWhitespace(t *testing.T) {
 	got := commandText("tool", []string{"plain", `path with spaces`})
 	if got != `tool plain "path with spaces"` {

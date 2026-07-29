@@ -104,6 +104,90 @@ func TestValidateUserProvisioningContract(t *testing.T) {
 	}
 }
 
+func TestProjectProvisioningRejectsReparseScriptAndParent(t *testing.T) {
+	t.Run("script", func(t *testing.T) {
+		root := t.TempDir()
+		project := createWorkspaceFixture(t, root, "project")
+		script := filepath.Join(project, projectConfigurationName, projectProvisioningName)
+		target := filepath.Join(root, "target.ps1")
+		writeTestFile(t, target, "target")
+		if err := os.Remove(script); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, script); err != nil {
+			t.Skipf("file symlink unavailable: %v", err)
+		}
+		if err := validateProjectProvisioningScript(script); err == nil || !strings.Contains(err.Error(), "non-reparse") {
+			t.Fatalf("reparse project script error = %v", err)
+		}
+	})
+
+	t.Run("parent", func(t *testing.T) {
+		root := t.TempDir()
+		project := filepath.Join(root, "project")
+		target := filepath.Join(root, "configuration")
+		if err := os.MkdirAll(project, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(target, projectProvisioningName), "target")
+		configuration := filepath.Join(project, projectConfigurationName)
+		createTestDirectoryLink(t, configuration, target)
+		if err := validateProjectProvisioningScript(filepath.Join(configuration, projectProvisioningName)); err == nil || !strings.Contains(err.Error(), "unsafe parent") {
+			t.Fatalf("reparse project parent error = %v", err)
+		}
+	})
+}
+
+func TestProtectedRootMappingValidationAllowsOnlyNarrowDescendants(t *testing.T) {
+	protected := t.TempDir()
+	child := filepath.Join(protected, "selected-project")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(name, protected)
+	}
+	protectedIdentity, err := physicalMappedDirectory(protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspace", protectedIdentity); err == nil || !strings.Contains(err.Error(), "must not contain") {
+		t.Fatalf("protected-root mapping error = %v", err)
+	}
+	childIdentity, err := physicalMappedDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspace", childIdentity); err != nil {
+		t.Fatalf("narrow protected-root descendant was rejected: %v", err)
+	}
+}
+
+func TestCanonicalWorkspacePlansRebindProvisioningScriptToPhysicalRoot(t *testing.T) {
+	root := t.TempDir()
+	project := createWorkspaceFixture(t, root, "project")
+	plans, err := canonicalWorkspacePlans([]workspacePlan{{
+		Name:             "project",
+		HostDirectory:    project,
+		GuestDirectory:   guestWorkspaceDirectory("project"),
+		ProvisioningPath: filepath.Join(root, "stale", projectProvisioningName),
+	}})
+	if err != nil {
+		t.Fatalf("canonicalWorkspacePlans: %v", err)
+	}
+	wantRoot, err := canonicalMappedDirectory(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantScript := filepath.Join(wantRoot, projectConfigurationName, projectProvisioningName)
+	if len(plans) != 1 || plans[0].HostDirectory != wantRoot || plans[0].ProvisioningPath != wantScript {
+		t.Fatalf("canonical workspace plans = %#v, want root %q and script %q", plans, wantRoot, wantScript)
+	}
+}
+
 func TestDefaultBaseInstallsGitHubCLIThroughCachedMSIAdapter(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -163,6 +247,9 @@ func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
 	for _, required := range []string{
 		"$openCodeManagedDirectory = Join-Path $env:ProgramData 'opencode'",
 		"sandbox-allow-all.js",
+		"$openCodeAllowAllJSON = $openCodeAllowAllPermissions | ConvertTo-Json -Compress",
+		"const permissions = $openCodeAllowAllJSON",
+		"const allowAll = () => ({ ...permissions })",
 		"config.permission = allowAll()",
 		"for (const agent of Object.values(config.agent ?? {}))",
 		"agent.permission = allowAll()",
@@ -179,6 +266,9 @@ func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
 	}
 	if strings.Contains(text, `"permission": "allow"`) {
 		t.Fatal("default Base still relies on the merge-unsafe scalar OpenCode permission")
+	}
+	if strings.Contains(text, `external_directory: "allow"`) {
+		t.Fatal("OpenCode managed plugin repeats the canonical permission table")
 	}
 }
 
@@ -547,6 +637,8 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
+		"function Assert-ProvisioningCacheTree",
+		"Assert-ProvisioningCacheTree -Path $directory.FullName",
 		"function Test-ProvisioningWinGetPackageInstalled",
 		"function Test-ProvisioningPortablePackageInstalled",
 		"function Test-ProvisioningRustupInstalled",
@@ -566,6 +658,52 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 	}
 }
 
+func TestProvisioningCacheTreeRejectsNestedReparseInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 cache-tree regression")
+	}
+	cacheRoot := filepath.Join(t.TempDir(), "cache")
+	candidate := filepath.Join(cacheRoot, "candidate")
+	outside := t.TempDir()
+	if err := os.MkdirAll(candidate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createTestDirectoryLink(t, filepath.Join(candidate, "outside-link"), outside)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+trap { Write-Output ($_ | Out-String); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+foreach ($name in @('Assert-ProvisioningCachePath', 'Assert-ProvisioningCacheTree')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function $name" }
+    Invoke-Expression $definition.Extent.Text.Replace('C:\HerdrSandbox\cache', '%s')
+}
+$accepted = $false
+try {
+    Assert-ProvisioningCacheTree -Path '%s'
+    $accepted = $true
+} catch {
+    if ([string]$_.Exception.Message -notmatch 'reparse point') { throw }
+}
+if ($accepted) { throw 'Nested cache alias was accepted.' }
+exit 0
+`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(cacheRoot), quote(candidate))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("cache-tree regression: %v: %s", err, output)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
+		t.Fatalf("outside cache target changed: %q, %v", contents, err)
+	}
+}
+
 func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *testing.T) {
 	text := readDefaultStackProvisioning(t)
 	for _, required := range []string{
@@ -580,6 +718,8 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 		"function Install-CargoNextest",
 		"function Install-Just",
 		"function Install-StackVisualStudioBuildTools",
+		"if ($Direction -ceq 'Inbound') { $parameters.EdgeTraversalPolicy = 'Block' }",
+		"Assert-ProvisioningCacheTree -Path $slot",
 		"Get-StackRustManifestSnapshot -Channel 'stable'",
 		"-Id 'OpenJS.NodeJS.LTS'",
 	} {
@@ -625,6 +765,58 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 	projectCall := strings.Index(base, "& $projectScript.FullName -ProjectDirectory $projectDirectory")
 	if dotSource < 0 || userCall <= dotSource || projectCall <= userCall {
 		t.Fatalf("provisioning order must be stack, user, project: stack=%d user=%d project=%d", dotSource, userCall, projectCall)
+	}
+}
+
+func TestVisualStudioFirewallVerifierRejectsNarrowedFiltersInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 firewall verifier regression")
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+foreach ($name in @('Test-StackFirewallValue', 'Test-StackVisualStudioFirewallRule')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$script:Application = [pscustomobject]@{ Program = 'C:\fixture.exe'; Package = $null }
+$script:Address = [pscustomobject]@{ LocalAddress = 'Any'; RemoteAddress = 'Any' }
+$script:Port = [pscustomobject]@{ Protocol = 'Any'; LocalPort = 'Any'; RemotePort = 'Any'; IcmpType = 'Any'; DynamicTarget = $null }
+$script:Service = [pscustomobject]@{ Service = 'Any' }
+$script:Interface = [pscustomobject]@{ InterfaceAlias = 'Any' }
+$script:InterfaceType = [pscustomobject]@{ InterfaceType = 'Any' }
+$script:Security = [pscustomobject]@{ Authentication = 'NotRequired'; Encryption = 'NotRequired'; OverrideBlockRules = $false; LocalUser = 'Any'; RemoteUser = 'Any'; RemoteMachine = 'Any' }
+function Get-NetFirewallApplicationFilter { process { $script:Application } }
+function Get-NetFirewallAddressFilter { process { $script:Address } }
+function Get-NetFirewallPortFilter { process { $script:Port } }
+function Get-NetFirewallServiceFilter { process { $script:Service } }
+function Get-NetFirewallInterfaceFilter { process { $script:Interface } }
+function Get-NetFirewallInterfaceTypeFilter { process { $script:InterfaceType } }
+function Get-NetFirewallSecurityFilter { process { $script:Security } }
+$rule = [pscustomobject]@{
+    Name = 'fixture'; DisplayName = 'fixture'; Enabled = 'True'; Profile = 'Any'; Direction = 'Outbound';
+    Action = 'Block'; EdgeTraversalPolicy = 'Block'; LooseSourceMapping = $false; LocalOnlyMapping = $false; Owner = $null
+}
+if (-not (Test-StackVisualStudioFirewallRule -Rules @($rule) -Name 'fixture' -Direction 'Outbound' -Program 'C:\fixture.exe')) {
+    throw 'Canonical Visual Studio firewall rule was rejected.'
+}
+$script:Address.RemoteAddress = 'LocalSubnet'
+if (Test-StackVisualStudioFirewallRule -Rules @($rule) -Name 'fixture' -Direction 'Outbound' -Program 'C:\fixture.exe') {
+    throw 'Narrowed Visual Studio firewall address filter was accepted.'
+}
+$script:Address.RemoteAddress = 'Any'
+$rule.Profile = 'Private'
+if (Test-StackVisualStudioFirewallRule -Rules @($rule) -Name 'fixture' -Direction 'Outbound' -Program 'C:\fixture.exe') {
+    throw 'Narrowed Visual Studio firewall profile was accepted.'
+}
+`, quote(stackPath))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Visual Studio firewall verifier regression: %v: %s", err, output)
 	}
 }
 
@@ -714,15 +906,19 @@ func TestRustMirrorCacheUsesResolvedIdentityInWindowsPowerShell51(t *testing.T) 
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 trap { Write-Output ($_ | Out-String); exit 1 }
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Assert-StackRustMirrorPayloads', 'Test-StackRustMirrorCacheEntry')) {
+foreach ($name in @('Get-StackRustSHA256', 'Assert-StackRustMirrorPayloads', 'Test-StackRustMirrorCacheEntry')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
     Invoke-Expression $definition.Extent.Text
+}
+function Get-FileHash {
+    param([string]$LiteralPath, [string]$Algorithm)
+    if ($Algorithm -cne 'SHA256') { throw "Unsupported fixture hash: $Algorithm" }
+    return [pscustomobject]@{ Hash = Get-StackRustSHA256 -Bytes ([IO.File]::ReadAllBytes($LiteralPath)) }
 }
 $entry = '%s'
 $mirror = Join-Path $entry 'mirror'

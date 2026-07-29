@@ -7,7 +7,11 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateSet('Disabled', 'Enabled')]
-    [string]$AudioPlayback
+    [string]$AudioPlayback,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, 60)]
+    [int]$ConfigurationHandoffTimeoutMinutes
 )
 
 Set-StrictMode -Version Latest
@@ -784,13 +788,13 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     Write-ProgressStatus -Phase 'configuration-handoff' `
         -Message 'Waiting for verified host configuration before workspace creation'
     $configurationHandoffPath = Join-Path $StatusDirectory 'configuration-handoff.json'
-    $configurationDeadline = [DateTime]::UtcNow.AddMinutes(7)
+    $configurationDeadline = [DateTime]::UtcNow.AddMinutes($ConfigurationHandoffTimeoutMinutes)
     while (-not (Test-Path -LiteralPath $configurationHandoffPath -PathType Leaf)) {
         if ($herdrProcess.HasExited) {
             throw "Herdr server exited with code $($herdrProcess.ExitCode) while waiting for host configuration."
         }
         if ([DateTime]::UtcNow -ge $configurationDeadline) {
-            throw 'Verified host configuration did not arrive within 7 minutes.'
+            throw "Verified host configuration did not arrive within $ConfigurationHandoffTimeoutMinutes minutes."
         }
         Start-Sleep -Milliseconds 250
     }

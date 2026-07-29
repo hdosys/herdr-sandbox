@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"herdr-sandbox/internal/sandbox"
 )
+
+func runWithCleanup(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cleanup staleCleanup) int {
+	return runWithDependencies(ctx, args, stdin, stdout, stderr, cleanup, sandbox.InspectSession)
+}
 
 func TestRunPrintsHelp(t *testing.T) {
 	var stdout bytes.Buffer

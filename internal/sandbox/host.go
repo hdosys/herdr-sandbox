@@ -13,13 +13,15 @@ import (
 	"unicode/utf8"
 )
 
+var errUnsafeHostHerdrInspection = errors.New("host Herdr executable inspection is unsafe")
+
 func inspectHostHerdrAt(ctx context.Context, path string) (string, string, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
-		return "", "", fmt.Errorf("inspect host Herdr executable: %w", err)
+		return "", "", fmt.Errorf("%w: inspect executable: %w", errUnsafeHostHerdrInspection, err)
 	}
-	if !info.Mode().IsRegular() {
-		return "", "", fmt.Errorf("host Herdr executable is not a regular file: %s", path)
+	if err := validateHostHerdrRegularFile(info, path, "host Herdr executable"); err != nil {
+		return "", "", fmt.Errorf("%w: %w", errUnsafeHostHerdrInspection, err)
 	}
 	output, err := hiddenCommandContext(ctx, path, "--version").CombinedOutput()
 	if err != nil {
@@ -33,8 +35,10 @@ func inspectHostHerdrAt(ctx context.Context, path string) (string, string, error
 }
 
 func ensureIdentity(ctx context.Context, directory string) (string, string, error) {
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return "", "", fmt.Errorf("create SSH identity directory: %w", err)
+	var err error
+	directory, err = ensurePhysicalDirectory(directory, "SSH identity")
+	if err != nil {
+		return "", "", err
 	}
 	privateKey := filepath.Join(directory, "id_ed25519")
 	publicKey := privateKey + ".pub"
@@ -70,15 +74,19 @@ func ensureIdentity(ctx context.Context, directory string) (string, string, erro
 }
 
 func regularFileExists(path string) (bool, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("expected a regular file: %s", path)
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s reparse state: %w", path, err)
+	}
+	if reparse || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("expected a regular non-reparse file: %s", path)
 	}
 	return true, nil
 }

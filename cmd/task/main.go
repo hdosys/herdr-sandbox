@@ -13,7 +13,10 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
+
+const taskTimeout = 30 * time.Minute
 
 const usage = `Usage: go run ./cmd/task <task>
 
@@ -26,10 +29,15 @@ Tasks:
 `
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	ctx, cancel := context.WithTimeout(interruptContext, taskTimeout)
+	defer cancel()
 
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("exceeded %s: %w", taskTimeout, err)
+		}
 		fmt.Fprintln(os.Stderr, "task:", err)
 		os.Exit(1)
 	}
@@ -43,6 +51,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	switch args[0] {
 	case "fmt":
+		if len(args) != 1 {
+			return errors.New("fmt accepts no arguments")
+		}
 		return runCommand(ctx, stdout, stderr, "go", "fmt", "./...")
 	case "test":
 		extra := args[1:]
@@ -52,6 +63,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		goArgs := append([]string{"test", "./..."}, extra...)
 		return runCommand(ctx, stdout, stderr, "go", goArgs...)
 	case "build":
+		if len(args) != 1 {
+			return errors.New("build accepts no arguments")
+		}
 		return build(ctx, stdout, stderr)
 	case "package":
 		if len(args) != 2 {
@@ -94,7 +108,7 @@ func checkGoFormat(ctx context.Context, stderr io.Writer) error {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", ".agent", "build", "node_modules":
+			case ".git", ".agent", "build", "node_modules", "reference", "references":
 				if path != "." {
 					return filepath.SkipDir
 				}

@@ -17,6 +17,9 @@ func TestConfigureCreatesHiddenProcessTreeConsole(t *testing.T) {
 	if command.SysProcAttr.CreationFlags&createNewConsole == 0 {
 		t.Fatalf("creation flags = %#x, want CREATE_NEW_CONSOLE", command.SysProcAttr.CreationFlags)
 	}
+	if command.SysProcAttr.CreationFlags&createSuspended != 0 {
+		t.Fatalf("raw Configure creation flags = %#x, must not suspend inspection-only commands", command.SysProcAttr.CreationFlags)
+	}
 	if !slices.Equal(command.Args[1:3], []string{"-WindowStyle", "Hidden"}) {
 		t.Fatalf("PowerShell startup arguments = %#v, want hidden window style first", command.Args)
 	}

@@ -35,10 +35,6 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 type staleCleanup func(context.Context) (sandbox.CleanResult, error)
 type sessionInspector func(context.Context) (sandbox.SessionStatus, error)
 
-func runWithCleanup(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cleanup staleCleanup) int {
-	return runWithDependencies(ctx, args, stdin, stdout, stderr, cleanup, sandbox.InspectSession)
-}
-
 func runWithDependencies(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, cleanup staleCleanup, inspect sessionInspector) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)

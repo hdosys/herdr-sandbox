@@ -25,13 +25,9 @@ type reprovisionResult struct {
 	ProjectCount  int    `json:"projectCount"`
 }
 
-func reprovisionReadySession(ctx context.Context, options Options, active activeSession, provisioning provisioningPlan, memoryMB int, herdrExecutable string, release herdrRelease) (Connection, error) {
-	plan, err := retainedRunPlan(active, provisioning, memoryMB)
-	if err != nil {
-		return Connection{}, err
-	}
+func reprovisionReadySession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, herdrExecutable string) (Connection, error) {
 	provisioning.Workspaces = plan.Workspaces
-	fmt.Fprintf(options.Output, "Existing ready Sandbox run %s; re-running current provisioning in place...\n", active.RunID)
+	fmt.Fprintf(options.Output, "Existing ready Sandbox run %s; re-running current provisioning in place...\n", plan.ID)
 
 	snapshot, cleanupSnapshot, err := prepareRetainedProvisioningSnapshot(ctx, plan, provisioning)
 	if err != nil {
@@ -48,38 +44,23 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 		}
 	}
 
-	ready, found, err := readOptionalStatus[readyStatus](filepath.Join(plan.StatusDirectory, readyFileName))
-	if err != nil {
-		return Connection{}, fmt.Errorf("read retained Sandbox ready status: %w", err)
-	}
-	if !found {
-		return Connection{}, errors.New("retained Sandbox ready status is missing")
-	}
-	if err := ready.validate(); err != nil {
-		return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
-	}
-	if ready.HerdrVersion != release.Version || ready.HerdrProtocol != release.Protocol {
-		return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, required %q protocol %d", ready.HerdrVersion, ready.HerdrProtocol, release.Version, release.Protocol)
-	}
 	connection, err := writeRunConnection(plan, connectableStatus(connectionStatus(ready)), herdrExecutable)
 	if err != nil {
 		return Connection{}, err
 	}
 
-	runContext, cancel := withOptionalTimeout(ctx, options.Timeout)
-	defer cancel()
-	if err := verifySSH(runContext, connection); err != nil {
+	if err := verifySSH(ctx, connection); err != nil {
 		return Connection{}, err
 	}
-	if err := verifyGuestHerdr(runContext, connection); err != nil {
+	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return Connection{}, err
 	}
-	if err := runRetainedProvisioning(runContext, connection, snapshot); err != nil {
+	if err := runRetainedProvisioning(ctx, connection, snapshot); err != nil {
 		return Connection{}, err
 	}
 	if plan.Tailscale {
 		fmt.Fprintln(options.Output, "Capturing and verifying the retained Tailscale identity...")
-		tailscaleContext, cancelTailscale := context.WithTimeout(runContext, tailscaleIdentityTimeout)
+		tailscaleContext, cancelTailscale := context.WithTimeout(ctx, tailscaleIdentityTimeout)
 		err = captureAndStoreTailscale(tailscaleContext, connection, plan.DataDirectory)
 		cancelTailscale()
 		if err != nil {
@@ -87,7 +68,7 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 		}
 	}
 	fmt.Fprintf(options.Output, "Reapplying and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, provisioning.CodingAgentSync))
-	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
+	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.Directory)
 	cancelSync()
 	if err != nil {
@@ -96,7 +77,7 @@ func reprovisionReadySession(ctx context.Context, options Options, active active
 	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
 		return Connection{}, err
 	}
-	if err := verifyGuestHerdr(runContext, connection); err != nil {
+	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return Connection{}, fmt.Errorf("verify guest Herdr after retained provisioning: %w", err)
 	}
 	fmt.Fprintf(options.Output, "Retained provisioning verified for %d workspace(s).\n", len(snapshot.Workspaces))
@@ -127,12 +108,12 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 	if err != nil {
 		return runPlan{}, err
 	}
-	workspaces := append([]workspacePlan(nil), provisioning.Workspaces...)
-	for index := range workspaces {
-		workspaces[index].HostDirectory, err = canonicalMappedDirectory(workspaces[index].HostDirectory)
-		if err != nil {
-			return runPlan{}, fmt.Errorf("workspace %q: %w", workspaces[index].Name, err)
-		}
+	workspaces, err := canonicalWorkspacePlans(provisioning.Workspaces)
+	if err != nil {
+		return runPlan{}, err
+	}
+	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, workspaces); err != nil {
+		return runPlan{}, err
 	}
 	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB, provisioning.Audio)
 	if err != nil {
@@ -217,6 +198,7 @@ func runRetainedProvisioning(ctx context.Context, connection Connection, snapsho
 	if err != nil {
 		return err
 	}
+	defer clear(archive)
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	launcher := buildReprovisionLauncher(digest, len(archive), len(snapshot.Workspaces))
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcher, "run retained provisioning")
@@ -292,13 +274,11 @@ func buildReprovisionArchive(snapshot provisioningSnapshot) ([]byte, error) {
 }
 
 func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int) string {
+	staging := guestArchiveStagingPowerShell("reprovision-"+expectedDigest[:16], "Retained provisioning")
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$archive = Join-Path $env:TEMP 'herdr-sandbox-reprovision.zip'
-$expanded = Join-Path 'C:\HerdrSandbox\staging' 'reprovision-%s'
+%s
 $expectedArchiveLength = [long]%d
-Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
 try {
     $inputStream = [Console]::OpenStandardInput()
     $outputStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -320,6 +300,7 @@ try {
     if ($digest -cne '%s') { throw 'Retained provisioning archive SHA-256 mismatch.' }
     New-Item -ItemType Directory -Path $expanded -Force | Out-Null
     Expand-Archive -LiteralPath $archive -DestinationPath $expanded
+    Assert-GuestArchiveTree
     foreach ($name in @('base.ps1', 'stacks.ps1', 'user.ps1', 'winget-packages.json', 'workspaces.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $expanded $name) -PathType Leaf)) {
             throw "Retained provisioning input is missing: $name"
@@ -342,10 +323,9 @@ try {
     Write-Output ([ordered]@{ schemaVersion = %d; archiveSha256 = $digest; projectCount = $projects.Count } | ConvertTo-Json -Compress)
 } finally {
     Remove-Item Env:HERDR_SANDBOX_STATUS_DIRECTORY -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $expanded -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-GuestArchiveStaging
 }
-exit 0`, expectedDigest[:16], archiveLength, expectedDigest, projectCount, reprovisionResultSchema)
+exit 0`, staging, archiveLength, expectedDigest, projectCount, reprovisionResultSchema)
 }
 
 func decodeReprovisionResult(data []byte) (reprovisionResult, error) {

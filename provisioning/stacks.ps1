@@ -376,6 +376,19 @@ function Wait-StackVisualStudioInstalled {
     throw "Visual Studio C++ workload did not become ready within $TimeoutSeconds seconds."
 }
 
+function Test-StackFirewallValue {
+    param(
+        [AllowNull()]
+        [object]$Value,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Expected
+    )
+
+    $values = @($Value)
+    return $values.Count -eq 1 -and [string]$values[0] -ceq $Expected
+}
+
 function Test-StackVisualStudioFirewallRule {
     param(
         [Parameter(Mandatory = $true)]
@@ -394,7 +407,18 @@ function Test-StackVisualStudioFirewallRule {
     $candidate = $Rules[0]
     try {
         $applicationFilters = @($candidate | Get-NetFirewallApplicationFilter -ErrorAction Stop)
-        if ($applicationFilters.Count -ne 1) { return $false }
+        $addressFilters = @($candidate | Get-NetFirewallAddressFilter -ErrorAction Stop)
+        $portFilters = @($candidate | Get-NetFirewallPortFilter -ErrorAction Stop)
+        $serviceFilters = @($candidate | Get-NetFirewallServiceFilter -ErrorAction Stop)
+        $interfaceFilters = @($candidate | Get-NetFirewallInterfaceFilter -ErrorAction Stop)
+        $interfaceTypeFilters = @($candidate | Get-NetFirewallInterfaceTypeFilter -ErrorAction Stop)
+        $securityFilters = @($candidate | Get-NetFirewallSecurityFilter -ErrorAction Stop)
+        if ($applicationFilters.Count -ne 1 -or $addressFilters.Count -ne 1 -or
+            $portFilters.Count -ne 1 -or $serviceFilters.Count -ne 1 -or
+            $interfaceFilters.Count -ne 1 -or $interfaceTypeFilters.Count -ne 1 -or
+            $securityFilters.Count -ne 1) {
+            return $false
+        }
         $actualProgram = [IO.Path]::GetFullPath([string]$applicationFilters[0].Program)
         $expectedProgram = [IO.Path]::GetFullPath($Program)
     } catch {
@@ -403,9 +427,33 @@ function Test-StackVisualStudioFirewallRule {
     return [string]$candidate.Name -ceq $Name -and
         [string]$candidate.DisplayName -ceq $Name -and
         [string]$candidate.Enabled -ceq 'True' -and
+        [string]$candidate.Profile -ceq 'Any' -and
         [string]$candidate.Direction -ceq $Direction -and
         [string]$candidate.Action -ceq 'Block' -and
-        [string]::Equals($actualProgram, $expectedProgram, [StringComparison]::OrdinalIgnoreCase)
+        ($Direction -cne 'Inbound' -or [string]$candidate.EdgeTraversalPolicy -ceq 'Block') -and
+        [string]$candidate.LooseSourceMapping -ceq 'False' -and
+        [string]$candidate.LocalOnlyMapping -ceq 'False' -and
+        [string]::IsNullOrEmpty([string]$candidate.Owner) -and
+        [string]::Equals($actualProgram, $expectedProgram, [StringComparison]::OrdinalIgnoreCase) -and
+        ([string]::IsNullOrEmpty([string]$applicationFilters[0].Package) -or
+            [string]$applicationFilters[0].Package -ceq 'Any') -and
+        (Test-StackFirewallValue -Value $addressFilters[0].LocalAddress -Expected 'Any') -and
+        (Test-StackFirewallValue -Value $addressFilters[0].RemoteAddress -Expected 'Any') -and
+        [string]$portFilters[0].Protocol -ceq 'Any' -and
+        (Test-StackFirewallValue -Value $portFilters[0].LocalPort -Expected 'Any') -and
+        (Test-StackFirewallValue -Value $portFilters[0].RemotePort -Expected 'Any') -and
+        (Test-StackFirewallValue -Value $portFilters[0].IcmpType -Expected 'Any') -and
+        ([string]::IsNullOrEmpty([string]$portFilters[0].DynamicTarget) -or
+            [string]$portFilters[0].DynamicTarget -ceq 'Any') -and
+        [string]$serviceFilters[0].Service -ceq 'Any' -and
+        (Test-StackFirewallValue -Value $interfaceFilters[0].InterfaceAlias -Expected 'Any') -and
+        [string]$interfaceTypeFilters[0].InterfaceType -ceq 'Any' -and
+        [string]$securityFilters[0].Authentication -ceq 'NotRequired' -and
+        [string]$securityFilters[0].Encryption -ceq 'NotRequired' -and
+        [string]$securityFilters[0].OverrideBlockRules -ceq 'False' -and
+        [string]$securityFilters[0].LocalUser -ceq 'Any' -and
+        [string]$securityFilters[0].RemoteUser -ceq 'Any' -and
+        [string]$securityFilters[0].RemoteMachine -ceq 'Any'
 }
 
 function Set-StackVisualStudioFirewallRule {
@@ -427,8 +475,15 @@ function Set-StackVisualStudioFirewallRule {
     if ($existing.Count -gt 0) {
         $existing | Remove-NetFirewallRule -ErrorAction Stop
     }
-    New-NetFirewallRule -Name $Name -DisplayName $Name -Enabled True `
-        -Direction $Direction -Program $Program -Action Block | Out-Null
+    $parameters = @{
+        Name = $Name; DisplayName = $Name; Enabled = 'True'; Profile = 'Any'
+        Direction = $Direction; Action = 'Block'; LooseSourceMapping = $false; LocalOnlyMapping = $false
+        Program = $Program; LocalAddress = 'Any'; RemoteAddress = 'Any'; Protocol = 'Any'
+        LocalPort = 'Any'; RemotePort = 'Any'; Service = 'Any'; InterfaceType = 'Any'
+        Authentication = 'NotRequired'; Encryption = 'NotRequired'
+    }
+    if ($Direction -ceq 'Inbound') { $parameters.EdgeTraversalPolicy = 'Block' }
+    New-NetFirewallRule @parameters | Out-Null
     $verified = @(Get-NetFirewallRule -Name $Name -ErrorAction Stop)
     if (-not (Test-StackVisualStudioFirewallRule -Rules $verified -Name $Name `
                 -Direction $Direction -Program $Program)) {
@@ -496,7 +551,7 @@ function Install-StackVisualStudioBuildTools {
         Wait-StackVisualStudioInstalled
         foreach ($slot in @($slotA, $slotB)) {
             if ($slot -ine $selectedSlot -and (Test-Path -LiteralPath $slot)) {
-                Assert-ProvisioningCachePath -Path $slot
+                Assert-ProvisioningCacheTree -Path $slot
                 Remove-Item -LiteralPath $slot -Recurse -Force
             }
         }
@@ -888,7 +943,7 @@ function Publish-StackRustMirrorCacheEntry {
     } finally {
         try {
             if (Test-Path -LiteralPath $staging) {
-                Assert-ProvisioningCachePath -Path $staging
+                Assert-ProvisioningCacheTree -Path $staging
                 Remove-Item -LiteralPath $staging -Recurse -Force
             }
         } catch {
@@ -897,7 +952,7 @@ function Publish-StackRustMirrorCacheEntry {
         try {
             if ($promotionSucceeded -and -not [string]::IsNullOrWhiteSpace($displaced) -and
                 (Test-Path -LiteralPath $displaced)) {
-                Assert-ProvisioningCachePath -Path $displaced
+                Assert-ProvisioningCacheTree -Path $displaced
                 Remove-Item -LiteralPath $displaced -Recurse -Force
             }
         } catch {
@@ -1269,7 +1324,7 @@ try {
     }
     foreach ($directory in @(Get-ChildItem -LiteralPath $rustCacheRoot -Directory -Force)) {
         if ($directory.Name -ine $rustEntryName) {
-            Assert-ProvisioningCachePath -Path $directory.FullName
+            Assert-ProvisioningCacheTree -Path $directory.FullName
             Remove-Item -LiteralPath $directory.FullName -Recurse -Force
         }
     }

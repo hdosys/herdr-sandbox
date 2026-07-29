@@ -316,6 +316,16 @@ func archiveOptionalConfigurationTree(directory, archiveRoot string, excludedDir
 	if err != nil || !exists {
 		return err
 	}
+	excluded := make(map[string]bool, len(excludedDirectoryNames)+2)
+	for name, value := range excludedDirectoryNames {
+		excluded[name] = value
+	}
+	excluded["node_modules"] = true
+	excluded[".git"] = true
+	return addConfigurationTree(directory, archiveRoot, excluded, add)
+}
+
+func addConfigurationTree(directory, archiveRoot string, excludedDirectoryNames map[string]bool, add func(string, string) error) error {
 	return filepath.WalkDir(directory, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -324,7 +334,7 @@ func archiveOptionalConfigurationTree(directory, archiveRoot string, excludedDir
 			return fmt.Errorf("configuration directory contains a symbolic link: %s", path)
 		}
 		if entry.IsDir() {
-			if path != directory && (excludedDirectoryNames[entry.Name()] || entry.Name() == "node_modules" || entry.Name() == ".git") {
+			if path != directory && excludedDirectoryNames[entry.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
