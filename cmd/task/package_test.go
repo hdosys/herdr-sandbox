@@ -345,6 +345,7 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 	workflow := string(data)
 	for _, want := range []string{
 		`NSIS_VERSION: "` + installerEngineVersion + `"`,
+		`NSIS_URL: https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip`,
 		`NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f`,
 		`go run ./cmd/task package $env:RELEASE_TAG`,
 		`$baseName.zip`,
