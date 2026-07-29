@@ -14,6 +14,7 @@
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Purpose-bounded PowerShell:** Windows PowerShell 5.1 is limited to Windows-specific provisioning, parser adapters, and installer orchestration; the host lifecycle remains Go.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
+- **Stable private reachability with Tailscale (experimental):** opt in to preserve one tagged guest identity, Tailscale IP, and MagicDNS name across fresh Sandboxes without exposing services to the public internet. [Setup and security boundaries](#stable-tailscale-tailnet-identity-experimental) remain explicit.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
 - **Fail-closed lifecycle:** exact process, path, launch-plan, and download identities are revalidated before reuse or cleanup.
@@ -75,6 +76,15 @@ Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once
 
 ### Install herdr-sandbox
 
+The independent WinGet package IDs are fixed as `hdosys.herdr-sandbox` and `hdosys.herdr-win`. Once both community manifests are published, the intended installation command is:
+
+```powershell
+winget install hdosys.herdr-sandbox hdosys.herdr-win
+```
+
+> [!NOTE]
+> The identifiers and command above are the committed distribution contract, but the manifests are not yet available in the public WinGet source. Neither package will bundle or declare a package dependency on the other.
+
 Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both packages use the same verified three-file layout: `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`.
 
 #### Portable ZIP
@@ -103,7 +113,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The
 
 Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`, updates all three runtime files together with rollback on replacement failure, adds that exact directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
 
-Setup does not install Herdr, an updater, agent integrations, a runtime bundle, or Windows prerequisites. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It removes only installer-owned files, registration, and the installer-owned `PATH` entry; user configuration, selected workspaces, app identity/state, and package caches remain intact.
+Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It removes only installer-owned files, registration, and the installer-owned `PATH` entry; user configuration, selected workspaces, app identity/state, and package caches remain intact.
 
 </details>
 

@@ -242,6 +242,8 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`$APPDATA\herdr-sandbox`,
 		`$LOCALAPPDATA\herdr-sandbox`,
 		`herdr.exe`,
+		`herdr-win`,
+		`Herdr-Win`,
 		`WebView`,
 		`updater`,
 		`runtime bundle`,

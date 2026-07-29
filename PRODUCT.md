@@ -7,7 +7,7 @@
 ## Terminology
 
 - **Windows Sandbox**: Microsoft's disposable Windows guest environment.
-- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI, executable, commands, and version identity remain upstream-compatible as `herdr` and `herdr.exe`. `herdr-win` names only the user's maintained Windows fork/project/release line, not the produced program. `herdr-sandbox` publishes its own Sandbox release and never republishes `herdr.exe`; until official upstream builds provide the complete Windows SSH remote-attach path, the `herdr-win` repository is the intended owner of a combined package containing one exact Herdr/Sandbox release pair. The future WinGet installer must contain that pair directly rather than use WinGet package-dependency resolution; this installation path is planned but is not current behavior.
+- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI, executable, commands, and version identity remain upstream-compatible as `herdr` and `herdr.exe`. `herdr-win` names only the user's maintained Windows fork/project/release line that supplies the pinned Windows runtime until official upstream builds provide the complete SSH remote-attach path. Neither project bundles or republishes the other. The future WinGet distribution consists of two independent package IDs, `hdosys.herdr-sandbox` and `hdosys.herdr-win`; after those manifests are published, users may install both in one invocation with `winget install hdosys.herdr-sandbox hdosys.herdr-win`. Runtime compatibility validation belongs to Sandbox, while installation and upgrades remain package-manager owned. This is planned distribution behavior, not a claim that either manifest is currently published.
 - **Host**: the user's normal Windows machine.
 - **Guest**: the disposable Windows Sandbox instance.
 
@@ -35,7 +35,7 @@ Prefer the happy path and fast real feedback over broad configuration, compatibi
 Until a deliberate semantic-versioning decision replaces it, manually initiated releases use `v0.0.N`, beginning at `v0.0.0`; `N` is the monotonically increasing release ID and advances by one for each release while the major and minor components remain zero.
 
 - Every release offers both a per-user Windows installer and a ZIP download. This installer is a temporary direct sharing/testing path: it installs only `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`, replaces those three runtime files as one rollback-protected upgrade set, adds the fixed install directory to the current user's `PATH` only when an effective equivalent entry is absent, records that ownership across upgrades, and registers an uninstaller. It does not install Herdr/Herdr-Win, an updater, agent integrations, runtime bundles, or unrelated prerequisites. Uninstall removes only those installed application files, an exact `PATH` entry previously added by this installer, and installer registration; a pre-existing equivalent `PATH` entry, user configuration/provisioning, selected workspaces, run/identity state, persistent package/tool caches, and unrelated files in the fixed install directory remain untouched.
-- The ZIP contains the same three files at its root and remains a permanent parallel release artifact for portable use and later `herdr-win` packaging.
+- The ZIP contains the same three files at its root and remains a permanent portable release artifact. Neither release format contains Herdr or becomes an input to a combined package.
 
 ## Productive Development Guest
 
