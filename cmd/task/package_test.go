@@ -225,6 +225,8 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.`,
 		`${APP_NAME} init`,
 		`${APP_NAME} up`,
+		`!define MUI_FINISHPAGE_LINK "View setup and usage guide"`,
+		`!define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
 		`${GetOptions} $0 "/DELETE_CONFIG" $1`,
@@ -258,6 +260,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	for _, forbidden := range []string{
 		`MUI_PAGE_DIRECTORY`,
 		`MUI_FINISHPAGE_RUN`,
+		`MUI_FINISHPAGE_SHOWREADME`,
 		`MUI_UNPAGE_CONFIRM`,
 		`RequestExecutionLevel admin`,
 		`RMDir /r`,

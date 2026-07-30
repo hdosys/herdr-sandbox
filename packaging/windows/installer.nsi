@@ -99,6 +99,8 @@ VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_set
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
 !define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\n${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.$\r$\n$\r$\nOpen a new terminal and go to a project directory.$\r$\n$\r$\nFor a new project, run:$\r$\n${APP_NAME} init$\r$\n$\r$\nFor an existing profile, run:$\r$\n${APP_NAME} up"
+!define MUI_FINISHPAGE_LINK "View setup and usage guide"
+!define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
