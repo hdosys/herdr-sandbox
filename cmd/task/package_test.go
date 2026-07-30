@@ -220,6 +220,12 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SetCompressorDictSize 32`,
 		`SetCompressor /SOLID /FINAL lzma`,
 		`AutoCloseWindow true`,
+		`!define MUI_FINISHPAGE_NOREBOOTSUPPORT`,
+		`!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"`,
+		`${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.`,
+		`${APP_NAME} init`,
+		`${APP_NAME} up`,
+		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
 		`${GetOptions} $0 "/DELETE_CONFIG" $1`,
 		`${NSD_CreateCheckbox}`,
@@ -251,7 +257,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`MUI_PAGE_DIRECTORY`,
-		`MUI_PAGE_FINISH`,
+		`MUI_FINISHPAGE_RUN`,
 		`MUI_UNPAGE_CONFIRM`,
 		`RequestExecutionLevel admin`,
 		`RMDir /r`,
@@ -288,6 +294,12 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	executableDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_EXECUTABLE}"`)
 	if cleanupIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= executableDeleteIndex {
 		t.Fatalf("clean uninstall must finish before executable deletion")
+	}
+	installFilesIndex := strings.Index(source, `!insertmacro MUI_PAGE_INSTFILES`)
+	finishPageIndex := strings.Index(source, `!insertmacro MUI_PAGE_FINISH`)
+	uninstallPageIndex := strings.Index(source, `UninstPage custom un.DeleteConfigurationPage`)
+	if installFilesIndex < 0 || finishPageIndex <= installFilesIndex || uninstallPageIndex <= finishPageIndex {
+		t.Fatal("installer flow must end Welcome/Files/Finish before uninstaller pages")
 	}
 }
 
