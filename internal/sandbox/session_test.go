@@ -93,6 +93,19 @@ func TestEffectiveCacheDirectoryUsesSystemTemporaryDefaultAndConfiguredOverride(
 	}
 }
 
+func TestExpectedWindowsSandboxExecutableDoesNotRequireInstalledFeature(t *testing.T) {
+	windowsDirectory := filepath.Join(t.TempDir(), "Windows")
+	t.Setenv("WINDIR", windowsDirectory)
+	want := filepath.Join(windowsDirectory, "System32", "WindowsSandbox.exe")
+	got, err := expectedWindowsSandboxExecutable()
+	if err != nil || got != want {
+		t.Fatalf("expectedWindowsSandboxExecutable = %q, %v; want %q", got, err, want)
+	}
+	if _, err := windowsSandboxExecutable(); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("windowsSandboxExecutable missing-feature error = %v", err)
+	}
+}
+
 func TestAttachEnvironmentIsolatesParentHerdrRuntime(t *testing.T) {
 	environment := attachEnvironment([]string{
 		`PATH=C:\Windows\System32`,

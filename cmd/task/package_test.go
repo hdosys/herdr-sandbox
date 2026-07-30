@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"herdr-sandbox/internal/productidentity"
 )
 
 func TestParseReleaseVersion(t *testing.T) {
@@ -107,7 +109,7 @@ func TestStageAndZIPReleasePackageContainExactRuntimeFiles(t *testing.T) {
 			t.Fatalf("ZIP content %s = %q", file.Name, data)
 		}
 	}
-	wantNames := []string{"herdr-sandbox.exe", "base.ps1", "stacks.ps1"}
+	wantNames := []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("ZIP entries = %v, want %v", names, wantNames)
 	}
@@ -132,7 +134,7 @@ func TestValidateReleasePackageRejectsExtraOrMissingFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(stage, "unexpected.dll")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(stage, "base.ps1")); err != nil {
+	if err := os.Remove(filepath.Join(stage, productidentity.BaseScriptName)); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateReleasePackage(stage); err == nil {
@@ -213,10 +215,18 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	for _, want := range []string{
 		`RequestExecutionLevel user`,
 		`AllowSkipFiles off`,
-		`InstallDir "$LOCALAPPDATA\Programs\Herdr Sandbox"`,
-		`File "${PACKAGE_DIR}\base.ps1"`,
-		`File "${PACKAGE_DIR}\herdr-sandbox.exe"`,
-		`File "${PACKAGE_DIR}\stacks.ps1"`,
+		`InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
+		`SetDatablockOptimize on`,
+		`SetCompressorDictSize 32`,
+		`SetCompressor /SOLID /FINAL lzma`,
+		`AutoCloseWindow true`,
+		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
+		`${GetOptions} $0 "/DELETE_CONFIG" $1`,
+		`${NSD_CreateCheckbox}`,
+		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
+		`File "${PACKAGE_DIR}\${APP_BASE_SCRIPT}"`,
+		`File "${PACKAGE_DIR}\${APP_EXECUTABLE}"`,
+		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`BackupRuntimeFile`,
 		`RestoreRuntimeFile`,
 		`VIProductVersion "${FIXED_VERSION}"`,
@@ -224,12 +234,16 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
 		`ReadRegDWORD $2 HKCU "${UNINSTALL_KEY}" "PathAdded"`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $5`,
-		`StrCpy $INSTDIR "$LOCALAPPDATA\Programs\Herdr Sandbox"`,
+		`StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
+		`__installer-seed-configuration`,
+		`__installer-clean-uninstall`,
+		`--delete-configuration`,
 		`!insertmacro UpdateUserPath "Add"`,
 		`!insertmacro UpdateUserPath "Remove"`,
-		`Delete "$INSTDIR\herdr-sandbox.exe"`,
-		`Delete "$INSTDIR\base.ps1"`,
-		`Delete "$INSTDIR\stacks.ps1"`,
+		`User32::SendNotifyMessageW`,
+		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
+		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
+		`Delete "$INSTDIR\${APP_STACK_SCRIPT}"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("installer source is missing %q", want)
@@ -237,10 +251,27 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`MUI_PAGE_DIRECTORY`,
+		`MUI_PAGE_FINISH`,
+		`MUI_UNPAGE_CONFIRM`,
 		`RequestExecutionLevel admin`,
 		`RMDir /r`,
 		`$APPDATA\herdr-sandbox`,
 		`$LOCALAPPDATA\herdr-sandbox`,
+		`SendMessage ${HWND_BROADCAST}`,
+		`!define PRODUCT_NAME`,
+		`Herdr Sandbox`,
+		`herdr-sandbox`,
+		`HERDR_SANDBOX`,
+		`base.ps1`,
+		`stacks.ps1`,
+		`config.json`,
+		`user.ps1`,
+		`.herdr-sandbox`,
+		`MUI_ICON`,
+		`MUI_UNICON`,
+		`MUI_WELCOMEFINISHPAGE_BITMAP`,
+		`icon.ico`,
+		`welcome-328x628.bmp`,
 		`herdr.exe`,
 		`herdr-win`,
 		`Herdr-Win`,
@@ -251,6 +282,39 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)
+		}
+	}
+	cleanupIndex := strings.Index(source, `__installer-clean-uninstall`)
+	executableDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_EXECUTABLE}"`)
+	if cleanupIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= executableDeleteIndex {
+		t.Fatalf("clean uninstall must finish before executable deletion")
+	}
+}
+
+func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("package.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		`"herdr-sandbox/internal/productidentity"`,
+		`"/DAPP_NAME=" + productidentity.ApplicationName`,
+		`"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName`,
+		`"/DAPP_EXECUTABLE=" + productidentity.ExecutableName`,
+		`"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName`,
+		`"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName`,
+		`"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName`,
+		`"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName`,
+		`"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName`,
+		`"/DAPP_INSTALL_DIRECTORY=" + productidentity.InstallDirectoryName`,
+		`"/DAPP_PUBLISHER=" + productidentity.Publisher`,
+		`"/DAPP_PRODUCT_URL=" + productidentity.ProductURL`,
+		`"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName`,
+		`"/DAPP_COPYRIGHT=" + productidentity.Copyright`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("package task is missing canonical installer identity input %q", want)
 		}
 	}
 }
@@ -267,6 +331,7 @@ func TestInstallerPathHelperPreservesUnownedState(t *testing.T) {
 		`RegistryValueKind]::ExpandString`,
 		`Test-PathEntry`,
 		`Resolve-UserPathUpdate`,
+		`[string]$InstallDirectory`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
 		`[string]::Join(';', [string[]]$kept)`,
 		`exit 10`,
@@ -275,7 +340,7 @@ func TestInstallerPathHelperPreservesUnownedState(t *testing.T) {
 			t.Fatalf("PATH helper is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Remove-Item", "APPDATA", "cache", "identity", "runs", "workspace"} {
+	for _, forbidden := range []string{"Remove-Item", "APPDATA", "cache", "identity", "runs", "workspace", "HERDR_SANDBOX_INSTALL_DIRECTORY"} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("PATH helper contains unrelated state pattern %q", forbidden)
 		}
@@ -350,10 +415,11 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 		`$curl = Join-Path $env:SystemRoot 'System32\curl.exe'`,
 		`& $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL`,
 		`go run ./cmd/task package $env:RELEASE_TAG`,
-		`$baseName.zip`,
-		`$baseName.zip.sha256`,
-		`$($baseName)_setup.exe`,
-		`$($baseName)_setup.exe.sha256`,
+		`Get-ChildItem -LiteralPath 'build\dist' -File`,
+		`$assets.Count -ne 4`,
+		`$installers.Count -ne 1`,
+		`VersionInfo.ProductName`,
+		`'--title', "$productName $env:RELEASE_TAG"`,
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release workflow is missing %q", want)

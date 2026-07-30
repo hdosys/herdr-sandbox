@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"herdr-sandbox/internal/sandbox"
 )
@@ -33,6 +34,59 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "--timeout 20m") {
 		t.Fatalf("help = %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "__installer-") {
+		t.Fatalf("installer-only commands leaked into help: %q", stdout.String())
+	}
+}
+
+func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	seedCalls := 0
+	cleanCalls := []bool{}
+	dependencies.seedInstaller = func() error {
+		seedCalls++
+		return nil
+	}
+	dependencies.cleanInstaller = func(ctx context.Context, deleteConfiguration bool) error {
+		cleanCalls = append(cleanCalls, deleteConfiguration)
+		deadline, ok := ctx.Deadline()
+		remaining := time.Until(deadline)
+		if !ok || remaining > installerCleanUninstallTimeout || remaining < installerCleanUninstallTimeout-time.Minute {
+			t.Fatalf("installer cleanup deadline = %v, found = %t", deadline, ok)
+		}
+		return nil
+	}
+	for _, args := range [][]string{{"__installer-seed-configuration"}, {"__installer-clean-uninstall"}, {"__installer-clean-uninstall", "--delete-configuration"}} {
+		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
+			t.Fatalf("%v exit code = %d", args, code)
+		}
+	}
+	if seedCalls != 1 || len(cleanCalls) != 2 || cleanCalls[0] || !cleanCalls[1] {
+		t.Fatalf("installer owner calls = seed %d, clean %#v", seedCalls, cleanCalls)
+	}
+}
+
+func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	dependencies.seedInstaller = func() error { return errors.New("seed fixture") }
+	dependencies.cleanInstaller = func(context.Context, bool) error { return errors.New("clean fixture") }
+	for _, test := range []struct {
+		args     []string
+		wantCode int
+		wantText string
+	}{
+		{args: []string{"__installer-seed-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
+		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "accepts only --delete-configuration"},
+		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
+		{args: []string{"__installer-clean-uninstall"}, wantCode: 1, wantText: "clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 1, wantText: "clean fixture"},
+	} {
+		var stderr bytes.Buffer
+		code := runWithCommandDependencies(context.Background(), test.args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
+		if code != test.wantCode || !strings.Contains(stderr.String(), test.wantText) {
+			t.Fatalf("args = %v, code = %d, stderr = %q", test.args, code, stderr.String())
+		}
 	}
 }
 

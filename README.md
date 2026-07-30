@@ -111,9 +111,9 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`, updates all three runtime files together with rollback on replacement failure, adds that exact directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
+Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`, updates all three runtime files together with rollback on replacement failure, creates `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` when each is absent, adds the install directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. Setup and upgrades never replace existing `config.json` or `user.ps1`. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
 
-Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It removes only installer-owned files, registration, and the installer-owned `PATH` entry; user configuration, selected workspaces, app identity/state, and package caches remain intact.
+Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. Every uninstall stops a proven app-owned Sandbox and completely removes `%LOCALAPPDATA%\herdr-sandbox`, the managed SSH integration, the selected dedicated cache, the application, registration, and installer-owned `PATH` entry. The **Also delete config.json and user.ps1** checkbox is off by default: leave it unchecked to preserve the entire `%APPDATA%\herdr-sandbox` configuration root for reinstall, or check it to remove that whole directory too. Project `.herdr-sandbox\provision.ps1` files and unrelated SSH/install-directory content are always preserved. Unsafe ownership aborts before the application is removed.
 
 </details>
 
@@ -276,7 +276,7 @@ The first mutating `up` creates:
 
 | Field | Meaning |
 | --- | --- |
-| `cacheDirectory` | Absolute persistent package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state. |
+| `cacheDirectory` | Absolute dedicated Herdr Sandbox package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state; every uninstall recursively removes the entire selected cache, so never point it at a shared directory. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `audio` | Exact boolean playback opt-in. Omitted or `false` keeps the guest silent; only `true` leaves playback enabled. Microphone input always remains disabled. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
@@ -331,7 +331,7 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 
 #### Global extension ownership
 
-`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable snapshot remains with active/uncertain run diagnostics until bounded automatic or explicit cleanup can safely remove that run.
+`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. The installer creates missing `config.json` and `user.ps1` defaults immediately; portable use creates the same defaults on its first mutating provisioning command. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable snapshot remains with active/uncertain run diagnostics until bounded automatic or explicit cleanup can safely remove that run.
 
 Older releases seeded a user-owned `%APPDATA%\herdr-sandbox\base.ps1`. The new ownership model never overwrites or executes that file: `up` stops with migration instructions. Review it, move only deliberate global extension commands into `user.ps1`, move package choices into `config.json`, keep project tools in project profiles, archive the complete legacy Base under a non-reserved name, and retry.
 

@@ -79,17 +79,22 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $baseName = "herdr-sandbox_$($env:RELEASE_TAG)_windows_amd64"
-          $assets = @(
-              "build\dist\$baseName.zip",
-              "build\dist\$baseName.zip.sha256",
-              "build\dist\$($baseName)_setup.exe",
-              "build\dist\$($baseName)_setup.exe.sha256"
-          )
-          $arguments = @('release', 'create', $env:RELEASE_TAG) + $assets + @(
+          $assets = @(Get-ChildItem -LiteralPath 'build\dist' -File | Sort-Object Name)
+          if ($assets.Count -ne 4) {
+              throw "Expected exactly four release assets, found $($assets.Count)."
+          }
+          $installers = @($assets | Where-Object { $_.Name.EndsWith('_setup.exe', [StringComparison]::Ordinal) })
+          if ($installers.Count -ne 1) {
+              throw "Expected exactly one installer asset, found $($installers.Count)."
+          }
+          $productName = [string]$installers[0].VersionInfo.ProductName
+          if ([string]::IsNullOrWhiteSpace($productName)) {
+              throw 'Installer ProductName is missing.'
+          }
+          $arguments = @('release', 'create', $env:RELEASE_TAG) + @($assets.FullName) + @(
               '--verify-tag',
               '--generate-notes',
-              '--title', "herdr-sandbox $env:RELEASE_TAG"
+              '--title', "$productName $env:RELEASE_TAG"
           )
           & gh.exe @arguments
           if ($LASTEXITCODE -ne 0) {

@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"herdr-sandbox/internal/productidentity"
 )
 
 const installerEngineVersion = "3.12"
@@ -29,9 +31,9 @@ type releasePackageFile struct {
 }
 
 var releasePackageFiles = []releasePackageFile{
-	{Name: "herdr-sandbox.exe", Mode: 0o755},
-	{Name: "base.ps1", Mode: 0o644},
-	{Name: "stacks.ps1", Mode: 0o644},
+	{Name: productidentity.ExecutableName, Mode: 0o755},
+	{Name: productidentity.BaseScriptName, Mode: 0o644},
+	{Name: productidentity.StackScriptName, Mode: 0o644},
 }
 
 type releaseVersion struct {
@@ -182,7 +184,7 @@ func parseReleaseVersion(tag string) (releaseVersion, error) {
 }
 
 func releasePaths(root string, version releaseVersion) releasePackagePaths {
-	baseName := "herdr-sandbox_" + version.Tag + "_windows_amd64"
+	baseName := productidentity.ApplicationName + "_" + version.Tag + "_windows_amd64"
 	dist := filepath.Join(root, "build", "dist")
 	zipPath := filepath.Join(dist, baseName+".zip")
 	installerPath := filepath.Join(dist, baseName+"_setup.exe")
@@ -398,6 +400,19 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DRELEASE_TAG=" + version.Tag,
 		"/DVERSION=" + version.Display,
 		"/DFIXED_VERSION=" + version.Fixed,
+		"/DAPP_NAME=" + productidentity.ApplicationName,
+		"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName,
+		"/DAPP_EXECUTABLE=" + productidentity.ExecutableName,
+		"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName,
+		"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName,
+		"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName,
+		"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName,
+		"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName,
+		"/DAPP_INSTALL_DIRECTORY=" + productidentity.InstallDirectoryName,
+		"/DAPP_PUBLISHER=" + productidentity.Publisher,
+		"/DAPP_PRODUCT_URL=" + productidentity.ProductURL,
+		"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName,
+		"/DAPP_COPYRIGHT=" + productidentity.Copyright,
 		"/DPACKAGE_DIR=" + stageDirectory,
 		"/DPATH_HELPER=" + pathHelper,
 		"/DOUTPUT_FILE=" + outputPath,

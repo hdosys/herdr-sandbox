@@ -14,19 +14,21 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"herdr-sandbox/internal/productidentity"
 )
 
 const taskTimeout = 30 * time.Minute
 
-const usage = `Usage: go run ./cmd/task <task>
+var usage = fmt.Sprintf(`Usage: go run ./cmd/task <task>
 
 Tasks:
   fmt              format Go source
   test [args...]   run go test ./... with optional extra arguments
-  build            build build/bin/herdr-sandbox.exe
+  build            build build/bin/%s
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
-`
+`, productidentity.ExecutableName)
 
 func main() {
 	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -189,14 +191,14 @@ if ($errors.Count -gt 0) {
 }
 
 func build(ctx context.Context, stdout, stderr io.Writer) error {
-	output := filepath.Join("build", "bin", "herdr-sandbox.exe")
+	output := filepath.Join("build", "bin", productidentity.ExecutableName)
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
 	}
 	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output)...); err != nil {
 		return err
 	}
-	for _, name := range []string{"base.ps1", "stacks.ps1"} {
+	for _, name := range []string{productidentity.BaseScriptName, productidentity.StackScriptName} {
 		data, err := os.ReadFile(filepath.Join("provisioning", name))
 		if err != nil {
 			return fmt.Errorf("read provisioning asset %s: %w", name, err)

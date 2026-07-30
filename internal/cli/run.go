@@ -36,6 +36,8 @@ The up command has no overall timeout unless --timeout is supplied.
 The nearest .herdr-sandbox\provision.ps1, when present, becomes the active workspace.
 `
 
+const installerCleanUninstallTimeout = 15 * time.Minute
+
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return runWithCommandDependencies(ctx, args, stdin, stdout, stderr, defaultCommandDependencies())
 }
@@ -53,6 +55,8 @@ type commandDependencies struct {
 	validateAttach func(io.Reader, io.Writer, io.Writer) error
 	resolvePlan    func(context.Context, string) (sandbox.EffectivePlan, error)
 	initialize     func(string, []string) (sandbox.ProjectInitResult, error)
+	seedInstaller  func() error
+	cleanInstaller func(context.Context, bool) error
 }
 
 func defaultCommandDependencies() commandDependencies {
@@ -66,6 +70,8 @@ func defaultCommandDependencies() commandDependencies {
 		validateAttach: sandbox.ValidateInteractiveAttachStreams,
 		resolvePlan:    sandbox.ResolveEffectivePlan,
 		initialize:     sandbox.InitializeProject,
+		seedInstaller:  sandbox.SeedInstallerConfiguration,
+		cleanInstaller: sandbox.CleanInstallerData,
 	}
 }
 
@@ -82,6 +88,31 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	}
 	switch args[0] {
+	case "__installer-seed-configuration":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "herdr-sandbox: installer configuration seed does not accept arguments")
+			return 2
+		}
+		if err := dependencies.seedInstaller(); err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		return 0
+	case "__installer-clean-uninstall":
+		deleteConfiguration := false
+		if len(args) == 2 && args[1] == "--delete-configuration" {
+			deleteConfiguration = true
+		} else if len(args) != 1 {
+			fmt.Fprintln(stderr, "herdr-sandbox: installer clean uninstall accepts only --delete-configuration")
+			return 2
+		}
+		cleanupContext, cancel := context.WithTimeout(ctx, installerCleanUninstallTimeout)
+		defer cancel()
+		if err := dependencies.cleanInstaller(cleanupContext, deleteConfiguration); err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		return 0
 	case "plan":
 		if commandHelpRequested(args) {
 			fmt.Fprint(stdout, usage)

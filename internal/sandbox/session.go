@@ -740,11 +740,10 @@ func newRunID() (string, error) {
 }
 
 func windowsSandboxExecutable() (string, error) {
-	windowsDirectory := strings.TrimSpace(os.Getenv("WINDIR"))
-	if windowsDirectory == "" {
-		return "", errors.New("WINDIR is not set")
+	path, err := expectedWindowsSandboxExecutable()
+	if err != nil {
+		return "", err
 	}
-	path := filepath.Join(windowsDirectory, "System32", "WindowsSandbox.exe")
 	exists, err := regularFileExists(path)
 	if err != nil {
 		return "", fmt.Errorf("inspect Windows Sandbox executable: %w", err)
@@ -753,6 +752,17 @@ func windowsSandboxExecutable() (string, error) {
 		return "", errors.New("Windows Sandbox is unavailable; enable Containers-DisposableClientVM and reboot")
 	}
 	return path, nil
+}
+
+func expectedWindowsSandboxExecutable() (string, error) {
+	windowsDirectory := strings.TrimSpace(os.Getenv("WINDIR"))
+	if windowsDirectory == "" {
+		return "", errors.New("WINDIR is not set")
+	}
+	if !filepath.IsAbs(windowsDirectory) {
+		return "", fmt.Errorf("WINDIR is not absolute: %q", windowsDirectory)
+	}
+	return filepath.Join(filepath.Clean(windowsDirectory), "System32", "WindowsSandbox.exe"), nil
 }
 
 func launchSandbox(ctx context.Context, plan runPlan) error {

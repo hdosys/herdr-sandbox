@@ -11,17 +11,19 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"herdr-sandbox/internal/productidentity"
 )
 
 const (
-	applicationName                    = "herdr-sandbox"
-	projectConfigurationName           = ".herdr-sandbox"
-	projectProvisioningName            = "provision.ps1"
-	baseProvisioningName               = "base.ps1"
-	stackProvisioningName              = "stacks.ps1"
-	userProvisioningName               = "user.ps1"
+	applicationName                    = productidentity.ApplicationName
+	projectConfigurationName           = productidentity.ProjectDirectoryName
+	projectProvisioningName            = productidentity.ProjectScriptName
+	baseProvisioningName               = productidentity.BaseScriptName
+	stackProvisioningName              = productidentity.StackScriptName
+	userProvisioningName               = productidentity.UserScriptName
 	workspaceManifestName              = "workspaces.json"
-	globalConfigurationName            = "config.json"
+	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 33"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
@@ -42,6 +44,8 @@ Set-StrictMode -Version 2.0
 
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
+
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -1048,6 +1052,26 @@ func findProjectProvisioning(startDirectory string) (string, string, bool, error
 }
 
 func ensureGlobalProvisioning(globalRoot string) error {
+	if err := seedGlobalProvisioning(globalRoot); err != nil {
+		return err
+	}
+	return rejectLegacyUserBase(globalRoot)
+}
+
+// SeedInstallerConfiguration creates the user-owned defaults that setup owns
+// seeding once. Existing user files are never replaced.
+func SeedInstallerConfiguration() error {
+	configurationRoot, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("resolve user configuration directory: %w", err)
+	}
+	if !filepath.IsAbs(configurationRoot) {
+		return fmt.Errorf("user configuration directory is not absolute: %q", configurationRoot)
+	}
+	return seedGlobalProvisioning(filepath.Join(configurationRoot, applicationName))
+}
+
+func seedGlobalProvisioning(globalRoot string) error {
 	if !filepath.IsAbs(globalRoot) {
 		return errors.New("global provisioning directory must be absolute")
 	}
@@ -1056,9 +1080,6 @@ func ensureGlobalProvisioning(globalRoot string) error {
 	}
 	userPath := filepath.Join(globalRoot, userProvisioningName)
 	if err := seedUserProvisioning(userPath); err != nil {
-		return err
-	}
-	if err := rejectLegacyUserBase(globalRoot); err != nil {
 		return err
 	}
 	return ensureGlobalWorkspaceConfig(globalRoot)
@@ -1076,12 +1097,36 @@ func rejectLegacyUserBase(globalRoot string) error {
 }
 
 func seedUserProvisioning(path string) error {
+	return seedFileOnce(path, defaultUserProvisioningScript, "user provisioning script", validateUserProvisioningContract)
+}
+
+func ensureGlobalWorkspaceConfig(globalRoot string) error {
+	path := filepath.Join(globalRoot, globalConfigurationName)
+	return seedFileOnce(path, defaultGlobalConfiguration, "global workspace config", validateExistingGlobalWorkspaceConfig)
+}
+
+func validateExistingGlobalWorkspaceConfig(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect global workspace config: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect global workspace config reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() {
+		return fmt.Errorf("global workspace config is not a regular non-reparse file: %s", path)
+	}
+	return nil
+}
+
+func seedFileOnce(path string, contents []byte, role string, validateExisting func(string) error) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		return validateUserProvisioningContract(path)
+		return validateExisting(path)
 	}
 	if err != nil {
-		return fmt.Errorf("create user provisioning script %s: %w", path, err)
+		return fmt.Errorf("create %s %s: %w", role, path, err)
 	}
 	written := false
 	defer func() {
@@ -1090,33 +1135,16 @@ func seedUserProvisioning(path string) error {
 			_ = os.Remove(path)
 		}
 	}()
-	if _, err := file.Write(defaultUserProvisioningScript); err != nil {
-		return fmt.Errorf("write user provisioning script %s: %w", path, err)
+	if _, err := file.Write(contents); err != nil {
+		return fmt.Errorf("write %s %s: %w", role, path, err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync user provisioning script %s: %w", path, err)
+		return fmt.Errorf("sync %s %s: %w", role, path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close user provisioning script %s: %w", path, err)
+		return fmt.Errorf("close %s %s: %w", role, path, err)
 	}
 	written = true
-	return nil
-}
-
-func ensureGlobalWorkspaceConfig(globalRoot string) error {
-	path := filepath.Join(globalRoot, globalConfigurationName)
-	if info, err := os.Stat(path); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("global workspace config is not a regular file: %s", path)
-		}
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect global workspace config: %w", err)
-	}
-	contents := []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
-	if err := writeFileAtomically(path, contents, 0o600); err != nil {
-		return fmt.Errorf("seed global workspace config %s: %w", path, err)
-	}
 	return nil
 }
 

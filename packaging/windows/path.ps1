@@ -1,15 +1,18 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Add', 'Remove')]
-    [string]$Action
+    [string]$Action,
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$InstallDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$configured = [string]$env:HERDR_SANDBOX_INSTALL_DIRECTORY
+$configured = $InstallDirectory
 if ([string]::IsNullOrWhiteSpace($configured)) {
-    throw 'HERDR_SANDBOX_INSTALL_DIRECTORY is required.'
+    throw 'InstallDirectory is required.'
 }
 $target = [IO.Path]::GetFullPath($configured).TrimEnd([char[]]@('\'))
 

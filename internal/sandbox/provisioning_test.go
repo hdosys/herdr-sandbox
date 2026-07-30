@@ -2211,3 +2211,52 @@ func TestEnsureGlobalProvisioningPreservesAndRefusesLegacyBase(t *testing.T) {
 		t.Fatalf("user provisioning was not seeded before migration refusal: %v", err)
 	}
 }
+
+func TestInstallerSeedCreatesDefaultsWithoutOwningLegacyBase(t *testing.T) {
+	global := t.TempDir()
+	legacy := filepath.Join(global, baseProvisioningName)
+	legacyData := []byte("user-owned legacy Base")
+	if err := os.WriteFile(legacy, legacyData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedGlobalProvisioning(global); err != nil {
+		t.Fatalf("seedGlobalProvisioning: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(global, globalConfigurationName),
+		filepath.Join(global, userProvisioningName),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("installer default was not seeded %s: %v", path, err)
+		}
+	}
+	got, err := os.ReadFile(legacy)
+	if err != nil || !bytes.Equal(got, legacyData) {
+		t.Fatalf("legacy Base changed: %q, %v", got, err)
+	}
+}
+
+func TestSeedFileOnceNeverReplacesExistingUserFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), globalConfigurationName)
+	existing := []byte("user-owned configuration")
+	if err := os.WriteFile(path, existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validated := false
+	if err := seedFileOnce(path, defaultGlobalConfiguration, "test configuration", func(candidate string) error {
+		validated = true
+		if candidate != path {
+			t.Fatalf("validated path = %q, want %q", candidate, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seedFileOnce existing file: %v", err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validated || !bytes.Equal(contents, existing) {
+		t.Fatalf("existing user file changed: validated = %t, contents = %q", validated, contents)
+	}
+}
