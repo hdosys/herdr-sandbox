@@ -310,7 +310,7 @@ func verifyGuestHerdr(ctx context.Context, connection Connection) error {
 	}
 	verifyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	remoteCommand := `powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& '` + guestHerdrPath + `' status server"`
+	remoteCommand := `powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ` + encodePowerShell(guestHerdrStatusScript())
 	output, err := hiddenCommandContext(verifyContext, ssh, "-F", connection.SSHConfigPath, connection.SSHTarget, remoteCommand).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("verify guest Herdr server over SSH: %w: %s", err, boundedText(output))
@@ -320,4 +320,13 @@ func verifyGuestHerdr(ctx context.Context, connection Connection) error {
 		return fmt.Errorf("verify guest Herdr server: unexpected status %q", boundedText(output))
 	}
 	return nil
+}
+
+func guestHerdrStatusScript() string {
+	expected := strings.ReplaceAll(guestHerdrPath, "'", "''")
+	return "$herdr = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1; " +
+		"$resolvedPath = [string]$herdr.Source; " +
+		"if ([string]::IsNullOrWhiteSpace($resolvedPath) -or $resolvedPath -ine '" + expected + "') { " +
+		"throw \"Guest PATH resolved an unexpected Herdr executable: $resolvedPath\" }; " +
+		"& $resolvedPath status server"
 }

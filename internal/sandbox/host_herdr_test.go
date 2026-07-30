@@ -12,10 +12,7 @@ import (
 	"testing"
 )
 
-const (
-	hostHerdrFixtureEnvironment                = "HERDR_SANDBOX_TEST_HOST_HERDR"
-	hostHerdrFixtureGuestExecutableEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR_GUEST_EXECUTABLE"
-)
+const hostHerdrFixtureEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(hostHerdrFixtureEnvironment) == "1" {
@@ -35,12 +32,11 @@ func runHostHerdrFixtureProcess() {
 		protocol := 0
 		_, _ = fmt.Sscanf(os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL"), "%d", &protocol)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"version":                         os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
-			"channel":                         "preview",
-			"protocol":                        protocol,
-			"binary":                          os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
-			"session":                         nil,
-			"windows_remote_guest_executable": os.Getenv(hostHerdrFixtureGuestExecutableEnvironment),
+			"version":  os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
+			"channel":  "preview",
+			"protocol": protocol,
+			"binary":   os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
+			"session":  nil,
 		})
 		os.Exit(0)
 	case len(arguments) == 1 && arguments[0] == "--remote":
@@ -116,25 +112,6 @@ func TestResolveHostHerdrMissingCommandNamesWinGetAction(t *testing.T) {
 	}
 }
 
-func TestResolveHostHerdrRejectsMissingOrWrongSandboxAdapterWithWinGetAction(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows executable fixture")
-	}
-	for name, guestExecutable := range map[string]string{
-		"missing": "",
-		"legacy":  `C:\HerdrSandbox\runtime\herdr\herdr.exe`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			prepareHostHerdrFixture(t, true)
-			t.Setenv(hostHerdrFixtureGuestExecutableEnvironment, guestExecutable)
-			_, err := ResolveHostHerdr(context.Background())
-			if err == nil || !strings.Contains(err.Error(), "windows_remote_guest_executable") || !strings.Contains(err.Error(), hostHerdrInstallCommand) {
-				t.Fatalf("Sandbox adapter error = %v", err)
-			}
-		})
-	}
-}
-
 func TestHostHerdrVerifyUnchangedRejectsPackageUpdateRace(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
@@ -201,18 +178,16 @@ func TestRemoteUnsupportedDiagnosticAcceptsCaseAndNotSupportedPhrase(t *testing.
 }
 
 func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *testing.T) {
-	valid := []byte(`{"version":"1.2.3","channel":"preview","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null,"windows_remote_guest_executable":"C:\\HerdrSandbox\\runtime\\herdr.exe"}`)
+	valid := []byte(`{"version":"1.2.3","channel":"preview","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null}`)
 	status, err := parseHostHerdrClientStatus(valid)
-	if err != nil || status.Version != "1.2.3" || status.Protocol != 42 || status.WindowsRemoteGuestExecutable != guestHerdrPath {
+	if err != nil || status.Version != "1.2.3" || status.Protocol != 42 {
 		t.Fatalf("valid status = %#v, %v", status, err)
 	}
 	for _, invalid := range [][]byte{
 		append(append([]byte{}, valid...), []byte(` {}`)...),
-		[]byte(`{"version":"herdr 1.2.3","protocol":42,"binary":"C:\\Herdr\\herdr.exe","windows_remote_guest_executable":"C:\\HerdrSandbox\\runtime\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":0,"binary":"C:\\Herdr\\herdr.exe","windows_remote_guest_executable":"C:\\HerdrSandbox\\runtime\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":42,"binary":"relative\\herdr.exe","windows_remote_guest_executable":"C:\\HerdrSandbox\\runtime\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":42,"binary":"C:\\Herdr\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":42,"binary":"C:\\Herdr\\herdr.exe","windows_remote_guest_executable":"C:\\HerdrSandbox\\runtime\\herdr\\herdr.exe"}`),
+		[]byte(`{"version":"herdr 1.2.3","protocol":42,"binary":"C:\\Herdr\\herdr.exe"}`),
+		[]byte(`{"version":"1.2.3","protocol":0,"binary":"C:\\Herdr\\herdr.exe"}`),
+		[]byte(`{"version":"1.2.3","protocol":42,"binary":"relative\\herdr.exe"}`),
 	} {
 		if _, err := parseHostHerdrClientStatus(invalid); err == nil {
 			t.Fatalf("invalid status was accepted: %s", invalid)
@@ -298,7 +273,6 @@ func prepareHostHerdrFixture(t *testing.T, managed bool) (string, string) {
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL", "42")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME", runtimePath)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "error: failed to start ssh.exe for remote capability probe")
-	t.Setenv(hostHerdrFixtureGuestExecutableEnvironment, guestHerdrPath)
 	t.Setenv("PATH", filepath.Dir(commandPath))
 	return commandPath, runtimePath
 }

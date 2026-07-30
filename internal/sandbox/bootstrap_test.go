@@ -53,8 +53,11 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		"VC_redist.x64.exe",
 		"@('/install', '/quiet', '/norestart')",
 		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
-		"C:\\HerdrSandbox\\runtime",
+		"$herdrDirectory = 'C:\\HerdrSandbox\\runtime\\herdr'",
 		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
+		"[Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')",
+		"Get-Command -Name 'herdr.exe' -CommandType Application",
+		"Guest PATH resolved an unexpected Herdr executable",
 		"OpenSSH-Win64-v10.0.0.0.msi",
 		"'ADDLOCAL=Server'",
 		"administrators_authorized_keys",
@@ -75,7 +78,7 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		}
 	}
 	lower := strings.ToLower(script)
-	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "github.com/hdosys/herdr-win/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdrsandbox\\runtime\\herdr\\herdr.exe", "c:\\herdr\\", "active-workspace.txt"} {
+	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "github.com/hdosys/herdr-win/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdr\\", "active-workspace.txt"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("bootstrap contains forbidden path %q", forbidden)
 		}

@@ -664,7 +664,7 @@ try {
     }
 
     Write-ProgressStatus -Phase 'herdr-install' -Message 'Provisioning the verified host Herdr runtime'
-    $herdrDirectory = 'C:\HerdrSandbox\runtime'
+    $herdrDirectory = 'C:\HerdrSandbox\runtime\herdr'
     if (Test-Path -LiteralPath $herdrDirectory) {
         throw "Refusing to replace existing Herdr directory: $herdrDirectory"
     }
@@ -710,6 +710,11 @@ try {
     $updatedMachinePath = $pathSegments -join ';'
     [Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')
     $env:Path = $herdrDirectory + ';' + $env:Path
+    $pathHerdr = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    if ($null -eq $pathHerdr -or
+        -not [string]::Equals([string]$pathHerdr.Source, $herdrExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Guest PATH resolved an unexpected Herdr executable: $([string]$pathHerdr.Source)"
+    }
 
     Write-ProgressStatus -Phase 'openssh-install' -Message 'Installing the pinned Microsoft OpenSSH Server'
     $openSSHInstaller = Join-Path $env:TEMP 'OpenSSH-Win64-v10.0.0.0.msi'

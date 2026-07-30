@@ -23,7 +23,7 @@ const (
 	configurationSyncTimeout    = 5 * time.Minute
 	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + 2*time.Minute
 	sshTargetName               = "sandbox"
-	guestHerdrPath              = guestRootDirectory + `\runtime\herdr.exe`
+	guestHerdrPath              = guestRootDirectory + `\runtime\herdr\herdr.exe`
 )
 
 //go:embed assets/bootstrap.ps1

@@ -65,6 +65,22 @@ func TestWriteRunConnectionDoesNotPublishStableAlias(t *testing.T) {
 	}
 }
 
+func TestGuestHerdrStatusScriptResolvesVerifiedApplicationFromPath(t *testing.T) {
+	script := guestHerdrStatusScript()
+	for _, required := range []string{
+		"Get-Command -Name 'herdr.exe' -CommandType Application",
+		guestHerdrPath,
+		"& $resolvedPath status server",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("guest Herdr status script is missing %q: %s", required, script)
+		}
+	}
+	if strings.Contains(script, "& '"+guestHerdrPath+"'") {
+		t.Fatalf("guest Herdr status script bypasses PATH: %s", script)
+	}
+}
+
 func TestUpdateManagedSSHIncludeIsFirstAndIdempotent(t *testing.T) {
 	existing := "Host work\n    HostName work.example\n"
 	managedPath := `C:\Users\Test User\AppData\Local\herdr-sandbox\ssh\config`

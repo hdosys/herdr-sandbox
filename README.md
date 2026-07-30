@@ -63,7 +63,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows PowerShell 5.1, OpenSSH Client, Windows Terminal, and internet access for cache misses.
-- An existing `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on `PATH` whose `status client --json` reports the `C:\HerdrSandbox\runtime\herdr.exe` Windows remote adapter.
+- An existing remote-capable `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on host `PATH`.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -72,7 +72,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on `PATH`; `herdr-sandbox` never installs, updates, or replaces it. Before `up` or `attach` changes lifecycle state, Sandbox verifies the host command's remote interface and active runtime. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`. A fresh guest receives a digest-verified copy of that same active host runtime, so Herdr itself is never downloaded or installed inside the Sandbox.
+Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on host `PATH`; `herdr-sandbox` never installs, updates, or replaces it. Before `up` or `attach` changes lifecycle state, Sandbox verifies the host command's remote interface and active runtime. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`. A fresh guest receives a digest-verified copy of that same active host runtime in a directory placed first on guest `PATH`, and the real SSH shell must resolve that copy before readiness. Herdr itself is never downloaded or installed inside the Sandbox.
 
 ### Install herdr-sandbox
 

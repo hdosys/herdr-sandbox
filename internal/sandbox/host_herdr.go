@@ -61,11 +61,10 @@ type hostHerdrRuntimeFile struct {
 }
 
 type hostHerdrClientStatus struct {
-	Version                      string          `json:"version"`
-	Protocol                     int             `json:"protocol"`
-	Binary                       string          `json:"binary"`
-	Session                      json.RawMessage `json:"session"`
-	WindowsRemoteGuestExecutable string          `json:"windows_remote_guest_executable"`
+	Version  string          `json:"version"`
+	Protocol int             `json:"protocol"`
+	Binary   string          `json:"binary"`
+	Session  json.RawMessage `json:"session"`
 }
 
 type hostHerdrManifest struct {
@@ -272,9 +271,6 @@ func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
 	}
 	if !filepath.IsAbs(status.Binary) {
 		return hostHerdrClientStatus{}, fmt.Errorf("host Herdr client binary is not absolute: %q", status.Binary)
-	}
-	if status.WindowsRemoteGuestExecutable != guestHerdrPath {
-		return hostHerdrClientStatus{}, fmt.Errorf("`herdr status client --json` field windows_remote_guest_executable = %q, expected %q", status.WindowsRemoteGuestExecutable, guestHerdrPath)
 	}
 	return status, nil
 }
