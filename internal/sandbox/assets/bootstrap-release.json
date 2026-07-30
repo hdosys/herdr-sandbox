@@ -1,9 +1,5 @@
 {
   "schemaVersion": 1,
-  "version": "herdr 0.7.5-nightly.cd5f2e0a8589d6ef6769f0f30c5ef06a1bae7392",
-  "protocol": 18,
-  "archiveUrl": "https://github.com/hdosys/herdr-win/releases/download/windows-nightly-cd5f2e0a8589-conpty-1.25.260710002-preview/herdr-windows-x86_64.zip",
-  "archiveSha256": "8a01fec7281b60d83927aac296a4776d058369f8932c011ac76e77f4742cf085",
   "vcRuntimeUrl": "https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe",
   "vcRuntimeSha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
   "wingetVersion": "v1.29.280",

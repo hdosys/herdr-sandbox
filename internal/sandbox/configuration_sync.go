@@ -1022,7 +1022,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
     $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
     Copy-VerifiedConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination
-    $guestHerdr = 'C:\HerdrSandbox\runtime\herdr\herdr.exe'
+    $guestHerdr = 'C:\HerdrSandbox\runtime\herdr.exe'
     if (-not (Test-Path -LiteralPath $guestHerdr -PathType Leaf)) {
         throw "Guest Herdr executable is missing: $guestHerdr"
     }

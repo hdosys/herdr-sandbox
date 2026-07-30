@@ -12,15 +12,11 @@ import (
 	"strings"
 )
 
-//go:embed assets/herdr-release.json
-var herdrReleaseJSON []byte
+//go:embed assets/bootstrap-release.json
+var bootstrapReleaseJSON []byte
 
-type herdrRelease struct {
+type bootstrapRelease struct {
 	SchemaVersion            int    `json:"schemaVersion"`
-	Version                  string `json:"version"`
-	Protocol                 int    `json:"protocol"`
-	ArchiveURL               string `json:"archiveUrl"`
-	ArchiveSHA256            string `json:"archiveSha256"`
 	VCRuntimeURL             string `json:"vcRuntimeUrl"`
 	VCRuntimeSHA256          string `json:"vcRuntimeSha256"`
 	WinGetVersion            string `json:"wingetVersion"`
@@ -33,42 +29,26 @@ type herdrRelease struct {
 	OpenSSHMSISHA256         string `json:"openSSHMSISha256"`
 }
 
-func loadHerdrRelease() (herdrRelease, error) {
-	var release herdrRelease
-	decoder := json.NewDecoder(bytes.NewReader(herdrReleaseJSON))
+func loadBootstrapRelease() (bootstrapRelease, error) {
+	var release bootstrapRelease
+	decoder := json.NewDecoder(bytes.NewReader(bootstrapReleaseJSON))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&release); err != nil {
-		return herdrRelease{}, fmt.Errorf("decode Herdr Windows release metadata: %w", err)
+		return bootstrapRelease{}, fmt.Errorf("decode bootstrap release metadata: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return herdrRelease{}, errors.New("Herdr Windows release metadata contains trailing JSON")
+		return bootstrapRelease{}, errors.New("bootstrap release metadata contains trailing JSON")
 	}
 	if err := release.validate(); err != nil {
-		return herdrRelease{}, fmt.Errorf("validate Herdr Windows release metadata: %w", err)
+		return bootstrapRelease{}, fmt.Errorf("validate bootstrap release metadata: %w", err)
 	}
 	return release, nil
 }
 
-func (release herdrRelease) validate() error {
+func (release bootstrapRelease) validate() error {
 	if release.SchemaVersion != 1 {
 		return fmt.Errorf("schemaVersion = %d, want 1", release.SchemaVersion)
-	}
-	if !strings.HasPrefix(release.Version, "herdr ") || strings.ContainsAny(release.Version, "\r\n") {
-		return fmt.Errorf("invalid version %q", release.Version)
-	}
-	if release.Protocol < 1 {
-		return fmt.Errorf("protocol = %d, want a positive value", release.Protocol)
-	}
-	parsedURL, err := url.Parse(release.ArchiveURL)
-	if err != nil {
-		return fmt.Errorf("parse archiveUrl: %w", err)
-	}
-	if parsedURL.Scheme != "https" || parsedURL.Host != "github.com" || !strings.HasPrefix(parsedURL.Path, "/hdosys/herdr-win/releases/download/") || !strings.HasSuffix(parsedURL.Path, "/herdr-windows-x86_64.zip") {
-		return fmt.Errorf("archiveUrl %q is not a hdosys/herdr-win Windows release ZIP", release.ArchiveURL)
-	}
-	if err := validateSHA256("archiveSha256", release.ArchiveSHA256); err != nil {
-		return err
 	}
 	parsedRuntimeURL, err := url.Parse(release.VCRuntimeURL)
 	if err != nil {

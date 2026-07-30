@@ -1,20 +1,20 @@
 package sandbox
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
 
-func TestLoadHerdrReleaseUsesHerdrWin(t *testing.T) {
-	release, err := loadHerdrRelease()
+func TestLoadBootstrapReleaseExcludesHerdrRuntimePins(t *testing.T) {
+	release, err := loadBootstrapRelease()
 	if err != nil {
-		t.Fatalf("loadHerdrRelease: %v", err)
+		t.Fatalf("loadBootstrapRelease: %v", err)
 	}
-	if !strings.Contains(release.ArchiveURL, "github.com/hdosys/herdr-win/releases/") {
-		t.Fatalf("archive URL = %q", release.ArchiveURL)
-	}
-	if release.Protocol < 1 || release.Version == "" {
-		t.Fatalf("release = %#v", release)
+	for _, forbidden := range [][]byte{[]byte(`"version"`), []byte(`"protocol"`), []byte(`"archiveUrl"`), []byte(`"archiveSha256"`), []byte("hdosys/herdr-win")} {
+		if bytes.Contains(bootstrapReleaseJSON, forbidden) {
+			t.Fatalf("bootstrap release metadata still contains Herdr runtime pin %q", forbidden)
+		}
 	}
 	if !strings.Contains(release.VCRuntimeURL, "download.visualstudio.microsoft.com/download/pr/") {
 		t.Fatalf("VC++ runtime URL = %q", release.VCRuntimeURL)
@@ -27,8 +27,8 @@ func TestLoadHerdrReleaseUsesHerdrWin(t *testing.T) {
 	}
 }
 
-func TestHerdrReleaseRejectsUnpinnedVCRuntime(t *testing.T) {
-	release, err := loadHerdrRelease()
+func TestBootstrapReleaseRejectsUnpinnedVCRuntime(t *testing.T) {
+	release, err := loadBootstrapRelease()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,8 @@ func TestHerdrReleaseRejectsUnpinnedVCRuntime(t *testing.T) {
 	}
 }
 
-func TestHerdrReleaseRejectsMismatchedWinGetAssets(t *testing.T) {
-	release, err := loadHerdrRelease()
+func TestBootstrapReleaseRejectsMismatchedWinGetAssets(t *testing.T) {
+	release, err := loadBootstrapRelease()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,24 +49,13 @@ func TestHerdrReleaseRejectsMismatchedWinGetAssets(t *testing.T) {
 	}
 }
 
-func TestHerdrReleaseRejectsMismatchedOpenSSHAsset(t *testing.T) {
-	release, err := loadHerdrRelease()
+func TestBootstrapReleaseRejectsMismatchedOpenSSHAsset(t *testing.T) {
+	release, err := loadBootstrapRelease()
 	if err != nil {
 		t.Fatal(err)
 	}
 	release.OpenSSHMSIURL = strings.Replace(release.OpenSSHMSIURL, release.OpenSSHVersion, "other", 1)
 	if err := release.validate(); err == nil {
 		t.Fatal("validate unexpectedly accepted a mismatched OpenSSH asset")
-	}
-}
-
-func TestHerdrReleaseRejectsOfficialUpstream(t *testing.T) {
-	release, err := loadHerdrRelease()
-	if err != nil {
-		t.Fatal(err)
-	}
-	release.ArchiveURL = strings.Replace(release.ArchiveURL, "hdosys", "ogulcancelik", 1)
-	if err := release.validate(); err == nil {
-		t.Fatal("validate unexpectedly accepted the official upstream archive")
 	}
 }

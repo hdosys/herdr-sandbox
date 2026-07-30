@@ -13,27 +13,6 @@ import (
 	"unicode/utf8"
 )
 
-var errUnsafeHostHerdrInspection = errors.New("host Herdr executable inspection is unsafe")
-
-func inspectHostHerdrAt(ctx context.Context, path string) (string, string, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", "", fmt.Errorf("%w: inspect executable: %v", errUnsafeHostHerdrInspection, err)
-	}
-	if err := validateHostHerdrRegularFile(info, path, "host Herdr executable"); err != nil {
-		return "", "", fmt.Errorf("%w: %v", errUnsafeHostHerdrInspection, err)
-	}
-	output, err := hiddenCommandContext(ctx, path, "--version").CombinedOutput()
-	if err != nil {
-		return "", "", fmt.Errorf("inspect host Herdr version: %w: %s", err, boundedText(output))
-	}
-	version := strings.TrimSpace(string(output))
-	if !strings.HasPrefix(version, "herdr ") || strings.ContainsAny(version, "\r\n") {
-		return "", "", fmt.Errorf("unexpected host Herdr version output %q", version)
-	}
-	return path, version, nil
-}
-
 func ensureIdentity(ctx context.Context, directory string) (string, string, error) {
 	var err error
 	directory, err = ensurePhysicalDirectory(directory, "SSH identity")

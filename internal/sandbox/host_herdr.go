@@ -1,13 +1,13 @@
 package sandbox
 
 import (
-	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,434 +16,483 @@ import (
 )
 
 const (
-	maximumHostHerdrArchiveSize = 256 * 1024 * 1024
-	maximumHostHerdrBinarySize  = 128 * 1024 * 1024
-	hostHerdrOperationTimeout   = 10 * time.Minute
+	hostHerdrInstallCommand         = "winget install --id hdosys.herdr-win --exact"
+	hostHerdrInspectionTimeout      = 30 * time.Second
+	maximumHostHerdrRuntimeFileSize = 256 * 1024 * 1024
+	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
+	hostHerdrManifestSchemaVersion  = 1
+	hostHerdrChangedAction          = "run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current WinGet-managed runtime"
 )
 
-func ensurePinnedHostHerdr(ctx context.Context, release herdrRelease, dataDirectory string, output io.Writer) (string, string, error) {
-	operationContext, cancel := context.WithTimeout(ctx, hostHerdrOperationTimeout)
+var hostHerdrRuntimeLayouts = [][]string{
+	{
+		"herdr.exe",
+		"conpty.dll",
+		"x64/OpenConsole.exe",
+		"arm64/OpenConsole.exe",
+	},
+	{
+		"herdr.exe",
+		"conpty/conpty.dll",
+		"conpty/herdr-conpty.json",
+		"conpty/x64/OpenConsole.exe",
+		"conpty/arm64/OpenConsole.exe",
+	},
+}
+
+// HostHerdr is the read-only result of resolving one compatible host command
+// and its active physical runtime. Its fields remain private so callers cannot
+// construct a partially verified identity.
+type HostHerdr struct {
+	commandPath       string
+	commandSHA256     string
+	commandSize       int64
+	runtimeExecutable string
+	version           string
+	protocol          int
+	files             []hostHerdrRuntimeFile
+}
+
+type hostHerdrRuntimeFile struct {
+	RelativePath string
+	SourcePath   string
+	SHA256       string
+	Size         int64
+}
+
+type hostHerdrClientStatus struct {
+	Version                      string          `json:"version"`
+	Protocol                     int             `json:"protocol"`
+	Binary                       string          `json:"binary"`
+	Session                      json.RawMessage `json:"session"`
+	WindowsRemoteGuestExecutable string          `json:"windows_remote_guest_executable"`
+}
+
+type hostHerdrManifest struct {
+	SchemaVersion int                     `json:"schemaVersion"`
+	Version       string                  `json:"version"`
+	Protocol      int                     `json:"protocol"`
+	Files         []hostHerdrManifestFile `json:"files"`
+}
+
+type hostHerdrManifestFile struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// ResolveHostHerdr verifies the installed command without changing it. WinGet
+// remains the sole installation and update owner.
+func ResolveHostHerdr(ctx context.Context) (HostHerdr, error) {
+	commandPath, err := resolveInstalledHostHerdrCommand()
+	if err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("a compatible host Herdr command is required: %v", err)
+	}
+	return inspectCompatibleHostHerdr(ctx, commandPath)
+}
+
+func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHerdr, error) {
+	operationContext, cancel := context.WithTimeout(ctx, hostHerdrInspectionTimeout)
 	defer cancel()
-	ctx = operationContext
 
-	target, err := resolveInstalledHostHerdrPath()
+	commandPath, err := canonicalHostHerdrExecutable(commandPath, "host Herdr command")
 	if err != nil {
-		return "", "", err
+		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr command is unsafe: %v", err)
 	}
-	_, version, inspectErr := inspectHostHerdrAt(ctx, target)
-	if inspectErr == nil && version == release.Version {
-		_ = cleanupReplacedHostHerdrBackup(target + ".herdr-sandbox-previous")
-		_ = cleanupReplacedHostHerdrBackup(target + ".herdr-sandbox-atomic-previous")
-		return target, version, nil
-	}
-	if errors.Is(inspectErr, errUnsafeHostHerdrInspection) {
-		return "", "", inspectErr
-	}
-	if output != nil {
-		fmt.Fprintf(output, "Updating the standard host Herdr executable to %s...\n", strings.TrimPrefix(release.Version, "herdr "))
-	}
-	archivePath, err := ensurePinnedHostHerdrArchive(ctx, release, dataDirectory, output)
+	version, err := inspectHostHerdrVersion(operationContext, commandPath)
 	if err != nil {
-		return "", "", err
+		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr version could not be verified: %v", err)
 	}
-	temporaryExecutable, err := extractPinnedHostHerdr(archivePath, filepath.Dir(target))
+	if err := verifyHostHerdrRemoteCapability(operationContext, commandPath); err != nil {
+		return HostHerdr{}, err
+	}
+	statusOutput, err := hiddenCommandContext(operationContext, commandPath, "status", "client", "--json").CombinedOutput()
 	if err != nil {
-		return "", "", err
+		if remoteUnsupportedDiagnostic(statusOutput) {
+			return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(statusOutput))
+		}
+		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v: %s", err, boundedText(statusOutput))
 	}
-	defer os.Remove(temporaryExecutable)
-	if _, temporaryVersion, err := inspectHostHerdrAt(ctx, temporaryExecutable); err != nil {
-		return "", "", fmt.Errorf("verify extracted host Herdr executable: %w", err)
-	} else if temporaryVersion != release.Version {
-		return "", "", fmt.Errorf("extracted host Herdr version = %q, required %q", temporaryVersion, release.Version)
-	}
-	backup, err := replacePinnedHostHerdr(ctx, temporaryExecutable, target, release.Version)
+	status, err := parseHostHerdrClientStatus(statusOutput)
 	if err != nil {
-		return "", "", err
+		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v", err)
 	}
-	if cleanupErr := cleanupReplacedHostHerdrBackup(backup); cleanupErr != nil && output != nil {
-		fmt.Fprintf(output, "Warning: deferred old host Herdr executable cleanup: %v\n", cleanupErr)
+	if version != "herdr "+status.Version {
+		return HostHerdr{}, hostHerdrCompatibilityError("host Herdr identity changed during inspection: --version returned %q but client status returned %q", version, status.Version)
 	}
-	return inspectHostHerdrAt(ctx, target)
+	runtimeExecutable, err := canonicalHostHerdrExecutable(status.Binary, "active host Herdr runtime")
+	if err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("resolve the active host Herdr runtime: %v", err)
+	}
+	files, err := inspectHostHerdrRuntimeFiles(runtimeExecutable)
+	if err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr Windows runtime: %v", err)
+	}
+	commandSHA256, commandSize, err := sha256HostHerdrFile(commandPath)
+	if err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("fingerprint the host Herdr command: %v", err)
+	}
+	if commandSize <= 0 {
+		return HostHerdr{}, hostHerdrCompatibilityError("the host Herdr command has invalid size %d", commandSize)
+	}
+	host := HostHerdr{
+		commandPath:       commandPath,
+		commandSHA256:     commandSHA256,
+		commandSize:       commandSize,
+		runtimeExecutable: runtimeExecutable,
+		version:           version,
+		protocol:          status.Protocol,
+		files:             files,
+	}
+	if err := host.validate(); err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("validate the active host Herdr runtime: %v", err)
+	}
+	return host, nil
 }
 
-func resolveInstalledHostHerdrPath() (string, error) {
-	target, err := exec.LookPath("herdr.exe")
+func resolveInstalledHostHerdrCommand() (string, error) {
+	path, err := exec.LookPath("herdr.exe")
 	if err != nil {
-		recovered, recoveryErr := recoverStandardHostHerdrBackup()
-		if recoveryErr != nil {
-			return "", fmt.Errorf("locate installed host Herdr executable: %w (atomic-backup recovery failed: %v)", err, recoveryErr)
-		}
-		if !recovered {
-			return "", fmt.Errorf("locate installed host Herdr executable: %w", err)
-		}
-		target, err = exec.LookPath("herdr.exe")
-		if err != nil {
-			return "", fmt.Errorf("locate recovered host Herdr executable: %w", err)
-		}
+		return "", fmt.Errorf("locate herdr.exe on PATH: %w", err)
 	}
-	target, err = filepath.Abs(target)
-	if err != nil {
-		return "", fmt.Errorf("resolve installed host Herdr executable: %w", err)
-	}
-	targetDirectory, err := resolveHostHerdrTargetDirectory(filepath.Dir(target))
-	if err != nil {
-		return "", fmt.Errorf("validate installed Herdr directory: %w", err)
-	}
-	return filepath.Join(targetDirectory, filepath.Base(target)), nil
+	return canonicalHostHerdrExecutable(path, "host Herdr command")
 }
 
-func recoverStandardHostHerdrBackup() (bool, error) {
-	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
-	if !filepath.IsAbs(localAppData) {
-		return false, fmt.Errorf("LOCALAPPDATA is not absolute: %q", localAppData)
-	}
-	standardDirectory := filepath.Join(localAppData, "Programs", "Herdr", "bin")
-	targetDirectory, err := resolveHostHerdrTargetDirectory(standardDirectory)
-	if err != nil {
-		return false, fmt.Errorf("validate standard host Herdr recovery directory: %w", err)
-	}
-	target := filepath.Join(targetDirectory, "herdr.exe")
-	if _, err := os.Lstat(target); err == nil {
-		return false, nil
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("inspect host Herdr recovery target: %w", err)
-	}
-	backup := target + ".herdr-sandbox-atomic-previous"
-	info, err := os.Lstat(backup)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspect host Herdr recovery backup: %w", err)
-	}
-	if err := validateHostHerdrRegularFile(info, backup, "host Herdr recovery backup"); err != nil {
-		return false, err
-	}
-	if err := os.Rename(backup, target); err != nil {
-		return false, fmt.Errorf("restore host Herdr atomic backup: %w", err)
-	}
-	return true, nil
-}
-
-func resolveHostHerdrTargetDirectory(directory string) (string, error) {
-	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home for host Herdr executable: %w", err)
-	}
-	standardJunction := filepath.Join(localAppData, "Programs", "Herdr", "bin")
-	isStandardDirectory := false
-	if strings.EqualFold(filepath.Base(directory), filepath.Base(standardJunction)) {
-		directoryParent := filepath.Dir(directory)
-		standardParent := filepath.Dir(standardJunction)
-		directoryParentInfo, err := os.Stat(directoryParent)
+func canonicalHostHerdrExecutable(path, role string) (string, error) {
+	if !filepath.IsAbs(path) {
+		absolute, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("inspect installed Herdr parent directory: %w", err)
+			return "", fmt.Errorf("resolve %s path: %w", role, err)
 		}
-		standardParentInfo, err := os.Stat(standardParent)
-		if err == nil && os.SameFile(directoryParentInfo, standardParentInfo) {
-			if _, err := canonicalMappedDirectory(directoryParent); err != nil {
-				return "", fmt.Errorf("validate installed Herdr parent directory: %w", err)
-			}
-			if _, err := canonicalMappedDirectory(standardParent); err != nil {
-				return "", fmt.Errorf("validate standard host Herdr parent directory: %w", err)
-			}
-			isStandardDirectory = true
-		} else if err != nil && !os.IsNotExist(err) {
-			return "", fmt.Errorf("inspect standard host Herdr parent directory: %w", err)
-		}
+		path = absolute
 	}
-	if isStandardDirectory {
-		resolved, err := resolvedDirectoryPath(directory)
-		if err != nil {
-			return "", fmt.Errorf("resolve standard host Herdr junction: %w", err)
-		}
-		releasesRoot := filepath.Join(userHome, ".herdr", "packages", "standalone", "releases")
-		validatedReleasesRoot, err := canonicalMappedDirectory(releasesRoot)
-		if err != nil {
-			return "", fmt.Errorf("validate standard host Herdr releases root: %w", err)
-		}
-		validatedTarget, err := canonicalMappedDirectory(resolved)
-		if err != nil {
-			return "", fmt.Errorf("validate standard host Herdr release directory: %w", err)
-		}
-		relative, err := filepath.Rel(validatedReleasesRoot, validatedTarget)
-		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) || strings.Contains(relative, string(os.PathSeparator)) {
-			return "", fmt.Errorf("standard host Herdr junction has unexpected target: %s", validatedTarget)
-		}
-		return validatedTarget, nil
-	}
-	validated, err := canonicalMappedDirectory(directory)
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
 	if err != nil {
-		return "", fmt.Errorf("validate installed Herdr directory: %w", err)
+		return "", fmt.Errorf("resolve %s: %w", role, err)
 	}
-	return validated, nil
-}
-
-func ensurePinnedHostHerdrArchive(ctx context.Context, release herdrRelease, dataDirectory string, output io.Writer) (string, error) {
-	directory := filepath.Join(dataDirectory, "downloads")
-	var err error
-	directory, err = ensurePhysicalDirectory(directory, "host download cache")
+	resolved, err = filepath.Abs(resolved)
 	if err != nil {
+		return "", fmt.Errorf("make %s path absolute: %w", role, err)
+	}
+	directory, err := canonicalMappedDirectory(filepath.Dir(resolved))
+	if err != nil {
+		return "", fmt.Errorf("validate %s directory: %w", role, err)
+	}
+	resolved = filepath.Join(directory, filepath.Base(resolved))
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", role, err)
+	}
+	if err := validateHostHerdrRegularFile(info, resolved, role); err != nil {
 		return "", err
 	}
-	archivePath := filepath.Join(directory, "herdr-"+release.ArchiveSHA256+".zip")
-	if info, err := os.Lstat(archivePath); err == nil {
-		if err := validateHostHerdrRegularFile(info, archivePath, "host Herdr archive cache"); err != nil {
-			return "", err
-		}
-		if digest, err := sha256File(archivePath); err == nil && digest == release.ArchiveSHA256 {
-			return archivePath, nil
-		}
-		if err := os.Remove(archivePath); err != nil {
-			return "", fmt.Errorf("remove invalid host Herdr archive cache: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("inspect host Herdr archive cache: %w", err)
+	if !strings.EqualFold(filepath.Base(resolved), "herdr.exe") {
+		return "", fmt.Errorf("%s is not named herdr.exe: %s", role, resolved)
 	}
-	temporary, err := os.CreateTemp(directory, ".herdr-download-*.zip")
-	if err != nil {
-		return "", fmt.Errorf("create host Herdr download stage: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, release.ArchiveURL, nil)
-	if err != nil {
-		temporary.Close()
-		return "", fmt.Errorf("create host Herdr release request: %w", err)
-	}
-	client := &http.Client{CheckRedirect: func(request *http.Request, previous []*http.Request) error {
-		if len(previous) >= 10 || request.URL.Scheme != "https" {
-			return fmt.Errorf("unsafe host Herdr release redirect to %s", request.URL)
-		}
-		return nil
-	}}
-	response, err := client.Do(request)
-	if err != nil {
-		temporary.Close()
-		if removeErr := os.Remove(temporaryPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			return "", fmt.Errorf("download host Herdr release: %w (remove direct-download stage: %v)", err, removeErr)
-		}
-		if output != nil {
-			fmt.Fprintln(output, "Direct HTTPS was unavailable; retrying the same pinned Herdr Windows asset with BITS...")
-		}
-		if bitsErr := downloadPinnedHostHerdrWithBITS(ctx, release.ArchiveURL, temporaryPath); bitsErr != nil {
-			return "", fmt.Errorf("download host Herdr release: direct HTTPS: %v; BITS: %w", err, bitsErr)
-		}
-		info, statErr := os.Stat(temporaryPath)
-		if statErr != nil {
-			return "", fmt.Errorf("inspect BITS host Herdr release: %w", statErr)
-		}
-		if info.Size() <= 0 || info.Size() > maximumHostHerdrArchiveSize {
-			return "", fmt.Errorf("BITS host Herdr release has invalid size %d", info.Size())
-		}
-		digest, hashErr := sha256File(temporaryPath)
-		if hashErr != nil {
-			return "", fmt.Errorf("hash BITS host Herdr release: %w", hashErr)
-		}
-		if digest != release.ArchiveSHA256 {
-			return "", fmt.Errorf("BITS host Herdr release SHA-256 = %s, required %s", digest, release.ArchiveSHA256)
-		}
-		if renameErr := os.Rename(temporaryPath, archivePath); renameErr != nil {
-			return "", fmt.Errorf("publish BITS host Herdr release cache: %w", renameErr)
-		}
-		return archivePath, nil
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		temporary.Close()
-		return "", fmt.Errorf("download host Herdr release: HTTP %s", response.Status)
-	}
-	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(response.Body, maximumHostHerdrArchiveSize+1))
-	syncErr := temporary.Sync()
-	closeErr := temporary.Close()
-	if copyErr != nil {
-		return "", fmt.Errorf("write host Herdr release: %w", copyErr)
-	}
-	if closeErr != nil {
-		return "", fmt.Errorf("close host Herdr release: %w", closeErr)
-	}
-	if syncErr != nil {
-		return "", fmt.Errorf("flush host Herdr release: %w", syncErr)
-	}
-	if written > maximumHostHerdrArchiveSize {
-		return "", fmt.Errorf("host Herdr release exceeds %d bytes", maximumHostHerdrArchiveSize)
-	}
-	if digest := fmt.Sprintf("%x", hash.Sum(nil)); digest != release.ArchiveSHA256 {
-		return "", fmt.Errorf("host Herdr release SHA-256 = %s, required %s", digest, release.ArchiveSHA256)
-	}
-	if err := os.Rename(temporaryPath, archivePath); err != nil {
-		return "", fmt.Errorf("publish host Herdr release cache: %w", err)
-	}
-	return archivePath, nil
+	return resolved, nil
 }
 
-func downloadPinnedHostHerdrWithBITS(ctx context.Context, source, destination string) error {
-	powerShell, err := windowsPowerShellExecutable()
+func inspectHostHerdrVersion(ctx context.Context, path string) (string, error) {
+	output, err := hiddenCommandContext(ctx, path, "--version").CombinedOutput()
 	if err != nil {
-		return err
+		return "", fmt.Errorf("run --version: %w: %s", err, boundedText(output))
 	}
-	script := `$ErrorActionPreference = 'Stop'
-Import-Module BitsTransfer -ErrorAction Stop
-Start-BitsTransfer -Source $env:HERDR_SANDBOX_BITS_SOURCE -Destination $env:HERDR_SANDBOX_BITS_DESTINATION -ErrorAction Stop`
-	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	command.Env = append(childProcessEnvironment(os.Environ()),
-		"HERDR_SANDBOX_BITS_SOURCE="+source,
-		"HERDR_SANDBOX_BITS_DESTINATION="+destination,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("BITS transfer failed: %w: %s", err, boundedText(output))
+	version := strings.TrimSpace(string(output))
+	if !strings.HasPrefix(version, "herdr ") || strings.ContainsAny(version, "\r\n") || len(version) > 256 {
+		return "", fmt.Errorf("unexpected --version output %q", version)
+	}
+	return version, nil
+}
+
+func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
+	output, err := hiddenCommandContext(ctx, path, "--remote").CombinedOutput()
+	if remoteUnsupportedDiagnostic(output) {
+		return hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(output))
+	}
+	if err == nil {
+		return hostHerdrCompatibilityError("the installed host Herdr command accepted --remote without its required target")
+	}
+	lower := strings.ToLower(string(output))
+	mentionsMissingTarget := strings.Contains(lower, "--remote") &&
+		(strings.Contains(lower, "missing") || strings.Contains(lower, "required")) &&
+		(strings.Contains(lower, "value") || strings.Contains(lower, "target") || strings.Contains(lower, "argument"))
+	if !mentionsMissingTarget {
+		return hostHerdrCompatibilityError("the installed host Herdr command did not expose the expected remote interface: %s", boundedText(output))
+	}
+
+	// A target is required to reach the platform capability owner. Remove PATH so
+	// a compatible build can cross that boundary only as far as its first local
+	// ssh.exe lookup; no SSH process or network connection can be started.
+	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid")
+	command.Env = hostHerdrCapabilityEnvironment(os.Environ())
+	output, _ = command.CombinedOutput()
+	if remoteUnsupportedDiagnostic(output) {
+		return hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(output))
+	}
+	if ctx.Err() != nil {
+		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe did not terminate: %v", ctx.Err())
 	}
 	return nil
 }
 
-func extractPinnedHostHerdr(archivePath, targetDirectory string) (string, error) {
-	reader, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return "", fmt.Errorf("open host Herdr release: %w", err)
-	}
-	defer reader.Close()
-	var executable *zip.File
-	for _, file := range reader.File {
-		if strings.EqualFold(filepath.Base(filepath.FromSlash(file.Name)), "herdr.exe") && file.Mode().IsRegular() {
-			if executable != nil {
-				return "", fmt.Errorf("host Herdr release contains multiple herdr.exe files")
-			}
-			executable = file
-		}
-	}
-	if executable == nil || executable.UncompressedSize64 > maximumHostHerdrBinarySize {
-		return "", fmt.Errorf("host Herdr release does not contain one bounded herdr.exe")
-	}
-	source, err := executable.Open()
-	if err != nil {
-		return "", fmt.Errorf("open host Herdr executable from release: %w", err)
-	}
-	defer source.Close()
-	temporary, err := os.CreateTemp(targetDirectory, ".herdr-sandbox-client-*.exe")
-	if err != nil {
-		return "", fmt.Errorf("create host Herdr executable stage: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() {
-		temporary.Close()
-		if err != nil {
-			os.Remove(temporaryPath)
-		}
-	}()
-	written, copyErr := io.Copy(temporary, io.LimitReader(source, maximumHostHerdrBinarySize+1))
-	syncErr := temporary.Sync()
-	closeErr := temporary.Close()
-	if copyErr != nil {
-		os.Remove(temporaryPath)
-		return "", fmt.Errorf("extract host Herdr executable: %w", copyErr)
-	}
-	if closeErr != nil {
-		os.Remove(temporaryPath)
-		return "", fmt.Errorf("close host Herdr executable stage: %w", closeErr)
-	}
-	if syncErr != nil {
-		os.Remove(temporaryPath)
-		return "", fmt.Errorf("flush host Herdr executable stage: %w", syncErr)
-	}
-	if written == 0 || written > maximumHostHerdrBinarySize {
-		os.Remove(temporaryPath)
-		return "", fmt.Errorf("host Herdr executable has invalid size %d", written)
-	}
-	return temporaryPath, nil
-}
-
-func replacePinnedHostHerdr(ctx context.Context, source, target, requiredVersion string) (string, error) {
-	info, err := os.Lstat(target)
-	if err != nil {
-		return "", fmt.Errorf("inspect installed host Herdr executable: %w", err)
-	}
-	if err := validateHostHerdrRegularFile(info, target, "installed host Herdr executable"); err != nil {
-		return "", err
-	}
-	backup := target + ".herdr-sandbox-atomic-previous"
-	if err := cleanupReplacedHostHerdrBackup(backup); err != nil {
-		return "", fmt.Errorf("clear prior host Herdr atomic backup: %w", err)
-	}
-	if err := replaceFileAtomically(target, source, backup); err != nil {
-		recoveryErr := recoverFailedAtomicReplacement(target, source, backup)
-		if recoveryErr != nil {
-			return "", fmt.Errorf("atomically install pinned host Herdr executable: %w (recovery failed: %v)", err, recoveryErr)
-		}
-		return "", fmt.Errorf("atomically install pinned host Herdr executable: %w", err)
-	}
-	rollback := func() error {
-		failedReplacement := target + ".herdr-sandbox-failed-replacement"
-		if err := cleanupReplacedHostHerdrBackup(failedReplacement); err != nil {
-			return fmt.Errorf("clear failed host Herdr replacement backup: %w", err)
-		}
-		if err := replaceFileAtomically(target, backup, failedReplacement); err != nil {
-			recoveryErr := recoverFailedAtomicReplacement(target, backup, failedReplacement)
-			if recoveryErr != nil {
-				return fmt.Errorf("atomically restore host Herdr executable: %w (recovery failed: %v)", err, recoveryErr)
-			}
-			return fmt.Errorf("atomically restore host Herdr executable: %w", err)
-		}
-		_ = cleanupReplacedHostHerdrBackup(failedReplacement)
-		return nil
-	}
-	_, version, err := inspectHostHerdrAt(ctx, target)
-	if err != nil || version != requiredVersion {
-		rollbackErr := rollback()
-		if err != nil {
-			if rollbackErr != nil {
-				return "", fmt.Errorf("verify installed host Herdr executable: %w (rollback failed: %v)", err, rollbackErr)
-			}
-			return "", fmt.Errorf("verify installed host Herdr executable: %w", err)
-		}
-		if rollbackErr != nil {
-			return "", fmt.Errorf("installed host Herdr version = %q, required %q (rollback failed: %v)", version, requiredVersion, rollbackErr)
-		}
-		return "", fmt.Errorf("installed host Herdr version = %q, required %q", version, requiredVersion)
-	}
-	return backup, nil
-}
-
-func recoverFailedAtomicReplacement(target, replacement, backup string) error {
-	if info, err := os.Lstat(target); err == nil {
-		if err := validateHostHerdrRegularFile(info, target, "host Herdr target after atomic replacement"); err != nil {
-			return err
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect host Herdr target after atomic replacement: %w", err)
-	}
-	for _, candidate := range []string{backup, replacement} {
-		info, err := os.Lstat(candidate)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("inspect host Herdr recovery candidate: %w", err)
-		}
-		if err := validateHostHerdrRegularFile(info, candidate, "host Herdr recovery candidate"); err != nil {
+func hostHerdrCapabilityEnvironment(parent []string) []string {
+	environment := attachEnvironment(childProcessEnvironment(parent))
+	filtered := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		name, _, found := strings.Cut(entry, "=")
+		if found && strings.EqualFold(name, "PATH") {
 			continue
 		}
-		if err := os.Rename(candidate, target); err != nil {
-			return fmt.Errorf("restore host Herdr target after atomic replacement: %w", err)
-		}
-		return nil
+		filtered = append(filtered, entry)
 	}
-	return errors.New("host Herdr atomic replacement left no recoverable target")
+	return append(filtered, "PATH=")
 }
 
-func cleanupReplacedHostHerdrBackup(backup string) error {
-	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		if err := os.Remove(backup); err == nil || os.IsNotExist(err) {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(200 * time.Millisecond)
+func remoteUnsupportedDiagnostic(output []byte) bool {
+	lower := strings.ToLower(string(output))
+	return strings.Contains(lower, "unsupported") ||
+		(strings.Contains(lower, "remote") && strings.Contains(lower, "not supported"))
+}
+
+func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
+	var status hostHerdrClientStatus
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	if err := decoder.Decode(&status); err != nil {
+		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
 	}
-	return lastErr
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return hostHerdrClientStatus{}, errors.New("`herdr status client --json` contains trailing data")
+	}
+	if status.Version == "" || strings.HasPrefix(status.Version, "herdr ") || strings.ContainsAny(status.Version, "\r\n") || len(status.Version) > 250 {
+		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr client version %q", status.Version)
+	}
+	if status.Protocol < 1 {
+		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr client protocol %d", status.Protocol)
+	}
+	if !filepath.IsAbs(status.Binary) {
+		return hostHerdrClientStatus{}, fmt.Errorf("host Herdr client binary is not absolute: %q", status.Binary)
+	}
+	if status.WindowsRemoteGuestExecutable != guestHerdrPath {
+		return hostHerdrClientStatus{}, fmt.Errorf("`herdr status client --json` field windows_remote_guest_executable = %q, expected %q", status.WindowsRemoteGuestExecutable, guestHerdrPath)
+	}
+	return status, nil
+}
+
+func inspectHostHerdrRuntimeFiles(runtimeExecutable string) ([]hostHerdrRuntimeFile, error) {
+	root := filepath.Dir(runtimeExecutable)
+	completeLayouts := make([][]string, 0, 1)
+	for _, layout := range hostHerdrRuntimeLayouts {
+		complete := true
+		for _, relative := range layout {
+			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					complete = false
+					break
+				}
+				return nil, fmt.Errorf("inspect runtime file %s: %w", relative, err)
+			}
+		}
+		if complete {
+			completeLayouts = append(completeLayouts, layout)
+		}
+	}
+	if len(completeLayouts) != 1 {
+		return nil, fmt.Errorf("expected exactly one complete supported Windows runtime layout, found %d", len(completeLayouts))
+	}
+	files := make([]hostHerdrRuntimeFile, 0, len(completeLayouts[0]))
+	var total int64
+	for _, relative := range completeLayouts[0] {
+		source := filepath.Join(root, filepath.FromSlash(relative))
+		file, err := inspectHostHerdrRuntimeFile(source, relative)
+		if err != nil {
+			return nil, err
+		}
+		total += file.Size
+		if total > maximumHostHerdrRuntimeSize {
+			return nil, fmt.Errorf("host Herdr runtime exceeds %d bytes", maximumHostHerdrRuntimeSize)
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func inspectHostHerdrRuntimeFile(path, relative string) (hostHerdrRuntimeFile, error) {
+	if err := rejectMappedPathReparsePoints(filepath.Dir(path)); err != nil {
+		return hostHerdrRuntimeFile{}, fmt.Errorf("validate runtime file %s directory: %w", relative, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return hostHerdrRuntimeFile{}, fmt.Errorf("inspect runtime file %s: %w", relative, err)
+	}
+	if err := validateHostHerdrRegularFile(info, path, "host Herdr runtime file"); err != nil {
+		return hostHerdrRuntimeFile{}, err
+	}
+	if info.Size() <= 0 || info.Size() > maximumHostHerdrRuntimeFileSize {
+		return hostHerdrRuntimeFile{}, fmt.Errorf("host Herdr runtime file %s has invalid size %d", relative, info.Size())
+	}
+	digest, size, err := sha256HostHerdrFile(path)
+	if err != nil {
+		return hostHerdrRuntimeFile{}, fmt.Errorf("hash host Herdr runtime file %s: %w", relative, err)
+	}
+	if size != info.Size() {
+		return hostHerdrRuntimeFile{}, fmt.Errorf("host Herdr runtime file %s changed size during inspection", relative)
+	}
+	return hostHerdrRuntimeFile{RelativePath: relative, SourcePath: path, SHA256: digest, Size: size}, nil
+}
+
+func sha256HostHerdrFile(path string) (string, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(file, maximumHostHerdrRuntimeFileSize+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if written > maximumHostHerdrRuntimeFileSize {
+		return "", 0, fmt.Errorf("file exceeds %d bytes", maximumHostHerdrRuntimeFileSize)
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), written, nil
+}
+
+func (host HostHerdr) validate() error {
+	if !filepath.IsAbs(host.commandPath) || !filepath.IsAbs(host.runtimeExecutable) {
+		return errors.New("host Herdr command and runtime paths must be absolute")
+	}
+	if host.commandSize <= 0 || len(host.commandSHA256) != 64 {
+		return errors.New("host Herdr command fingerprint is invalid")
+	}
+	if !strings.HasPrefix(host.version, "herdr ") || strings.ContainsAny(host.version, "\r\n") || host.protocol < 1 {
+		return errors.New("host Herdr version or protocol is invalid")
+	}
+	if len(host.files) != 4 && len(host.files) != 5 {
+		return fmt.Errorf("host Herdr runtime file count = %d, want 4 or 5", len(host.files))
+	}
+	foundExecutable := false
+	for _, file := range host.files {
+		if file.RelativePath == "herdr.exe" {
+			foundExecutable = strings.EqualFold(file.SourcePath, host.runtimeExecutable)
+		}
+		if !filepath.IsAbs(file.SourcePath) || file.Size <= 0 || len(file.SHA256) != 64 {
+			return fmt.Errorf("host Herdr runtime file %q is invalid", file.RelativePath)
+		}
+	}
+	if !foundExecutable {
+		return errors.New("host Herdr runtime file set does not own its reported executable")
+	}
+	return nil
+}
+
+func (host HostHerdr) verifyUnchanged(ctx context.Context) error {
+	current, err := inspectCompatibleHostHerdr(ctx, host.commandPath)
+	if err != nil {
+		return fmt.Errorf("revalidate host Herdr before reporting the Sandbox ready: %w; %s", err, hostHerdrChangedAction)
+	}
+	if host.sameIdentity(current) {
+		return nil
+	}
+	return fmt.Errorf("host Herdr runtime changed during provisioning; %s", hostHerdrChangedAction)
+}
+
+func (host HostHerdr) sameIdentity(other HostHerdr) bool {
+	if !strings.EqualFold(host.commandPath, other.commandPath) ||
+		host.commandSHA256 != other.commandSHA256 || host.commandSize != other.commandSize ||
+		!strings.EqualFold(host.runtimeExecutable, other.runtimeExecutable) ||
+		host.version != other.version || host.protocol != other.protocol || len(host.files) != len(other.files) {
+		return false
+	}
+	for index, file := range host.files {
+		otherFile := other.files[index]
+		if file.RelativePath != otherFile.RelativePath ||
+			!strings.EqualFold(file.SourcePath, otherFile.SourcePath) ||
+			file.SHA256 != otherFile.SHA256 || file.Size != otherFile.Size {
+			return false
+		}
+	}
+	return true
+}
+
+func (host HostHerdr) manifest() hostHerdrManifest {
+	files := make([]hostHerdrManifestFile, 0, len(host.files))
+	for _, file := range host.files {
+		files = append(files, hostHerdrManifestFile{Path: file.RelativePath, SHA256: file.SHA256, Size: file.Size})
+	}
+	return hostHerdrManifest{
+		SchemaVersion: hostHerdrManifestSchemaVersion,
+		Version:       host.version,
+		Protocol:      host.protocol,
+		Files:         files,
+	}
+}
+
+func writeHostHerdrRunInput(ctx context.Context, host HostHerdr, inputDirectory string) error {
+	if err := host.validate(); err != nil {
+		return err
+	}
+	runtimeDirectory := filepath.Join(inputDirectory, "herdr-runtime")
+	if err := os.Mkdir(runtimeDirectory, 0o700); err != nil {
+		return fmt.Errorf("create host Herdr runtime snapshot: %w", err)
+	}
+	for _, file := range host.files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		destination := filepath.Join(runtimeDirectory, filepath.FromSlash(file.RelativePath))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			return fmt.Errorf("create host Herdr runtime snapshot directory: %w", err)
+		}
+		if err := copyVerifiedHostHerdrFile(file, destination); err != nil {
+			return err
+		}
+	}
+	version, err := inspectHostHerdrVersion(ctx, filepath.Join(runtimeDirectory, "herdr.exe"))
+	if err != nil {
+		return fmt.Errorf("verify snapshotted host Herdr executable: %w", err)
+	}
+	if version != host.version {
+		return fmt.Errorf("snapshotted host Herdr version = %q, expected %q", version, host.version)
+	}
+	manifest, err := json.MarshalIndent(host.manifest(), "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode host Herdr runtime manifest: %w", err)
+	}
+	manifest = append(manifest, '\n')
+	if err := os.WriteFile(filepath.Join(inputDirectory, "host-herdr.json"), manifest, 0o600); err != nil {
+		return fmt.Errorf("write host Herdr runtime manifest: %w", err)
+	}
+	return nil
+}
+
+func copyVerifiedHostHerdrFile(file hostHerdrRuntimeFile, destination string) (resultErr error) {
+	source, err := os.Open(file.SourcePath)
+	if err != nil {
+		return fmt.Errorf("open host Herdr runtime file %s: %w", file.RelativePath, err)
+	}
+	defer source.Close()
+	destinationFile, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create host Herdr runtime snapshot file %s: %w", file.RelativePath, err)
+	}
+	defer func() {
+		if closeErr := destinationFile.Close(); resultErr == nil && closeErr != nil {
+			resultErr = fmt.Errorf("close host Herdr runtime snapshot file %s: %w", file.RelativePath, closeErr)
+		}
+	}()
+	hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(destinationFile, hash), io.LimitReader(source, maximumHostHerdrRuntimeFileSize+1))
+	if err != nil {
+		return fmt.Errorf("copy host Herdr runtime file %s: %w", file.RelativePath, err)
+	}
+	if written != file.Size || fmt.Sprintf("%x", hash.Sum(nil)) != file.SHA256 {
+		return fmt.Errorf("host Herdr runtime file %s changed during snapshot", file.RelativePath)
+	}
+	if err := destinationFile.Sync(); err != nil {
+		return fmt.Errorf("flush host Herdr runtime snapshot file %s: %w", file.RelativePath, err)
+	}
+	return nil
 }
 
 func validateHostHerdrRegularFile(info os.FileInfo, path, role string) error {
@@ -457,15 +506,7 @@ func validateHostHerdrRegularFile(info os.FileInfo, path, role string) error {
 	return nil
 }
 
-func sha256File(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+func hostHerdrCompatibilityError(format string, arguments ...any) error {
+	reason := fmt.Sprintf(format, arguments...)
+	return fmt.Errorf("%s; install the supported Herdr Windows fork with `%s`, then retry", reason, hostHerdrInstallCommand)
 }

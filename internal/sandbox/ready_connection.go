@@ -11,9 +11,12 @@ import (
 // OpenReadyConnection reconstructs and verifies the exact app-owned ready
 // session without re-running provisioning. The lifecycle lock is released before
 // the caller starts the interactive client.
-func OpenReadyConnection(ctx context.Context, output io.Writer) (connection Connection, resultErr error) {
+func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHerdr) (connection Connection, resultErr error) {
 	if output == nil {
 		output = io.Discard
+	}
+	if err := hostHerdr.validate(); err != nil {
+		return Connection{}, fmt.Errorf("validate compatible host Herdr: %w", err)
 	}
 	dataDirectory, err := defaultDataDirectory()
 	if err != nil {
@@ -42,10 +45,6 @@ func OpenReadyConnection(ctx context.Context, output io.Writer) (connection Conn
 		return Connection{}, fmt.Errorf("clean stale state before attach: %w", err)
 	}
 
-	releaseIdentity, err := loadHerdrRelease()
-	if err != nil {
-		return Connection{}, err
-	}
 	sandboxExecutable, err := windowsSandboxExecutable()
 	if err != nil {
 		return Connection{}, err
@@ -76,16 +75,9 @@ func OpenReadyConnection(ctx context.Context, output io.Writer) (connection Conn
 	if err := ready.validate(); err != nil {
 		return Connection{}, fmt.Errorf("validate ready Sandbox identity: %w", err)
 	}
-	if ready.HerdrVersion != releaseIdentity.Version || ready.HerdrProtocol != releaseIdentity.Protocol {
-		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, required %q protocol %d",
-			ready.HerdrVersion, ready.HerdrProtocol, releaseIdentity.Version, releaseIdentity.Protocol)
-	}
-	herdrExecutable, hostVersion, err := ensurePinnedHostHerdr(ctx, releaseIdentity, dataDirectory, output)
-	if err != nil {
-		return Connection{}, err
-	}
-	if hostVersion != releaseIdentity.Version {
-		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, releaseIdentity.Version)
+	if ready.HerdrVersion != hostHerdr.version || ready.HerdrProtocol != hostHerdr.protocol {
+		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime",
+			ready.HerdrVersion, ready.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 	}
 	plan := runPlan{
 		ID:              active.RunID,
@@ -94,7 +86,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer) (connection Conn
 		StatusDirectory: filepath.Join(runDirectory, "status"),
 		PrivateKeyPath:  filepath.Join(dataDirectory, "identity", "id_ed25519"),
 	}
-	connection, err = writeRunConnection(plan, connectableStatus(connectionStatus(ready)), herdrExecutable)
+	connection, err = writeRunConnection(plan, connectableStatus(connectionStatus(ready)), hostHerdr.commandPath)
 	if err != nil {
 		return Connection{}, err
 	}

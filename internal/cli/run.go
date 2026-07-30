@@ -46,8 +46,9 @@ type sessionInspector func(context.Context) (sandbox.SessionStatus, error)
 type commandDependencies struct {
 	cleanup        staleCleanup
 	inspect        sessionInspector
-	up             func(context.Context, sandbox.Options) (sandbox.Connection, error)
-	openReady      func(context.Context, io.Writer) (sandbox.Connection, error)
+	resolveHerdr   func(context.Context) (sandbox.HostHerdr, error)
+	up             func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error)
+	openReady      func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error)
 	attach         func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
 	validateAttach func(io.Reader, io.Writer, io.Writer) error
 	resolvePlan    func(context.Context, string) (sandbox.EffectivePlan, error)
@@ -58,6 +59,7 @@ func defaultCommandDependencies() commandDependencies {
 	return commandDependencies{
 		cleanup:        sandbox.CleanupStaleState,
 		inspect:        sandbox.InspectSession,
+		resolveHerdr:   sandbox.ResolveHostHerdr,
 		up:             sandbox.Up,
 		openReady:      sandbox.OpenReadyConnection,
 		attach:         sandbox.Attach,
@@ -111,7 +113,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintln(stderr, "herdr-sandbox:", err)
 			return 1
 		}
-		connection, err := dependencies.openReady(ctx, stdout)
+		hostHerdr, err := dependencies.resolveHerdr(ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		connection, err := dependencies.openReady(ctx, stdout, hostHerdr)
 		if err != nil {
 			fmt.Fprintln(stderr, "herdr-sandbox:", err)
 			return 1
@@ -218,11 +225,16 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 	}
+	hostHerdr, err := dependencies.resolveHerdr(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		return 1
+	}
 	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 		return 1
 	}
 
-	connection, err := dependencies.up(ctx, options)
+	connection, err := dependencies.up(ctx, options, hostHerdr)
 	if err != nil {
 		fmt.Fprintln(stderr, "herdr-sandbox:", err)
 		return 1

@@ -178,8 +178,15 @@ func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
 				called = true
 				return sandbox.CleanResult{RemovedRuns: 1}, errors.New("cleanup fixture")
 			}
+			dependencies := defaultCommandDependencies()
+			dependencies.cleanup = cleanup
+			if args[0] == "up" {
+				dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
+					return sandbox.HostHerdr{}, nil
+				}
+			}
 			var stderr bytes.Buffer
-			code := runWithCleanup(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, cleanup)
+			code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
 			if !called || code != 1 || !strings.Contains(stderr.String(), "removed 1 inactive run workspace") ||
 				!strings.Contains(stderr.String(), "stale-state cleanup incomplete: cleanup fixture") {
 				t.Fatalf("called = %t, code = %d, stderr = %q", called, code, stderr.String())
@@ -227,20 +234,25 @@ func TestRunCleanUsesOneCanonicalCleanupResult(t *testing.T) {
 func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	cleanupCalled := false
+	resolveCalled := false
 	upCalled := false
 	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error { return errors.New("console streams required") }
 	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
 		cleanupCalled = true
 		return sandbox.CleanResult{}, nil
 	}
-	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
+		resolveCalled = true
+		return sandbox.HostHerdr{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		upCalled = true
 		return sandbox.Connection{}, nil
 	}
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
-	if code != 1 || cleanupCalled || upCalled || !strings.Contains(stderr.String(), "--no-attach") {
-		t.Fatalf("code = %d, cleanup = %t, up = %t, stderr = %q", code, cleanupCalled, upCalled, stderr.String())
+	if code != 1 || cleanupCalled || resolveCalled || upCalled || !strings.Contains(stderr.String(), "--no-attach") {
+		t.Fatalf("code = %d, cleanup = %t, resolve = %t, up = %t, stderr = %q", code, cleanupCalled, resolveCalled, upCalled, stderr.String())
 	}
 }
 
@@ -248,12 +260,21 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	validated := false
 	attached := false
+	var order []string
 	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error {
 		validated = true
 		return errors.New("unexpected validation")
 	}
-	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
-	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
+		order = append(order, "host-herdr")
+		return sandbox.HostHerdr{}, nil
+	}
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+		order = append(order, "cleanup")
+		return sandbox.CleanResult{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+		order = append(order, "up")
 		return sandbox.Connection{}, nil
 	}
 	dependencies.attach = func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error {
@@ -262,8 +283,28 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || !strings.Contains(stdout.String(), "Sandbox is ready") {
-		t.Fatalf("code = %d, validated = %t, attached = %t, stdout = %q", code, validated, attached, stdout.String())
+	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Sandbox is ready") {
+		t.Fatalf("code = %d, validated = %t, attached = %t, order = %v, stdout = %q", code, validated, attached, order, stdout.String())
+	}
+}
+
+func TestRunUpRejectsIncompatibleHostHerdrBeforeCleanup(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
+		return sandbox.HostHerdr{}, errors.New("remote mode is unsupported; run winget install")
+	}
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+		t.Fatal("incompatible host Herdr reached cleanup")
+		return sandbox.CleanResult{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+		t.Fatal("incompatible host Herdr reached up")
+		return sandbox.Connection{}, nil
+	}
+	var stderr bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
+	if code != 1 || !strings.Contains(strings.ToLower(stderr.String()), "unsupported") {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 }
 
@@ -271,8 +312,13 @@ func TestRunAttachOpensExactReadyConnectionWithoutProvisioning(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	opened := false
 	attached := false
+	resolved := false
 	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error { return nil }
-	dependencies.openReady = func(context.Context, io.Writer) (sandbox.Connection, error) {
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
+		resolved = true
+		return sandbox.HostHerdr{}, nil
+	}
+	dependencies.openReady = func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error) {
 		opened = true
 		return sandbox.Connection{}, nil
 	}
@@ -280,13 +326,13 @@ func TestRunAttachOpensExactReadyConnectionWithoutProvisioning(t *testing.T) {
 		attached = true
 		return nil
 	}
-	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		t.Fatal("attach invoked provisioning")
 		return sandbox.Connection{}, nil
 	}
 	code := runWithCommandDependencies(context.Background(), []string{"attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
-	if code != 0 || !opened || !attached {
-		t.Fatalf("code = %d, opened = %t, attached = %t", code, opened, attached)
+	if code != 0 || !resolved || !opened || !attached {
+		t.Fatalf("code = %d, resolved = %t, opened = %t, attached = %t", code, resolved, opened, attached)
 	}
 }
 
@@ -301,7 +347,7 @@ func TestRunPlanUsesOnlyReadOnlyResolver(t *testing.T) {
 		t.Fatal("plan invoked cleanup")
 		return sandbox.CleanResult{}, nil
 	}
-	dependencies.up = func(context.Context, sandbox.Options) (sandbox.Connection, error) {
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		t.Fatal("plan invoked up")
 		return sandbox.Connection{}, nil
 	}

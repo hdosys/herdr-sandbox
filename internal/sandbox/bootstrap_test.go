@@ -45,12 +45,16 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		"default_shell = `\"pwsh.exe`\"",
 		"-Value $powerShell7Executable",
 		"OpenSSH default shell verification failed",
+		"bootstrap-release.json",
+		"host-herdr.json",
+		"herdr-runtime",
+		"Host Herdr runtime layout is unsupported",
 		"download.visualstudio.microsoft.com/download/pr/",
 		"VC_redist.x64.exe",
 		"@('/install', '/quiet', '/norestart')",
-		"github.com/hdosys/herdr-win/releases/download/",
 		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
-		"C:\\HerdrSandbox\\runtime\\herdr",
+		"C:\\HerdrSandbox\\runtime",
+		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
 		"OpenSSH-Win64-v10.0.0.0.msi",
 		"'ADDLOCAL=Server'",
 		"administrators_authorized_keys",
@@ -71,7 +75,7 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		}
 	}
 	lower := strings.ToLower(script)
-	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "c:\\herdr\\", "active-workspace.txt"} {
+	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "github.com/hdosys/herdr-win/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdrsandbox\\runtime\\herdr\\herdr.exe", "c:\\herdr\\", "active-workspace.txt"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("bootstrap contains forbidden path %q", forbidden)
 		}
@@ -96,13 +100,14 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	script := string(bootstrapScript)
 	needles := []string{
+		"$hostHerdrMetadata =",
 		"-Phase 'Registry'",
 		"Get-PinnedBootstrapAsset -Role 'WinGet bundle'",
 		"Add-AppxPackage -Path $wingetBundle",
 		"-Phase 'Development'",
 		"$powerShell7 = Get-PowerShell7Installation",
 		"$vcRuntimeProcess = Start-Process",
-		"Expand-Archive -LiteralPath $herdrArchive",
+		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
 		"$initialHerdrConfig =",
 		"$openSSHInstallProcess = Start-Process",
 		"Start-Process -FilePath $herdrExecutable",
@@ -234,8 +239,8 @@ func TestBootstrapAndReleaseMetadataAreEmbedded(t *testing.T) {
 	if len(bytes.TrimSpace(bootstrapScript)) == 0 {
 		t.Fatal("bootstrap script is empty")
 	}
-	if len(bytes.TrimSpace(herdrReleaseJSON)) == 0 {
-		t.Fatal("Herdr release metadata is empty")
+	if len(bytes.TrimSpace(bootstrapReleaseJSON)) == 0 {
+		t.Fatal("bootstrap release metadata is empty")
 	}
 }
 

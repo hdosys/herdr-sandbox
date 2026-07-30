@@ -63,7 +63,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows PowerShell 5.1, OpenSSH Client, Windows Terminal, and internet access for cache misses.
-- An existing `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on `PATH`.
+- An existing `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on `PATH` whose `status client --json` reports the `C:\HerdrSandbox\runtime\herdr.exe` Windows remote adapter.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -72,7 +72,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on `PATH`; `herdr-sandbox` does not perform that first installation. Later runs verify that host and guest use the same pinned Herdr release and update the existing host executable when required.
+Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and make it available on `PATH`; `herdr-sandbox` never installs, updates, or replaces it. Before `up` or `attach` changes lifecycle state, Sandbox verifies the host command's remote interface and active runtime. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`. A fresh guest receives a digest-verified copy of that same active host runtime, so Herdr itself is never downloaded or installed inside the Sandbox.
 
 ### Install herdr-sandbox
 
@@ -226,7 +226,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Cargo Nextest | `Install-CargoNextest` |
 | Just | `Install-Just` |
 
-Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. `Install-DotNetStack` owns only `Microsoft.DotNet.SDK.10`, the current modern LTS SDK family; it does not install .NET Framework, an older/preview SDK, Visual Studio, MSBuild compatibility, or `dotnet-install.ps1`. TypeScript, .NET target frameworks, and other application libraries remain project dependencies owned by their manifests and lockfiles. Release/bootstrap artifacts such as WinGet, Herdr, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins.
+Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. `Install-DotNetStack` owns only `Microsoft.DotNet.SDK.10`, the current modern LTS SDK family; it does not install .NET Framework, an older/preview SDK, Visual Studio, MSBuild compatibility, or `dotnet-install.ps1`. TypeScript, .NET target frameworks, and other application libraries remain project dependencies owned by their manifests and lockfiles. Release/bootstrap artifacts such as WinGet, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins; Herdr instead comes from the verified active host runtime.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is intentionally no plugin registry.
 
@@ -449,7 +449,7 @@ Start with `herdr-sandbox status`; it never changes a running Sandbox and perfor
 | The guest has no playback audio | Silence is the default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Microphone input remains disabled. |
 | `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
-| Initial provisioning is slow | The first run may download WinGet, Herdr/OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Confirm that the cache is writable and does not overlap a workspace or run state. |
+| Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Herdr is copied from the host and does not use the download cache. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
 | Old diagnostics consume space | `up`, `status`, and `down` remove validated inactive run workspaces automatically; `clean` invokes the same cleanup explicitly once. Active/uncertain evidence and the persistent cache remain preserved. |
 

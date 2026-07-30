@@ -676,7 +676,7 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("herdr-sandbox\\workspaces.json"),
 		[]byte("--replace-all' 'safe.directory"),
 		[]byte("Git safe-directory verification failed"),
-		[]byte(`C:\HerdrSandbox\runtime\herdr\herdr.exe`),
+		[]byte(`C:\HerdrSandbox\runtime\herdr.exe`),
 		[]byte("starship\\preset.txt"),
 		[]byte("catppuccin_latte"),
 		[]byte("starshipConfigured = $starshipConfigured"),

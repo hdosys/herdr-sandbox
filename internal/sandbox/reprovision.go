@@ -25,7 +25,7 @@ type reprovisionResult struct {
 	ProjectCount  int    `json:"projectCount"`
 }
 
-func reprovisionReadySession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, herdrExecutable string) (connection Connection, resultErr error) {
+func reprovisionReadySession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, hostHerdr HostHerdr) (connection Connection, resultErr error) {
 	provisioning.Workspaces = plan.Workspaces
 	fmt.Fprintf(options.Output, "Existing ready Sandbox run %s; re-running current provisioning in place...\n", plan.ID)
 	operation, err := startSessionOperation(plan.RunDirectory, plan.ID, operationKindReprovision,
@@ -84,7 +84,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := updateOperation("connection-verification", "Verifying the retained SSH and Herdr connection."); err != nil {
 		return Connection{}, err
 	}
-	connection, err = writeRunConnection(plan, connectableStatus(connectionStatus(ready)), herdrExecutable)
+	connection, err = writeRunConnection(plan, connectableStatus(connectionStatus(ready)), hostHerdr.commandPath)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -139,8 +139,6 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return Connection{}, fmt.Errorf("verify guest Herdr after retained provisioning: %w", err)
 	}
-	fmt.Fprintf(options.Output, "Retained provisioning verified for %d workspace(s).\n", len(snapshot.Workspaces))
-	fmt.Fprintf(options.Output, "Remote attach: herdr --remote %s\n", connection.SSHTarget)
 	return connection, nil
 }
 

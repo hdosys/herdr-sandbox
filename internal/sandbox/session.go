@@ -23,7 +23,7 @@ const (
 	configurationSyncTimeout    = 5 * time.Minute
 	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + 2*time.Minute
 	sshTargetName               = "sandbox"
-	guestHerdrPath              = guestRootDirectory + `\runtime\herdr\herdr.exe`
+	guestHerdrPath              = guestRootDirectory + `\runtime\herdr.exe`
 )
 
 //go:embed assets/bootstrap.ps1
@@ -91,7 +91,7 @@ func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Co
 	return context.WithTimeout(ctx, timeout)
 }
 
-func Up(ctx context.Context, options Options) (Connection, error) {
+func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, error) {
 	if runtime.GOOS != "windows" {
 		return Connection{}, errors.New("Windows Sandbox is available only on Windows")
 	}
@@ -104,6 +104,9 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if options.Timeout < 0 {
 		return Connection{}, errors.New("Sandbox timeout must be positive when set")
 	}
+	if err := hostHerdr.validate(); err != nil {
+		return Connection{}, fmt.Errorf("validate compatible host Herdr: %w", err)
+	}
 	runContext, cancelRun := withOptionalTimeout(ctx, options.Timeout)
 	defer cancelRun()
 
@@ -113,7 +116,7 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	}
 	defer clear(authKey)
 
-	release, err := loadHerdrRelease()
+	_, err = loadBootstrapRelease()
 	if err != nil {
 		return Connection{}, err
 	}
@@ -187,8 +190,8 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		if err := retainedReady.validate(); err != nil {
 			return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
 		}
-		if retainedReady.HerdrVersion != release.Version || retainedReady.HerdrProtocol != release.Protocol {
-			return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, required %q protocol %d", retainedReady.HerdrVersion, retainedReady.HerdrProtocol, release.Version, release.Protocol)
+		if retainedReady.HerdrVersion != hostHerdr.version || retainedReady.HerdrProtocol != hostHerdr.protocol {
+			return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime", retainedReady.HerdrVersion, retainedReady.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 		}
 	} else if sessionStatus.State != SessionStopped {
 		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `herdr-sandbox status` and use `herdr-sandbox down` before a fresh launch", sessionStatus.State)
@@ -203,18 +206,20 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 		defer tailscaleBootstrap.clear()
 	}
 
-	herdrExecutable, hostVersion, err := ensurePinnedHostHerdr(runContext, release, dataDirectory, options.Output)
-	if err != nil {
-		return Connection{}, err
-	}
-	if hostVersion != release.Version {
-		return Connection{}, fmt.Errorf("host Herdr version = %q, required %q", hostVersion, release.Version)
-	}
 	if sessionStatus.State == SessionReady {
-		return reprovisionReadySession(runContext, options, retainedPlan, retainedReady, provisioning, herdrExecutable)
+		connection, err := reprovisionReadySession(runContext, options, retainedPlan, retainedReady, provisioning, hostHerdr)
+		if err != nil {
+			return Connection{}, err
+		}
+		if err := hostHerdr.verifyUnchanged(runContext); err != nil {
+			return Connection{}, err
+		}
+		fmt.Fprintln(options.Output, "Retained provisioning verified.")
+		fmt.Fprintf(options.Output, "Remote attach: herdr --remote %s\n", connection.SSHTarget)
+		return connection, nil
 	}
 
-	plan, err := prepareRun(runContext, dataDirectory, memoryMB, provisioning)
+	plan, err := prepareRun(runContext, dataDirectory, memoryMB, provisioning, hostHerdr)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -241,12 +246,12 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if err != nil {
 		return Connection{}, err
 	}
-	if connectable.HerdrVersion != release.Version || connectable.HerdrProtocol != release.Protocol {
-		identityErr := fmt.Errorf("guest Herdr identity = %q protocol %d, required %q protocol %d", connectable.HerdrVersion, connectable.HerdrProtocol, release.Version, release.Protocol)
+	if connectable.HerdrVersion != hostHerdr.version || connectable.HerdrProtocol != hostHerdr.protocol {
+		identityErr := fmt.Errorf("guest Herdr identity = %q protocol %d, copied host runtime = %q protocol %d", connectable.HerdrVersion, connectable.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "guest-identity", identityErr)
 	}
 
-	connection, err := writeRunConnection(plan, connectable, herdrExecutable)
+	connection, err := writeRunConnection(plan, connectable, hostHerdr.commandPath)
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-material", err)
 	}
@@ -304,6 +309,9 @@ func Up(ctx context.Context, options Options) (Connection, error) {
 	if !sameConnectionIdentity(connectable, ready) {
 		return Connection{}, errors.New("terminal ready identity differs from the verified connection identity")
 	}
+	if err := hostHerdr.verifyUnchanged(runContext); err != nil {
+		return Connection{}, err
+	}
 
 	fmt.Fprintf(options.Output, "WinGet: %s\n", connection.WinGetVersion)
 	fmt.Fprintf(options.Output, "Herdr: %s (protocol %d)\n", connection.HerdrVersion, connection.HerdrProtocol)
@@ -336,7 +344,14 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	if err := validateInteractiveAttachStreams(stdin, stdout, stderr); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, connection.herdrExecutable, "--remote", connection.SSHTarget)
+	currentHost, err := inspectCompatibleHostHerdr(ctx, connection.herdrExecutable)
+	if err != nil {
+		return fmt.Errorf("verify host Herdr before attach: %w", err)
+	}
+	if currentHost.version != connection.HerdrVersion || currentHost.protocol != connection.HerdrProtocol {
+		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime", currentHost.version, currentHost.protocol, connection.HerdrVersion, connection.HerdrProtocol)
+	}
+	command := exec.CommandContext(ctx, currentHost.commandPath, "--remote", connection.SSHTarget)
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -418,7 +433,7 @@ func prepareHostStateDirectories(dataDirectory string) (string, error) {
 	return physicalDataDirectory, nil
 }
 
-func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisioning provisioningPlan) (runPlan, error) {
+func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisioning provisioningPlan, hostHerdr HostHerdr) (runPlan, error) {
 	var err error
 	dataDirectory, err = prepareHostStateDirectories(dataDirectory)
 	if err != nil {
@@ -509,13 +524,16 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		mode os.FileMode
 	}{
 		{path: filepath.Join(plan.InputDirectory, "bootstrap.ps1"), data: bootstrapScript, mode: 0o644},
-		{path: filepath.Join(plan.InputDirectory, "herdr-release.json"), data: herdrReleaseJSON, mode: 0o644},
+		{path: filepath.Join(plan.InputDirectory, "bootstrap-release.json"), data: bootstrapReleaseJSON, mode: 0o644},
 		{path: filepath.Join(plan.InputDirectory, "authorized_key.pub"), data: publicKeyData, mode: 0o644},
 	}
 	for _, file := range files {
 		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
 			return runPlan{}, fmt.Errorf("write run input %s: %w", filepath.Base(file.path), err)
 		}
+	}
+	if err := writeHostHerdrRunInput(ctx, hostHerdr, plan.InputDirectory); err != nil {
+		return runPlan{}, fmt.Errorf("snapshot compatible host Herdr runtime: %w", err)
 	}
 	snapshot, err := prepareProvisioningSnapshot(ctx, plan.RunDirectory, filepath.Join(plan.InputDirectory, "provisioning"), provisioning)
 	if err != nil {
