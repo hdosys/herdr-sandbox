@@ -562,6 +562,24 @@ func TestGitHubCLICommandEnvironmentRemovesTokenOverrides(t *testing.T) {
 	}
 }
 
+func TestCanonicalGitHubCLIAccountLoginHandlesRenamedAccount(t *testing.T) {
+	account := githubCLIAccount{
+		Hostname: "github.com", Login: "User-3090", Active: true,
+		GitProtocol: "https", Token: "fixture-token",
+	}
+	canonical, err := withCanonicalGitHubCLIAccountLogin(account, []byte("hdosys\r\n"))
+	if err != nil {
+		t.Fatalf("withCanonicalGitHubCLIAccountLogin: %v", err)
+	}
+	if canonical.Login != "hdosys" || canonical.Hostname != account.Hostname ||
+		canonical.Active != account.Active || canonical.GitProtocol != account.GitProtocol || canonical.Token != account.Token {
+		t.Fatalf("canonical account = %#v", canonical)
+	}
+	if _, err := withCanonicalGitHubCLIAccountLogin(account, []byte("invalid\nlogin")); err == nil {
+		t.Fatal("invalid canonical login unexpectedly succeeded")
+	}
+}
+
 func TestNativeGitHubCLIAuthenticationExport(t *testing.T) {
 	if os.Getenv("HERDR_SANDBOX_NATIVE_GITHUB_CLI") != "1" {
 		t.Skip("set HERDR_SANDBOX_NATIVE_GITHUB_CLI=1 for host keyring verification")
