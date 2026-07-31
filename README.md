@@ -7,9 +7,9 @@
 `herdr-sandbox` is a Windows-native counterpart to a [dev container](https://containers.dev/). It launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, starts Herdr in the guest, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
 
 > [!NOTE]
-> This README describes intended behavior, not a guarantee that every feature will be available or work on every Windows configuration. Host policy, networking, upstream tools, and platform changes can affect operation.
+> Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
@@ -40,12 +40,22 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 ## Key capabilities
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
-- **Testable control plane:** Go owns CLI, configuration, lifecycle, SSH, cleanup, and packaging; Windows PowerShell 5.1 stays limited to Windows-specific provisioning and installer adapters.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
+- **Multi-stack provisioning:** .NET 10, Go, Node.js, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
+- **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
-- **Fail-closed lifecycle:** exact process, path, launch-plan, and download identities are revalidated before reuse or cleanup.
 - **Stable private reachability with Tailscale (experimental):** opt in to preserve one tagged guest identity, Tailscale IP, and MagicDNS name across fresh Sandboxes without exposing services publicly.
+
+## Engineering approach
+
+- **Native Windows architecture:** a standard-library-first Go control plane owns the product while PowerShell 5.1 remains a narrow Windows provisioning adapter; no CGO, helper runtime, daemon, provider framework, or alternate provisioner is required.
+- **Explicit responsibility boundaries:** CLI, configuration, lifecycle, SSH, cleanup, packaging, and user/project extensions each have one owner instead of parallel implementations.
+- **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
+- **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
+- **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
+- **Release engineering:** the installer and portable ZIP share one four-file payload, checksums, deterministic ZIP output, rollback-aware upgrades, and explicit uninstall ownership.
+- **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
 
 ## Get started
 
@@ -62,7 +72,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-Install `herdr.exe` from [`herdr-win`](https://github.com/hdosys/herdr-win) once and place it on host `PATH`. `herdr-sandbox` verifies that command and copies the same digest-verified runtime into each fresh guest; it never installs, updates, or replaces host Herdr. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`.
+If `herdr.exe` is missing, install it from [`herdr-win`](https://github.com/hdosys/herdr-win) and place it on host `PATH`. `herdr-sandbox` verifies that command and copies the same digest-verified runtime into each fresh guest; it never installs, updates, or replaces host Herdr. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`.
 
 ### Install herdr-sandbox
 
@@ -127,15 +137,15 @@ herdr-sandbox init --stack go
 
 Repeat `--stack` to combine `dotnet`, `go`, `node`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
-#### 2. Inspect the effective plan
+#### Optional: Inspect the effective plan
 
 ```powershell
 herdr-sandbox plan
 ```
 
-`plan` validates and prints the effective configuration, workspaces, global and project stacks, package owners, agent-sync choices, fixed Sandbox settings, and exact differences from a ready guest. It does not seed configuration, create app state, update host tools, download packages, consume a Tailscale key, or execute project scripts.
+`plan` prints the validated configuration, workspaces, stacks, packages, agent-sync choices, fixed Sandbox settings, and differences from a ready guest. It does not create state, download packages, update tools, consume a Tailscale key, or execute project scripts.
 
-#### 3. Start from the project
+#### 2. Start from the project
 
 ```powershell
 herdr-sandbox up
@@ -150,7 +160,7 @@ The visible PowerShell bootstrap console inside Windows Sandbox is intentional a
 herdr-sandbox up --no-attach
 ```
 
-#### 4. Reattach
+#### 3. Reattach
 
 After a normal detach, the guest Herdr server remains running:
 
@@ -172,22 +182,22 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 
 | Command | Behavior |
 | --- | --- |
-| `herdr-sandbox plan` | Validates and prints the effective plan without seeding configuration or changing app, host-tool, or Sandbox state. |
-| `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile without guessing or replacing an existing/ancestor-owned profile. With no flag, prompts for stacks. |
-| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches a fresh guest, or reprovisions when the exact ready app-owned launch plan still matches. It attaches unless `--no-attach` intentionally stops at terminal ready. There is no overall timeout by default. |
-| `herdr-sandbox attach` | Reconstructs and verifies the exact ready app-owned connection, then starts the interactive Herdr client without reprovisioning. |
-| `herdr-sandbox status` | Reports guest health, retained-operation state, safe workspace identities, versions, bounded timings/diagnostics, warnings, and the next action. It may clean only proven stale app-owned state. |
-| `herdr-sandbox down` | Idempotently terminates only the exact revalidated app-owned Sandbox process tree without opening the Windows close-confirmation dialog. Failed Tailscale preservation leaves an opted-in guest open. |
-| `herdr-sandbox clean` | Explicitly runs the same strict inactive-run cleanup used automatically at startup. Exact active state, identities, user configuration, workspaces, unknown entries, and package caches are preserved. |
+| `herdr-sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
+| `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
+| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
+| `herdr-sandbox attach` | Verifies and attaches to the ready guest without reprovisioning. |
+| `herdr-sandbox status` | Reports guest health, operation progress, workspaces, versions, timings, diagnostics, warnings, and the next action. |
+| `herdr-sandbox down` | Stops only the revalidated app-owned Sandbox. If opted-in Tailscale state cannot be preserved, the guest remains running. |
+| `herdr-sandbox clean` | Removes only validated inactive run workspaces while preserving active or uncertain state, configuration, projects, and cache. |
 
 <details>
 <summary><strong>Lifecycle and automatic cleanup</strong></summary>
 
-After command syntax is validated, `up`, `status`, and `down` automatically remove validated inactive run directories; `clean` performs that same operation directly, not as an extra pre-step. A freely acquired lifecycle lock first marks any abandoned retained operation as interrupted. If process evidence proves that the Sandbox window was closed and no launcher/client remains, cleanup also clears the stale active record and app-owned SSH target so `up` can start cleanly. Changed, unmanaged, reparse-bearing, or uncertain ownership is reported without deleting status/failure evidence; `status` still prints the preserved state, while mutating commands fail closed. Help, `plan`, and invalid command lines do not run cleanup.
-
-`up` refuses starting, failed, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
-
-Changing Tailscale identity selection, audio input/output, memory, cache, or workspace mappings requires `down` before the next `up`.
+- After valid command syntax, `up`, `status`, and `down` run the same bounded cleanup; `clean` invokes that owner directly. Help, `plan`, and invalid command lines remain nonmutating.
+- Cleanup clears stale run and SSH state only when process evidence proves no Sandbox launcher or client remains. Changed, unmanaged, reparse-bearing, or uncertain state is preserved and reported.
+- A freely acquired lifecycle lock records an abandoned retained operation as interrupted before another mutation can begin.
+- `up` reuses only an exact ready app-owned instance. Inspect refused state with `status`, then use `down` only when the CLI identifies the app-owned guest.
+- Changing Tailscale, audio, memory, cache, or workspace mappings requires `down` before the next `up`.
 
 </details>
 
@@ -208,9 +218,11 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Cargo Nextest | `Install-CargoNextest` |
 | Just | `Install-Just` |
 
-Keep these calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1). With no version, a development stack resolves the latest stable release once and carries that concrete identity through cache, installation, and verification. An explicit version remains exact and fails instead of silently falling back. `Install-DotNetStack` owns only `Microsoft.DotNet.SDK.10`, the current modern LTS SDK family; it does not install .NET Framework, an older/preview SDK, Visual Studio, MSBuild compatibility, or `dotnet-install.ps1`. TypeScript, .NET target frameworks, and other application libraries remain project dependencies owned by their manifests and lockfiles. Release/bootstrap artifacts such as WinGet, OpenSSH, VC prerequisites, and the GeistMono payload remain application-release pins; Herdr instead comes from the verified active host runtime.
+- Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
+- An omitted version resolves the latest stable release once for cache, installation, and verification. An explicit version remains exact and never falls back silently.
+- Built-in stacks own toolchains, not application dependencies. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
 
-For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is intentionally no plugin registry.
+For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
 **Rust/MSVC note:** the first Rust-stack run may show Microsoft Visual Studio Installer on the host. The signed bootstrapper creates a verified Build Tools layout in the app-owned cache; it does not install Visual Studio or Rust on the host. The guest copies and installs from that layout.
 
@@ -271,13 +283,13 @@ The first mutating `up` creates:
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. |
 
-#### Audio and CPU policy
+#### Audio policy
 
-Both audio toggles default off. With `audio` and `audioInput` omitted or `false`, provisioning selects the Windows **No Sounds** scheme, mutes the default render endpoint at zero volume, and disables and stops the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback just by changing their own volume.
+Both audio toggles default off. With both off, provisioning selects Windows **No Sounds**, mutes the default render endpoint, and disables the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback by changing only their own volume.
 
-Set `"audioInput": true` to share the host microphone with the guest, retain the shared audio services, and allow guest microphone capability consent. Capture and playback use the same Windows audio services, so when `audio` remains false, provisioning still selects **No Sounds** and mutes the render endpoint, but guest applications can unmute it. These controls are not an adversarial security boundary against administrator code inside the guest. Set `"audio": true` independently when playback is deliberate. Changing either toggle requires `herdr-sandbox down` before the next `up` can launch the new fixed plan.
+Set `"audioInput": true` to share the host microphone and retain the shared audio services. Because capture and playback use those services together, guest applications can then unmute output even while `audio` remains false; these controls are not a security boundary against guest administrator code. Set `"audio": true` independently for deliberate playback. Changing either toggle requires `down` before the next `up`.
 
-Windows Sandbox exposes no supported per-instance CPU-priority setting, and Windows client Hyper-V scheduling does not support per-VM weights, caps, or reserves. The tool therefore does not offer an idle/low-priority option; changing the `WindowsSandbox.exe` launcher priority would not reliably control guest vCPU scheduling.
+No CPU-priority option is exposed because Windows Sandbox provides no supported per-instance control; changing the launcher priority would not reliably control guest vCPU scheduling.
 
 #### Agent packages
 
@@ -313,11 +325,16 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 
 #### Workspace discovery
 
-`workspaceDiscovery` tests each Go/RE2 expression against the original direct-child directory name; matching is case-sensitive unless the expression uses `(?i)`, and any match excludes the directory. Discovery does not recurse or map the root itself. Every remaining child must contain `.herdr-sandbox\provision.ps1`; its workspace name is derived from the folder name. Use `workspaces` for projects outside the root or to give a discovered path an explicit name. The explicit entry wins when both select the same path. The active project is added automatically and deduplicated against the combined selection. The final maximum is 16 workspaces; paths must exist, must not overlap, and must not contain reparse aliases. Changing the discovered child set requires `down` before an existing guest can be replaced with the new mappings.
+- Discovery checks only direct child directories and never maps the root itself. Each Go/RE2 `exclude` expression is case-sensitive unless it uses `(?i)`; any match excludes that child.
+- Every selected child must contain `.herdr-sandbox\provision.ps1`. Its folder name becomes the workspace name; use `workspaces` for external projects or explicit names, which win when both select the same path.
+- The active project is added and deduplicated automatically. At most 16 physical, existing, nonoverlapping, non-reparse workspaces are allowed; a changed set requires `down` before the next `up`.
 
 #### Global extension ownership
 
-`base.ps1` and `stacks.ps1` are release-owned provider/adapter code and update with the application. The installer creates missing `config.json` and `user.ps1` defaults immediately; portable use creates the same defaults on its first mutating provisioning command. Put idempotent global PowerShell additions in the seeded-once `user.ps1`; it runs after app-owned helpers are ready and before project profiles. Keep package selection in `config.json` and project-specific behavior in the project profile. Do not store credentials or print secrets from `user.ps1`, because its immutable snapshot remains with active/uncertain run diagnostics until bounded automatic or explicit cleanup can safely remove that run.
+- `base.ps1` and `stacks.ps1` are release-owned and update with the application.
+- `user.ps1` is seeded once for idempotent global PowerShell additions and runs before project profiles.
+- Keep package selection in `config.json` and project-specific behavior in each project profile.
+- Do not store credentials or print secrets from `user.ps1`; its immutable snapshot may remain with active or uncertain run diagnostics until safe cleanup.
 
 Older releases seeded a user-owned `%APPDATA%\herdr-sandbox\base.ps1`. The new ownership model never overwrites or executes that file: `up` stops with migration instructions. Review it, move only deliberate global extension commands into `user.ps1`, move package choices into `config.json`, keep project tools in project profiles, archive the complete legacy Base under a non-reserved name, and retry.
 
@@ -350,9 +367,9 @@ Persistent host state is split intentionally:
 > [!CAUTION]
 > The required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open. Use this opt-in only with a tailnet prepared for a dedicated tagged device.
 
-`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage its policy. The stable address lets an approved phone, tablet, or another computer reach services in the running Sandbox without publishing them to the internet. The web admin console remains available. Installation only suppresses automatically opening the guest tray app; noninteractive DPAPI protection does not disable the Tailscale UI. Leave `"tailscale": false` if you prefer a manually managed disposable login; that identity will not be preserved.
+`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage policy. The stable address lets an approved phone, tablet, or computer reach services in the running Sandbox without publishing them to the internet. Leave `"tailscale": false` for a manually managed disposable login whose identity is not preserved.
 
-Tailscale supplies the private network path, not a terminal UI or automatic service authorization. To control the guest from a phone, install Tailscale plus a compatible SSH/terminal client on the phone and deliberately authorize that client's public key in guest provisioning—or expose another authenticated guest service. The default OpenSSH endpoint authorizes only the app-owned host-side client identity; never copy that private key to the phone.
+Tailscale supplies only the private network path. Another device still needs a compatible client and an explicitly authorized credential; the default OpenSSH endpoint accepts only the app-owned host identity. Never copy that private key to another device.
 
 <details>
 <summary><strong>First-time tailnet and enrollment setup</strong></summary>
@@ -400,20 +417,19 @@ Set `"tailscale": true` in `%APPDATA%\herdr-sandbox\config.json`. A minimal `{ "
 From the intended project directory, pass the key once without putting it in command history:
 
 ```powershell
-$herdrSandbox = 'D:\path\to\herdr-sandbox\build\bin\herdr-sandbox.exe'
 $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
     (Read-Host 'One-off tagged Tailscale auth key' -AsSecureString)
 )
 try {
     $env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-    & $herdrSandbox up
+    herdr-sandbox up
 } finally {
     Remove-Item Env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY -ErrorAction SilentlyContinue
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
 }
 ```
 
-The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores the complete node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify the private route from the phone or another intended peer with `tailscale ping herdr-sandbox`; service login still requires the separately authorized credential described above.
+The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify the route from an intended peer with `tailscale ping herdr-sandbox`; service login still requires its own authorized credential.
 
 ### 4. Later Sandboxes
 
@@ -425,7 +441,7 @@ Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDAT
 
 ## Troubleshooting
 
-Start with `herdr-sandbox status`; it never changes a running Sandbox and performs only the same bounded stale-state cleanup as other valid commands.
+Start with `herdr-sandbox status`; it preserves a running guest, removes only proven stale state, and reports the next action.
 
 | Symptom | Action |
 | --- | --- |
@@ -453,7 +469,10 @@ go run ./cmd/task native-all-stacks
 go run ./cmd/task package v0.0.0
 ```
 
-`check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. The opt-in `native-all-stacks` task builds that stable CLI, uses a credential-free ignored fixture under `build\native-all-stacks`, provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig, runs version plus build/test smokes over managed SSH, verifies the transferred Terminal/Starship state, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, and the normal host Herdr and GitHub CLI prerequisites. `package` requires the pinned NSIS 3.12 compiler and writes the installer, ZIP, and both checksum files under `build\dist`; it never installs the resulting package. Repository-owned provisioning and installer helper scripts run exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
+- `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
+- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig; it runs representative version/build/test commands over managed SSH, verifies Terminal and Starship transfer, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
+- Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
 ## License
 

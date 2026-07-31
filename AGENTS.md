@@ -8,6 +8,9 @@ the global workflow or recreate project `.opencode/` configuration.
 ## Canonical owners and precedence
 
 - Code and tests own detailed implementation behavior.
+- `README.md` owns practical public onboarding plus a portfolio-facing overview
+  of product value, engineering decisions, and verification; detailed behavior
+  and design remain canonical in the owners below.
 - `PRODUCT.md` owns stable user-visible CLI behavior, terminology, and acceptance
   outcomes.
 - `ARCHITECTURE.md` owns technical boundaries, state, external integrations, and
