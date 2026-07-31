@@ -239,11 +239,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`BackupRuntimeFile`,
 		`BackupRuntimeFile "${APP_LICENSE}" $R1`,
-		`BackupRuntimeFile "${APP_LEGACY_LICENSE}" $R2`,
 		`ReplaceRuntimeFile "${APP_LICENSE}"`,
 		`RestoreRuntimeFile`,
 		`RestoreRuntimeFile "${APP_LICENSE}" $R1`,
-		`RestoreRuntimeFile "${APP_LEGACY_LICENSE}" $R2`,
 		`VIProductVersion "${FIXED_VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
@@ -259,7 +257,6 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
 		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
 		`Delete "$INSTDIR\${APP_LICENSE}"`,
-		`Delete "$INSTDIR\${APP_LEGACY_LICENSE}"`,
 		`Delete "$INSTDIR\${APP_STACK_SCRIPT}"`,
 	} {
 		if !strings.Contains(source, want) {
@@ -296,6 +293,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`updater`,
 		`runtime bundle`,
 		`File /r`,
+		`APP_LEGACY_LICENSE`,
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)
@@ -330,7 +328,6 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName`,
 		`"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName`,
 		`"/DAPP_LICENSE=" + productidentity.LicenseName`,
-		`"/DAPP_LEGACY_LICENSE=" + productidentity.LicenseSourceName`,
 		`"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName`,
 		`"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName`,
 		`"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName`,
@@ -343,6 +340,9 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Fatalf("package task is missing canonical installer identity input %q", want)
 		}
+	}
+	if strings.Contains(source, "LEGACY_LICENSE") {
+		t.Fatal("package task must not carry a legacy license compatibility path")
 	}
 }
 

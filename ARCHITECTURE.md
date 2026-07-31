@@ -62,7 +62,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Terminal failure outranks stale progress. Host waiting is cancellable and has no default overall deadline; a caller context or explicit `--timeout` may bound it, while external-operation owners retain their narrower timeouts.
 - Per-run identity and known-hosts files remain app-owned. The Sandbox tool updates a stable app-owned `Host sandbox` file and owns one idempotent, marked `Include` at the start of the user's standard SSH config; unrelated user content is preserved. That first matching target explicitly disables `ControlMaster`, `ControlPath`, and `ControlPersist`: official Win32-OpenSSH design and the installed 9.5 client confirm that Windows lacks the AF_UNIX ancillary file-descriptor path required by OpenSSH multiplexing. Reuse means reconnecting fresh SSH clients to the same ready guest and persistent Herdr server, not sharing one TCP connection.
 - The `herdr-win` project owns generic Windows SSH behavior matching Unix: it builds a private temporary config that includes the normal user and system SSH configs before Herdr keepalive defaults, then passes that file to `ssh.exe -F`. It has no Sandbox-specific target knowledge or required environment-variable contract.
-- No backward-compatibility state, dual read/write path, or legacy marker parser is part of the MVP.
+- Superseded application contracts are not supported through backward-compatibility state, dual read/write paths, legacy marker parsers, aliases, migration code, or cleanup bridges. A changed contract replaces the old path directly.
 
 ## Development Provisioning
 

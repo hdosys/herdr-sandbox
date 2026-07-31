@@ -198,10 +198,6 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output)...); err != nil {
 		return err
 	}
-	obsoleteLicense := filepath.Join(filepath.Dir(output), productidentity.LicenseSourceName)
-	if err := os.Remove(obsoleteLicense); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove obsolete build asset %s: %w", productidentity.LicenseSourceName, err)
-	}
 	for _, asset := range []struct {
 		Source string
 		Name   string
