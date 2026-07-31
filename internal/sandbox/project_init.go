@@ -108,7 +108,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: go, node, python, rust, zig, or dotnet")
+		return nil, nil, errors.New("select at least one stack: dotnet, go, node, python, rust, or zig")
 	}
 	aliases := map[string]projectStack{
 		"dotnet": stackDotNet,
@@ -125,7 +125,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose go, node, python, rust, zig, or dotnet", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, node, python, rust, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)

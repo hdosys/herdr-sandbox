@@ -50,6 +50,11 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
 	}
+	for index := 1; index < len(plan.Packages); index++ {
+		if strings.ToLower(plan.Packages[index-1].ID) > strings.ToLower(plan.Packages[index].ID) {
+			t.Fatalf("effective packages are not sorted case-insensitively: %#v", plan.Packages)
+		}
+	}
 	data, err := os.ReadFile(profile)
 	if err != nil || string(data) != string(profileData) {
 		t.Fatalf("profile changed = %q, %v", data, err)

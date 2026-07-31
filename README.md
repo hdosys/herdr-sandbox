@@ -103,7 +103,7 @@ The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-o
 
 #### Installer
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access and adds the application to Windows Installed Apps.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access and adds the application to Windows Installed Apps. Its finish page explains the terminal-first next steps and links to this setup and usage guide without launching a program or browser automatically.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches the sidecar from the same release.
@@ -129,7 +129,7 @@ From the project root, select one or more stacks explicitly:
 herdr-sandbox init --stack go
 ```
 
-Repeat `--stack` to combine `go`, `node`, `python`, `rust`, `zig`, and `dotnet`, or omit the flag for a guided prompt. `init` validates every selection before writing, never guesses from repository contents, and refuses to replace an existing profile or create a nested profile beneath an ancestor-owned project.
+Repeat `--stack` to combine `dotnet`, `go`, `node`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. `init` validates every selection before writing, never guesses from repository contents, and refuses to replace an existing profile or create a nested profile beneath an ancestor-owned project.
 
 The Go command above creates `<project>\.herdr-sandbox\provision.ps1` with the equivalent direct-call profile:
 
@@ -187,6 +187,8 @@ ssh sandbox
 ```
 
 ## Commands
+
+Command output is plain and redirect-safe: summaries use descriptive headings, indented fields, deterministic ordering, and one item per line instead of packed comma-separated lists. Results go to stdout, errors go to stderr, and no color or terminal UI framework is required.
 
 | Command | Behavior |
 | --- | --- |

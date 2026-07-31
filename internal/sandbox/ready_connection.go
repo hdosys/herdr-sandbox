@@ -116,8 +116,9 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 	if err := installRunConnectionAlias(dataDirectory, connection); err != nil {
 		return Connection{}, err
 	}
-	fmt.Fprintf(output, "Ready Sandbox run %s verified.\n", active.RunID)
-	fmt.Fprintf(output, "Remote attach: herdr --remote %s\n", connection.SSHTarget)
+	fmt.Fprintln(output, "Ready Sandbox")
+	fmt.Fprintf(output, "  Run: %s\n", active.RunID)
+	fmt.Fprintf(output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
 	return connection, nil
 }
 

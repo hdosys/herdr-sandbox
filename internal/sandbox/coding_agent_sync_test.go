@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -272,13 +273,17 @@ func TestArchiveCodingAgentConfigurationSkipsDisabledAndMissingSources(t *testin
 	}
 }
 
-func TestProvisioningConfigurationSummaryIncludesSelectedCodingAgentsOnce(t *testing.T) {
+func TestProvisioningConfigurationNamesAreSortedAndIncludeSelectedCodingAgentsOnce(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary := provisioningConfigurationSummary(packages, codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true})
+	names := provisioningConfigurationNames(packages, codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true})
+	summary := strings.Join(names, "|")
+	if !sort.StringsAreSorted(names) {
+		t.Fatalf("configuration names are not sorted: %q", names)
+	}
 	for _, expected := range []string{"OpenCode", "Claude Code", "Codex"} {
 		if strings.Count(summary, expected) != 1 {
 			t.Fatalf("summary %q does not contain %q exactly once", summary, expected)
@@ -288,6 +293,11 @@ func TestProvisioningConfigurationSummaryIncludesSelectedCodingAgentsOnce(t *tes
 		if strings.Contains(summary, disabled) {
 			t.Fatalf("summary %q contains disabled %q", summary, disabled)
 		}
+	}
+	var output bytes.Buffer
+	writeProvisioningConfiguration(&output, "Development configuration", packages, codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true})
+	if !strings.HasPrefix(output.String(), "Development configuration:\n  - Claude Code\n") || strings.Contains(output.String(), ", ") {
+		t.Fatalf("configuration output is not a sorted bullet list: %q", output.String())
 	}
 }
 

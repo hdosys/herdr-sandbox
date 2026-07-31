@@ -120,7 +120,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := updateOperation("configuration-sync", "Reapplying and verifying selected development configuration."); err != nil {
 		return Connection{}, err
 	}
-	fmt.Fprintf(options.Output, "Reapplying and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, provisioning.CodingAgentSync))
+	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.Directory)
 	cancelSync()

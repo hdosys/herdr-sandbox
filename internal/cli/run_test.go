@@ -40,6 +40,32 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 }
 
+func TestFlagCommandHelpPreservesStderr(t *testing.T) {
+	for _, command := range []string{"init", "up"} {
+		t.Run(command, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := Run(context.Background(), []string{command, "--help"}, &bytes.Buffer{}, &stdout, &stderr)
+			if code != 0 || stdout.Len() != 0 || stderr.String() != usage {
+				t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestFlagParseErrorsUseProductPrefix(t *testing.T) {
+	for _, command := range []string{"init", "up"} {
+		t.Run(command, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := Run(context.Background(), []string{command, "--unknown"}, &bytes.Buffer{}, &stdout, &stderr)
+			if code != 2 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "herdr-sandbox: flag provided but not defined: -unknown\n\nUsage:") {
+				t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	seedCalls := 0
@@ -106,13 +132,13 @@ func TestPrintSessionStatus(t *testing.T) {
 		status sandbox.SessionStatus
 		want   string
 	}{
-		{name: "stopped", status: sandbox.SessionStatus{State: sandbox.SessionStopped}, want: "state: stopped\n"},
-		{name: "unmanaged", status: sandbox.SessionStatus{State: sandbox.SessionUnmanaged, Processes: []string{"WindowsSandbox:12", "WindowsSandboxClient:34"}}, want: "state: unmanaged\nprocesses: WindowsSandbox:12, WindowsSandboxClient:34\n"},
-		{name: "starting", status: sandbox.SessionStatus{State: sandbox.SessionStarting, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "winget", Message: "Installing"}, want: "state: starting\nrun: 20260724-123456-abcdef12\npid: 1234\nphase: winget\nmessage: Installing\n"},
-		{name: "connectable", status: sandbox.SessionStatus{State: sandbox.SessionStarting, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "connectable", Message: "SSH and Herdr server are ready; applying verified host configuration"}, want: "state: starting\nrun: 20260724-123456-abcdef12\npid: 1234\nphase: connectable\nmessage: SSH and Herdr server are ready; applying verified host configuration\n"},
-		{name: "ready", status: sandbox.SessionStatus{State: sandbox.SessionReady, RunID: "20260724-123456-abcdef12", PID: 1234, GuestIP: "172.24.1.2", HerdrVersion: "herdr 1.0.0"}, want: "state: ready\nrun: 20260724-123456-abcdef12\npid: 1234\nip: 172.24.1.2\nherdr: herdr 1.0.0\nattach: herdr --remote sandbox\n"},
-		{name: "failed", status: sandbox.SessionStatus{State: sandbox.SessionFailed, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "base", Message: "failed"}, want: "state: failed\nrun: 20260724-123456-abcdef12\npid: 1234\nphase: base\nmessage: failed\n"},
-		{name: "stale", status: sandbox.SessionStatus{State: sandbox.SessionStale, RunID: "20260724-123456-abcdef12", PID: 1234, Message: "recorded Windows Sandbox process is no longer running"}, want: "state: stale\nrun: 20260724-123456-abcdef12\npid: 1234\nmessage: recorded Windows Sandbox process is no longer running\n"},
+		{name: "stopped", status: sandbox.SessionStatus{State: sandbox.SessionStopped}, want: "Sandbox\n  State: stopped\n"},
+		{name: "unmanaged", status: sandbox.SessionStatus{State: sandbox.SessionUnmanaged, Processes: []string{"WindowsSandboxClient:34", "WindowsSandbox:12"}}, want: "Sandbox\n  State: unmanaged\n\nProcesses\n  - WindowsSandbox:12\n  - WindowsSandboxClient:34\n"},
+		{name: "starting", status: sandbox.SessionStatus{State: sandbox.SessionStarting, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "winget", Message: "Installing"}, want: "Sandbox\n  State: starting\n  Run: 20260724-123456-abcdef12\n  PID: 1234\n  Phase: winget\n  Message: Installing\n"},
+		{name: "connectable", status: sandbox.SessionStatus{State: sandbox.SessionStarting, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "connectable", Message: "SSH and Herdr server are ready; applying verified host configuration"}, want: "Sandbox\n  State: starting\n  Run: 20260724-123456-abcdef12\n  PID: 1234\n  Phase: connectable\n  Message: SSH and Herdr server are ready; applying verified host configuration\n"},
+		{name: "ready", status: sandbox.SessionStatus{State: sandbox.SessionReady, RunID: "20260724-123456-abcdef12", PID: 1234, GuestIP: "172.24.1.2", HerdrVersion: "herdr 1.0.0"}, want: "Sandbox\n  State: ready\n  Run: 20260724-123456-abcdef12\n  PID: 1234\n  Guest IP: 172.24.1.2\n  Herdr: herdr 1.0.0\n  Attach: herdr --remote sandbox\n"},
+		{name: "failed", status: sandbox.SessionStatus{State: sandbox.SessionFailed, RunID: "20260724-123456-abcdef12", PID: 1234, Phase: "base", Message: "failed"}, want: "Sandbox\n  State: failed\n  Run: 20260724-123456-abcdef12\n  PID: 1234\n  Phase: base\n  Message: failed\n"},
+		{name: "stale", status: sandbox.SessionStatus{State: sandbox.SessionStale, RunID: "20260724-123456-abcdef12", PID: 1234, Message: "recorded Windows Sandbox process is no longer running"}, want: "Sandbox\n  State: stale\n  Run: 20260724-123456-abcdef12\n  PID: 1234\n  Message: recorded Windows Sandbox process is no longer running\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -131,9 +157,9 @@ func TestPrintDownResult(t *testing.T) {
 		result sandbox.DownResult
 		want   string
 	}{
-		{name: "stopped", result: sandbox.DownResult{RunID: "20260724-123456-abcdef12"}, want: "herdr-sandbox: stopped run 20260724-123456-abcdef12\n"},
-		{name: "already", result: sandbox.DownResult{AlreadyStopped: true}, want: "herdr-sandbox: already stopped\n"},
-		{name: "stale", result: sandbox.DownResult{RunID: "20260724-123456-abcdef12", AlreadyStopped: true}, want: "herdr-sandbox: already stopped (stale run 20260724-123456-abcdef12 cleared)\n"},
+		{name: "stopped", result: sandbox.DownResult{RunID: "20260724-123456-abcdef12"}, want: "Sandbox\n  Result: stopped\n  Run: 20260724-123456-abcdef12\n"},
+		{name: "already", result: sandbox.DownResult{AlreadyStopped: true}, want: "Sandbox\n  Result: already stopped\n"},
+		{name: "stale", result: sandbox.DownResult{RunID: "20260724-123456-abcdef12", AlreadyStopped: true}, want: "Sandbox\n  Result: already stopped\n  Cleared stale run: 20260724-123456-abcdef12\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -152,10 +178,10 @@ func TestPrintCleanResult(t *testing.T) {
 		result sandbox.CleanResult
 		want   string
 	}{
-		{name: "empty", result: sandbox.CleanResult{}, want: "herdr-sandbox: no inactive run workspaces\n"},
-		{name: "active", result: sandbox.CleanResult{ActiveRunID: "20260725-121936-0d9549e4"}, want: "herdr-sandbox: no inactive run workspaces; preserved active run 20260725-121936-0d9549e4\n"},
-		{name: "one", result: sandbox.CleanResult{RemovedRuns: 1}, want: "herdr-sandbox: removed 1 inactive run workspace\n"},
-		{name: "many", result: sandbox.CleanResult{RemovedRuns: 3, ActiveRunID: "20260725-121936-0d9549e4"}, want: "herdr-sandbox: removed 3 inactive run workspaces; preserved active run 20260725-121936-0d9549e4\n"},
+		{name: "empty", result: sandbox.CleanResult{}, want: "Cleanup\n  Removed: no inactive run workspaces\n"},
+		{name: "active", result: sandbox.CleanResult{ActiveRunID: "20260725-121936-0d9549e4"}, want: "Cleanup\n  Removed: no inactive run workspaces\n  Preserved active run: 20260725-121936-0d9549e4\n"},
+		{name: "one", result: sandbox.CleanResult{RemovedRuns: 1}, want: "Cleanup\n  Removed: 1 inactive run workspace\n"},
+		{name: "many", result: sandbox.CleanResult{RemovedRuns: 3, ActiveRunID: "20260725-121936-0d9549e4"}, want: "Cleanup\n  Removed: 3 inactive run workspaces\n  Preserved active run: 20260725-121936-0d9549e4\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -241,7 +267,7 @@ func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
 			}
 			var stderr bytes.Buffer
 			code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
-			if !called || code != 1 || !strings.Contains(stderr.String(), "removed 1 inactive run workspace") ||
+			if !called || code != 1 || !strings.Contains(stderr.String(), "Removed: 1 inactive run workspace") ||
 				!strings.Contains(stderr.String(), "stale-state cleanup incomplete: cleanup fixture") {
 				t.Fatalf("called = %t, code = %d, stderr = %q", called, code, stderr.String())
 			}
@@ -265,8 +291,8 @@ func TestRunStatusReportsPreservedStateWhenCleanupIsIncomplete(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithDependencies(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr, cleanup, inspect)
-	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "warning: Stale-state cleanup incomplete: ownership is uncertain") ||
-		!strings.Contains(stdout.String(), "state: stale") || !strings.Contains(stdout.String(), "recorded Windows Sandbox process identity changed") {
+	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Warnings\n  - Stale-state cleanup incomplete: ownership is uncertain") ||
+		!strings.Contains(stdout.String(), "State: stale") || !strings.Contains(stdout.String(), "recorded Windows Sandbox process identity changed") {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }
@@ -280,7 +306,7 @@ func TestRunCleanUsesOneCanonicalCleanupResult(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithCleanup(context.Background(), []string{"clean"}, &bytes.Buffer{}, &stdout, &stderr, cleanup)
-	if code != 0 || calls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "removed 2 inactive run workspaces") {
+	if code != 0 || calls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Removed: 2 inactive run workspaces") {
 		t.Fatalf("code = %d, calls = %d, stdout = %q, stderr = %q", code, calls, stdout.String(), stderr.String())
 	}
 }
@@ -337,7 +363,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Sandbox is ready") {
+	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Next: run `herdr-sandbox attach`") {
 		t.Fatalf("code = %d, validated = %t, attached = %t, order = %v, stdout = %q", code, validated, attached, order, stdout.String())
 	}
 }
@@ -407,8 +433,50 @@ func TestRunPlanUsesOnlyReadOnlyResolver(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"plan"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || !resolved || !strings.Contains(stdout.String(), "memory-mb: 32768") || !strings.Contains(stdout.String(), "next: Run up.") {
+	if code != 0 || !resolved || !strings.Contains(stdout.String(), "Memory: 32768 MB") || !strings.Contains(stdout.String(), "Next: Run up.") {
 		t.Fatalf("code = %d, resolved = %t, stdout = %q", code, resolved, stdout.String())
+	}
+}
+
+func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
+	plan := sandbox.EffectivePlan{
+		ConfigurationPath:   `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`,
+		ConfigurationExists: true,
+		UserScriptPath:      `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
+		CacheDirectory:      `D:\herdr-cache`,
+		MemoryMB:            32768,
+		WindowsTerminal:     "stable",
+		CodingAgents:        []string{"OpenCode", "Claude Code"},
+		GlobalStacks:        []string{"rust", "go"},
+		Packages: []sandbox.EffectivePackage{
+			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
+		},
+		StackPackages: []sandbox.EffectiveStackPackage{{Stack: "go", PackageOwner: "GoLang.Go"}},
+		Workspaces: []sandbox.EffectiveWorkspace{
+			{Name: "project", HostDirectory: `D:\project`, GuestDirectory: `C:\Workspaces\project`, Active: true, Stacks: []string{"rust", "go"}},
+			{Name: "shared", HostDirectory: `D:\shared`, GuestDirectory: `C:\Workspaces\shared`},
+		},
+		ReadyChanges: []string{"memory: 16384 -> 32768", "workspaces changed"},
+		NextAction:   "Run `herdr-sandbox up` to apply this plan.",
+	}
+	var output bytes.Buffer
+	printEffectivePlan(&output, plan)
+	for _, required := range []string{
+		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio: disabled",
+		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
+		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
+		"Workspaces\n  * project (active)\n    Host: D:\\project\n    Guest: C:\\Workspaces\\project\n    Stacks:\n      - go\n      - rust",
+		"  - shared\n    Host: D:\\shared", "Ready Sandbox changes\n  - memory: 16384 -> 32768\n  - workspaces changed",
+		"Next: Run `herdr-sandbox up` to apply this plan.",
+	} {
+		if !strings.Contains(output.String(), required) {
+			t.Fatalf("plan is missing %q:\n%s", required, output.String())
+		}
+	}
+	for _, packed := range []string{"OpenCode, Claude Code", "rust, go", "workspace:", "workspace(s)"} {
+		if strings.Contains(output.String(), packed) {
+			t.Fatalf("plan contains packed or placeholder output %q:\n%s", packed, output.String())
+		}
 	}
 }
 
@@ -432,7 +500,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 			}
 			var stdout bytes.Buffer
 			code := runWithCommandDependencies(context.Background(), test.args, bytes.NewBufferString(test.input), &stdout, &bytes.Buffer{}, dependencies)
-			if code != 0 || got != test.want || !strings.Contains(stdout.String(), "Created project profile") {
+			if code != 0 || got != test.want || !strings.Contains(stdout.String(), "Project profile created") {
 				t.Fatalf("code = %d, stacks = %q, stdout = %q", code, got, stdout.String())
 			}
 		})
@@ -462,10 +530,10 @@ func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *t
 	var output bytes.Buffer
 	printSessionStatus(&output, status)
 	for _, required := range []string{
-		"started: 2026-07-29T12:00:00Z", "winget: v1.29.0", "herdr-protocol: 18",
-		"workspace: * project", "operation: reprovision failed", "operation-phase: configuration-sync",
-		"diagnostics: C:\\state\\status", "timing: Go package total = 1.25s",
-		"warning: diagnostic warning", "next: Run `herdr-sandbox attach`.",
+		"Started: 2026-07-29T12:00:00Z", "WinGet: v1.29.0", "Herdr protocol: 18",
+		"* project (active)", "Operation\n  Kind: reprovision\n  State: failed", "Phase: configuration-sync",
+		"Diagnostics\n  Path: C:\\state\\status", "- Go package total: 1.25s",
+		"Warnings\n  - diagnostic warning", "Next: Run `herdr-sandbox attach`.",
 	} {
 		if !strings.Contains(output.String(), required) {
 			t.Fatalf("status is missing %q: %q", required, output.String())
@@ -486,7 +554,7 @@ func TestPrintSessionStatusDoesNotAdvertiseAttachUntilReadyAndIdle(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			var output bytes.Buffer
 			printSessionStatus(&output, status)
-			if strings.Contains(output.String(), "attach: herdr --remote sandbox") {
+			if strings.Contains(output.String(), "Attach: herdr --remote sandbox") {
 				t.Fatalf("nonattachable status advertised attach: %q", output.String())
 			}
 		})

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 type EffectivePackage struct {
@@ -103,7 +104,14 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 			plan.Packages = append(plan.Packages, EffectivePackage{ID: entry.ID, Version: version, Source: group.name})
 		}
 	}
-	sort.Slice(plan.Packages, func(left, right int) bool { return plan.Packages[left].ID < plan.Packages[right].ID })
+	sort.Slice(plan.Packages, func(left, right int) bool {
+		leftFold := strings.ToLower(plan.Packages[left].ID)
+		rightFold := strings.ToLower(plan.Packages[right].ID)
+		if leftFold == rightFold {
+			return plan.Packages[left].ID < plan.Packages[right].ID
+		}
+		return leftFold < rightFold
+	})
 	for _, workspace := range workspaces {
 		stacks := make([]string, len(workspace.Stacks))
 		for index, stack := range workspace.Stacks {

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -137,7 +138,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 		return Connection{}, fmt.Errorf("reconcile previous retained operation before up: %w", err)
 	}
 	if interruptedOperation {
-		fmt.Fprintln(options.Output, "The previous retained reprovision ended without a terminal result and is now recorded as interrupted.")
+		fmt.Fprintln(options.Output, "Warning: the previous retained reprovision ended without a terminal result and is now recorded as interrupted.")
 	}
 
 	provisioning, err := resolveProvisioning("")
@@ -152,14 +153,15 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 	if memoryMB == 0 {
 		memoryMB = provisioning.MemoryMB
 	}
-	fmt.Fprintf(options.Output, "Windows Terminal host edition: %s\n", provisioning.WindowsTerminal.Edition)
-	fmt.Fprintf(options.Output, "Sandbox memory: %d MB\n", memoryMB)
+	fmt.Fprintln(options.Output, "Launch configuration")
+	fmt.Fprintf(options.Output, "  Windows Terminal: %s\n", provisioning.WindowsTerminal.Edition)
+	fmt.Fprintf(options.Output, "  Memory: %d MB\n", memoryMB)
 	sessionStatus, err := inspectSessionAt(runContext, dataDirectory)
 	if err != nil {
 		return Connection{}, err
 	}
 	if !interruptedOperation && sessionStatus.Operation != nil && sessionStatus.Operation.State == operationStateInterrupted {
-		fmt.Fprintln(options.Output, "The previous retained reprovision ended without a terminal result and is recorded as interrupted.")
+		fmt.Fprintln(options.Output, "Warning: the previous retained reprovision ended without a terminal result and is recorded as interrupted.")
 	}
 	var retainedPlan runPlan
 	var retainedReady readyStatus
@@ -214,8 +216,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 		if err := hostHerdr.verifyUnchanged(runContext); err != nil {
 			return Connection{}, err
 		}
-		fmt.Fprintln(options.Output, "Retained provisioning verified.")
-		fmt.Fprintf(options.Output, "Remote attach: herdr --remote %s\n", connection.SSHTarget)
+		fmt.Fprintln(options.Output, "Ready Sandbox")
+		fmt.Fprintln(options.Output, "  Mode: retained and reprovisioned")
+		fmt.Fprintf(options.Output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
 		return connection, nil
 	}
 
@@ -285,7 +288,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 		}
 		fmt.Fprintln(options.Output, "Stable Tailscale identity restored, verified, and protected on the host.")
 	}
-	fmt.Fprintf(options.Output, "Transferring and verifying selected development configuration: %s...\n", provisioningConfigurationSummary(plan.Packages, plan.CodingAgentSync))
+	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
@@ -313,10 +316,12 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 		return Connection{}, err
 	}
 
-	fmt.Fprintf(options.Output, "WinGet: %s\n", connection.WinGetVersion)
-	fmt.Fprintf(options.Output, "Herdr: %s (protocol %d)\n", connection.HerdrVersion, connection.HerdrProtocol)
-	fmt.Fprintf(options.Output, "SSH config: %s\n", connection.SSHConfigPath)
-	fmt.Fprintf(options.Output, "Remote attach: herdr --remote %s\n", connection.SSHTarget)
+	fmt.Fprintln(options.Output, "Sandbox ready")
+	fmt.Fprintf(options.Output, "  WinGet: %s\n", connection.WinGetVersion)
+	fmt.Fprintf(options.Output, "  Herdr: %s\n", connection.HerdrVersion)
+	fmt.Fprintf(options.Output, "  Herdr protocol: %d\n", connection.HerdrProtocol)
+	fmt.Fprintf(options.Output, "  SSH config: %s\n", connection.SSHConfigPath)
+	fmt.Fprintf(options.Output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
 	return connection, nil
 }
 
@@ -682,7 +687,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}, nil
 }
 
-func provisioningConfigurationSummary(packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) string {
+func provisioningConfigurationNames(packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) []string {
 	selected := []string{"Herdr"}
 	for _, integration := range []struct {
 		id   string
@@ -699,7 +704,22 @@ func provisioningConfigurationSummary(packages wingetPackagePlan, codingAgents c
 		}
 	}
 	selected = append(selected, codingAgentSyncNames(codingAgents)...)
-	return strings.Join(selected, ", ")
+	sort.Slice(selected, func(left, right int) bool {
+		leftFold := strings.ToLower(selected[left])
+		rightFold := strings.ToLower(selected[right])
+		if leftFold == rightFold {
+			return selected[left] < selected[right]
+		}
+		return leftFold < rightFold
+	})
+	return selected
+}
+
+func writeProvisioningConfiguration(output io.Writer, title string, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) {
+	fmt.Fprintf(output, "%s:\n", title)
+	for _, name := range provisioningConfigurationNames(packages, codingAgents) {
+		fmt.Fprintf(output, "  - %s\n", name)
+	}
 }
 
 func applyWorkspaceRequirements(plan *runPlan) {

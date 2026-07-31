@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +17,7 @@ import (
 
 const usage = `Usage:
   herdr-sandbox plan
-  herdr-sandbox init [--stack go|node|python|rust|zig|dotnet]...
+  herdr-sandbox init [--stack dotnet|go|node|python|rust|zig]...
   herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   herdr-sandbox attach
   herdr-sandbox status
@@ -31,9 +33,17 @@ Commands:
   down    stop only the exact app-owned Sandbox
   clean   remove inactive app-owned run workspaces
 
-Explicit workspaces, optional workspaceDiscovery, absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache), memoryMB (default 32768), audio, tailscale, codingAgentSync choices, and wingetPackages add/remove/version choices come from %APPDATA%\herdr-sandbox\config.json.
-The up command has no overall timeout unless --timeout is supplied.
-The nearest .herdr-sandbox\provision.ps1, when present, becomes the active workspace.
+Configuration:
+  %APPDATA%\herdr-sandbox\config.json
+  - workspaces and optional workspaceDiscovery
+  - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
+  - memoryMB (default 32768), audio, and tailscale
+  - codingAgentSync choices
+  - wingetPackages additions, removals, and version pins
+
+Behavior:
+  - up has no overall timeout unless --timeout is supplied
+  - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
 const installerCleanUninstallTimeout = 15 * time.Minute
@@ -215,19 +225,21 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	options := sandbox.DefaultOptions()
 	noAttach := false
 	flags := flag.NewFlagSet("herdr-sandbox up", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(io.Discard)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "optional launch-to-terminal-ready timeout (no default)")
 	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
-	flags.Usage = func() { fmt.Fprint(stderr, usage) }
+	flags.Usage = func() {}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stderr, usage)
 			return 0
 		}
+		fmt.Fprintf(stderr, "herdr-sandbox: %v\n\n%s", err, usage)
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "herdr-sandbox: unexpected arguments: %v\n\n%s", flags.Args(), usage)
+		fmt.Fprintf(stderr, "herdr-sandbox: unexpected arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
 		return 2
 	}
 	memoryOverrideSet := false
@@ -271,7 +283,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 1
 	}
 	if noAttach {
-		fmt.Fprintln(stdout, "Sandbox is ready. Attach later with `herdr-sandbox attach` or `herdr --remote sandbox`.")
+		fmt.Fprintln(stdout, "Next: run `herdr-sandbox attach` or `herdr --remote sandbox`.")
 		return 0
 	}
 	return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
@@ -284,7 +296,7 @@ func commandHelpRequested(args []string) bool {
 func runAttach(ctx context.Context, connection sandbox.Connection, stdin io.Reader, stdout, stderr io.Writer,
 	attach func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error,
 ) int {
-	fmt.Fprintln(stdout, "Attaching the host Herdr client to the persistent guest server. Detach with Herdr's normal detach key.")
+	fmt.Fprintln(stdout, "Starting the Herdr remote session. Use Herdr's normal detach key to leave the guest running.")
 	if err := attach(ctx, connection, stdin, stdout, stderr); err != nil {
 		fmt.Fprintln(stderr, "herdr-sandbox:", err)
 		return 1
@@ -304,18 +316,20 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	initialize func(string, []string) (sandbox.ProjectInitResult, error),
 ) int {
 	flags := flag.NewFlagSet("herdr-sandbox init", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(io.Discard)
 	var selected stackSelections
-	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: go, node, python, rust, zig, dotnet")
-	flags.Usage = func() { fmt.Fprint(stderr, usage) }
+	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: dotnet, go, node, python, rust, zig")
+	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stderr, usage)
 			return 0
 		}
+		fmt.Fprintf(stderr, "herdr-sandbox: %v\n\n%s", err, usage)
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "herdr-sandbox: unexpected init arguments: %v\n\n%s", flags.Args(), usage)
+		fmt.Fprintf(stderr, "herdr-sandbox: unexpected init arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
 		return 2
 	}
 	if len(selected) == 0 {
@@ -331,14 +345,18 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		fmt.Fprintln(stderr, "herdr-sandbox:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Created project profile: %s\n", result.Path)
-	fmt.Fprintf(stdout, "Stacks: %s\n", strings.Join(result.Stacks, ", "))
-	fmt.Fprintln(stdout, "Next: run `herdr-sandbox plan`, then `herdr-sandbox up`.")
+	fmt.Fprintln(stdout, "Project profile created")
+	fmt.Fprintf(stdout, "  Path: %s\n", result.Path)
+	fmt.Fprintln(stdout, "  Stacks:")
+	printBulletList(stdout, result.Stacks, "    ")
+	fmt.Fprintln(stdout, "\nNext")
+	fmt.Fprintln(stdout, "  1. Run `herdr-sandbox plan`.")
+	fmt.Fprintln(stdout, "  2. Run `herdr-sandbox up`.")
 	return 0
 }
 
 func promptForStacks(input io.Reader, output io.Writer) ([]string, error) {
-	fmt.Fprintln(output, "Available stacks: go, node, python, rust, zig, dotnet")
+	fmt.Fprintln(output, "Available stacks: dotnet, go, node, python, rust, zig")
 	fmt.Fprint(output, "Select one or more stacks (comma or space separated): ")
 	reader := bufio.NewReader(io.LimitReader(input, 4097))
 	line, err := reader.ReadString('\n')
@@ -373,96 +391,117 @@ func reportIncompleteCleanup(stderr io.Writer, result sandbox.CleanResult, err e
 }
 
 func printDownResult(output io.Writer, result sandbox.DownResult) {
+	fmt.Fprintln(output, "Sandbox")
 	if result.AlreadyStopped {
-		if result.RunID == "" {
-			fmt.Fprintln(output, "herdr-sandbox: already stopped")
-		} else {
-			fmt.Fprintf(output, "herdr-sandbox: already stopped (stale run %s cleared)\n", result.RunID)
+		fmt.Fprintln(output, "  Result: already stopped")
+		if result.RunID != "" {
+			fmt.Fprintf(output, "  Cleared stale run: %s\n", result.RunID)
 		}
 		return
 	}
-	fmt.Fprintf(output, "herdr-sandbox: stopped run %s\n", result.RunID)
+	fmt.Fprintln(output, "  Result: stopped")
+	fmt.Fprintf(output, "  Run: %s\n", result.RunID)
 }
 
 func printCleanResult(output io.Writer, result sandbox.CleanResult) {
+	fmt.Fprintln(output, "Cleanup")
 	if result.RemovedRuns == 0 {
-		fmt.Fprint(output, "herdr-sandbox: no inactive run workspaces")
+		fmt.Fprintln(output, "  Removed: no inactive run workspaces")
 	} else if result.RemovedRuns == 1 {
-		fmt.Fprint(output, "herdr-sandbox: removed 1 inactive run workspace")
+		fmt.Fprintln(output, "  Removed: 1 inactive run workspace")
 	} else {
-		fmt.Fprintf(output, "herdr-sandbox: removed %d inactive run workspaces", result.RemovedRuns)
+		fmt.Fprintf(output, "  Removed: %d inactive run workspaces\n", result.RemovedRuns)
 	}
 	if result.ActiveRunID != "" {
-		fmt.Fprintf(output, "; preserved active run %s", result.ActiveRunID)
+		fmt.Fprintf(output, "  Preserved active run: %s\n", result.ActiveRunID)
 	}
-	fmt.Fprintln(output)
 }
 
 func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
-	fmt.Fprintf(output, "state: %s\n", status.State)
+	fmt.Fprintln(output, "Sandbox")
+	fmt.Fprintf(output, "  State: %s\n", status.State)
 	if status.RunID != "" {
-		fmt.Fprintf(output, "run: %s\n", status.RunID)
+		fmt.Fprintf(output, "  Run: %s\n", status.RunID)
 	}
 	if status.PID > 0 {
-		fmt.Fprintf(output, "pid: %d\n", status.PID)
+		fmt.Fprintf(output, "  PID: %d\n", status.PID)
 	}
 	if status.StartedAtUTC != "" {
-		fmt.Fprintf(output, "started: %s\n", status.StartedAtUTC)
+		fmt.Fprintf(output, "  Started: %s\n", status.StartedAtUTC)
 	}
 	if status.Phase != "" {
-		fmt.Fprintf(output, "phase: %s\n", status.Phase)
+		fmt.Fprintf(output, "  Phase: %s\n", status.Phase)
 	}
 	if status.Message != "" {
-		fmt.Fprintf(output, "message: %s\n", status.Message)
+		fmt.Fprintf(output, "  Message: %s\n", status.Message)
 	}
 	if status.GuestIP != "" {
-		fmt.Fprintf(output, "ip: %s\n", status.GuestIP)
+		fmt.Fprintf(output, "  Guest IP: %s\n", status.GuestIP)
 	}
 	if status.WinGetVersion != "" {
-		fmt.Fprintf(output, "winget: %s\n", status.WinGetVersion)
+		fmt.Fprintf(output, "  WinGet: %s\n", status.WinGetVersion)
 	}
 	attachable := status.State == sandbox.SessionReady &&
 		(status.Operation == nil || status.Operation.State != "running")
 	if status.HerdrVersion != "" {
-		fmt.Fprintf(output, "herdr: %s\n", status.HerdrVersion)
+		fmt.Fprintf(output, "  Herdr: %s\n", status.HerdrVersion)
 		if status.HerdrProtocol > 0 {
-			fmt.Fprintf(output, "herdr-protocol: %d\n", status.HerdrProtocol)
+			fmt.Fprintf(output, "  Herdr protocol: %d\n", status.HerdrProtocol)
 		}
 	}
 	if attachable {
-		fmt.Fprintln(output, "attach: herdr --remote sandbox")
+		fmt.Fprintln(output, "  Attach: herdr --remote sandbox")
+	}
+	if len(status.Workspaces) > 0 {
+		fmt.Fprintln(output, "\nWorkspaces")
 	}
 	for _, workspace := range status.Workspaces {
-		marker := " "
+		marker := "-"
+		suffix := ""
 		if workspace.Active {
 			marker = "*"
+			suffix = " (active)"
 		}
-		fmt.Fprintf(output, "workspace: %s %s -> %s\n", marker, workspace.Name, workspace.Directory)
+		fmt.Fprintf(output, "  %s %s%s\n", marker, workspace.Name, suffix)
+		fmt.Fprintf(output, "    Directory: %s\n", workspace.Directory)
 	}
 	if status.Operation != nil {
-		fmt.Fprintf(output, "operation: %s %s\n", status.Operation.Kind, status.Operation.State)
-		fmt.Fprintf(output, "operation-phase: %s\n", status.Operation.Phase)
-		fmt.Fprintf(output, "operation-message: %s\n", status.Operation.Message)
-		fmt.Fprintf(output, "operation-updated: %s\n", status.Operation.UpdatedAtUTC)
+		fmt.Fprintln(output, "\nOperation")
+		fmt.Fprintf(output, "  Kind: %s\n", status.Operation.Kind)
+		fmt.Fprintf(output, "  State: %s\n", status.Operation.State)
+		fmt.Fprintf(output, "  Phase: %s\n", status.Operation.Phase)
+		fmt.Fprintf(output, "  Message: %s\n", status.Operation.Message)
+		fmt.Fprintf(output, "  Updated: %s\n", status.Operation.UpdatedAtUTC)
 	}
 	if status.DiagnosticsPath != "" {
-		fmt.Fprintf(output, "diagnostics: %s\n", status.DiagnosticsPath)
+		fmt.Fprintln(output, "\nDiagnostics")
+		fmt.Fprintf(output, "  Path: %s\n", status.DiagnosticsPath)
 	}
-	for _, timing := range status.Timings {
-		duration := time.Duration(timing.ElapsedMilliseconds) * time.Millisecond
-		fmt.Fprintf(output, "timing: %s = %s\n", timing.Role, duration)
+	if len(status.Timings) > 0 {
+		fmt.Fprintln(output, "\nTimings")
+		for _, timing := range status.Timings {
+			duration := time.Duration(timing.ElapsedMilliseconds) * time.Millisecond
+			fmt.Fprintf(output, "  - %s: %s\n", timing.Role, duration)
+		}
 	}
 	if status.CleanupRemovedRuns > 0 {
-		fmt.Fprintf(output, "cleanup: removed %d inactive run workspace(s)\n", status.CleanupRemovedRuns)
+		fmt.Fprintln(output, "\nCleanup")
+		if status.CleanupRemovedRuns == 1 {
+			fmt.Fprintln(output, "  Removed: 1 inactive run workspace")
+		} else {
+			fmt.Fprintf(output, "  Removed: %d inactive run workspaces\n", status.CleanupRemovedRuns)
+		}
 	}
-	for _, warning := range status.Warnings {
-		fmt.Fprintf(output, "warning: %s\n", warning)
+	if len(status.Warnings) > 0 {
+		fmt.Fprintln(output, "\nWarnings")
+		printBulletList(output, status.Warnings, "  ")
 	}
 	if len(status.Processes) > 0 {
-		fmt.Fprintf(output, "processes: %s\n", strings.Join(status.Processes, ", "))
+		fmt.Fprintln(output, "\nProcesses")
+		printBulletList(output, sortedFold(status.Processes), "  ")
 	}
 	if status.NextAction != "" {
-		fmt.Fprintf(output, "next: %s\n", status.NextAction)
+		fmt.Fprintf(output, "\nNext: %s\n", status.NextAction)
 	}
 }
 
@@ -475,48 +514,103 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	if plan.UserScriptExists {
 		userState = "existing"
 	}
-	fmt.Fprintf(output, "configuration: %s (%s)\n", plan.ConfigurationPath, configurationState)
-	fmt.Fprintf(output, "user-script: %s (%s)\n", plan.UserScriptPath, userState)
-	fmt.Fprintf(output, "cache: %s\n", plan.CacheDirectory)
-	fmt.Fprintf(output, "memory-mb: %d\n", plan.MemoryMB)
-	fmt.Fprintf(output, "audio: %t\n", plan.Audio)
-	fmt.Fprintf(output, "tailscale: %t\n", plan.Tailscale)
-	fmt.Fprintf(output, "windows-terminal: %s\n", plan.WindowsTerminal)
-	if len(plan.CodingAgents) == 0 {
-		fmt.Fprintln(output, "coding-agents: none")
-	} else {
-		fmt.Fprintf(output, "coding-agents: %s\n", strings.Join(plan.CodingAgents, ", "))
-	}
-	if len(plan.GlobalStacks) == 0 {
-		fmt.Fprintln(output, "global-stacks: none")
-	} else {
-		fmt.Fprintf(output, "global-stacks: %s\n", strings.Join(plan.GlobalStacks, ", "))
+	fmt.Fprintln(output, "Effective plan")
+	fmt.Fprintln(output, "\nConfiguration")
+	fmt.Fprintf(output, "  File: %s\n", plan.ConfigurationPath)
+	fmt.Fprintf(output, "  File state: %s\n", configurationState)
+	fmt.Fprintf(output, "  User script: %s\n", plan.UserScriptPath)
+	fmt.Fprintf(output, "  User script state: %s\n", userState)
+	fmt.Fprintf(output, "  Cache: %s\n", plan.CacheDirectory)
+	fmt.Fprintf(output, "  Memory: %d MB\n", plan.MemoryMB)
+	fmt.Fprintf(output, "  Audio: %s\n", enabledDisabled(plan.Audio))
+	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
+	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
+
+	fmt.Fprintln(output, "\nCoding agents")
+	printBulletList(output, sortedFold(plan.CodingAgents), "  ")
+	fmt.Fprintln(output, "\nGlobal stacks")
+	printBulletList(output, sortedFold(plan.GlobalStacks), "  ")
+
+	fmt.Fprintln(output, "\nPackages")
+	if len(plan.Packages) == 0 {
+		fmt.Fprintln(output, "  (none)")
 	}
 	for _, entry := range plan.Packages {
-		fmt.Fprintf(output, "package: %s (%s; %s)\n", entry.ID, entry.Version, entry.Source)
+		fmt.Fprintf(output, "  - %s\n", entry.ID)
+		fmt.Fprintf(output, "    Version: %s\n", entry.Version)
+		fmt.Fprintf(output, "    Source: %s\n", entry.Source)
 	}
-	for _, entry := range plan.StackPackages {
-		fmt.Fprintf(output, "stack-package: %s -> %s\n", entry.Stack, entry.PackageOwner)
+	if len(plan.StackPackages) > 0 {
+		fmt.Fprintln(output, "\nStack package owners")
+		for _, entry := range plan.StackPackages {
+			fmt.Fprintf(output, "  - %s: %s\n", entry.Stack, entry.PackageOwner)
+		}
 	}
+
+	fmt.Fprintln(output, "\nWorkspaces")
 	if len(plan.Workspaces) == 0 {
-		fmt.Fprintln(output, "workspaces: none")
+		fmt.Fprintln(output, "  (none)")
 	}
 	for _, workspace := range plan.Workspaces {
-		marker := " "
+		marker := "-"
+		suffix := ""
 		if workspace.Active {
 			marker = "*"
+			suffix = " (active)"
 		}
-		fmt.Fprintf(output, "workspace: %s %s: %s -> %s", marker, workspace.Name, workspace.HostDirectory, workspace.GuestDirectory)
+		fmt.Fprintf(output, "  %s %s%s\n", marker, workspace.Name, suffix)
+		fmt.Fprintf(output, "    Host: %s\n", workspace.HostDirectory)
+		fmt.Fprintf(output, "    Guest: %s\n", workspace.GuestDirectory)
 		if len(workspace.Stacks) > 0 {
-			fmt.Fprintf(output, " [%s]", strings.Join(workspace.Stacks, ", "))
+			fmt.Fprintln(output, "    Stacks:")
+			printBulletList(output, sortedFold(workspace.Stacks), "      ")
 		}
-		fmt.Fprintln(output)
 	}
 	if plan.RequiresVisualStudio {
-		fmt.Fprintln(output, "host-preparation: Visual Studio Build Tools layout required")
+		fmt.Fprintln(output, "\nHost preparation")
+		fmt.Fprintln(output, "  - Visual Studio Build Tools layout required")
 	}
 	if len(plan.ReadyChanges) > 0 {
-		fmt.Fprintf(output, "ready-sandbox-changes: %s\n", strings.Join(plan.ReadyChanges, ", "))
+		fmt.Fprintln(output, "\nReady Sandbox changes")
+		printBulletList(output, plan.ReadyChanges, "  ")
 	}
-	fmt.Fprintf(output, "next: %s\n", plan.NextAction)
+	fmt.Fprintf(output, "\nNext: %s\n", plan.NextAction)
+}
+
+func quotedArguments(arguments []string) string {
+	quoted := make([]string, len(arguments))
+	for index, argument := range arguments {
+		quoted[index] = strconv.Quote(argument)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func printBulletList(output io.Writer, values []string, indent string) {
+	if len(values) == 0 {
+		fmt.Fprintf(output, "%s(none)\n", indent)
+		return
+	}
+	for _, value := range values {
+		fmt.Fprintf(output, "%s- %s\n", indent, value)
+	}
+}
+
+func sortedFold(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Slice(result, func(left, right int) bool {
+		leftFold := strings.ToLower(result[left])
+		rightFold := strings.ToLower(result[right])
+		if leftFold == rightFold {
+			return result[left] < result[right]
+		}
+		return leftFold < rightFold
+	})
+	return result
+}
+
+func enabledDisabled(value bool) string {
+	if value {
+		return "enabled"
+	}
+	return "disabled"
 }
