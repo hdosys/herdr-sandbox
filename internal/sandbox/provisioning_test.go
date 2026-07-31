@@ -188,6 +188,23 @@ func TestCanonicalWorkspacePlansRebindProvisioningScriptToPhysicalRoot(t *testin
 	}
 }
 
+func TestCanonicalWorkspacePlansAllowsMissingProvisioningScript(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "plain")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := canonicalWorkspacePlans([]workspacePlan{{
+		Name: "plain", HostDirectory: project, GuestDirectory: guestWorkspaceDirectory("plain"),
+		ProvisioningPath: filepath.Join(project, projectConfigurationName, projectProvisioningName),
+	}})
+	if err != nil {
+		t.Fatalf("canonicalWorkspacePlans: %v", err)
+	}
+	if len(plans) != 1 || plans[0].ProvisioningPath != "" {
+		t.Fatalf("unprofiled canonical workspace = %#v", plans)
+	}
+}
+
 func TestDefaultBaseInstallsGitHubCLIThroughCachedMSIAdapter(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
@@ -1212,6 +1229,23 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	}
 }
 
+func TestDefaultBaseTreatsProjectProvisioningProfilesAsOptional(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"$projectScriptPath = Join-Path $ProjectProvisioningDirectory ($workspaceName + '.ps1')",
+		"if (-not (Test-Path -LiteralPath $projectScriptPath -PathType Leaf)) {",
+		"$projectScript = Get-Item -LiteralPath $projectScriptPath",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing optional project provisioning contract %q", required)
+		}
+	}
+	mandatory := "-not (Test-Path -LiteralPath (Join-Path $ProjectProvisioningDirectory ($workspaceName + '.ps1')) -PathType Leaf) -or"
+	if strings.Contains(text, mandatory) {
+		t.Fatal("default Base still requires one provisioning profile per workspace")
+	}
+}
+
 func TestBasePackagePlanReaderIsStrictInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
@@ -1744,6 +1778,13 @@ func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 	explicit := createWorkspaceFixture(t, projects, "Alpha Project")
 	external := createWorkspaceFixture(t, root, "external")
 	active := createWorkspaceFixture(t, projects, "zeta")
+	plain := filepath.Join(projects, "plain")
+	plainExternal := filepath.Join(root, "plain-external")
+	for _, directory := range []string{plain, plainExternal} {
+		if err := os.MkdirAll(filepath.Join(directory, "src"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	_ = createWorkspaceFixture(t, active, "nested")
 	for _, excluded := range []string{"archive", "Scratch-Temp"} {
 		if err := os.MkdirAll(filepath.Join(projects, excluded), 0o700); err != nil {
@@ -1754,21 +1795,25 @@ func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 	writeWorkspaceDiscoveryConfig(t, global, &workspaceDiscoveryConfiguration{
 		Root:    projects,
 		Exclude: []string{`^archive$`, `(?i)^scratch`},
-	}, map[string]string{"Alpha-Project": external, "custom-alpha": explicit})
+	}, map[string]string{"Alpha-Project": external, "custom-alpha": explicit, "plain-external": plainExternal})
 
 	plan, err := resolveProvisioningAt(filepath.Join(active, "src"), global, defaults)
 	if err != nil {
 		t.Fatalf("resolveProvisioningAt: %v", err)
 	}
-	if len(plan.Workspaces) != 3 || !plan.Workspaces[0].Active || plan.Workspaces[0].Name != "zeta" ||
-		plan.Workspaces[1].Name != "Alpha-Project" || plan.Workspaces[2].Name != "custom-alpha" {
+	if len(plan.Workspaces) != 5 || !plan.Workspaces[0].Active || plan.Workspaces[0].Name != "zeta" ||
+		plan.Workspaces[1].Name != "Alpha-Project" || plan.Workspaces[2].Name != "custom-alpha" ||
+		plan.Workspaces[3].Name != "plain" || plan.Workspaces[4].Name != "plain-external" {
 		t.Fatalf("discovered workspaces = %#v", plan.Workspaces)
 	}
-	for index, expected := range []string{active, external, explicit} {
+	for index, expected := range []string{active, external, explicit, plain, plainExternal} {
 		equal, err := workspaceDirectoriesEqual(plan.Workspaces[index].HostDirectory, expected)
 		if err != nil || !equal {
 			t.Fatalf("workspace %q path = %q, want physical path %q: %v", plan.Workspaces[index].Name, plan.Workspaces[index].HostDirectory, expected, err)
 		}
+	}
+	if plan.Workspaces[3].ProvisioningPath != "" || plan.Workspaces[4].ProvisioningPath != "" {
+		t.Fatalf("unprofiled workspaces received provisioning paths: %#v", plan.Workspaces)
 	}
 	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB, plan.AudioOutput, plan.AudioInput)
 	if err != nil {
@@ -1808,12 +1853,42 @@ func TestDiscoverWorkspacePlansRejectsInvalidRootsChildrenAndCollisions(t *testi
 
 	t.Run("unprofiled child", func(t *testing.T) {
 		root := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(root, "not-a-project"), 0o700); err != nil {
+		child := filepath.Join(root, "not-a-project")
+		if err := os.MkdirAll(child, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
-		if err == nil || !strings.Contains(err.Error(), "not-a-project") || !strings.Contains(err.Error(), "provisioning script") {
-			t.Fatalf("unprofiled child error = %v", err)
+		workspaces, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err != nil {
+			t.Fatalf("discover unprofiled child: %v", err)
+		}
+		equal := false
+		if len(workspaces) == 1 {
+			equal, err = workspaceDirectoriesEqual(workspaces[0].HostDirectory, child)
+		}
+		if err != nil || len(workspaces) != 1 || !equal || workspaces[0].ProvisioningPath != "" {
+			t.Fatalf("unprofiled child workspace = %#v", workspaces)
+		}
+	})
+
+	t.Run("invalid profiles reported together", func(t *testing.T) {
+		root := t.TempDir()
+		valid := createWorkspaceFixture(t, root, "valid")
+		for _, name := range []string{"broken-one", "broken-two"} {
+			project := createWorkspaceFixture(t, root, name)
+			if err := os.WriteFile(filepath.Join(project, projectConfigurationName, projectProvisioningName), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		workspaces, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})
+		if err == nil || !strings.Contains(err.Error(), "broken-one") || !strings.Contains(err.Error(), "broken-two") {
+			t.Fatalf("combined invalid profile error = %v", err)
+		}
+		equal := false
+		if len(workspaces) == 1 {
+			equal, err = workspaceDirectoriesEqual(workspaces[0].HostDirectory, valid)
+		}
+		if err != nil || len(workspaces) != 1 || !equal {
+			t.Fatalf("valid workspaces beside invalid profiles = %#v", workspaces)
 		}
 	})
 

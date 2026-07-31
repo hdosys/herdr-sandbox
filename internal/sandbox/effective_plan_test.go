@@ -24,6 +24,10 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 	if err := os.WriteFile(profile, profileData, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	plain := filepath.Join(root, "plain")
+	if err := os.MkdirAll(plain, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
 	if err != nil {
@@ -40,12 +44,14 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		Workspaces: []workspacePlan{{
 			Name: "project", HostDirectory: project, GuestDirectory: guestWorkspaceDirectory("project"),
 			ProvisioningPath: profile, Active: true,
+		}, {
+			Name: "plain", HostDirectory: plain, GuestDirectory: guestWorkspaceDirectory("plain"),
 		}},
 	}, filepath.Join(root, "missing-config.json"), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Workspaces) != 1 || strings.Join(plan.Workspaces[0].Stacks, "|") != "dotnet|go" ||
+	if len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "dotnet|go" || len(plan.Workspaces[1].Stacks) != 0 ||
 		len(plan.StackPackages) != 2 || plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)

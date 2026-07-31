@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 34
+# herdr-sandbox-base-contract: 35
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -2895,7 +2895,6 @@ foreach ($workspace in $provisioningWorkspaces) {
         $workspaceName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
         $projectDirectory -cne $expectedDirectory -or
         -not (Test-Path -LiteralPath $projectDirectory -PathType Container) -or
-        -not (Test-Path -LiteralPath (Join-Path $ProjectProvisioningDirectory ($workspaceName + '.ps1')) -PathType Leaf) -or
         $provisioningWorkspaceNames.ContainsKey($workspaceIdentity)) {
         throw "Workspace manifest entry is invalid for Base provisioning: $workspaceName"
     }
@@ -2966,7 +2965,11 @@ if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -an
 foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     $workspaceName = [string]$workspace.name
     $projectDirectory = [string]$workspace.directory
-    $projectScript = Get-Item -LiteralPath (Join-Path $ProjectProvisioningDirectory ($workspaceName + '.ps1'))
+    $projectScriptPath = Join-Path $ProjectProvisioningDirectory ($workspaceName + '.ps1')
+    if (-not (Test-Path -LiteralPath $projectScriptPath -PathType Leaf)) {
+        continue
+    }
+    $projectScript = Get-Item -LiteralPath $projectScriptPath
     Write-Output "Running project provisioning for $workspaceName"
     & $projectScript.FullName -ProjectDirectory $projectDirectory
 }

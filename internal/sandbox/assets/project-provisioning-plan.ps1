@@ -76,17 +76,25 @@ if ($scripts.Count -gt 16) {
 }
 
 $projects = @()
+$projectErrors = @()
 foreach ($script in $scripts) {
-    $name = [IO.Path]::GetFileNameWithoutExtension($script.Name)
-    if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
-        $script.Length -le 0 -or $script.Length -gt 1048576) {
-        throw "Project provisioning script identity is invalid: $($script.Name)"
-    }
+    try {
+        $name = [IO.Path]::GetFileNameWithoutExtension($script.Name)
+        if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
+            $script.Length -le 0 -or $script.Length -gt 1048576) {
+            throw "Project provisioning script identity is invalid: $($script.Name)"
+        }
 
-    $projects += [pscustomobject]@{
-        name = $name
-        stacks = @(Get-SelectedProvisioningStacks -Script $script -Role 'Project provisioning')
+        $projects += [pscustomobject]@{
+            name = $name
+            stacks = @(Get-SelectedProvisioningStacks -Script $script -Role 'Project provisioning')
+        }
+    } catch {
+        $projectErrors += "$($script.Name): $([string]$_.Exception.Message)"
     }
+}
+if ($projectErrors.Count -ne 0) {
+    throw ("Project provisioning validation failed:`n" + ($projectErrors -join "`n"))
 }
 
 [pscustomobject]@{

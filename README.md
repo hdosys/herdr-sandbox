@@ -326,7 +326,7 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 #### Workspace discovery
 
 - Discovery checks only direct child directories and never maps the root itself. Each Go/RE2 `exclude` expression is case-sensitive unless it uses `(?i)`; any match excludes that child.
-- Every selected child must contain `.herdr-sandbox\provision.ps1`. Its folder name becomes the workspace name; use `workspaces` for external projects or explicit names, which win when both select the same path.
+- Every selected child becomes a workspace even without `.herdr-sandbox\provision.ps1`. When that optional script exists it is validated and run; the folder name becomes the workspace name. Use `workspaces` for external projects or explicit names, which win when both select the same path.
 - The active project is added and deduplicated automatically. At most 16 physical, existing, nonoverlapping, non-reparse workspaces are allowed; a changed set requires `down` before the next `up`.
 
 #### Global extension ownership

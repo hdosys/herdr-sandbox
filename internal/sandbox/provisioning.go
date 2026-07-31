@@ -25,7 +25,7 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 34"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 35"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema            = 1
@@ -380,16 +380,21 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	}
 	sort.Strings(names)
 	workspaces := make([]workspacePlan, 0, len(names)+1)
+	workspaceErrors := []error{}
 	for _, name := range names {
 		workspace, err := newWorkspacePlan(name, configured[name])
 		if err != nil {
-			return provisioningPlan{}, fmt.Errorf("global workspace %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("global workspace %q: %w", name, err))
+			continue
 		}
 		workspaces = append(workspaces, workspace)
 	}
 	discovered, err := discoverWorkspacePlans(configuration.WorkspaceDiscovery)
 	if err != nil {
-		return provisioningPlan{}, err
+		workspaceErrors = append(workspaceErrors, err)
+	}
+	if len(workspaceErrors) > 0 {
+		return provisioningPlan{}, fmt.Errorf("workspace validation failed: %w", errors.Join(workspaceErrors...))
 	}
 	for _, candidate := range discovered {
 		duplicatePath := false
@@ -926,6 +931,7 @@ func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]w
 	})
 
 	workspaces := []workspacePlan{}
+	workspaceErrors := []error{}
 	for _, entry := range entries {
 		name := entry.Name()
 		excluded := false
@@ -940,36 +946,42 @@ func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]w
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err))
+			continue
 		}
 		directoryEntry, err := fileInfoIsDirectory(info)
 		if err != nil {
-			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err))
+			continue
 		}
 		if !directoryEntry {
 			continue
 		}
 		reparse, err := fileInfoIsReparsePoint(info)
 		if err != nil {
-			return nil, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("inspect workspaceDiscovery child %q: %w", name, err))
+			continue
 		}
 		if reparse {
-			return nil, fmt.Errorf("workspaceDiscovery child must not be a reparse point: %s", filepath.Join(root, name))
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("workspaceDiscovery child %q must not be a reparse point: %s", name, filepath.Join(root, name)))
+			continue
 		}
 		child, err := canonicalMappedDirectory(filepath.Join(root, name))
 		if err != nil {
-			return nil, fmt.Errorf("workspaceDiscovery child %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("workspaceDiscovery child %q: %w", name, err))
+			continue
 		}
 		workspace, err := newWorkspacePlan(deriveWorkspaceName(child), child)
 		if err != nil {
-			return nil, fmt.Errorf("workspaceDiscovery child %q: %w", name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("workspaceDiscovery child %q: %w", name, err))
+			continue
 		}
 		workspaces = append(workspaces, workspace)
-		if len(workspaces) > 16 {
-			return nil, fmt.Errorf("workspaceDiscovery selects more than 16 direct child directories")
+		if len(workspaces) == 17 {
+			workspaceErrors = append(workspaceErrors, errors.New("workspaceDiscovery selects more than 16 direct child directories"))
 		}
 	}
-	return workspaces, nil
+	return workspaces, errors.Join(workspaceErrors...)
 }
 
 func newWorkspacePlan(name, directory string) (workspacePlan, error) {
@@ -979,16 +991,12 @@ func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 	if !filepath.IsAbs(directory) {
 		return workspacePlan{}, fmt.Errorf("path is not absolute: %q", directory)
 	}
-	directory = filepath.Clean(directory)
-	info, err := os.Stat(directory)
+	directory, err := canonicalMappedDirectory(directory)
 	if err != nil {
 		return workspacePlan{}, fmt.Errorf("inspect directory: %w", err)
 	}
-	if !info.IsDir() {
-		return workspacePlan{}, fmt.Errorf("path is not a directory: %s", directory)
-	}
-	script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
-	if err := validateProjectProvisioningScript(script); err != nil {
+	script, err := optionalProjectProvisioningPath(directory)
+	if err != nil {
 		return workspacePlan{}, err
 	}
 	return workspacePlan{
@@ -997,6 +1005,19 @@ func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 		GuestDirectory:   guestWorkspaceDirectory(name),
 		ProvisioningPath: script,
 	}, nil
+}
+
+func optionalProjectProvisioningPath(directory string) (string, error) {
+	script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
+	if _, err := os.Lstat(script); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", fmt.Errorf("inspect project provisioning script: %w", err)
+	}
+	if err := validateProjectProvisioningScript(script); err != nil {
+		return "", err
+	}
+	return script, nil
 }
 
 func validateProjectProvisioningScript(path string) error {
@@ -1009,17 +1030,23 @@ func validateProjectProvisioningScript(path string) error {
 
 func canonicalWorkspacePlans(workspaces []workspacePlan) ([]workspacePlan, error) {
 	result := append([]workspacePlan(nil), workspaces...)
+	workspaceErrors := []error{}
 	for index := range result {
 		directory, err := canonicalMappedDirectory(result[index].HostDirectory)
 		if err != nil {
-			return nil, fmt.Errorf("workspace %q: %w", result[index].Name, err)
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("workspace %q: %w", result[index].Name, err))
+			continue
 		}
-		script := filepath.Join(directory, projectConfigurationName, projectProvisioningName)
-		if err := validateProjectProvisioningScript(script); err != nil {
-			return nil, fmt.Errorf("workspace %q: %w", result[index].Name, err)
+		script, err := optionalProjectProvisioningPath(directory)
+		if err != nil {
+			workspaceErrors = append(workspaceErrors, fmt.Errorf("workspace %q: %w", result[index].Name, err))
+			continue
 		}
 		result[index].HostDirectory = directory
 		result[index].ProvisioningPath = script
+	}
+	if len(workspaceErrors) > 0 {
+		return nil, fmt.Errorf("workspace validation failed: %w", errors.Join(workspaceErrors...))
 	}
 	return result, nil
 }

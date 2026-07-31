@@ -109,7 +109,7 @@ func TestInitializeProjectRefusesNestedProfileUnderExistingOwner(t *testing.T) {
 }
 
 func TestProjectPlanRecognizesModernDotNetDirectCall(t *testing.T) {
-	workspaces := []workspacePlan{{Name: "project"}}
+	workspaces := []workspacePlan{{Name: "project", ProvisioningPath: `C:\profiles\project.ps1`}}
 	data := []byte(`{"schemaVersion":2,"userStacks":[],"projects":[{"name":"project","stacks":["dotnet"]}]}`)
 	result, _, err := decodeProjectProvisioningPlan(data, workspaces)
 	if err != nil || len(result) != 1 || len(result[0].Stacks) != 1 || result[0].Stacks[0] != stackDotNet {

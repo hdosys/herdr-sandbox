@@ -109,7 +109,13 @@ func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]w
 	if err := ensureJSONEOF(decoder); err != nil {
 		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
 	}
-	if decoded.SchemaVersion != projectProvisioningPlanSchema || len(decoded.Projects) != len(workspaces) {
+	expectedProjects := 0
+	for _, workspace := range workspaces {
+		if workspace.ProvisioningPath != "" {
+			expectedProjects++
+		}
+	}
+	if decoded.SchemaVersion != projectProvisioningPlanSchema || len(decoded.Projects) != expectedProjects {
 		return nil, nil, fmt.Errorf("provisioning inspection schema or project count is invalid")
 	}
 	userStacks, err := validateInspectedStacks(decoded.UserStacks, "user provisioning")
@@ -126,13 +132,18 @@ func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]w
 	seenProjects := make(map[string]bool, len(result))
 	for _, project := range decoded.Projects {
 		index, found := indexes[project.Name]
-		if !found || seenProjects[project.Name] {
+		if !found || result[index].ProvisioningPath == "" || seenProjects[project.Name] {
 			return nil, nil, fmt.Errorf("project provisioning inspection returned unexpected or duplicate project %q", project.Name)
 		}
 		seenProjects[project.Name] = true
 		result[index].Stacks, err = validateInspectedStacks(project.Stacks, fmt.Sprintf("project %q", project.Name))
 		if err != nil {
 			return nil, nil, err
+		}
+	}
+	for _, workspace := range result {
+		if workspace.ProvisioningPath != "" && !seenProjects[workspace.Name] {
+			return nil, nil, fmt.Errorf("project provisioning inspection omitted project %q", workspace.Name)
 		}
 	}
 	return result, userStacks, nil

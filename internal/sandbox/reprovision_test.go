@@ -141,7 +141,10 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		ProjectScriptsDirectory: projects,
 		PackagePlanPath:         filepath.Join(directory, wingetPackagePlanFileName),
 		WorkspaceManifestPath:   filepath.Join(directory, workspaceManifestName),
-		Workspaces:              []workspacePlan{{Name: "one"}},
+		Workspaces: []workspacePlan{
+			{Name: "one", ProvisioningPath: filepath.Join(projects, "one.ps1")},
+			{Name: "plain"},
+		},
 	}
 	data, err := buildReprovisionArchive(snapshot)
 	if err != nil {
@@ -194,6 +197,7 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		`C:\HerdrSandbox\staging`,
 		"reprovision-aaaaaaaaaaaaaaaa",
 		"Assert-GuestArchiveTree",
+		"New-Item -ItemType Directory -Path $projectsDirectory -Force",
 		`$env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'`,
 		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
 		"*>&1",

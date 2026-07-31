@@ -201,6 +201,9 @@ func inspectEffectivePlanScripts(ctx context.Context, provisioning provisioningP
 		return nil, nil, fmt.Errorf("write temporary user inspection input: %w", err)
 	}
 	for _, workspace := range provisioning.Workspaces {
+		if workspace.ProvisioningPath == "" {
+			continue
+		}
 		data, err := readProvisioningScript(workspace.ProvisioningPath, "project provisioning script", maximumProjectScriptSize)
 		if err != nil {
 			return nil, nil, err

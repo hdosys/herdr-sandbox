@@ -650,6 +650,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		return provisioningSnapshot{}, fmt.Errorf("create project provisioning snapshot directory: %w", err)
 	}
 	for _, workspace := range provisioning.Workspaces {
+		if workspace.ProvisioningPath == "" {
+			continue
+		}
 		data, readErr := readProvisioningScript(workspace.ProvisioningPath, "project provisioning script", maximumProjectScriptSize)
 		if readErr != nil {
 			return provisioningSnapshot{}, fmt.Errorf("read provisioning script %s: %w", workspace.ProvisioningPath, readErr)

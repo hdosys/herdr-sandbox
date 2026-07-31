@@ -38,7 +38,10 @@ Install-RustMSVCStack -ProjectDirectory 'C:\Workspaces\herdr'
 Install-ZigStack -Version '0.15.2'
 Install-Just
 `)
-	workspaces := []workspacePlan{{Name: "alpha"}, {Name: "herdr"}}
+	workspaces := []workspacePlan{
+		{Name: "alpha", ProvisioningPath: projectsDirectory + `\alpha.ps1`},
+		{Name: "herdr", ProvisioningPath: projectsDirectory + `\herdr.ps1`},
+	}
 	got, userStacks, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, workspaces)
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
@@ -62,9 +65,14 @@ func TestInspectProjectProvisioningPlanRejectsParseErrors(t *testing.T) {
 	projectsDirectory := t.TempDir()
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\n")
-	writeTestFile(t, projectsDirectory+`\broken.ps1`, "function Broken {\n")
-	_, _, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, []workspacePlan{{Name: "broken"}})
-	if err == nil || !strings.Contains(err.Error(), "parse failed") {
+	writeTestFile(t, projectsDirectory+`\broken-one.ps1`, "function Broken {\n")
+	writeTestFile(t, projectsDirectory+`\broken-two.ps1`, "function AlsoBroken {\n")
+	workspaces := []workspacePlan{
+		{Name: "broken-one", ProvisioningPath: projectsDirectory + `\broken-one.ps1`},
+		{Name: "broken-two", ProvisioningPath: projectsDirectory + `\broken-two.ps1`},
+	}
+	_, _, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, workspaces)
+	if err == nil || !strings.Contains(err.Error(), "parse failed") || !strings.Contains(err.Error(), "broken-one.ps1") || !strings.Contains(err.Error(), "broken-two.ps1") {
 		t.Fatalf("parse error = %v", err)
 	}
 }
@@ -78,14 +86,14 @@ func TestInspectProjectProvisioningPlanRejectsUserParamBlock(t *testing.T) {
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\nparam([string]$Unexpected)\n")
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Write-Output 'project'\n")
-	_, _, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, []workspacePlan{{Name: "alpha"}})
+	_, _, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, []workspacePlan{{Name: "alpha", ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
 	if err == nil || !strings.Contains(err.Error(), "must not declare a script-level param block") {
 		t.Fatalf("user param block error = %v", err)
 	}
 }
 
 func TestDecodeProjectProvisioningPlanIsStrict(t *testing.T) {
-	workspaces := []workspacePlan{{Name: "alpha"}}
+	workspaces := []workspacePlan{{Name: "alpha", ProvisioningPath: `C:\profiles\alpha.ps1`}}
 	valid := []byte(`{"schemaVersion":2,"userStacks":["rust-msvc"],"projects":[{"name":"alpha","stacks":["go"]}]}`)
 	got, userStacks, err := decodeProjectProvisioningPlan(valid, workspaces)
 	if err != nil || len(got) != 1 || len(got[0].Stacks) != 1 || got[0].Stacks[0] != stackGo {
@@ -107,6 +115,21 @@ func TestDecodeProjectProvisioningPlanIsStrict(t *testing.T) {
 		if _, _, err := decodeProjectProvisioningPlan(invalid, workspaces); err == nil {
 			t.Fatalf("invalid plan unexpectedly decoded: %s", invalid)
 		}
+	}
+}
+
+func TestDecodeProjectProvisioningPlanAllowsWorkspaceWithoutProfile(t *testing.T) {
+	workspaces := []workspacePlan{
+		{Name: "profiled", ProvisioningPath: `C:\profiles\profiled.ps1`},
+		{Name: "plain"},
+	}
+	data := []byte(`{"schemaVersion":2,"userStacks":[],"projects":[{"name":"profiled","stacks":["go"]}]}`)
+	got, _, err := decodeProjectProvisioningPlan(data, workspaces)
+	if err != nil {
+		t.Fatalf("decode optional project provisioning plan: %v", err)
+	}
+	if len(got) != 2 || len(got[0].Stacks) != 1 || got[0].Stacks[0] != stackGo || len(got[1].Stacks) != 0 {
+		t.Fatalf("optional project provisioning plan = %#v", got)
 	}
 }
 

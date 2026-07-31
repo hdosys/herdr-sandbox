@@ -276,7 +276,8 @@ func runRetainedProvisioning(ctx context.Context, connection Connection, snapsho
 	}
 	defer clear(archive)
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
-	launcher := buildReprovisionLauncher(digest, len(archive), len(snapshot.Workspaces))
+	projectCount := workspaceProvisioningProfileCount(snapshot.Workspaces)
+	launcher := buildReprovisionLauncher(digest, len(archive), projectCount)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcher, "run retained provisioning")
 	if err != nil {
 		return err
@@ -285,7 +286,7 @@ func runRetainedProvisioning(ctx context.Context, connection Connection, snapsho
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != reprovisionResultSchema || result.ArchiveSHA256 != digest || result.ProjectCount != len(snapshot.Workspaces) {
+	if result.SchemaVersion != reprovisionResultSchema || result.ArchiveSHA256 != digest || result.ProjectCount != projectCount {
 		return fmt.Errorf("verify retained provisioning result: schema=%d digest=%q projects=%d", result.SchemaVersion, result.ArchiveSHA256, result.ProjectCount)
 	}
 	return nil
@@ -332,6 +333,9 @@ func buildReprovisionArchive(snapshot provisioningSnapshot) ([]byte, error) {
 		{snapshot.WorkspaceManifestPath, workspaceManifestName},
 	}
 	for _, workspace := range snapshot.Workspaces {
+		if workspace.ProvisioningPath == "" {
+			continue
+		}
 		files = append(files, struct {
 			source      string
 			destination string
@@ -347,6 +351,16 @@ func buildReprovisionArchive(snapshot provisioningSnapshot) ([]byte, error) {
 		return nil, fmt.Errorf("finalize retained provisioning archive: %w", err)
 	}
 	return buffer.Bytes(), nil
+}
+
+func workspaceProvisioningProfileCount(workspaces []workspacePlan) int {
+	count := 0
+	for _, workspace := range workspaces {
+		if workspace.ProvisioningPath != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int) string {
@@ -382,14 +396,16 @@ try {
             throw "Retained provisioning input is missing: $name"
         }
     }
-    $projects = @(Get-ChildItem -LiteralPath (Join-Path $expanded 'projects') -File -Filter '*.ps1')
+    $projectsDirectory = Join-Path $expanded 'projects'
+    New-Item -ItemType Directory -Path $projectsDirectory -Force | Out-Null
+    $projects = @(Get-ChildItem -LiteralPath $projectsDirectory -File -Filter '*.ps1')
     if ($projects.Count -ne %d) { throw "Retained provisioning project count is $($projects.Count)." }
     $reparse = @(Get-ChildItem -LiteralPath $expanded -Force -Recurse | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
     if ($reparse.Count -ne 0) { throw 'Retained provisioning input contains a reparse point.' }
     $env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'
     $captured = @()
     try {
-        $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory (Join-Path $expanded 'projects') -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') *>&1)
+        $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') *>&1)
     } catch {
         $detail = @($captured | Select-Object -Last 20 | ForEach-Object { [string]$_ })
         $detail += [string]$_.Exception.Message
