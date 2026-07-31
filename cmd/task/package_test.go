@@ -217,7 +217,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`AllowSkipFiles off`,
 		`InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
 		`SetDatablockOptimize on`,
-		`SetCompressorDictSize 32`,
+		`SetCompressorDictSize 8`,
 		`SetCompressor /SOLID /FINAL lzma`,
 		`AutoCloseWindow true`,
 		`!define MUI_FINISHPAGE_NOREBOOTSUPPORT`,

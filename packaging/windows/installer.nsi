@@ -79,7 +79,7 @@ InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
 RequestExecutionLevel user
 SetCompressor lzma
 SetDatablockOptimize on
-SetCompressorDictSize 32
+SetCompressorDictSize 8
 SetCompressor /SOLID /FINAL lzma
 AllowSkipFiles off
 ManifestDPIAware true
