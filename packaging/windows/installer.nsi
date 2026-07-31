@@ -33,6 +33,9 @@ Unicode true
 !ifndef APP_STACK_SCRIPT
     !error "APP_STACK_SCRIPT is required"
 !endif
+!ifndef APP_LICENSE
+    !error "APP_LICENSE is required"
+!endif
 !ifndef APP_CONFIG_FILE
     !error "APP_CONFIG_FILE is required"
 !endif
@@ -104,6 +107,7 @@ VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_set
 !define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
@@ -253,6 +257,7 @@ Section "Install"
     ClearErrors
     File "${PACKAGE_DIR}\${APP_BASE_SCRIPT}"
     File "${PACKAGE_DIR}\${APP_EXECUTABLE}"
+    File "${PACKAGE_DIR}\${APP_LICENSE}"
     File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"
     ${If} ${Errors}
         MessageBox MB_ICONSTOP|MB_OK "Could not extract the ${APP_DISPLAY_NAME} application package." /SD IDOK
@@ -262,16 +267,19 @@ Section "Install"
     CreateDirectory "$INSTDIR"
     !insertmacro BackupRuntimeFile "${APP_BASE_SCRIPT}" $6
     !insertmacro BackupRuntimeFile "${APP_EXECUTABLE}" $7
+    !insertmacro BackupRuntimeFile "${APP_LICENSE}" $R1
     !insertmacro BackupRuntimeFile "${APP_STACK_SCRIPT}" $8
 
     StrCpy $9 "0"
     !insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"
     !insertmacro ReplaceRuntimeFile "${APP_BASE_SCRIPT}"
+    !insertmacro ReplaceRuntimeFile "${APP_LICENSE}"
     !insertmacro ReplaceRuntimeFile "${APP_STACK_SCRIPT}"
     ${If} $9 != "0"
         StrCpy $R0 "0"
         !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
         !insertmacro RestoreRuntimeFile "${APP_BASE_SCRIPT}" $6
+        !insertmacro RestoreRuntimeFile "${APP_LICENSE}" $R1
         !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
         ${If} $R0 == "0"
             MessageBox MB_ICONSTOP|MB_OK "Could not update ${APP_DISPLAY_NAME}; the prior application files were restored. Close running commands and try again." /SD IDOK
@@ -376,6 +384,7 @@ Section "Uninstall"
     ${EndIf}
     ClearErrors
     Delete "$INSTDIR\${APP_BASE_SCRIPT}"
+    Delete "$INSTDIR\${APP_LICENSE}"
     Delete "$INSTDIR\${APP_STACK_SCRIPT}"
     ${If} ${Errors}
         MessageBox MB_ICONSTOP|MB_OK "Could not remove the installed ${APP_DISPLAY_NAME} files. Check their permissions and try again." /SD IDOK

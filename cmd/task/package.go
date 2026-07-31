@@ -34,6 +34,7 @@ var releasePackageFiles = []releasePackageFile{
 	{Name: productidentity.ExecutableName, Mode: 0o755},
 	{Name: productidentity.BaseScriptName, Mode: 0o644},
 	{Name: productidentity.StackScriptName, Mode: 0o644},
+	{Name: productidentity.LicenseName, Mode: 0o644},
 }
 
 type releaseVersion struct {
@@ -405,6 +406,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_EXECUTABLE=" + productidentity.ExecutableName,
 		"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName,
 		"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName,
+		"/DAPP_LICENSE=" + productidentity.LicenseName,
 		"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName,
 		"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName,
 		"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName,

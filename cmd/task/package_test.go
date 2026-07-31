@@ -51,7 +51,7 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 	}
 }
 
-func TestStageAndZIPReleasePackageContainExactRuntimeFiles(t *testing.T) {
+func TestStageAndZIPReleasePackageContainExactFiles(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "bin")
 	if err := os.MkdirAll(source, 0o755); err != nil {
@@ -109,7 +109,7 @@ func TestStageAndZIPReleasePackageContainExactRuntimeFiles(t *testing.T) {
 			t.Fatalf("ZIP content %s = %q", file.Name, data)
 		}
 	}
-	wantNames := []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName}
+	wantNames := []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, productidentity.LicenseName}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("ZIP entries = %v, want %v", names, wantNames)
 	}
@@ -227,6 +227,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`${APP_NAME} up`,
 		`!define MUI_FINISHPAGE_LINK "View setup and usage guide"`,
 		`!define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"`,
+		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
 		`${GetOptions} $0 "/DELETE_CONFIG" $1`,
@@ -234,9 +235,13 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
 		`File "${PACKAGE_DIR}\${APP_BASE_SCRIPT}"`,
 		`File "${PACKAGE_DIR}\${APP_EXECUTABLE}"`,
+		`File "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`BackupRuntimeFile`,
+		`BackupRuntimeFile "${APP_LICENSE}" $R1`,
+		`ReplaceRuntimeFile "${APP_LICENSE}"`,
 		`RestoreRuntimeFile`,
+		`RestoreRuntimeFile "${APP_LICENSE}" $R1`,
 		`VIProductVersion "${FIXED_VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
@@ -251,6 +256,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`User32::SendNotifyMessageW`,
 		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
 		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
+		`Delete "$INSTDIR\${APP_LICENSE}"`,
 		`Delete "$INSTDIR\${APP_STACK_SCRIPT}"`,
 	} {
 		if !strings.Contains(source, want) {
@@ -297,11 +303,13 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	if cleanupIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= executableDeleteIndex {
 		t.Fatalf("clean uninstall must finish before executable deletion")
 	}
+	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
+	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)
 	installFilesIndex := strings.Index(source, `!insertmacro MUI_PAGE_INSTFILES`)
 	finishPageIndex := strings.Index(source, `!insertmacro MUI_PAGE_FINISH`)
 	uninstallPageIndex := strings.Index(source, `UninstPage custom un.DeleteConfigurationPage`)
-	if installFilesIndex < 0 || finishPageIndex <= installFilesIndex || uninstallPageIndex <= finishPageIndex {
-		t.Fatal("installer flow must end Welcome/Files/Finish before uninstaller pages")
+	if welcomePageIndex < 0 || licensePageIndex <= welcomePageIndex || installFilesIndex <= licensePageIndex || finishPageIndex <= installFilesIndex || uninstallPageIndex <= finishPageIndex {
+		t.Fatal("installer flow must end Welcome/License/Files/Finish before uninstaller pages")
 	}
 }
 
@@ -318,6 +326,7 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_EXECUTABLE=" + productidentity.ExecutableName`,
 		`"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName`,
 		`"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName`,
+		`"/DAPP_LICENSE=" + productidentity.LicenseName`,
 		`"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName`,
 		`"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName`,
 		`"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName`,

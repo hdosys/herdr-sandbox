@@ -6,6 +6,7 @@ const (
 	ExecutableName       = "herdr-sandbox.exe"
 	BaseScriptName       = "base.ps1"
 	StackScriptName      = "stacks.ps1"
+	LicenseName          = "LICENSE"
 	ConfigurationName    = "config.json"
 	UserScriptName       = "user.ps1"
 	ProjectDirectoryName = ".herdr-sandbox"

@@ -198,13 +198,20 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output)...); err != nil {
 		return err
 	}
-	for _, name := range []string{productidentity.BaseScriptName, productidentity.StackScriptName} {
-		data, err := os.ReadFile(filepath.Join("provisioning", name))
+	for _, asset := range []struct {
+		Source string
+		Name   string
+	}{
+		{Source: filepath.Join("provisioning", productidentity.BaseScriptName), Name: productidentity.BaseScriptName},
+		{Source: filepath.Join("provisioning", productidentity.StackScriptName), Name: productidentity.StackScriptName},
+		{Source: productidentity.LicenseName, Name: productidentity.LicenseName},
+	} {
+		data, err := os.ReadFile(asset.Source)
 		if err != nil {
-			return fmt.Errorf("read provisioning asset %s: %w", name, err)
+			return fmt.Errorf("read build asset %s: %w", asset.Name, err)
 		}
-		if err := os.WriteFile(filepath.Join(filepath.Dir(output), name), data, 0o644); err != nil {
-			return fmt.Errorf("write provisioning asset %s: %w", name, err)
+		if err := os.WriteFile(filepath.Join(filepath.Dir(output), asset.Name), data, 0o644); err != nil {
+			return fmt.Errorf("write build asset %s: %w", asset.Name, err)
 		}
 	}
 	return nil

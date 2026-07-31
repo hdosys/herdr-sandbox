@@ -2,11 +2,14 @@
 
 **Run coding agents in a disposable, native Windows development environment—without RDP, broad home-directory mounts, or host toolchain drift.**
 
-[![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white)
+[![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 `herdr-sandbox` is a Windows-native counterpart to a [dev container](https://containers.dev/). It launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, starts Herdr in the guest, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
 
-[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Development](#development)
+> [!NOTE]
+> This README describes intended behavior, not a guarantee that every feature will be available or work on every Windows configuration. Host policy, networking, upstream tools, and platform changes can affect operation.
+
+[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Development](#development) · [License](#license)
 
 ## Key capabilities
 
@@ -45,7 +48,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 ## Engineering approach
 
-`herdr-sandbox` is a production-minded compiled Go application. Go owns the host control plane and launch/lifecycle decisions; PowerShell is a deliberately narrow adapter for Windows-specific provisioning and installer work.
+`herdr-sandbox` is a compiled Go application. Go owns the host control plane and launch/lifecycle decisions; PowerShell is a deliberately narrow adapter for Windows-specific provisioning and installer work.
 
 - Standard-library-first Go with no CGO or helper runtime.
 - `context.Context` cancellation and bounded waits for subprocesses and long operations.
@@ -85,11 +88,11 @@ winget install hdosys.herdr-sandbox hdosys.herdr-win
 > [!NOTE]
 > The identifiers and command above are the committed distribution contract, but the manifests are not yet available in the public WinGet source. Neither package will bundle or declare a package dependency on the other.
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both packages use the same verified three-file layout: `herdr-sandbox.exe`, `base.ps1`, and `stacks.ps1`.
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both distribute the same four application files: `herdr-sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE`.
 
 #### Portable ZIP
 
-Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all three files into one directory. Keep `base.ps1` and `stacks.ps1` beside `herdr-sandbox.exe`, then run `.\herdr-sandbox.exe` or add that directory to your user `PATH`.
+Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep `base.ps1`, `stacks.ps1`, and `LICENSE` beside `herdr-sandbox.exe`, then run `.\herdr-sandbox.exe` or add that directory to your user `PATH`.
 
 #### Build from source
 
@@ -99,11 +102,11 @@ From the repository root:
 go run ./cmd/task check
 ```
 
-The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets. Use that executable directly or add `build\bin` to your user `PATH`.
+The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets and a copy of `LICENSE`. Use that executable directly or add `build\bin` to your user `PATH`.
 
 #### Installer
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access and adds the application to Windows Installed Apps. Its finish page explains the terminal-first next steps and links to this setup and usage guide without launching a program or browser automatically.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access, displays the Apache 2.0 license before installation, installs `LICENSE` beside the executable, and adds the application to Windows Installed Apps. Its finish page explains the terminal-first next steps and links to this setup and usage guide without launching a program or browser automatically.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches the sidecar from the same release.
@@ -111,9 +114,9 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`, updates all three runtime files together with rollback on replacement failure, creates `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` when each is absent, adds the install directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. Setup and upgrades never replace existing `config.json` or `user.ps1`. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
+Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and replaces the four packaged files as one set. If replacement fails, it attempts to restore the prior set and reports any incomplete rollback. It creates `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` when each is absent, adds the install directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. Setup and upgrades never replace existing `config.json` or `user.ps1`. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
 
-Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. Every uninstall stops a proven app-owned Sandbox and completely removes `%LOCALAPPDATA%\herdr-sandbox`, the managed SSH integration, the selected dedicated cache, the application, registration, and installer-owned `PATH` entry. The **Also delete config.json and user.ps1** checkbox is off by default: leave it unchecked to preserve the entire `%APPDATA%\herdr-sandbox` configuration root for reinstall, or check it to remove that whole directory too. Project `.herdr-sandbox\provision.ps1` files and unrelated SSH/install-directory content are always preserved. Unsafe ownership aborts before the application is removed.
+Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. A successful uninstall first stops a proven app-owned Sandbox, then removes `%LOCALAPPDATA%\herdr-sandbox`, the managed SSH integration, the selected dedicated cache, the application files, registration, and installer-owned `PATH` entry. The **Also delete config.json and user.ps1** checkbox is off by default: leave it unchecked to preserve the entire `%APPDATA%\herdr-sandbox` configuration root for reinstall, or check it to remove that whole directory too. Project `.herdr-sandbox\provision.ps1` files and unrelated SSH/install-directory content are outside the uninstaller's ownership. Unsafe ownership or cleanup failure aborts before the application is removed.
 
 </details>
 
@@ -473,6 +476,10 @@ go run ./cmd/task package v0.0.0
 ```
 
 `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. `package` requires the pinned NSIS 3.12 compiler and writes the installer, ZIP, and both checksum files under `build\dist`; it never installs the resulting package. Repository-owned provisioning and installer helper scripts run exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
+
+## License
+
+`herdr-sandbox` is licensed under the [Apache License, Version 2.0](LICENSE) and is provided on an **"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND**. See the license for the governing terms, including its warranty disclaimer and limitation of liability.
 
 ## Documentation
 
