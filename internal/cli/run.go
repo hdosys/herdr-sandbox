@@ -60,6 +60,7 @@ type commandDependencies struct {
 	inspect        sessionInspector
 	resolveHerdr   func(context.Context) (sandbox.HostHerdr, error)
 	up             func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error)
+	down           func(context.Context) (sandbox.DownResult, error)
 	openReady      func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error)
 	attach         func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
 	validateAttach func(io.Reader, io.Writer, io.Writer) error
@@ -75,6 +76,7 @@ func defaultCommandDependencies() commandDependencies {
 		inspect:        sandbox.InspectSession,
 		resolveHerdr:   sandbox.ResolveHostHerdr,
 		up:             sandbox.Up,
+		down:           sandbox.Down,
 		openReady:      sandbox.OpenReadyConnection,
 		attach:         sandbox.Attach,
 		validateAttach: sandbox.ValidateInteractiveAttachStreams,
@@ -193,7 +195,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 			return 1
 		}
-		result, err := sandbox.Down(ctx)
+		result, err := dependencies.down(ctx)
 		if err != nil {
 			fmt.Fprintln(stderr, "herdr-sandbox:", err)
 			return 1

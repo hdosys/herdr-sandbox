@@ -717,26 +717,7 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	contents, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "configuration_sync.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	prefix := []byte("remoteScript := `")
-	suffix := []byte("`\n\tarchive, err := buildDevelopmentConfigurationArchive")
-	start := bytes.Index(contents, prefix)
-	if start < 0 {
-		t.Fatal("remote configuration script start was not found")
-	}
-	start += len(prefix)
-	end := bytes.Index(contents[start:], suffix)
-	if end < 0 {
-		t.Fatal("remote configuration script end was not found")
-	}
-	remoteScript := contents[start : start+end]
+	remoteScript := configurationSyncScript
 	for _, required := range [][]byte{
 		[]byte("herdr-sandbox\\workspaces.json"),
 		[]byte("--replace-all' 'safe.directory"),

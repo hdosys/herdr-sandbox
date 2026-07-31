@@ -305,14 +305,7 @@ func TestCodingAgentPowerShellSyncPreservesAbsentAndExcludedStateAndRejectsJunct
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 configuration-sync regression")
 	}
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	contents, err := os.ReadFile(filepath.Join(filepath.Dir(currentFile), "configuration_sync.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	contents := configurationSyncScript
 	startMarker := []byte("$script:CopiedConfigurationFiles = 0")
 	endMarker := []byte("function Invoke-GuestGitHubCLI {")
 	start := bytes.Index(contents, startMarker)

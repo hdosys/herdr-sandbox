@@ -319,12 +319,18 @@ func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
 	// ssh.exe lookup; no SSH process or network connection can be started.
 	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid")
 	command.Env = hostHerdrCapabilityEnvironment(os.Environ())
-	output, _ = command.CombinedOutput()
+	output, err = command.CombinedOutput()
 	if remoteUnsupportedDiagnostic(output) {
 		return hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(output))
 	}
+	if err == nil {
+		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe unexpectedly succeeded")
+	}
 	if ctx.Err() != nil {
 		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe did not terminate: %v", ctx.Err())
+	}
+	if !expectedSSHLookupFailure(output) {
+		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe failed before the expected ssh.exe lookup: %v: %s", err, boundedText(output))
 	}
 	return nil
 }
@@ -346,6 +352,10 @@ func remoteUnsupportedDiagnostic(output []byte) bool {
 	lower := strings.ToLower(string(output))
 	return strings.Contains(lower, "unsupported") ||
 		(strings.Contains(lower, "remote") && strings.Contains(lower, "not supported"))
+}
+
+func expectedSSHLookupFailure(output []byte) bool {
+	return strings.TrimSpace(string(output)) == "error: program not found"
 }
 
 func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {

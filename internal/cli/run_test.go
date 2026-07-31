@@ -311,6 +311,52 @@ func TestRunCleanUsesOneCanonicalCleanupResult(t *testing.T) {
 	}
 }
 
+func TestRunDownUsesInjectedOwner(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		result     sandbox.DownResult
+		downError  error
+		wantCode   int
+		wantOutput string
+	}{
+		{
+			name:       "success",
+			result:     sandbox.DownResult{RunID: "20260724-123456-abcdef12"},
+			wantOutput: "Result: stopped",
+		},
+		{
+			name:       "failure",
+			downError:  errors.New("down fixture"),
+			wantCode:   1,
+			wantOutput: "down fixture",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dependencies := defaultCommandDependencies()
+			order := []string{}
+			dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+				order = append(order, "cleanup")
+				return sandbox.CleanResult{}, nil
+			}
+			dependencies.down = func(context.Context) (sandbox.DownResult, error) {
+				order = append(order, "down")
+				return test.result, test.downError
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := runWithCommandDependencies(context.Background(), []string{"down"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+			output := stdout.String()
+			unexpectedOutput := stderr.String()
+			if test.downError != nil {
+				output, unexpectedOutput = stderr.String(), stdout.String()
+			}
+			if code != test.wantCode || strings.Join(order, "|") != "cleanup|down" || unexpectedOutput != "" || !strings.Contains(output, test.wantOutput) {
+				t.Fatalf("code = %d, order = %v, stdout = %q, stderr = %q", code, order, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	cleanupCalled := false

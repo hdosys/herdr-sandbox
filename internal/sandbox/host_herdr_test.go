@@ -12,7 +12,10 @@ import (
 	"testing"
 )
 
-const hostHerdrFixtureEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR"
+const (
+	hostHerdrFixtureEnvironment        = "HERDR_SANDBOX_TEST_HOST_HERDR"
+	hostHerdrRemoteExitCodeEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE_EXIT_CODE"
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(hostHerdrFixtureEnvironment) == "1" {
@@ -43,8 +46,14 @@ func runHostHerdrFixtureProcess() {
 		fmt.Fprintln(os.Stderr, "error: missing value for --remote")
 		os.Exit(2)
 	case len(arguments) == 2 && arguments[0] == "--remote":
-		fmt.Fprintln(os.Stderr, os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE"))
-		os.Exit(1)
+		if diagnostic := os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE"); diagnostic != "" {
+			fmt.Fprintln(os.Stderr, diagnostic)
+		}
+		exitCode := 1
+		if configured := os.Getenv(hostHerdrRemoteExitCodeEnvironment); configured != "" {
+			_, _ = fmt.Sscanf(configured, "%d", &exitCode)
+		}
+		os.Exit(exitCode)
 	default:
 		fmt.Fprintf(os.Stderr, "unexpected fixture arguments: %q\n", arguments)
 		os.Exit(2)
@@ -115,6 +124,35 @@ func TestResolveHostHerdrRejectsUnsupportedCaseInsensitivelyWithWinGetAction(t *
 	_, err := ResolveHostHerdr(context.Background())
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported") || !strings.Contains(err.Error(), hostHerdrInstallCommand) {
 		t.Fatalf("unsupported remote error = %v", err)
+	}
+}
+
+func TestResolveHostHerdrRejectsUnexpectedRemoteCapabilityFailures(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable fixture")
+	}
+	tests := []struct {
+		name       string
+		diagnostic string
+		exitCode   string
+	}{
+		{name: "empty output", exitCode: "1"},
+		{name: "panic", diagnostic: "thread 'main' panicked: ssh executable file not found", exitCode: "101"},
+		{name: "unrelated failure", diagnostic: "error: configuration is corrupt", exitCode: "7"},
+		{name: "unrelated SSH failure", diagnostic: "error: configuration failed before ssh program not found", exitCode: "7"},
+		{name: "arbitrary missing program", diagnostic: "error: internal helper program not found", exitCode: "23"},
+		{name: "unexpected success", diagnostic: "error: program not found", exitCode: "0"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prepareHostHerdrFixture(t)
+			t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", test.diagnostic)
+			t.Setenv(hostHerdrRemoteExitCodeEnvironment, test.exitCode)
+			_, err := ResolveHostHerdr(context.Background())
+			if err == nil || !strings.Contains(err.Error(), hostHerdrInstallCommand) {
+				t.Fatalf("unexpected remote capability error = %v", err)
+			}
+		})
 	}
 }
 
@@ -203,6 +241,33 @@ func TestRemoteUnsupportedDiagnosticAcceptsCaseAndNotSupportedPhrase(t *testing.
 	}
 	if remoteUnsupportedDiagnostic([]byte("missing value for --remote")) {
 		t.Fatal("missing-target diagnostic was classified as unsupported")
+	}
+}
+
+func TestExpectedSSHLookupFailureAcceptsOnlyTheLookupBoundary(t *testing.T) {
+	for _, diagnostic := range []string{
+		"error: program not found",
+		"\r\nerror: program not found\r\n",
+	} {
+		if !expectedSSHLookupFailure([]byte(diagnostic)) {
+			t.Fatalf("expected SSH lookup diagnostic was rejected: %q", diagnostic)
+		}
+	}
+	for _, diagnostic := range []string{
+		"",
+		"thread 'main' panicked",
+		"thread 'main' panicked: ssh executable file not found",
+		"error: configuration is corrupt",
+		"error: configuration failed before ssh program not found",
+		"error: internal helper program not found",
+		"error: failed to start ssh.exe: program not found",
+		"ssh executable file not found in PATH",
+		"ssh.exe: The system cannot find the file specified",
+		"error: missing value for --remote",
+	} {
+		if expectedSSHLookupFailure([]byte(diagnostic)) {
+			t.Fatalf("unexpected diagnostic was accepted as an SSH lookup failure: %q", diagnostic)
+		}
 	}
 }
 
@@ -300,7 +365,8 @@ func prepareHostHerdrFixture(t *testing.T) (string, string) {
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "1.2.3-test")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL", "42")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME", runtimePath)
-	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "error: failed to start ssh.exe for remote capability probe")
+	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "error: program not found")
+	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "1")
 	t.Setenv("PATH", filepath.Dir(commandPath))
 	return commandPath, runtimePath
 }
