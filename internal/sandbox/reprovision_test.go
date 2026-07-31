@@ -64,7 +64,7 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 			Active:           true,
 		}},
 	}
-	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Workspaces, 4096, provisioning.Audio)
+	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +87,8 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	if err := os.WriteFile(configPath, legacyConfig, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio") {
-		t.Fatalf("legacy retained audio plan error = %v", err)
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio output") {
+		t.Fatalf("legacy retained audio output plan error = %v", err)
 	}
 	if err := os.WriteFile(configPath, config, 0o600); err != nil {
 		t.Fatal(err)
@@ -96,11 +96,16 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "memory") || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
 		t.Fatalf("changed retained plan error = %v", err)
 	}
-	provisioning.Audio = true
-	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio") {
-		t.Fatalf("changed retained audio selection error = %v", err)
+	provisioning.AudioOutput = true
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio output") {
+		t.Fatalf("changed retained audio output selection error = %v", err)
 	}
-	provisioning.Audio = false
+	provisioning.AudioOutput = false
+	provisioning.AudioInput = true
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio input") {
+		t.Fatalf("changed retained audio input selection error = %v", err)
+	}
+	provisioning.AudioInput = false
 	provisioning.Tailscale = true
 	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "Tailscale identity selection differs") {
 		t.Fatalf("changed retained Tailscale selection error = %v", err)

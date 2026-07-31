@@ -187,7 +187,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, workspaces); err != nil {
 		return runPlan{}, nil, err
 	}
-	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB, provisioning.Audio)
+	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, nil, err
 	}

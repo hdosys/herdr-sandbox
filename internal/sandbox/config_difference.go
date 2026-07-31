@@ -21,15 +21,20 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("decode expected Sandbox launch contract: %w", err)
 	}
-	differences := make([]string, 0, 5)
+	differences := make([]string, 0, 6)
 	if actual.MemoryInMB != expected.MemoryInMB {
 		differences = append(differences, "memory")
 	}
-	actualAudio, actualAudioFound := wsbAudioSelection(actual.LogonCommand.Command)
-	expectedAudio, expectedAudioFound := wsbAudioSelection(expected.LogonCommand.Command)
-	audioDifference := expectedAudioFound && (!actualAudioFound || actualAudio != expectedAudio)
-	if audioDifference {
-		differences = append(differences, "audio")
+	actualAudioOutput, actualAudioOutputFound := wsbAudioSelection(actual.LogonCommand.Command, "AudioPlayback")
+	expectedAudioOutput, expectedAudioOutputFound := wsbAudioSelection(expected.LogonCommand.Command, "AudioPlayback")
+	if expectedAudioOutputFound && (!actualAudioOutputFound || actualAudioOutput != expectedAudioOutput) {
+		differences = append(differences, "audio output")
+	}
+	actualAudioInput, actualAudioInputFound := wsbAudioSelection(actual.LogonCommand.Command, "AudioInput")
+	expectedAudioInput, expectedAudioInputFound := wsbAudioSelection(expected.LogonCommand.Command, "AudioInput")
+	if actual.AudioInput != expected.AudioInput ||
+		expectedAudioInputFound && (!actualAudioInputFound || actualAudioInput != expectedAudioInput) {
+		differences = append(differences, "audio input")
 	}
 	actualMappings := indexWSBMappings(actual.MappedFolders.Folders)
 	expectedMappings := indexWSBMappings(expected.MappedFolders.Folders)
@@ -42,7 +47,7 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if !sameWSBStaticContract(actual, expected) ||
 		!sameWSBMapping(actualMappings[strings.ToLower(guestInputDirectory)], expectedMappings[strings.ToLower(guestInputDirectory)]) ||
 		!sameWSBMapping(actualMappings[strings.ToLower(guestStatusDirectory)], expectedMappings[strings.ToLower(guestStatusDirectory)]) ||
-		normalizeWSBAudioSelection(actual.LogonCommand.Command) != normalizeWSBAudioSelection(expected.LogonCommand.Command) ||
+		normalizeWSBAudioSelections(actual.LogonCommand.Command) != normalizeWSBAudioSelections(expected.LogonCommand.Command) ||
 		hasUnexpectedWSBMappings(actualMappings, expectedMappings) {
 		differences = append(differences, "launch contract")
 	}
@@ -53,10 +58,12 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	return differences, nil
 }
 
-func normalizeWSBAudioSelection(command string) string {
-	for _, selection := range []string{"Enabled", "Disabled"} {
-		command = strings.ReplaceAll(command,
-			"'-AudioPlayback','"+selection+"'", "'-AudioPlayback','<selection>'")
+func normalizeWSBAudioSelections(command string) string {
+	for _, parameter := range []string{"AudioPlayback", "AudioInput"} {
+		for _, selection := range []string{"Enabled", "Disabled"} {
+			command = strings.ReplaceAll(command,
+				"'-"+parameter+"','"+selection+"'", "'-"+parameter+"','<selection>'")
+		}
 	}
 	return command
 }
@@ -75,11 +82,11 @@ func decodeWSBConfiguration(data []byte) (wsbConfiguration, error) {
 	return configuration, nil
 }
 
-func wsbAudioSelection(command string) (bool, bool) {
-	if strings.Contains(command, "'-AudioPlayback','Enabled'") {
+func wsbAudioSelection(command, parameter string) (bool, bool) {
+	if strings.Contains(command, "'-"+parameter+"','Enabled'") {
 		return true, true
 	}
-	if strings.Contains(command, "'-AudioPlayback','Disabled'") {
+	if strings.Contains(command, "'-"+parameter+"','Disabled'") {
 		return false, true
 	}
 	return false, false
@@ -144,7 +151,7 @@ func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool 
 
 func sameWSBStaticContract(left, right wsbConfiguration) bool {
 	return left.VGPU == right.VGPU && left.Networking == right.Networking &&
-		left.AudioInput == right.AudioInput && left.VideoInput == right.VideoInput &&
+		left.VideoInput == right.VideoInput &&
 		left.ProtectedClient == right.ProtectedClient && left.PrinterRedirection == right.PrinterRedirection &&
 		left.ClipboardRedirection == right.ClipboardRedirection
 }

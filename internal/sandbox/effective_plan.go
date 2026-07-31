@@ -38,7 +38,8 @@ type EffectivePlan struct {
 	UserScriptExists     bool
 	CacheDirectory       string
 	MemoryMB             int
-	Audio                bool
+	AudioOutput          bool
+	AudioInput           bool
 	Tailscale            bool
 	WindowsTerminal      string
 	CodingAgents         []string
@@ -83,7 +84,8 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		UserScriptExists:     userScriptExists,
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             provisioning.MemoryMB,
-		Audio:                provisioning.Audio,
+		AudioOutput:          provisioning.AudioOutput,
+		AudioInput:           provisioning.AudioInput,
 		Tailscale:            provisioning.Tailscale,
 		WindowsTerminal:      provisioning.WindowsTerminal.Edition,
 		CodingAgents:         codingAgentSyncNames(provisioning.CodingAgentSync),

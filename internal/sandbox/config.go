@@ -46,24 +46,29 @@ type wsbLogonCommand struct {
 	Command string `xml:"Command"`
 }
 
-func guestBootstrapLaunch(audioEnabled bool) string {
-	audioSelection := "'Disabled'"
-	if audioEnabled {
-		audioSelection = "'Enabled'"
+func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
+	audioOutputSelection := "'Disabled'"
+	if audioOutputEnabled {
+		audioOutputSelection = "'Enabled'"
+	}
+	audioInputSelection := "'Disabled'"
+	if audioInputEnabled {
+		audioInputSelection = "'Enabled'"
 	}
 	arguments := []string{
 		"'-NoLogo'", "'-NoProfile'", "'-NoExit'", "'-ExecutionPolicy'", "'Bypass'",
 		"'-File'", "'C:\\SandboxBootstrap\\bootstrap.ps1'",
 		"'-InputDirectory'", "'C:\\SandboxBootstrap'",
 		"'-StatusDirectory'", "'C:\\SandboxStatus'",
-		"'-AudioPlayback'", audioSelection,
+		"'-AudioPlayback'", audioOutputSelection,
+		"'-AudioInput'", audioInputSelection,
 		"'-ConfigurationHandoffTimeoutMinutes'", fmt.Sprintf("'%d'", configurationHandoffTimeout/time.Minute),
 	}
 	return "Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @(" +
 		strings.Join(arguments, ",") + ")"
 }
 
-func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan, memoryMB int, audioEnabled bool) ([]byte, error) {
+func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
 	if !filepath.IsAbs(inputDirectory) {
 		return nil, errors.New("Sandbox input directory must be absolute")
 	}
@@ -111,10 +116,14 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, worksp
 	mappings = append(mappings, wsbMappedFolder{HostFolder: cleanStatus, SandboxFolder: guestStatusDirectory, ReadOnly: false})
 	mappings = append(mappings, wsbMappedFolder{HostFolder: cleanCache, SandboxFolder: guestCacheDirectory, ReadOnly: false})
 
+	audioInput := "Disable"
+	if audioInputEnabled {
+		audioInput = "Enable"
+	}
 	config := wsbConfiguration{
 		VGPU:                 "Disable",
 		Networking:           "Enable",
-		AudioInput:           "Disable",
+		AudioInput:           audioInput,
 		VideoInput:           "Disable",
 		ProtectedClient:      "Disable",
 		PrinterRedirection:   "Disable",
@@ -127,7 +136,7 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, worksp
 			"-NoProfile",
 			"-NonInteractive",
 			"-ExecutionPolicy Bypass",
-			`-Command "` + guestBootstrapLaunch(audioEnabled) + `"`,
+			`-Command "` + guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled) + `"`,
 		}, " ")},
 	}
 

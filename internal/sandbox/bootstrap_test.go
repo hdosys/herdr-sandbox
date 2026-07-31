@@ -137,22 +137,27 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	}
 }
 
-func TestBootstrapPassesAudioSelectionOnlyToBaseRegistry(t *testing.T) {
+func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
 	script := string(bootstrapScript)
 	registryStart := strings.Index(script, "& $baseProvisioning -Phase 'Registry'")
 	developmentStart := strings.Index(script, "& $baseProvisioning -Phase 'Development'")
-	if !strings.Contains(script, "[ValidateSet('Disabled', 'Enabled')]") || !strings.Contains(script, "[string]$AudioPlayback") || registryStart < 0 || developmentStart <= registryStart {
+	if strings.Count(script, "[ValidateSet('Disabled', 'Enabled')]") < 2 ||
+		!strings.Contains(script, "[string]$AudioPlayback") || !strings.Contains(script, "[string]$AudioInput") ||
+		registryStart < 0 || developmentStart <= registryStart {
 		t.Fatalf("bootstrap audio handoff boundaries are missing: registry=%d development=%d", registryStart, developmentStart)
 	}
 	registryCall := script[registryStart:developmentStart]
-	if strings.Count(registryCall, "-AudioEnabled:($AudioPlayback -ceq 'Enabled')") != 1 {
+	if strings.Count(registryCall, "-AudioOutputEnabled:($AudioPlayback -ceq 'Enabled')") != 1 ||
+		strings.Count(registryCall, "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") != 1 {
 		t.Fatalf("Base Registry audio handoff = %q", registryCall)
 	}
 	developmentEnd := strings.Index(script[developmentStart:], "$powerShell7 = Get-PowerShell7Installation")
 	if developmentEnd < 0 {
 		t.Fatal("Base Development call boundary is missing")
 	}
-	if strings.Contains(script[developmentStart:developmentStart+developmentEnd], "AudioPlayback") || strings.Contains(script[developmentStart:developmentStart+developmentEnd], "AudioEnabled") {
+	developmentCall := script[developmentStart : developmentStart+developmentEnd]
+	if strings.Contains(developmentCall, "AudioPlayback") || strings.Contains(developmentCall, "AudioInput") ||
+		strings.Contains(developmentCall, "AudioOutputEnabled") {
 		t.Fatal("Base Development unexpectedly owns the audio selection")
 	}
 }

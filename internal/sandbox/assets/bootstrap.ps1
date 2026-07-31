@@ -10,6 +10,10 @@ param(
     [string]$AudioPlayback,
 
     [Parameter(Mandatory = $true)]
+    [ValidateSet('Disabled', 'Enabled')]
+    [string]$AudioInput,
+
+    [Parameter(Mandatory = $true)]
     [ValidateRange(1, 60)]
     [int]$ConfigurationHandoffTimeoutMinutes
 )
@@ -594,7 +598,9 @@ try {
     Write-ProgressStatus -Phase 'registry-customization' -Message 'Applying registry settings before package installation'
     & $baseProvisioning -Phase 'Registry' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning -AudioEnabled:($AudioPlayback -ceq 'Enabled')
+        -UserProvisioningPath $userProvisioning `
+        -AudioOutputEnabled:($AudioPlayback -ceq 'Enabled') `
+        -AudioInputEnabled:($AudioInput -ceq 'Enabled')
 
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'

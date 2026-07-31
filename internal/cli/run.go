@@ -37,7 +37,7 @@ Configuration:
   %APPDATA%\herdr-sandbox\config.json
   - workspaces and optional workspaceDiscovery
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
-  - memoryMB (default 32768), audio, and tailscale
+  - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
   - codingAgentSync choices
   - wingetPackages additions, removals, and version pins
 
@@ -522,7 +522,8 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  User script state: %s\n", userState)
 	fmt.Fprintf(output, "  Cache: %s\n", plan.CacheDirectory)
 	fmt.Fprintf(output, "  Memory: %d MB\n", plan.MemoryMB)
-	fmt.Fprintf(output, "  Audio: %s\n", enabledDisabled(plan.Audio))
+	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
+	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
 

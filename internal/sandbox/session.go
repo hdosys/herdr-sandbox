@@ -514,7 +514,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		return runPlan{}, err
 	}
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB, provisioning.Audio)
+	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, err
 	}

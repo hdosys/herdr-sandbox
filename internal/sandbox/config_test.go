@@ -11,7 +11,7 @@ import (
 
 func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	workspaces := []workspacePlan{{Name: "one", HostDirectory: `D:\Projects\one`, GuestDirectory: `C:\Workspaces\one`}}
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache`, workspaces, 8192, false)
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache`, workspaces, 8192, false, false)
 	if err != nil {
 		t.Fatalf("renderConfig: %v", err)
 	}
@@ -57,10 +57,13 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	if strings.Count(config.LogonCommand.Command, "'-AudioPlayback','Disabled'") != 1 || strings.Contains(config.LogonCommand.Command, "'-AudioPlayback','Enabled'") {
 		t.Fatalf("default-silent logon command has the wrong explicit audio identity: %s", config.LogonCommand.Command)
 	}
+	if strings.Count(config.LogonCommand.Command, "'-AudioInput','Disabled'") != 1 || strings.Contains(config.LogonCommand.Command, "'-AudioInput','Enabled'") {
+		t.Fatalf("default microphone logon command has the wrong explicit audio identity: %s", config.LogonCommand.Command)
+	}
 }
 
-func TestRenderConfigAudioOptInKeepsMicrophoneDisabled(t *testing.T) {
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, 4096, true)
+func TestRenderConfigAudioOutputOptInKeepsMicrophoneDisabled(t *testing.T) {
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, 4096, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +72,27 @@ func TestRenderConfigAudioOptInKeepsMicrophoneDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.AudioInput != "Disable" || strings.Count(config.LogonCommand.Command, "'-AudioPlayback','Enabled'") != 1 || strings.Contains(config.LogonCommand.Command, "'-AudioPlayback','Disabled'") {
-		t.Fatalf("audio opt-in config = input %q, command %q", config.AudioInput, config.LogonCommand.Command)
+		t.Fatalf("audio output opt-in config = input %q, command %q", config.AudioInput, config.LogonCommand.Command)
 	}
 }
 
-func TestAudioSelectionBindsThroughStartProcessInWindowsPowerShell51(t *testing.T) {
+func TestRenderConfigAudioInputOptInKeepsOutputDisabled(t *testing.T) {
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, 4096, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config wsbConfiguration
+	if err := xml.Unmarshal(encoded, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.AudioInput != "Enable" ||
+		strings.Count(config.LogonCommand.Command, "'-AudioInput','Enabled'") != 1 ||
+		strings.Count(config.LogonCommand.Command, "'-AudioPlayback','Disabled'") != 1 {
+		t.Fatalf("audio input opt-in config = input %q, command %q", config.AudioInput, config.LogonCommand.Command)
+	}
+}
+
+func TestAudioSelectionsBindThroughStartProcessInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 audio selection regression")
 	}
@@ -83,27 +102,33 @@ func TestAudioSelectionBindsThroughStartProcessInWindowsPowerShell51(t *testing.
     [Parameter(Mandatory = $true)][string]$OutputPath,
     [Parameter(Mandatory = $true)]
     [ValidateSet('Disabled', 'Enabled')]
-    [string]$AudioPlayback
+    [string]$AudioPlayback,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Disabled', 'Enabled')]
+    [string]$AudioInput
 )
-[IO.File]::WriteAllText($OutputPath, $AudioPlayback.ToLowerInvariant())
+[IO.File]::WriteAllText($OutputPath, ($AudioPlayback + '|' + $AudioInput).ToLowerInvariant())
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	for _, test := range []struct {
-		name      string
-		selection string
-		expected  string
+		name            string
+		outputSelection string
+		inputSelection  string
+		expected        string
 	}{
-		{name: "disabled", selection: "'Disabled'", expected: "disabled"},
-		{name: "enabled", selection: "'Enabled'", expected: "enabled"},
+		{name: "both-disabled", outputSelection: "'Disabled'", inputSelection: "'Disabled'", expected: "disabled|disabled"},
+		{name: "output-only", outputSelection: "'Enabled'", inputSelection: "'Disabled'", expected: "enabled|disabled"},
+		{name: "input-only", outputSelection: "'Disabled'", inputSelection: "'Enabled'", expected: "disabled|enabled"},
+		{name: "both-enabled", outputSelection: "'Enabled'", inputSelection: "'Enabled'", expected: "enabled|enabled"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			outputPath := filepath.Join(root, test.name+".txt")
 			arguments := []string{
 				"'-NoLogo'", "'-NoProfile'", "'-NonInteractive'", "'-ExecutionPolicy'", "'Bypass'",
 				"'-File'", "'" + quote(childPath) + "'", "'-OutputPath'", "'" + quote(outputPath) + "'",
-				"'-AudioPlayback'", test.selection,
+				"'-AudioPlayback'", test.outputSelection, "'-AudioInput'", test.inputSelection,
 			}
 			powerShell := mustWindowsPowerShellPath(t)
 			launcher := "$process = Start-Process -FilePath '" + quote(powerShell) +
@@ -118,7 +143,7 @@ func TestAudioSelectionBindsThroughStartProcessInWindowsPowerShell51(t *testing.
 				t.Fatal(err)
 			}
 			if string(value) != test.expected {
-				t.Fatalf("explicit audio selection = %q, want %q", value, test.expected)
+				t.Fatalf("explicit audio selections = %q, want %q", value, test.expected)
 			}
 		})
 	}
@@ -126,7 +151,7 @@ func TestAudioSelectionBindsThroughStartProcessInWindowsPowerShell51(t *testing.
 
 func TestRenderConfigEscapesHostPaths(t *testing.T) {
 	workspaces := []workspacePlan{{Name: "a-b", HostDirectory: `D:\Projects\A&B`, GuestDirectory: `C:\Workspaces\a-b`}}
-	encoded, err := renderConfig(`C:\Runs\A&B\input`, `C:\Runs\A&B\status`, `E:\cache&A`, workspaces, 4096, false)
+	encoded, err := renderConfig(`C:\Runs\A&B\input`, `C:\Runs\A&B\status`, `E:\cache&A`, workspaces, 4096, false, false)
 	if err != nil {
 		t.Fatalf("renderConfig: %v", err)
 	}
@@ -261,7 +286,7 @@ func TestRenderConfigRejectsUnsafeLayout(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderConfig(test.input, test.status, test.cache, []workspacePlan{test.workspace}, test.memory, false); err == nil {
+			if _, err := renderConfig(test.input, test.status, test.cache, []workspacePlan{test.workspace}, test.memory, false, false); err == nil {
 				t.Fatal("renderConfig unexpectedly succeeded")
 			}
 		})

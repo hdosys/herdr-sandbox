@@ -207,7 +207,7 @@ After command syntax is validated, `up`, `status`, and `down` automatically remo
 
 `up` refuses starting, failed, changed-plan, and unmanaged instances rather than guessing how to reuse them. Inspect with `status`, then use `down` when the recorded app-owned state can be safely closed.
 
-Changing Tailscale identity selection, audio, memory, cache, or workspace mappings requires `down` before the next `up`.
+Changing Tailscale identity selection, audio input/output, memory, cache, or workspace mappings requires `down` before the next `up`.
 
 </details>
 
@@ -250,6 +250,7 @@ The first mutating `up` creates:
   "cacheDirectory": "",
   "memoryMB": 32768,
   "audio": false,
+  "audioInput": false,
   "tailscale": false,
   "codingAgentSync": {
     "opencode": true,
@@ -280,7 +281,8 @@ The first mutating `up` creates:
 | --- | --- |
 | `cacheDirectory` | Absolute dedicated Herdr Sandbox package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state; every uninstall recursively removes the entire selected cache, so never point it at a shared directory. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
-| `audio` | Exact boolean playback opt-in. Omitted or `false` keeps the guest silent; only `true` leaves playback enabled. Microphone input always remains disabled. |
+| `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
+| `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
@@ -291,7 +293,9 @@ The first mutating `up` creates:
 
 #### Audio and CPU policy
 
-With `audio` omitted or `false`, provisioning selects the Windows **No Sounds** scheme, mutes the default render endpoint at zero volume, and disables and stops the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback just by changing their own volume. This is not a security boundary against administrator code inside the guest. Set `"audio": true` only when playback is deliberate; microphone capture remains disabled either way. Changing `audio` requires `herdr-sandbox down` before the next `up` can launch the new fixed plan.
+Both audio toggles default off. With `audio` and `audioInput` omitted or `false`, provisioning selects the Windows **No Sounds** scheme, mutes the default render endpoint at zero volume, and disables and stops the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback just by changing their own volume.
+
+Set `"audioInput": true` to share the host microphone with the guest, retain the shared audio services, and allow guest microphone capability consent. Capture and playback use the same Windows audio services, so when `audio` remains false, provisioning still selects **No Sounds** and mutes the render endpoint, but guest applications can unmute it. These controls are not an adversarial security boundary against administrator code inside the guest. Set `"audio": true` independently when playback is deliberate. Changing either toggle requires `herdr-sandbox down` before the next `up` can launch the new fixed plan.
 
 Windows Sandbox exposes no supported per-instance CPU-priority setting, and Windows client Hyper-V scheduling does not support per-VM weights, caps, or reserves. The tool therefore does not offer an idle/low-priority option; changing the `WindowsSandbox.exe` launcher priority would not reliably control guest vCPU scheduling.
 
@@ -448,7 +452,8 @@ Start with `herdr-sandbox status`; it never changes a running Sandbox and perfor
 | Windows Sandbox is unavailable | Enable `Containers-DisposableClientVM` from elevated Windows PowerShell, restart Windows, and confirm hardware virtualization is enabled. |
 | `up` refuses an existing Sandbox | A ready exact guest is reused automatically. A normally closed window is cleaned on the next valid command. For failed, changed-plan, unmanaged, or ownership-uncertain state, inspect the reported evidence and use `herdr-sandbox down` only when it identifies the app-owned instance. |
 | Automatic attach is unavailable in a headless process | Provision intentionally with `herdr-sandbox up --no-attach`, then open a real terminal and run `herdr-sandbox attach`; a verified ready guest remains reusable. |
-| The guest has no playback audio | Silence is the default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Microphone input remains disabled. |
+| The guest has no playback audio | Audio output is off by default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. This does not enable microphone input. |
+| The guest cannot use the microphone | Microphone input is off by default. Set `"audioInput": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Host microphone permissions or policy can still block sharing. |
 | `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Herdr is copied from the host and does not use the download cache. Confirm that the cache is writable and does not overlap a workspace or run state. |

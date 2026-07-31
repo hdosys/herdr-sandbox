@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 33
+# herdr-sandbox-base-contract: 34
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -8,7 +8,8 @@ param(
     [string]$PackagePlanPath,
     [Parameter(Mandatory = $true)]
     [string]$UserProvisioningPath,
-    [switch]$AudioEnabled
+    [switch]$AudioOutputEnabled,
+    [switch]$AudioInputEnabled
 )
 
 $ErrorActionPreference = 'Stop'
@@ -2121,6 +2122,8 @@ namespace HerdrSandbox
 }
 
 function Disable-ProvisioningAudioPlayback {
+    param([switch]$KeepAudioServices)
+
     $failures = New-Object 'Collections.Generic.List[string]'
     $schemeChanged = $false
     try {
@@ -2140,62 +2143,68 @@ function Disable-ProvisioningAudioPlayback {
             (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
     }
 
-    $serviceNames = @('Audiosrv', 'AudioEndpointBuilder')
-    foreach ($serviceName in $serviceNames) {
-        try {
-            Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
-        } catch {
-            [void]$failures.Add("disable $serviceName startup: " +
-                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+    if (-not $KeepAudioServices) {
+        $serviceNames = @('Audiosrv', 'AudioEndpointBuilder')
+        foreach ($serviceName in $serviceNames) {
+            try {
+                Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+            } catch {
+                [void]$failures.Add("disable $serviceName startup: " +
+                    (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+            }
         }
-    }
-    foreach ($serviceName in $serviceNames) {
-        $controller = $null
-        try {
-            $controller = New-Object System.ServiceProcess.ServiceController -ArgumentList @($serviceName)
-            $controller.Refresh()
-            if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
-                if (-not $controller.CanStop) {
-                    throw "$serviceName cannot be stopped."
-                }
-                $controller.Stop()
-                $controller.WaitForStatus(
-                    [System.ServiceProcess.ServiceControllerStatus]::Stopped,
-                    [TimeSpan]::FromSeconds(15))
+        foreach ($serviceName in $serviceNames) {
+            $controller = $null
+            try {
+                $controller = New-Object System.ServiceProcess.ServiceController -ArgumentList @($serviceName)
                 $controller.Refresh()
+                if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+                    if (-not $controller.CanStop) {
+                        throw "$serviceName cannot be stopped."
+                    }
+                    $controller.Stop()
+                    $controller.WaitForStatus(
+                        [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+                        [TimeSpan]::FromSeconds(15))
+                    $controller.Refresh()
+                }
+                if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+                    throw "$serviceName status is $($controller.Status), expected Stopped."
+                }
+            } catch {
+                [void]$failures.Add("stop ${serviceName}: " +
+                    (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
+            } finally {
+                if ($null -ne $controller) { $controller.Dispose() }
             }
-            if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
-                throw "$serviceName status is $($controller.Status), expected Stopped."
-            }
-        } catch {
-            [void]$failures.Add("stop ${serviceName}: " +
-                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
-        } finally {
-            if ($null -ne $controller) { $controller.Dispose() }
         }
-    }
-    foreach ($serviceName in $serviceNames) {
-        try {
-            $service = Get-Service -Name $serviceName -ErrorAction Stop
-            $wmiServices = @(Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop)
-            if ($wmiServices.Count -ne 1 -or
-                [string]$service.Status -cne 'Stopped' -or
-                [string]$service.StartType -cne 'Disabled' -or
-                [string]$wmiServices[0].State -cne 'Stopped' -or
-                [bool]$wmiServices[0].Started -or
-                [string]$wmiServices[0].StartMode -cne 'Disabled') {
-                throw "$serviceName service read-back did not match Disabled/Stopped."
+        foreach ($serviceName in $serviceNames) {
+            try {
+                $service = Get-Service -Name $serviceName -ErrorAction Stop
+                $wmiServices = @(Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop)
+                if ($wmiServices.Count -ne 1 -or
+                    [string]$service.Status -cne 'Stopped' -or
+                    [string]$service.StartType -cne 'Disabled' -or
+                    [string]$wmiServices[0].State -cne 'Stopped' -or
+                    [bool]$wmiServices[0].Started -or
+                    [string]$wmiServices[0].StartMode -cne 'Disabled') {
+                    throw "$serviceName service read-back did not match Disabled/Stopped."
+                }
+            } catch {
+                [void]$failures.Add("verify ${serviceName}: " +
+                    (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
             }
-        } catch {
-            [void]$failures.Add("verify ${serviceName}: " +
-                (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
         }
     }
 
     if ($failures.Count -ne 0) {
         throw ('Audio disable policy failed: ' + ($failures -join '; '))
     }
-    if ($endpointFound) {
+    if ($KeepAudioServices -and $endpointFound) {
+        Write-Host 'Audio playback muted at volume 0; shared audio services retained for microphone input.'
+    } elseif ($KeepAudioServices) {
+        Write-Host 'No default render endpoint was present; shared audio services retained for microphone input.'
+    } elseif ($endpointFound) {
         Write-Host 'Audio playback disabled: default render endpoint muted at volume 0; services stopped.'
     } else {
         Write-Host 'Audio playback disabled: no default render endpoint was present; services stopped.'
@@ -2206,13 +2215,15 @@ function Disable-ProvisioningAudioPlayback {
 $provisioningStopwatch = [Diagnostics.Stopwatch]::StartNew()
 if ($Phase -eq 'Registry') {
 $registryStateChanged = $false
-if (-not $AudioEnabled) {
+if (-not $AudioOutputEnabled) {
     Write-Output 'Disabling Sandbox audio playback...'
-    if (Disable-ProvisioningAudioPlayback) {
+    if (Disable-ProvisioningAudioPlayback -KeepAudioServices:$AudioInputEnabled) {
         $registryStateChanged = $true
     }
+} elseif ($AudioInputEnabled) {
+    Write-Output 'Sandbox audio output and microphone input enabled by config.'
 } else {
-    Write-Output 'Sandbox audio playback enabled by config; microphone input remains disabled.'
+    Write-Output 'Sandbox audio output enabled by config; microphone input disabled.'
 }
 Write-Output 'Applying machine and selected per-user policies for Microsoft Edge...'
 # Policy values derived from Just the Browser, MIT License, copyright 2026 Corbin Davenport.
@@ -2555,9 +2566,13 @@ foreach ($scope in @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore'
 )) {
     foreach ($capability in $privacyConsentCapabilities) {
+        $consentValue = 'Deny'
+        if ($AudioInputEnabled -and $capability -ceq 'microphone') {
+            $consentValue = 'Allow'
+        }
         $privacyRegistryGroups += [ordered]@{
             Path = $scope + '\' + $capability
-            Values = [ordered]@{ Value = 'Deny' }
+            Values = [ordered]@{ Value = $consentValue }
         }
     }
 }

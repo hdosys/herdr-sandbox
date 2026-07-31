@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
 		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox down", "herdr-sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "wingetPackages", "audio", "tailscale",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -462,7 +462,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	var output bytes.Buffer
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
-		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio: disabled",
+		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Workspaces\n  * project (active)\n    Host: D:\\project\n    Guest: C:\\Workspaces\\project\n    Stacks:\n      - go\n      - rust",

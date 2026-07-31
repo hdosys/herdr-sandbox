@@ -25,7 +25,7 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 33"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 34"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema            = 1
@@ -45,7 +45,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -120,7 +120,8 @@ type provisioningPlan struct {
 	UserScript           string
 	CacheDirectory       string
 	MemoryMB             int
-	Audio                bool
+	AudioOutput          bool
+	AudioInput           bool
 	Tailscale            bool
 	CodingAgentSync      codingAgentSyncConfiguration
 	PackageConfiguration wingetPackageConfiguration
@@ -132,7 +133,8 @@ type provisioningPlan struct {
 type globalConfiguration struct {
 	CacheDirectory     string                           `json:"cacheDirectory"`
 	MemoryMB           *int                             `json:"memoryMB,omitempty"`
-	Audio              bool                             `json:"audio"`
+	AudioOutput        bool                             `json:"audio"`
+	AudioInput         bool                             `json:"audioInput"`
 	Tailscale          bool                             `json:"tailscale"`
 	CodingAgentSync    codingAgentSyncConfiguration     `json:"codingAgentSync"`
 	WingetPackages     wingetPackageConfiguration       `json:"wingetPackages"`
@@ -475,7 +477,8 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		UserScript:           filepath.Join(globalRoot, userProvisioningName),
 		CacheDirectory:       cacheDirectory,
 		MemoryMB:             memoryMB,
-		Audio:                configuration.Audio,
+		AudioOutput:          configuration.AudioOutput,
+		AudioInput:           configuration.AudioInput,
 		Tailscale:            configuration.Tailscale,
 		CodingAgentSync:      configuration.CodingAgentSync,
 		PackageConfiguration: configuration.WingetPackages,
@@ -555,7 +558,15 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 			if err != nil {
 				return err
 			}
-			if err := json.Unmarshal(raw, &config.Audio); err != nil {
+			if err := json.Unmarshal(raw, &config.AudioOutput); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+		case "audioInput":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.AudioInput); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 		case "tailscale":
