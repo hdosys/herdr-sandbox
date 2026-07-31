@@ -9,7 +9,33 @@
 > [!NOTE]
 > This README describes intended behavior, not a guarantee that every feature will be available or work on every Windows configuration. Host policy, networking, upstream tools, and platform changes can affect operation.
 
-[Get started](#get-started) · [How it works](#how-it-works) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+
+## How it works
+
+```mermaid
+flowchart LR
+    Host["Host terminal<br/>herdr-sandbox (Go)"]
+    Projects[("Selected projects")]
+    Config["Approved agent config"]
+
+    subgraph Guest["Disposable Windows Sandbox"]
+        Provision["PowerShell 5.1<br/>provisioning"]
+        Agents["Agents + native<br/>toolchains"]
+        Herdr["Herdr server"]
+    end
+
+    Host -->|launch + lifecycle| Provision
+    Projects <-->|narrow writable mappings| Agents
+    Config -->|verified SSH only| Agents
+    Provision --> Agents --> Herdr
+    Host <-->|console-backed attach| Herdr
+```
+
+The host owns source, identity, configuration, cache, and bounded run evidence. The guest owns compilation, agent execution, and disposable runtime state. Go owns host lifecycle decisions and strict boundary contracts; PowerShell is the narrow Windows provisioning adapter.
+
+> [!IMPORTANT]
+> This is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
 ## Key capabilities
 
@@ -26,7 +52,7 @@
 ### Prerequisites
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
-- Windows PowerShell 5.1, OpenSSH Client, Windows Terminal, and internet access for cache misses.
+- Windows Terminal and internet access for cache misses.
 - An existing remote-capable `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on host `PATH`.
 - Go 1.26.4 or newer only when building this repository from source.
 
@@ -139,32 +165,6 @@ Plain SSH is available for noninteractive diagnostics:
 ```powershell
 ssh sandbox
 ```
-
-## How it works
-
-```mermaid
-flowchart LR
-    Host["Host terminal<br/>herdr-sandbox (Go)"]
-    Projects[("Selected projects")]
-    Config["Approved agent config"]
-
-    subgraph Guest["Disposable Windows Sandbox"]
-        Provision["PowerShell 5.1<br/>provisioning"]
-        Agents["Agents + native<br/>toolchains"]
-        Herdr["Herdr server"]
-    end
-
-    Host -->|launch + lifecycle| Provision
-    Projects <-->|narrow writable mappings| Agents
-    Config -->|verified SSH only| Agents
-    Provision --> Agents --> Herdr
-    Host <-->|console-backed attach| Herdr
-```
-
-The host owns source, identity, configuration, cache, and bounded run evidence. The guest owns compilation, agent execution, and disposable runtime state. Go owns host lifecycle decisions and strict boundary contracts; PowerShell is the narrow Windows provisioning adapter.
-
-> [!IMPORTANT]
-> This is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
 ## Commands
 
