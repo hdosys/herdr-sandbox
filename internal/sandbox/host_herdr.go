@@ -25,22 +25,14 @@ const (
 	hostHerdrChangedAction          = "run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current WinGet-managed runtime"
 )
 
-var hostHerdrRuntimeLayouts = [][]string{
-	{
-		"herdr.exe",
-		"conpty.dll",
-		"x64/OpenConsole.exe",
-		"arm64/OpenConsole.exe",
-	},
-	{
-		"herdr.exe",
-		"herdr-launcher.exe",
-		"runtime.ready",
-		"conpty/conpty.dll",
-		"conpty/herdr-conpty.json",
-		"conpty/x64/OpenConsole.exe",
-		"conpty/arm64/OpenConsole.exe",
-	},
+var hostHerdrRuntimeLayout = []string{
+	"herdr.exe",
+	"herdr-launcher.exe",
+	"runtime.ready",
+	"conpty/conpty.dll",
+	"conpty/herdr-conpty.json",
+	"conpty/x64/OpenConsole.exe",
+	"conpty/arm64/OpenConsole.exe",
 }
 
 // HostHerdr is the read-only result of resolving one compatible host command
@@ -380,28 +372,9 @@ func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
 
 func inspectHostHerdrRuntimeFiles(runtimeExecutable string) ([]hostHerdrRuntimeFile, error) {
 	root := filepath.Dir(runtimeExecutable)
-	completeLayouts := make([][]string, 0, 1)
-	for _, layout := range hostHerdrRuntimeLayouts {
-		complete := true
-		for _, relative := range layout {
-			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					complete = false
-					break
-				}
-				return nil, fmt.Errorf("inspect runtime file %s: %w", relative, err)
-			}
-		}
-		if complete {
-			completeLayouts = append(completeLayouts, layout)
-		}
-	}
-	if len(completeLayouts) != 1 {
-		return nil, fmt.Errorf("expected exactly one complete supported Windows runtime layout, found %d", len(completeLayouts))
-	}
-	files := make([]hostHerdrRuntimeFile, 0, len(completeLayouts[0]))
+	files := make([]hostHerdrRuntimeFile, 0, len(hostHerdrRuntimeLayout))
 	var total int64
-	for _, relative := range completeLayouts[0] {
+	for _, relative := range hostHerdrRuntimeLayout {
 		source := filepath.Join(root, filepath.FromSlash(relative))
 		file, err := inspectHostHerdrRuntimeFile(source, relative)
 		if err != nil {

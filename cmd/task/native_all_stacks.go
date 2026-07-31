@@ -90,7 +90,7 @@ func waitForNativeAllStacksCleanup(ctx context.Context, directory string, enviro
 	waitingReported := false
 	for {
 		var capturedOutput bytes.Buffer
-		command := hiddenCommandContext(cleanupContext, executable, "clean")
+		command := nativeAllStacksCLICommand(cleanupContext, executable, "clean")
 		command.Dir = directory
 		command.Env = environment
 		command.Stdout = &capturedOutput
@@ -364,8 +364,7 @@ func nativeAllStacksEnvironment(fixture nativeAllStacksFixture) []string {
 }
 
 func runNativeAllStacksCLI(ctx context.Context, directory string, environment []string, stdout, stderr io.Writer, executable string, arguments ...string) error {
-	command := exec.CommandContext(ctx, executable, arguments...)
-	hiddenprocess.Configure(command)
+	command := nativeAllStacksCLICommand(ctx, executable, arguments...)
 	command.Dir = directory
 	command.Env = environment
 	command.Stdout = stdout
@@ -374,6 +373,12 @@ func runNativeAllStacksCLI(ctx context.Context, directory string, environment []
 		return fmt.Errorf("run %s: %w", commandText(executable, arguments), err)
 	}
 	return nil
+}
+
+func nativeAllStacksCLICommand(ctx context.Context, executable string, arguments ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, executable, arguments...)
+	hiddenprocess.Configure(command)
+	return command
 }
 
 func runNativeAllStacksSmoke(ctx context.Context, fixture nativeAllStacksFixture, environment []string, stdout, stderr io.Writer) error {

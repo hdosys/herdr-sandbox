@@ -55,7 +55,7 @@ func TestResolveHostHerdrUsesManagedPhysicalRuntimeAndSnapshotsIt(t *testing.T) 
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
-	commandPath, runtimePath := prepareHostHerdrFixture(t, true)
+	commandPath, runtimePath := prepareHostHerdrFixture(t)
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr: %v", err)
@@ -110,7 +110,7 @@ func TestResolveHostHerdrRejectsUnsupportedCaseInsensitivelyWithWinGetAction(t *
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
-	prepareHostHerdrFixture(t, false)
+	prepareHostHerdrFixture(t)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "Remote mode is UnSuPpOrTeD on this Windows build")
 	_, err := ResolveHostHerdr(context.Background())
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported") || !strings.Contains(err.Error(), hostHerdrInstallCommand) {
@@ -133,7 +133,7 @@ func TestHostHerdrVerifyUnchangedRejectsPackageUpdateRace(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
-	prepareHostHerdrFixture(t, true)
+	prepareHostHerdrFixture(t)
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr: %v", err)
@@ -151,7 +151,7 @@ func TestHostHerdrIdentityIncludesLauncherFingerprint(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
-	prepareHostHerdrFixture(t, true)
+	prepareHostHerdrFixture(t)
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr: %v", err)
@@ -224,33 +224,34 @@ func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *test
 	}
 }
 
-func TestInspectHostHerdrRuntimeFilesAcceptsLegacyBundleAndRejectsPartialBundle(t *testing.T) {
+func TestInspectHostHerdrRuntimeFilesRequiresCompleteManagedRuntime(t *testing.T) {
 	root := t.TempDir()
-	for _, relative := range hostHerdrRuntimeLayouts[0] {
+	for _, relative := range hostHerdrRuntimeLayout {
 		writeHostHerdrFixtureFile(t, filepath.Join(root, filepath.FromSlash(relative)), relative)
 	}
 	files, err := inspectHostHerdrRuntimeFiles(filepath.Join(root, "herdr.exe"))
-	if err != nil || len(files) != 4 {
-		t.Fatalf("legacy runtime files = %#v, %v", files, err)
+	if err != nil || len(files) != len(hostHerdrRuntimeLayout) {
+		t.Fatalf("managed runtime files = %#v, %v", files, err)
 	}
-	if err := os.Remove(filepath.Join(root, "arm64", "OpenConsole.exe")); err != nil {
+	if err := os.Remove(filepath.Join(root, "conpty", "arm64", "OpenConsole.exe")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := inspectHostHerdrRuntimeFiles(filepath.Join(root, "herdr.exe")); err == nil {
-		t.Fatal("partial legacy runtime unexpectedly passed")
+		t.Fatal("partial managed runtime unexpectedly passed")
 	}
 }
 
 func TestInspectHostHerdrRuntimeFilesRejectsReparseBundleDirectory(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	writeHostHerdrFixtureFile(t, filepath.Join(root, "herdr.exe"), "executable")
-	for _, relative := range []string{"conpty.dll", "x64/OpenConsole.exe", "arm64/OpenConsole.exe"} {
-		writeHostHerdrFixtureFile(t, filepath.Join(outside, filepath.FromSlash(relative)), relative)
+	for _, relative := range hostHerdrRuntimeLayout {
+		if strings.HasPrefix(relative, "conpty/") {
+			writeHostHerdrFixtureFile(t, filepath.Join(outside, filepath.FromSlash(relative)), relative)
+			continue
+		}
+		writeHostHerdrFixtureFile(t, filepath.Join(root, filepath.FromSlash(relative)), relative)
 	}
-	createTestDirectoryLink(t, filepath.Join(root, "x64"), filepath.Join(outside, "x64"))
-	writeHostHerdrFixtureFile(t, filepath.Join(root, "conpty.dll"), "conpty")
-	writeHostHerdrFixtureFile(t, filepath.Join(root, "arm64", "OpenConsole.exe"), "arm64")
+	createTestDirectoryLink(t, filepath.Join(root, "conpty"), filepath.Join(outside, "conpty"))
 	if _, err := inspectHostHerdrRuntimeFiles(filepath.Join(root, "herdr.exe")); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse") {
 		t.Fatalf("reparse runtime error = %v", err)
 	}
@@ -274,30 +275,21 @@ func TestReplaceFileAtomicallyPreservesTargetAndBackup(t *testing.T) {
 	assertTestFileContents(t, backup, "old")
 }
 
-func prepareHostHerdrFixture(t *testing.T, managed bool) (string, string) {
+func prepareHostHerdrFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	commandPath := filepath.Join(root, "bin", "herdr.exe")
-	runtimePath := commandPath
-	if managed {
-		runtimePath = filepath.Join(root, "runtime", "0123456789ab.0123456789ab", "herdr.exe")
-	}
+	runtimePath := filepath.Join(root, "runtime", "0123456789ab.0123456789ab", "herdr.exe")
 	testExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	copyHostHerdrFixtureExecutable(t, testExecutable, commandPath)
-	if !strings.EqualFold(commandPath, runtimePath) {
-		copyHostHerdrFixtureExecutable(t, testExecutable, runtimePath)
-	}
-	layout := hostHerdrRuntimeLayouts[0]
-	if managed {
-		layout = hostHerdrRuntimeLayouts[1]
-		buildID := filepath.Base(filepath.Dir(runtimePath))
-		writeHostHerdrFixtureFile(t, filepath.Join(root, "bin", "managed-install-v1", "marker"), "herdr-managed-bin-v1\n")
-		writeHostHerdrFixtureFile(t, filepath.Join(root, "state", "active"), "herdr-pointer-v1\nbuild_id="+buildID+"\n")
-	}
-	for _, relative := range layout[1:] {
+	copyHostHerdrFixtureExecutable(t, testExecutable, runtimePath)
+	buildID := filepath.Base(filepath.Dir(runtimePath))
+	writeHostHerdrFixtureFile(t, filepath.Join(root, "bin", "managed-install-v1", "marker"), "herdr-managed-bin-v1\n")
+	writeHostHerdrFixtureFile(t, filepath.Join(root, "state", "active"), "herdr-pointer-v1\nbuild_id="+buildID+"\n")
+	for _, relative := range hostHerdrRuntimeLayout[1:] {
 		contents := relative
 		if relative == "runtime.ready" {
 			contents = "herdr-runtime-v1\nbuild_id=" + filepath.Base(filepath.Dir(runtimePath)) + "\n"
