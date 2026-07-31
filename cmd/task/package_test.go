@@ -4,8 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -206,6 +209,80 @@ func TestPublishReleaseArtifactSetNeverLeavesMixedOutputs(t *testing.T) {
 	}
 }
 
+func TestInstallerWelcomeArtworkAssets(t *testing.T) {
+	root := filepath.Join("..", "..")
+	source, err := os.ReadFile(filepath.Join(root, "bg.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != "cda0b672eb6ba9d912bc9c422b2ee53fc96aa8b9b1d751b4f653d9b6d0be4b27" {
+		t.Fatalf("bg.png SHA-256 = %s", got)
+	}
+	config, err := png.DecodeConfig(bytes.NewReader(source))
+	if err != nil {
+		t.Fatalf("decode bg.png: %v", err)
+	}
+	if config.Width != 906 || config.Height != 1736 || len(source) < 29 || source[24] != 8 || source[25] != 2 || source[28] != 0 {
+		t.Fatalf("bg.png contract = %dx%d depth=%d color-type=%d interlace=%d", config.Width, config.Height, source[24], source[25], source[28])
+	}
+
+	variants := []struct {
+		name   string
+		width  int
+		height int
+		hash   string
+	}{
+		{name: "installer-welcome-finish-164x314.bmp", width: 164, height: 314, hash: "c9ebaec9dd686eb18e943eada7d51f474e0367771719b8a4918b8fc3812481fd"},
+		{name: "installer-welcome-finish-205x393.bmp", width: 205, height: 393, hash: "a2b880e59fa15b1f8f51e5824c7e7c4f90eeb50f3cd649c58beeb5eefe7c64b0"},
+		{name: "installer-welcome-finish-246x471.bmp", width: 246, height: 471, hash: "04615093017767a7320c5580368f2aaa92e4f33d4ad1fb42309ee6afa570b927"},
+		{name: "installer-welcome-finish-287x550.bmp", width: 287, height: 550, hash: "8912c6dcee700825c4463704841f777e248d807f48cbe5db3ceb1b87c8d96127"},
+		{name: "installer-welcome-finish-328x628.bmp", width: 328, height: 628, hash: "b3b5bfaa3b07dd7eb8441f81bf733de86e31b8c37ec60ac3832a824c10e1cd3b"},
+	}
+	assetDirectory := filepath.Join(root, "packaging", "windows", "assets")
+	entries, err := os.ReadDir(assetDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".bmp") {
+			names = append(names, entry.Name())
+		}
+	}
+	slices.Sort(names)
+	wantNames := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		wantNames = append(wantNames, variant.name)
+	}
+	if !slices.Equal(names, wantNames) {
+		t.Fatalf("installer BMP assets = %v, want %v", names, wantNames)
+	}
+
+	for _, variant := range variants {
+		data, err := os.ReadFile(filepath.Join(assetDirectory, variant.name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != variant.hash {
+			t.Fatalf("%s SHA-256 = %s", variant.name, got)
+		}
+		rowSize := (variant.width*3 + 3) &^ 3
+		pixelSize := rowSize * variant.height
+		if len(data) != 54+pixelSize || string(data[:2]) != "BM" ||
+			int(binary.LittleEndian.Uint32(data[2:6])) != len(data) ||
+			binary.LittleEndian.Uint32(data[10:14]) != 54 ||
+			binary.LittleEndian.Uint32(data[14:18]) != 40 ||
+			int(int32(binary.LittleEndian.Uint32(data[18:22]))) != variant.width ||
+			int(int32(binary.LittleEndian.Uint32(data[22:26]))) != variant.height ||
+			binary.LittleEndian.Uint16(data[26:28]) != 1 ||
+			binary.LittleEndian.Uint16(data[28:30]) != 24 ||
+			binary.LittleEndian.Uint32(data[30:34]) != 0 ||
+			int(binary.LittleEndian.Uint32(data[34:38])) != pixelSize {
+			t.Fatalf("%s is not an exact uncompressed 24-bit BMP3 at %dx%d", variant.name, variant.width, variant.height)
+		}
+	}
+}
+
 func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer.nsi"))
 	if err != nil {
@@ -219,7 +296,25 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SetDatablockOptimize on`,
 		`SetCompressorDictSize 8`,
 		`SetCompressor /SOLID /FINAL lzma`,
+		`ManifestDPIAware true`,
 		`AutoCloseWindow true`,
+		`!define INSTALLER_WELCOME_BITMAP_100 "${__FILEDIR__}\assets\installer-welcome-finish-164x314.bmp"`,
+		`!define INSTALLER_WELCOME_BITMAP_125 "${__FILEDIR__}\assets\installer-welcome-finish-205x393.bmp"`,
+		`!define INSTALLER_WELCOME_BITMAP_150 "${__FILEDIR__}\assets\installer-welcome-finish-246x471.bmp"`,
+		`!define INSTALLER_WELCOME_BITMAP_175 "${__FILEDIR__}\assets\installer-welcome-finish-287x550.bmp"`,
+		`!define INSTALLER_WELCOME_BITMAP_200 "${__FILEDIR__}\assets\installer-welcome-finish-328x628.bmp"`,
+		`!define MUI_WELCOMEFINISHPAGE_BITMAP "${INSTALLER_WELCOME_BITMAP_100}"`,
+		`!define MUI_WELCOMEFINISHPAGE_BITMAP_STRETCH NoStretchNoCropNoAlign`,
+		`!define MUI_CUSTOMFUNCTION_GUIINIT SelectInstallerWelcomeBitmap`,
+		`System::Call 'USER32::GetDpiForWindow(p $HWNDPARENT)i.r0'`,
+		`${If} $0 >= 180`,
+		`${ElseIf} $0 >= 156`,
+		`${ElseIf} $0 >= 132`,
+		`${ElseIf} $0 >= 108`,
+		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_200}"`,
+		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_175}"`,
+		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_150}"`,
+		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_125}"`,
 		`!define MUI_FINISHPAGE_NOREBOOTSUPPORT`,
 		`!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"`,
 		`${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.`,
@@ -285,7 +380,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`MUI_ICON`,
 		`MUI_UNICON`,
 		`icon.ico`,
-		`welcome-328x628.bmp`,
+		`assets\installer-welcome-finish.bmp`,
 		`herdr.exe`,
 		`herdr-win`,
 		`Herdr-Win`,
