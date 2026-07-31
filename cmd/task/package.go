@@ -407,6 +407,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName,
 		"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName,
 		"/DAPP_LICENSE=" + productidentity.LicenseName,
+		"/DAPP_LEGACY_LICENSE=" + productidentity.LicenseSourceName,
 		"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName,
 		"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName,
 		"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName,

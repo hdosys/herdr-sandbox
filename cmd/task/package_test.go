@@ -109,7 +109,7 @@ func TestStageAndZIPReleasePackageContainExactFiles(t *testing.T) {
 			t.Fatalf("ZIP content %s = %q", file.Name, data)
 		}
 	}
-	wantNames := []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, productidentity.LicenseName}
+	wantNames := []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, "LICENSE.txt"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("ZIP entries = %v, want %v", names, wantNames)
 	}
@@ -239,9 +239,11 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`BackupRuntimeFile`,
 		`BackupRuntimeFile "${APP_LICENSE}" $R1`,
+		`BackupRuntimeFile "${APP_LEGACY_LICENSE}" $R2`,
 		`ReplaceRuntimeFile "${APP_LICENSE}"`,
 		`RestoreRuntimeFile`,
 		`RestoreRuntimeFile "${APP_LICENSE}" $R1`,
+		`RestoreRuntimeFile "${APP_LEGACY_LICENSE}" $R2`,
 		`VIProductVersion "${FIXED_VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
@@ -257,6 +259,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
 		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
 		`Delete "$INSTDIR\${APP_LICENSE}"`,
+		`Delete "$INSTDIR\${APP_LEGACY_LICENSE}"`,
 		`Delete "$INSTDIR\${APP_STACK_SCRIPT}"`,
 	} {
 		if !strings.Contains(source, want) {
@@ -327,6 +330,7 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName`,
 		`"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName`,
 		`"/DAPP_LICENSE=" + productidentity.LicenseName`,
+		`"/DAPP_LEGACY_LICENSE=" + productidentity.LicenseSourceName`,
 		`"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName`,
 		`"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName`,
 		`"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName`,

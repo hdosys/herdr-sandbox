@@ -88,11 +88,11 @@ winget install hdosys.herdr-sandbox hdosys.herdr-win
 > [!NOTE]
 > The identifiers and command above are the committed distribution contract, but the manifests are not yet available in the public WinGet source. Neither package will bundle or declare a package dependency on the other.
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both distribute the same four application files: `herdr-sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE`.
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases) provides a portable ZIP and a per-user installer with matching `.sha256` sidecars. Both distribute the same four application files: `herdr-sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
 
 #### Portable ZIP
 
-Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep `base.ps1`, `stacks.ps1`, and `LICENSE` beside `herdr-sandbox.exe`, then run `.\herdr-sandbox.exe` or add that directory to your user `PATH`.
+Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep `base.ps1`, `stacks.ps1`, and `LICENSE.txt` beside `herdr-sandbox.exe`, then run `.\herdr-sandbox.exe` or add that directory to your user `PATH`.
 
 #### Build from source
 
@@ -102,11 +102,11 @@ From the repository root:
 go run ./cmd/task check
 ```
 
-The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets and a copy of `LICENSE`. Use that executable directly or add `build\bin` to your user `PATH`.
+The checked build writes `build\bin\herdr-sandbox.exe` beside its required app-owned `base.ps1` and `stacks.ps1` assets and a `LICENSE.txt` copy of the root `LICENSE`. Use that executable directly or add `build\bin` to your user `PATH`.
 
 #### Installer
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access, displays the Apache 2.0 license before installation, installs `LICENSE` beside the executable, and adds the application to Windows Installed Apps. Its finish page explains the terminal-first next steps and links to this setup and usage guide without launching a program or browser automatically.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The installer runs per-user without administrator access, displays the Apache 2.0 license before installation, installs `LICENSE.txt` beside the executable, and adds the application to Windows Installed Apps. Its finish page explains the terminal-first next steps and links to this setup and usage guide without launching a program or browser automatically.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches the sidecar from the same release.
@@ -114,7 +114,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its checksum. The
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and replaces the four packaged files as one set. If replacement fails, it attempts to restore the prior set and reports any incomplete rollback. It creates `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` when each is absent, adds the install directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. Setup and upgrades never replace existing `config.json` or `user.ps1`. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
+Setup installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and replaces the four packaged files as one set. If replacement fails, it attempts to restore the prior set and reports any incomplete rollback. A successful upgrade removes the former extensionless `LICENSE` copy. Setup creates `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` when each is absent, adds the install directory to the current user's effective `PATH` when needed, and registers **Herdr Sandbox** in Windows Installed Apps. Setup and upgrades never replace existing `config.json` or `user.ps1`. A matching `PATH` entry that existed before setup remains user-owned and survives uninstall.
 
 Setup never bundles or installs Herdr/Herdr-Win, an updater, agent integrations, a runtime bundle, or Windows prerequisites. The two applications remain independent now and in their future WinGet manifests. Uninstall through **Settings → Apps → Installed apps → Herdr Sandbox → Uninstall**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. A successful uninstall first stops a proven app-owned Sandbox, then removes `%LOCALAPPDATA%\herdr-sandbox`, the managed SSH integration, the selected dedicated cache, the application files, registration, and installer-owned `PATH` entry. The **Also delete config.json and user.ps1** checkbox is off by default: leave it unchecked to preserve the entire `%APPDATA%\herdr-sandbox` configuration root for reinstall, or check it to remove that whole directory too. Project `.herdr-sandbox\provision.ps1` files and unrelated SSH/install-directory content are outside the uninstaller's ownership. Unsafe ownership or cleanup failure aborts before the application is removed.
 

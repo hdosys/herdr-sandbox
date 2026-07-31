@@ -36,6 +36,9 @@ Unicode true
 !ifndef APP_LICENSE
     !error "APP_LICENSE is required"
 !endif
+!ifndef APP_LEGACY_LICENSE
+    !error "APP_LEGACY_LICENSE is required"
+!endif
 !ifndef APP_CONFIG_FILE
     !error "APP_CONFIG_FILE is required"
 !endif
@@ -268,6 +271,7 @@ Section "Install"
     !insertmacro BackupRuntimeFile "${APP_BASE_SCRIPT}" $6
     !insertmacro BackupRuntimeFile "${APP_EXECUTABLE}" $7
     !insertmacro BackupRuntimeFile "${APP_LICENSE}" $R1
+    !insertmacro BackupRuntimeFile "${APP_LEGACY_LICENSE}" $R2
     !insertmacro BackupRuntimeFile "${APP_STACK_SCRIPT}" $8
 
     StrCpy $9 "0"
@@ -280,6 +284,7 @@ Section "Install"
         !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
         !insertmacro RestoreRuntimeFile "${APP_BASE_SCRIPT}" $6
         !insertmacro RestoreRuntimeFile "${APP_LICENSE}" $R1
+        !insertmacro RestoreRuntimeFile "${APP_LEGACY_LICENSE}" $R2
         !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
         ${If} $R0 == "0"
             MessageBox MB_ICONSTOP|MB_OK "Could not update ${APP_DISPLAY_NAME}; the prior application files were restored. Close running commands and try again." /SD IDOK
@@ -385,6 +390,7 @@ Section "Uninstall"
     ClearErrors
     Delete "$INSTDIR\${APP_BASE_SCRIPT}"
     Delete "$INSTDIR\${APP_LICENSE}"
+    Delete "$INSTDIR\${APP_LEGACY_LICENSE}"
     Delete "$INSTDIR\${APP_STACK_SCRIPT}"
     ${If} ${Errors}
         MessageBox MB_ICONSTOP|MB_OK "Could not remove the installed ${APP_DISPLAY_NAME} files. Check their permissions and try again." /SD IDOK
