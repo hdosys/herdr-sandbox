@@ -100,9 +100,9 @@ in the global OpenCode configuration, not this repository.
   scrape machine-bound keyring credentials.
 - Only the host SSH public key may enter the guest. Private keys remain on host.
 - App-owned Sandbox instances may be closed/replaced autonomously after preserving
-  terminal status. If orderly close fails, force-terminate only the exact
-  revalidated app-owned Sandbox client/process tree. Never extend this permission
-  to unrelated processes, VMs, evidence/cache, or user data.
+  terminal status. To avoid Windows Sandbox confirmation prompts, force-terminate
+  only the exact revalidated app-owned Sandbox client/process tree. Never extend
+  this permission to unrelated processes, VMs, evidence/cache, or user data.
 - Network, firewall, SSH, package installation, and tunnel behavior require native
   evidence. Use stable `build/bin/` executable paths; do not switch to random
   `go run` binaries after approval.
@@ -119,8 +119,9 @@ Use repository-owned tasks and the smallest ladder covering the change:
    PowerShell 5.1 syntax checks.
 3. `go run ./cmd/task build` and the stable CLI under `build/bin` when binary
    behavior changed.
-4. Opt-in real Windows Sandbox + WinGet + guest Herdr server + SSH remote-attach
-   smoke for the core path.
+4. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
+   WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
+   real interactive remote-attach check when attach behavior changed.
 
 `go run ./cmd/task check` is the complete repository gate covering formatting,
 PowerShell parsing, tests, `go vet`, and the stable build artifact. Unit tests do

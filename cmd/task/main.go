@@ -18,7 +18,10 @@ import (
 	"herdr-sandbox/internal/productidentity"
 )
 
-const taskTimeout = 30 * time.Minute
+const (
+	taskTimeout                = 30 * time.Minute
+	nativeAllStacksTaskTimeout = 2 * time.Hour
+)
 
 var usage = fmt.Sprintf(`Usage: go run ./cmd/task <task>
 
@@ -26,6 +29,7 @@ Tasks:
   fmt              format Go source
   test [args...]   run go test ./... with optional extra arguments
   build            build build/bin/%s
+  native-all-stacks build and test all six stacks in one real Windows Sandbox
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
 `, productidentity.ExecutableName)
@@ -33,12 +37,13 @@ Tasks:
 func main() {
 	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	ctx, cancel := context.WithTimeout(interruptContext, taskTimeout)
+	timeout := taskTimeoutFor(os.Args[1:])
+	ctx, cancel := context.WithTimeout(interruptContext, timeout)
 	defer cancel()
 
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			err = fmt.Errorf("exceeded %s: %w", taskTimeout, err)
+			err = fmt.Errorf("exceeded %s: %w", timeout, err)
 		}
 		fmt.Fprintln(os.Stderr, "task:", err)
 		os.Exit(1)
@@ -69,6 +74,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("build accepts no arguments")
 		}
 		return build(ctx, stdout, stderr)
+	case "native-all-stacks":
+		if len(args) != 1 {
+			return errors.New("native-all-stacks accepts no arguments")
+		}
+		return nativeAllStacks(ctx, stdout, stderr)
 	case "package":
 		if len(args) != 2 {
 			return errors.New("package requires one v0.0.RELEASE_ID version")
@@ -82,6 +92,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown task %q\n\n%s", args[0], usage)
 	}
+}
+
+func taskTimeoutFor(args []string) time.Duration {
+	if len(args) > 0 && args[0] == "native-all-stacks" {
+		return nativeAllStacksTaskTimeout
+	}
+	return taskTimeout
 }
 
 func check(ctx context.Context, stdout, stderr io.Writer) error {

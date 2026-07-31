@@ -161,6 +161,43 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	}
 }
 
+func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitHubCLIHosts(t *testing.T) {
+	root := t.TempDir()
+	githubCLI := filepath.Join(root, "github-cli")
+	if err := os.MkdirAll(githubCLI, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(githubCLI, "config.yml"), "git_protocol: https\n")
+	packagePlan := filepath.Join(root, wingetPackagePlanFileName)
+	writeTestFile(t, packagePlan, `{}`)
+	herdrConfig := filepath.Join(root, "herdr-config.toml")
+	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
+
+	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+		GitHubCLIConfiguration:  githubCLI,
+		GitHubCLIAuthentication: []byte(`{"schemaVersion":1,"accounts":[]}`),
+		HerdrConfig:             herdrConfig,
+		PackagePlan:             packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n"))
+	if err != nil {
+		t.Fatalf("build archive without GitHub CLI hosts.yml: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]bool{}
+	for _, file := range reader.File {
+		entries[file.Name] = true
+	}
+	if !entries["github-cli/config.yml"] || !entries[githubCLIAuthenticationArchivePath] {
+		t.Fatalf("archive is missing available GitHub CLI state: %#v", entries)
+	}
+	if entries["github-cli/hosts.yml"] {
+		t.Fatalf("archive synthesized missing GitHub CLI hosts.yml: %#v", entries)
+	}
+}
+
 func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("APPDATA", root)
@@ -320,6 +357,16 @@ func TestPatchGuestHerdrConfigUsesPowerShell7(t *testing.T) {
 	}
 	if _, err := patchGuestHerdrConfig([]byte("[terminal]\n[terminal]\n")); err == nil {
 		t.Fatal("duplicate terminal sections unexpectedly succeeded")
+	}
+}
+
+func TestBuildGuestHerdrConfigAllowsMissingHostConfig(t *testing.T) {
+	config, err := buildGuestHerdrConfig(filepath.Join(t.TempDir(), "missing", "config.toml"))
+	if err != nil {
+		t.Fatalf("build missing host Herdr config: %v", err)
+	}
+	if string(config) != "[terminal]\ndefault_shell = \"pwsh.exe\"\n" {
+		t.Fatalf("generated guest Herdr config = %q", config)
 	}
 }
 

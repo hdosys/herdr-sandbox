@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -20,7 +21,7 @@ const (
 	hostHerdrInspectionTimeout      = 30 * time.Second
 	maximumHostHerdrRuntimeFileSize = 256 * 1024 * 1024
 	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
-	hostHerdrManifestSchemaVersion  = 1
+	hostHerdrManifestSchemaVersion  = 2
 	hostHerdrChangedAction          = "run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current WinGet-managed runtime"
 )
 
@@ -33,6 +34,8 @@ var hostHerdrRuntimeLayouts = [][]string{
 	},
 	{
 		"herdr.exe",
+		"herdr-launcher.exe",
+		"runtime.ready",
 		"conpty/conpty.dll",
 		"conpty/herdr-conpty.json",
 		"conpty/x64/OpenConsole.exe",
@@ -123,7 +126,7 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("resolve the active host Herdr runtime: %v", err)
 	}
-	files, err := inspectHostHerdrRuntimeFiles(runtimeExecutable)
+	runtimeFiles, err := inspectHostHerdrRuntimeFiles(runtimeExecutable)
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr Windows runtime: %v", err)
 	}
@@ -133,6 +136,12 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 	}
 	if commandSize <= 0 {
 		return HostHerdr{}, hostHerdrCompatibilityError("the host Herdr command has invalid size %d", commandSize)
+	}
+	files, err := inspectHostHerdrManagedInstallFiles(
+		commandPath, commandSHA256, commandSize, runtimeExecutable, runtimeFiles,
+	)
+	if err != nil {
+		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active managed Herdr installation: %v", err)
 	}
 	host := HostHerdr{
 		commandPath:       commandPath,
@@ -147,6 +156,100 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 		return HostHerdr{}, hostHerdrCompatibilityError("validate the active host Herdr runtime: %v", err)
 	}
 	return host, nil
+}
+
+func inspectHostHerdrManagedInstallFiles(
+	commandPath, commandSHA256 string,
+	commandSize int64,
+	runtimeExecutable string,
+	runtimeFiles []hostHerdrRuntimeFile,
+) ([]hostHerdrRuntimeFile, error) {
+	buildDirectory := filepath.Dir(runtimeExecutable)
+	runtimeDirectory := filepath.Dir(buildDirectory)
+	if filepath.Base(runtimeDirectory) != "runtime" {
+		return nil, fmt.Errorf("active runtime is not a direct runtime/<build-id>/herdr.exe child: %s", runtimeExecutable)
+	}
+	buildID := filepath.Base(buildDirectory)
+	if !validHostHerdrBuildID(buildID) {
+		return nil, fmt.Errorf("active runtime has invalid managed build ID %q", buildID)
+	}
+	installRoot := filepath.Dir(runtimeDirectory)
+	expectedCommand := filepath.Join(installRoot, "bin", "herdr.exe")
+	commandInfo, err := os.Stat(commandPath)
+	if err != nil {
+		return nil, fmt.Errorf("stat host Herdr command: %w", err)
+	}
+	expectedCommandInfo, err := os.Stat(expectedCommand)
+	if err != nil {
+		return nil, fmt.Errorf("stat managed Herdr command: %w", err)
+	}
+	if !os.SameFile(commandInfo, expectedCommandInfo) {
+		return nil, fmt.Errorf("host command %s is not the active managed command %s", commandPath, expectedCommand)
+	}
+
+	marker, err := inspectHostHerdrRuntimeFile(
+		filepath.Join(installRoot, "bin", "managed-install-v1", "marker"),
+		"bin/managed-install-v1/marker",
+	)
+	if err != nil {
+		return nil, err
+	}
+	active, err := inspectHostHerdrRuntimeFile(
+		filepath.Join(installRoot, "state", "active"),
+		"state/active",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyHostHerdrRecord(marker.SourcePath, "herdr-managed-bin-v1\n"); err != nil {
+		return nil, err
+	}
+	if err := verifyHostHerdrRecord(active.SourcePath, "herdr-pointer-v1\nbuild_id="+buildID+"\n"); err != nil {
+		return nil, err
+	}
+
+	files := []hostHerdrRuntimeFile{
+		{RelativePath: "bin/herdr.exe", SourcePath: commandPath, SHA256: commandSHA256, Size: commandSize},
+		marker,
+		active,
+	}
+	for _, file := range runtimeFiles {
+		if file.RelativePath == "runtime.ready" {
+			if err := verifyHostHerdrRecord(file.SourcePath, "herdr-runtime-v1\nbuild_id="+buildID+"\n"); err != nil {
+				return nil, err
+			}
+		}
+		file.RelativePath = filepath.ToSlash(filepath.Join("runtime", buildID, filepath.FromSlash(file.RelativePath)))
+		files = append(files, file)
+	}
+	sort.Slice(files, func(left, right int) bool { return files[left].RelativePath < files[right].RelativePath })
+	return files, nil
+}
+
+func validHostHerdrBuildID(value string) bool {
+	if len(value) != 25 || value[12] != '.' {
+		return false
+	}
+	for index, character := range []byte(value) {
+		if index == 12 {
+			continue
+		}
+		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func verifyHostHerdrRecord(path, expected string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read managed Herdr record %s: %w", path, err)
+	}
+	if string(contents) != expected {
+		return fmt.Errorf("managed Herdr record %s does not match its exact contract", path)
+	}
+	return nil
 }
 
 func resolveInstalledHostHerdrCommand() (string, error) {
@@ -364,20 +467,25 @@ func (host HostHerdr) validate() error {
 	if !strings.HasPrefix(host.version, "herdr ") || strings.ContainsAny(host.version, "\r\n") || host.protocol < 1 {
 		return errors.New("host Herdr version or protocol is invalid")
 	}
-	if len(host.files) != 4 && len(host.files) != 5 {
-		return fmt.Errorf("host Herdr runtime file count = %d, want 4 or 5", len(host.files))
+	if len(host.files) != 10 {
+		return fmt.Errorf("host Herdr managed install file count = %d, want 10", len(host.files))
 	}
-	foundExecutable := false
+	foundCommand := false
+	foundRuntime := false
 	for _, file := range host.files {
-		if file.RelativePath == "herdr.exe" {
-			foundExecutable = strings.EqualFold(file.SourcePath, host.runtimeExecutable)
+		if file.RelativePath == "bin/herdr.exe" {
+			foundCommand = strings.EqualFold(file.SourcePath, host.commandPath) &&
+				file.SHA256 == host.commandSHA256 && file.Size == host.commandSize
+		}
+		if strings.HasPrefix(file.RelativePath, "runtime/") && strings.HasSuffix(file.RelativePath, "/herdr.exe") {
+			foundRuntime = strings.EqualFold(file.SourcePath, host.runtimeExecutable)
 		}
 		if !filepath.IsAbs(file.SourcePath) || file.Size <= 0 || len(file.SHA256) != 64 {
 			return fmt.Errorf("host Herdr runtime file %q is invalid", file.RelativePath)
 		}
 	}
-	if !foundExecutable {
-		return errors.New("host Herdr runtime file set does not own its reported executable")
+	if !foundCommand || !foundRuntime {
+		return errors.New("host Herdr managed file set does not own its command and reported runtime")
 	}
 	return nil
 }
@@ -428,28 +536,21 @@ func writeHostHerdrRunInput(ctx context.Context, host HostHerdr, inputDirectory 
 	if err := host.validate(); err != nil {
 		return err
 	}
-	runtimeDirectory := filepath.Join(inputDirectory, "herdr-runtime")
-	if err := os.Mkdir(runtimeDirectory, 0o700); err != nil {
-		return fmt.Errorf("create host Herdr runtime snapshot: %w", err)
+	installDirectory := filepath.Join(inputDirectory, "herdr-install")
+	if err := os.Mkdir(installDirectory, 0o700); err != nil {
+		return fmt.Errorf("create host Herdr install snapshot: %w", err)
 	}
 	for _, file := range host.files {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		destination := filepath.Join(runtimeDirectory, filepath.FromSlash(file.RelativePath))
+		destination := filepath.Join(installDirectory, filepath.FromSlash(file.RelativePath))
 		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 			return fmt.Errorf("create host Herdr runtime snapshot directory: %w", err)
 		}
 		if err := copyVerifiedHostHerdrFile(file, destination); err != nil {
 			return err
 		}
-	}
-	version, err := inspectHostHerdrVersion(ctx, filepath.Join(runtimeDirectory, "herdr.exe"))
-	if err != nil {
-		return fmt.Errorf("verify snapshotted host Herdr executable: %w", err)
-	}
-	if version != host.version {
-		return fmt.Errorf("snapshotted host Herdr version = %q, expected %q", version, host.version)
 	}
 	manifest, err := json.MarshalIndent(host.manifest(), "", "  ")
 	if err != nil {

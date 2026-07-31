@@ -335,7 +335,7 @@ func TestDefaultBaseUsesCanonicalGuestLayoutAndExactGitTrust(t *testing.T) {
 	}
 }
 
-func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsExplorerOnlyForRegistryChanges(t *testing.T) {
+func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsExplorerOnceEarly(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		"[ValidateSet('Registry', 'Development')]",
@@ -354,7 +354,7 @@ func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsE
 		"Explorer shell restarted:",
 		"Restart-ProvisioningExplorerShell -Role 'registry changes'",
 		"Registry state already matches; Explorer restart skipped.",
-		"early registry and Explorer customization",
+		"early registry customization",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing PowerShell 7 contract %q", required)
@@ -377,10 +377,19 @@ func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsE
 	if stopIndex < 0 || zeroIndex < 0 || startIndex < 0 || zeroIndex > stopIndex || startIndex < stopIndex {
 		t.Fatalf("Explorer stop/zero/start ordering is not explicit: zero=%d stop=%d start=%d", zeroIndex, stopIndex, startIndex)
 	}
+	if count := strings.Count(text, "Restart-ProvisioningExplorerShell -Role"); count != 1 {
+		t.Fatalf("Base invokes Explorer restart %d times, want exactly 1", count)
+	}
 	powerShellInstallIndex := strings.Index(text, "Write-Output 'Installing PowerShell 7...'")
-	registryReturnIndex := strings.Index(text, "Write-ProvisioningTiming -Role 'early registry and Explorer customization'")
-	if registryReturnIndex < startIndex || powerShellInstallIndex < registryReturnIndex {
-		t.Fatalf("PowerShell installation must follow the completed registry phase: explorer=%d registryReturn=%d PowerShell=%d", startIndex, registryReturnIndex, powerShellInstallIndex)
+	registryReturnIndex := strings.Index(text, "Write-ProvisioningTiming -Role 'early registry customization'")
+	restartCallIndex := strings.Index(text, "Restart-ProvisioningExplorerShell -Role 'registry changes'")
+	searchVisibilityIndex := strings.Index(text, "SearchboxTaskbarMode = 0")
+	weatherVisibilityIndex := strings.Index(text, "AllowNewsAndInterests = 0")
+	pinLayoutIndex := strings.LastIndex(text, "Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition")
+	if searchVisibilityIndex < 0 || weatherVisibilityIndex < 0 || pinLayoutIndex < 0 ||
+		restartCallIndex < startIndex || restartCallIndex < searchVisibilityIndex || restartCallIndex < weatherVisibilityIndex ||
+		registryReturnIndex < restartCallIndex || powerShellInstallIndex < registryReturnIndex || pinLayoutIndex < powerShellInstallIndex {
+		t.Fatalf("early taskbar visibility/restart and later pin ordering is invalid: explorerDefinition=%d search=%d weather=%d restart=%d registryReturn=%d PowerShell=%d pins=%d", startIndex, searchVisibilityIndex, weatherVisibilityIndex, restartCallIndex, registryReturnIndex, powerShellInstallIndex, pinLayoutIndex)
 	}
 }
 
@@ -627,7 +636,6 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 		"[Net.WebUtility]::HtmlEncode($layout)",
 		"StartLayout -ceq $layout",
 		"Taskbar policy read-back did not match the canonical decoded layout",
-		"Restart-ProvisioningExplorerShell -Role 'taskbar policy change'",
 		"Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition",
 	} {
 		if !strings.Contains(text, required) {
@@ -638,6 +646,9 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("default Base contains unsupported taskbar fallback %q", forbidden)
 		}
+	}
+	if strings.Contains(text, "Restart-ProvisioningExplorerShell -Role 'taskbar policy change'") {
+		t.Fatal("taskbar policy still restarts Explorer")
 	}
 }
 
@@ -650,7 +661,7 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"function Test-ProvisioningPortablePackageInstalled",
 		"function Test-ProvisioningRustupInstalled",
 		"function Test-ProvisioningGeistMonoFontInstalled",
-		"if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName)",
+		"Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName",
 		"if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata)",
 		"already matches requested version:",
 		"online package already matches requested version:",

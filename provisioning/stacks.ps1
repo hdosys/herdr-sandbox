@@ -1140,7 +1140,7 @@ function Install-PythonStack {
         -RequireAuthenticodeSignature
     Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' | Out-Null
-    $runtimeVersion = ($Version -split '\.')[0..2] -join '\.'
+    $runtimeVersion = ($Version -split '\.')[0..2] -join '.'
     $pythonPattern = '^Python ' + [regex]::Escape($runtimeVersion) + '$'
     $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
         -VersionArguments @('--version') -ExpectedPattern $pythonPattern
@@ -1156,7 +1156,8 @@ function Install-ZigStack {
 
     Write-Output 'Installing Zig...'
     Install-ProvisioningWinGetPackage -Role 'Zig' -Id 'zig.zig' -Version $Version `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'zig.exe'
+        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'zig.exe' `
+        -PortableVersionArguments @('version')
     $zigPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^\d+\.\d+\.\d+$'
     } else {

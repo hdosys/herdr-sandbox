@@ -200,7 +200,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches a fresh guest, or reprovisions when the exact ready app-owned launch plan still matches. It attaches unless `--no-attach` intentionally stops at terminal ready. There is no overall timeout by default. |
 | `herdr-sandbox attach` | Reconstructs and verifies the exact ready app-owned connection, then starts the interactive Herdr client without reprovisioning. |
 | `herdr-sandbox status` | Reports guest health, retained-operation state, safe workspace identities, versions, bounded timings/diagnostics, warnings, and the next action. It may clean only proven stale app-owned state. |
-| `herdr-sandbox down` | Idempotently requests orderly close only for the exact revalidated app-owned Sandbox. It never force-kills any Sandbox; failed Tailscale preservation leaves an opted-in guest open. |
+| `herdr-sandbox down` | Idempotently terminates only the exact revalidated app-owned Sandbox process tree without opening the Windows close-confirmation dialog. Failed Tailscale preservation leaves an opted-in guest open. |
 | `herdr-sandbox clean` | Explicitly runs the same strict inactive-run cleanup used automatically at startup. Exact active state, identities, user configuration, workspaces, unknown entries, and package caches are preserved. |
 
 <details>
@@ -472,10 +472,11 @@ go run ./cmd/task fmt
 go run ./cmd/task test
 go run ./cmd/task build
 go run ./cmd/task check
+go run ./cmd/task native-all-stacks
 go run ./cmd/task package v0.0.0
 ```
 
-`check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. `package` requires the pinned NSIS 3.12 compiler and writes the installer, ZIP, and both checksum files under `build\dist`; it never installs the resulting package. Repository-owned provisioning and installer helper scripts run exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
+`check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact. The opt-in `native-all-stacks` task builds that stable CLI, uses a credential-free ignored fixture under `build\native-all-stacks`, provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig, runs version plus build/test smokes over managed SSH, verifies the transferred Terminal/Starship state, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, and the normal host Herdr and GitHub CLI prerequisites. `package` requires the pinned NSIS 3.12 compiler and writes the installer, ZIP, and both checksum files under `build\dist`; it never installs the resulting package. Repository-owned provisioning and installer helper scripts run exclusively under Windows PowerShell 5.1; installed PowerShell 7 is interactive guest tooling.
 
 ## License
 

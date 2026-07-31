@@ -80,7 +80,7 @@ func TestResolveHostHerdrUsesManagedPhysicalRuntimeAndSnapshotsIt(t *testing.T) 
 			t.Fatalf("host Herdr %s paths identify different files: expected %q, got %q", expected.role, expected.want, expected.got)
 		}
 	}
-	if host.version != "herdr 1.2.3-test" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != 5 {
+	if host.version != "herdr 1.2.3-test" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != 10 {
 		t.Fatalf("host identity = %#v", host)
 	}
 
@@ -96,11 +96,11 @@ func TestResolveHostHerdrUsesManagedPhysicalRuntimeAndSnapshotsIt(t *testing.T) 
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.SchemaVersion != 1 || manifest.Version != host.version || manifest.Protocol != host.protocol || len(manifest.Files) != 5 {
+	if manifest.SchemaVersion != 2 || manifest.Version != host.version || manifest.Protocol != host.protocol || len(manifest.Files) != 10 {
 		t.Fatalf("manifest = %#v", manifest)
 	}
 	for _, file := range manifest.Files {
-		if _, err := os.Stat(filepath.Join(inputDirectory, "herdr-runtime", filepath.FromSlash(file.Path))); err != nil {
+		if _, err := os.Stat(filepath.Join(inputDirectory, "herdr-install", filepath.FromSlash(file.Path))); err != nil {
 			t.Fatalf("snapshotted %s: %v", file.Path, err)
 		}
 	}
@@ -175,6 +175,18 @@ func TestResolveHostHerdrAgainstInstalledRuntime(t *testing.T) {
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr installed boundary: %v", err)
+	}
+	inputDirectory := t.TempDir()
+	if err := writeHostHerdrRunInput(context.Background(), host, inputDirectory); err != nil {
+		t.Fatalf("snapshot installed host Herdr: %v", err)
+	}
+	snapshotCommand := filepath.Join(inputDirectory, "herdr-install", "bin", "herdr.exe")
+	output, err := hiddenCommand(snapshotCommand, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("run snapshotted host Herdr: %v: %s", err, output)
+	}
+	if actual := strings.TrimSpace(string(output)); actual != host.version {
+		t.Fatalf("snapshotted host Herdr version = %q, want %q", actual, host.version)
 	}
 	t.Logf("resolved %s protocol %d from %s", host.version, host.protocol, host.runtimeExecutable)
 }
@@ -281,9 +293,16 @@ func prepareHostHerdrFixture(t *testing.T, managed bool) (string, string) {
 	layout := hostHerdrRuntimeLayouts[0]
 	if managed {
 		layout = hostHerdrRuntimeLayouts[1]
+		buildID := filepath.Base(filepath.Dir(runtimePath))
+		writeHostHerdrFixtureFile(t, filepath.Join(root, "bin", "managed-install-v1", "marker"), "herdr-managed-bin-v1\n")
+		writeHostHerdrFixtureFile(t, filepath.Join(root, "state", "active"), "herdr-pointer-v1\nbuild_id="+buildID+"\n")
 	}
 	for _, relative := range layout[1:] {
-		writeHostHerdrFixtureFile(t, filepath.Join(filepath.Dir(runtimePath), filepath.FromSlash(relative)), relative)
+		contents := relative
+		if relative == "runtime.ready" {
+			contents = "herdr-runtime-v1\nbuild_id=" + filepath.Base(filepath.Dir(runtimePath)) + "\n"
+		}
+		writeHostHerdrFixtureFile(t, filepath.Join(filepath.Dir(runtimePath), filepath.FromSlash(relative)), contents)
 	}
 	t.Setenv(hostHerdrFixtureEnvironment, "1")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "1.2.3-test")

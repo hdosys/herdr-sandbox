@@ -1102,16 +1102,16 @@ if ($null -eq $verifiedClient -or [string]$verifiedClient.Name -cne 'WindowsSand
     [int]$verifiedClient.ParentProcessId -ne [int]$env:HERDR_SANDBOX_EXPECTED_PID) {
     exit 15
 }
-$windowDeadline = [DateTime]::UtcNow.AddSeconds(10)
-do {
-    $client.Refresh()
-    if ($client.MainWindowHandle -ne [IntPtr]::Zero) { break }
-    if ($client.HasExited) { exit 3 }
-    Start-Sleep -Milliseconds 100
-} while ([DateTime]::UtcNow -lt $windowDeadline)
-if ($client.MainWindowHandle -eq [IntPtr]::Zero -or -not $client.CloseMainWindow()) { exit 15 }
-if (-not $client.WaitForExit(60000)) { exit 16 }
-if (-not $process.WaitForExit(30000)) { exit 17 }
+$client.Refresh()
+if (-not $client.HasExited) {
+    try { $client.Kill() } catch { exit 16 }
+    if (-not $client.WaitForExit(30000)) { exit 16 }
+}
+$process.Refresh()
+if (-not $process.HasExited) {
+    try { $process.Kill() } catch { exit 17 }
+    if (-not $process.WaitForExit(30000)) { exit 17 }
+}
 $client.Dispose()
 $process.Dispose()
 Write-Output 'HERDR_SANDBOX_STOPPED'`
@@ -1132,11 +1132,11 @@ Write-Output 'HERDR_SANDBOX_STOPPED'`
 			case 12:
 				return false, fmt.Errorf("recorded Windows Sandbox process identity changed; refusing to stop PID %d", active.PID)
 			case 15:
-				return false, errors.New("owned Windows Sandbox client did not expose one closable main window; it was not force-terminated")
+				return false, errors.New("owned Windows Sandbox launcher did not expose exactly one revalidated client; no process was terminated")
 			case 16:
-				return false, errors.New("owned Windows Sandbox client refused to exit within 60 seconds; it was not force-terminated")
+				return false, errors.New("exact owned Windows Sandbox client could not be terminated within 30 seconds")
 			case 17:
-				return false, errors.New("owned Windows Sandbox launcher did not exit after its client closed; it was not force-terminated")
+				return false, errors.New("exact owned Windows Sandbox launcher could not be terminated within 30 seconds")
 			}
 		}
 		return false, fmt.Errorf("stop owned Windows Sandbox: %w: %s", err, boundedText(output))

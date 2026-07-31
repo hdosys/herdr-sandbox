@@ -944,7 +944,10 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $githubCLISource = Join-Path $expanded 'github-cli'
     $githubCLIDestination = Join-Path $env:APPDATA 'GitHub CLI'
     foreach ($name in @('config.yml', 'hosts.yml')) {
-        Copy-VerifiedConfigurationFile -Source (Join-Path $githubCLISource $name) -Destination (Join-Path $githubCLIDestination $name)
+        $source = Join-Path $githubCLISource $name
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-VerifiedConfigurationFile -Source $source -Destination (Join-Path $githubCLIDestination $name)
+        }
     }
     foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
         Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
@@ -1449,6 +1452,9 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		for _, name := range []string{"config.yml", "hosts.yml"} {
 			source := filepath.Join(sources.GitHubCLIConfiguration, name)
 			if err := add(source, filepath.Join("github-cli", name)); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
 				return nil, fmt.Errorf("archive GitHub CLI %s: %w", name, err)
 			}
 		}
@@ -1496,6 +1502,9 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 
 func buildGuestHerdrConfig(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return patchGuestHerdrConfig(nil)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect Herdr config: %w", err)
 	}
@@ -1547,7 +1556,9 @@ func patchGuestHerdrConfig(contents []byte) ([]byte, error) {
 	}
 	const guestShell = `default_shell = "pwsh.exe"`
 	if terminalSection < 0 {
-		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
+		if len(lines) == 1 && lines[0] == "" {
+			lines = nil
+		} else if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 			lines = append(lines, "")
 		}
 		lines = append(lines, "[terminal]", guestShell)

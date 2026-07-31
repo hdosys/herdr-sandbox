@@ -451,7 +451,7 @@ try {
     $releaseMetadataPath = Join-Path $InputDirectory 'bootstrap-release.json'
     $releaseMetadata = Get-Content -LiteralPath $releaseMetadataPath -Raw | ConvertFrom-Json
     $releaseMetadataProperties = @($releaseMetadata.PSObject.Properties.Name | Sort-Object)
-    if (($releaseMetadataProperties -join '|') -cne 'openSSHMSISha256|openSSHMSIUrl|openSSHVersion|schemaVersion|vcRuntimeSha256|vcRuntimeUrl|winGetBundleSha256|winGetBundleUrl|winGetDependenciesSha256|winGetDependenciesUrl|wingetVersion' -or
+    if (($releaseMetadataProperties -join '|') -cne 'openSSHMSISha256|openSSHMSIUrl|openSSHVersion|schemaVersion|vcRuntimeSha256|vcRuntimeUrl|wingetBundleSha256|wingetBundleUrl|wingetDependenciesSha256|wingetDependenciesUrl|wingetVersion' -or
         [int]$releaseMetadata.schemaVersion -ne 1) {
         throw 'Unsupported bootstrap release metadata schema.'
     }
@@ -494,7 +494,7 @@ try {
     }
 
     $hostHerdrMetadataPath = Join-Path $InputDirectory 'host-herdr.json'
-    $hostHerdrSourceDirectory = Join-Path $InputDirectory 'herdr-runtime'
+    $hostHerdrSourceDirectory = Join-Path $InputDirectory 'herdr-install'
     if (-not (Test-Path -LiteralPath $hostHerdrMetadataPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $hostHerdrSourceDirectory -PathType Container)) {
         throw 'Verified host Herdr runtime input is missing.'
@@ -502,17 +502,21 @@ try {
     $hostHerdrMetadata = Get-Content -LiteralPath $hostHerdrMetadataPath -Raw | ConvertFrom-Json
     $hostHerdrMetadataProperties = @($hostHerdrMetadata.PSObject.Properties.Name | Sort-Object)
     if (($hostHerdrMetadataProperties -join '|') -cne 'files|protocol|schemaVersion|version' -or
-        [int]$hostHerdrMetadata.schemaVersion -ne 1) {
+        [int]$hostHerdrMetadata.schemaVersion -ne 2) {
         throw 'Host Herdr runtime metadata has an unsupported contract.'
     }
     $ExpectedHerdrVersion = [string]$hostHerdrMetadata.version
     $ExpectedHerdrProtocol = [int]$hostHerdrMetadata.protocol
-    if ($ExpectedHerdrVersion -notmatch '^herdr [^\r\n]{1,250}$' -or $ExpectedHerdrProtocol -lt 1) {
+    $herdrBuildIDMatch = [regex]::Match(
+        $ExpectedHerdrVersion, '\.(?<buildID>[0-9a-f]{12}\.[0-9a-f]{12})$')
+    if ($ExpectedHerdrVersion -notmatch '^herdr [^\r\n]{1,250}$' -or
+        $ExpectedHerdrProtocol -lt 1 -or -not $herdrBuildIDMatch.Success) {
         throw 'Host Herdr runtime identity is invalid.'
     }
+    $ExpectedHerdrBuildID = $herdrBuildIDMatch.Groups['buildID'].Value
     $hostHerdrFiles = @($hostHerdrMetadata.files)
-    if ($hostHerdrFiles.Count -notin @(4, 5)) {
-        throw "Host Herdr runtime file count is invalid: $($hostHerdrFiles.Count)"
+    if ($hostHerdrFiles.Count -ne 10) {
+        throw "Host Herdr managed install file count is invalid: $($hostHerdrFiles.Count)"
     }
     $hostHerdrPaths = New-Object System.Collections.Generic.List[string]
     $seenHostHerdrPaths = @{}
@@ -542,10 +546,32 @@ try {
         }
     }
     $actualHostHerdrLayout = (@($hostHerdrPaths) | Sort-Object) -join '|'
-    $legacyHostHerdrLayout = 'arm64/OpenConsole.exe|conpty.dll|herdr.exe|x64/OpenConsole.exe'
-    $managedHostHerdrLayout = 'conpty/arm64/OpenConsole.exe|conpty/conpty.dll|conpty/herdr-conpty.json|conpty/x64/OpenConsole.exe|herdr.exe'
-    if ($actualHostHerdrLayout -cne $legacyHostHerdrLayout -and $actualHostHerdrLayout -cne $managedHostHerdrLayout) {
+    $managedRuntimePrefix = 'runtime/' + $ExpectedHerdrBuildID + '/'
+    $managedHostHerdrLayout = @(
+        'bin/herdr.exe',
+        'bin/managed-install-v1/marker',
+        ($managedRuntimePrefix + 'conpty/arm64/OpenConsole.exe'),
+        ($managedRuntimePrefix + 'conpty/conpty.dll'),
+        ($managedRuntimePrefix + 'conpty/herdr-conpty.json'),
+        ($managedRuntimePrefix + 'conpty/x64/OpenConsole.exe'),
+        ($managedRuntimePrefix + 'herdr-launcher.exe'),
+        ($managedRuntimePrefix + 'herdr.exe'),
+        ($managedRuntimePrefix + 'runtime.ready'),
+        'state/active'
+    ) | Sort-Object
+    if ($actualHostHerdrLayout -cne ($managedHostHerdrLayout -join '|')) {
         throw "Host Herdr runtime layout is unsupported: $actualHostHerdrLayout"
+    }
+    $expectedHostHerdrRecords = [ordered]@{
+        'bin/managed-install-v1/marker' = "herdr-managed-bin-v1`n"
+        ($managedRuntimePrefix + 'runtime.ready') = "herdr-runtime-v1`nbuild_id=$ExpectedHerdrBuildID`n"
+        'state/active' = "herdr-pointer-v1`nbuild_id=$ExpectedHerdrBuildID`n"
+    }
+    foreach ($record in $expectedHostHerdrRecords.GetEnumerator()) {
+        $recordPath = Join-Path $hostHerdrSourceDirectory ([string]$record.Key).Replace('/', '\')
+        if ([IO.File]::ReadAllText($recordPath) -cne [string]$record.Value) {
+            throw "Host Herdr managed record does not match its exact contract: $($record.Key)"
+        }
     }
 
     $provisioningDirectory = Join-Path $InputDirectory 'provisioning'
@@ -625,7 +651,24 @@ try {
     if ($wingetDependencyPaths.Count -ne 3) {
         throw "Expected 3 x64 WinGet dependencies but found $($wingetDependencyPaths.Count)."
     }
-    Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths -ErrorAction Stop
+    for ($attempt = 1; $attempt -le 4; $attempt += 1) {
+        try {
+            Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths -ErrorAction Stop
+            break
+        } catch {
+            $diagnostic = [string]$_.Exception.Message
+            $registrationNotReady =
+                $diagnostic.IndexOf('0x80073CF3', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $diagnostic.IndexOf('0x80070003', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $diagnostic.IndexOf('AppxManifest.xml', [StringComparison]::OrdinalIgnoreCase) -ge 0
+            if (-not $registrationNotReady -or $attempt -eq 4) {
+                throw
+            }
+            $nextAttempt = $attempt + 1
+            Write-ProgressStatus -Phase 'winget-install' -Message "WinGet package registration retry $nextAttempt of 4"
+            Start-Sleep -Seconds (5 * $attempt)
+        }
+    }
 
     $wingetPath = $null
     for ($attempt = 0; $attempt -lt 60; $attempt += 1) {
@@ -670,18 +713,20 @@ try {
     }
 
     Write-ProgressStatus -Phase 'herdr-install' -Message 'Provisioning the verified host Herdr runtime'
-    $herdrDirectory = 'C:\HerdrSandbox\runtime\herdr'
-    if (Test-Path -LiteralPath $herdrDirectory) {
-        throw "Refusing to replace existing Herdr directory: $herdrDirectory"
-    }
-    New-Item -ItemType Directory -Path $herdrDirectory | Out-Null
+    $herdrInstallRoot = 'C:\HerdrSandbox'
+    $herdrRoot = Join-Path $herdrInstallRoot 'runtime'
+    $herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID
+    $herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'
     foreach ($hostHerdrFile in $hostHerdrFiles) {
         $relativePath = [string]$hostHerdrFile.path
         $expectedSHA256 = [string]$hostHerdrFile.sha256
         $expectedSize = [long]$hostHerdrFile.size
         $windowsRelativePath = $relativePath.Replace('/', '\')
         $sourcePath = Join-Path $hostHerdrSourceDirectory $windowsRelativePath
-        $destinationPath = Join-Path $herdrDirectory $windowsRelativePath
+        $destinationPath = Join-Path $herdrInstallRoot $windowsRelativePath
+        if (Test-Path -LiteralPath $destinationPath) {
+            throw "Refusing to replace existing Herdr installation file: $destinationPath"
+        }
         $destinationParent = Split-Path -Parent $destinationPath
         if (-not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
             New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
@@ -691,10 +736,10 @@ try {
         if (($destinationFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
             [long]$destinationFile.Length -ne $expectedSize -or
             (Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedSHA256) {
-            throw "Guest-local Herdr runtime copy failed verification: $relativePath"
+            throw "Guest-local Herdr managed install copy failed verification: $relativePath"
         }
     }
-    $herdrExecutable = Join-Path $herdrDirectory 'herdr.exe'
+    $herdrExecutable = Join-Path $herdrBinDirectory 'herdr.exe'
     $herdrVersionOutput = Invoke-Native -Role 'Herdr version check' -FilePath $herdrExecutable -ArgumentList @('--version')
     $herdrVersion = ($herdrVersionOutput -join ' ').Trim()
     if ($herdrVersion -ne $ExpectedHerdrVersion) {
@@ -708,14 +753,14 @@ try {
         -ArgumentList @('config', 'check') | Out-Null
 
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $pathSegments = @($herdrDirectory)
+    $pathSegments = @($herdrBinDirectory)
     if (-not [string]::IsNullOrWhiteSpace($machinePath)) {
         $pathSegments += $machinePath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
-            Where-Object { $_.TrimEnd('\') -ine $herdrDirectory.TrimEnd('\') }
+            Where-Object { $_.TrimEnd('\') -ine $herdrBinDirectory.TrimEnd('\') }
     }
     $updatedMachinePath = $pathSegments -join ';'
     [Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')
-    $env:Path = $herdrDirectory + ';' + $env:Path
+    $env:Path = $herdrBinDirectory + ';' + $env:Path
     $pathHerdr = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     if ($null -eq $pathHerdr -or
         -not [string]::Equals([string]$pathHerdr.Source, $herdrExecutable, [StringComparison]::OrdinalIgnoreCase)) {

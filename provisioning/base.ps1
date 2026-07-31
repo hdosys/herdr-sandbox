@@ -985,7 +985,8 @@ function Test-ProvisioningPortablePackageInstalled {
         [Parameter(Mandatory = $true)]
         [object]$Metadata,
         [Parameter(Mandatory = $true)]
-        [string]$ExecutableName
+        [string]$ExecutableName,
+        [string[]]$VersionArguments = @('--version')
     )
 
     if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
@@ -1013,7 +1014,7 @@ function Test-ProvisioningPortablePackageInstalled {
         $previousErrorActionPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            $versionOutput = @(& $commands[0].FullName --version 2>&1 | ForEach-Object { [string]$_ })
+            $versionOutput = @(& $commands[0].FullName @VersionArguments 2>&1 | ForEach-Object { [string]$_ })
             $exitCode = $LASTEXITCODE
         } finally {
             $ErrorActionPreference = $previousErrorActionPreference
@@ -1222,12 +1223,14 @@ function Test-ProvisioningPackageInstalled {
         [object]$Metadata,
         [Parameter(Mandatory = $true)]
         [string]$Adapter,
-        [string]$ExecutableName = ''
+        [string]$ExecutableName = '',
+        [string[]]$PortableVersionArguments = @('--version')
     )
 
     switch ($Adapter) {
         'Portable' {
-            return Test-ProvisioningPortablePackageInstalled -Metadata $Metadata -ExecutableName $ExecutableName
+            return Test-ProvisioningPortablePackageInstalled -Metadata $Metadata -ExecutableName $ExecutableName `
+                -VersionArguments $PortableVersionArguments
         }
         'GeistMonoFont' {
             return Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata
@@ -1456,6 +1459,7 @@ function Install-ProvisioningCachedPackage {
         [string[]]$InstallerArguments = @(),
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
+        [string[]]$PortableVersionArguments = @('--version'),
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature
     )
@@ -1463,7 +1467,8 @@ function Install-ProvisioningCachedPackage {
     $packageStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $metadata = $Metadata
     Update-ProvisioningPath
-    if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName) {
+    if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
+            -PortableVersionArguments $PortableVersionArguments) {
         Write-Host "$Role already matches requested version: $($metadata.Version)"
         $packageStopwatch.Stop()
         Write-ProvisioningTiming -Role "$Role package total" -Seconds $packageStopwatch.Elapsed.TotalSeconds
@@ -1518,7 +1523,7 @@ function Install-ProvisioningCachedPackage {
             -DeferCommandReadiness:$DeferCommandReadiness `
             -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
         if (-not (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
-                -ExecutableName $ExecutableName)) {
+                -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments)) {
             throw "$Role installed package does not match resolved version $($metadata.Version)."
         }
         if (-not $cacheHit) {
@@ -1581,6 +1586,7 @@ function Install-ProvisioningWinGetPackage {
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
         [string]$CommandSourceExclusion = '',
+        [string[]]$PortableVersionArguments = @('--version'),
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature
     )
@@ -1590,6 +1596,7 @@ function Install-ProvisioningWinGetPackage {
     Install-ProvisioningCachedPackage -Role $Role -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
         -CommandSourceExclusion $CommandSourceExclusion `
+        -PortableVersionArguments $PortableVersionArguments `
         -DeferCommandReadiness:$DeferCommandReadiness `
         -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
 }
@@ -1983,7 +1990,6 @@ function Ensure-ProvisioningTaskbarPins {
     if ($verifiedInstances.Count -ne 1 -or [string]$verifiedInstances[0].StartLayout -cne $layout) {
         throw 'Taskbar policy read-back did not match the canonical decoded layout.'
     }
-    Restart-ProvisioningExplorerShell -Role 'taskbar policy change'
     Write-Host "Taskbar pins applied: $($pinNames -join ', ')"
 }
 
@@ -2604,7 +2610,7 @@ if ($registryStateChanged) {
     Write-Host 'Registry state already matches; Explorer restart skipped.'
 }
 $provisioningStopwatch.Stop()
-Write-ProvisioningTiming -Role 'early registry and Explorer customization' -Seconds $provisioningStopwatch.Elapsed.TotalSeconds
+Write-ProvisioningTiming -Role 'early registry customization' -Seconds $provisioningStopwatch.Elapsed.TotalSeconds
 return
 }
 

@@ -26,11 +26,20 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 }
 
 func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
-	for _, task := range []string{"fmt", "build", "check"} {
+	for _, task := range []string{"fmt", "build", "check", "native-all-stacks"} {
 		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
 			t.Fatalf("run %s error = %v", task, err)
 		}
+	}
+}
+
+func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
+	if got := taskTimeoutFor([]string{"native-all-stacks"}); got != nativeAllStacksTaskTimeout {
+		t.Fatalf("native timeout = %s", got)
+	}
+	if got := taskTimeoutFor([]string{"check"}); got != taskTimeout {
+		t.Fatalf("ordinary timeout = %s", got)
 	}
 }
 

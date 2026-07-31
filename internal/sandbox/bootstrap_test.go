@@ -3,12 +3,14 @@ package sandbox
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -47,13 +49,18 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		"OpenSSH default shell verification failed",
 		"bootstrap-release.json",
 		"host-herdr.json",
-		"herdr-runtime",
+		"herdr-install",
 		"Host Herdr runtime layout is unsupported",
 		"download.visualstudio.microsoft.com/download/pr/",
 		"VC_redist.x64.exe",
 		"@('/install', '/quiet', '/norestart')",
 		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
-		"$herdrDirectory = 'C:\\HerdrSandbox\\runtime\\herdr'",
+		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
+		"$herdrRoot = Join-Path $herdrInstallRoot 'runtime'",
+		"$herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID",
+		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
+		"($managedRuntimePrefix + 'herdr-launcher.exe')",
+		"($managedRuntimePrefix + 'runtime.ready')",
 		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
 		"[Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')",
 		"Get-Command -Name 'herdr.exe' -CommandType Application",
@@ -249,6 +256,65 @@ func TestBootstrapAndReleaseMetadataAreEmbedded(t *testing.T) {
 	}
 	if len(bytes.TrimSpace(bootstrapReleaseJSON)) == 0 {
 		t.Fatal("bootstrap release metadata is empty")
+	}
+}
+
+func TestBootstrapReleasePowerShellSchemaMatchesEmbeddedMetadata(t *testing.T) {
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(bootstrapReleaseJSON, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	properties := make([]string, 0, len(metadata))
+	for name := range metadata {
+		properties = append(properties, name)
+	}
+	sort.Slice(properties, func(left, right int) bool {
+		return strings.ToLower(properties[left]) < strings.ToLower(properties[right])
+	})
+	shape := strings.Join(properties, "|")
+	expected := "($releaseMetadataProperties -join '|') -cne '" + shape + "'"
+	if !strings.Contains(string(bootstrapScript), expected) {
+		t.Fatalf("bootstrap PowerShell schema does not match embedded metadata: want %q", shape)
+	}
+}
+
+func TestBootstrapBoundsWinGetRegistrationRaceRetries(t *testing.T) {
+	script := string(bootstrapScript)
+	for _, required := range []string{
+		"for ($attempt = 1; $attempt -le 4; $attempt += 1)",
+		"$diagnostic.IndexOf('0x80073CF3'",
+		"$diagnostic.IndexOf('0x80070003'",
+		"$diagnostic.IndexOf('AppxManifest.xml'",
+		"if (-not $registrationNotReady -or $attempt -eq 4)",
+		"Start-Sleep -Seconds (5 * $attempt)",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("bootstrap WinGet retry contract is missing %q", required)
+		}
+	}
+}
+
+func TestBootstrapPreservesManagedHerdrInstallTree(t *testing.T) {
+	script := string(bootstrapScript)
+	for _, required := range []string{
+		"\\.(?<buildID>[0-9a-f]{12}\\.[0-9a-f]{12})$",
+		"$ExpectedHerdrBuildID = $herdrBuildIDMatch.Groups['buildID'].Value",
+		"$hostHerdrSourceDirectory = Join-Path $InputDirectory 'herdr-install'",
+		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
+		"$herdrRoot = Join-Path $herdrInstallRoot 'runtime'",
+		"$herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID",
+		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
+		"herdr-managed-bin-v1`n",
+		"herdr-runtime-v1`nbuild_id=$ExpectedHerdrBuildID`n",
+		"herdr-pointer-v1`nbuild_id=$ExpectedHerdrBuildID`n",
+		"Guest-local Herdr managed install copy failed verification",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("bootstrap managed Herdr layout contract is missing %q", required)
+		}
+	}
+	if count := strings.Count(script, "($managedRuntimePrefix + '"); count != 8 {
+		t.Fatalf("bootstrap has %d parenthesized managed-runtime paths, want 8", count)
 	}
 }
 
