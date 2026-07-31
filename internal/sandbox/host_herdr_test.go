@@ -60,8 +60,25 @@ func TestResolveHostHerdrUsesManagedPhysicalRuntimeAndSnapshotsIt(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr: %v", err)
 	}
-	if !strings.EqualFold(host.commandPath, commandPath) || !strings.EqualFold(host.runtimeExecutable, runtimePath) {
-		t.Fatalf("host paths = command %q runtime %q", host.commandPath, host.runtimeExecutable)
+	for _, expected := range []struct {
+		role string
+		want string
+		got  string
+	}{
+		{role: "command", want: commandPath, got: host.commandPath},
+		{role: "runtime", want: runtimePath, got: host.runtimeExecutable},
+	} {
+		wantInfo, statErr := os.Stat(expected.want)
+		if statErr != nil {
+			t.Fatalf("stat expected host Herdr %s %q: %v", expected.role, expected.want, statErr)
+		}
+		gotInfo, statErr := os.Stat(expected.got)
+		if statErr != nil {
+			t.Fatalf("stat resolved host Herdr %s %q: %v", expected.role, expected.got, statErr)
+		}
+		if !os.SameFile(wantInfo, gotInfo) {
+			t.Fatalf("host Herdr %s paths identify different files: expected %q, got %q", expected.role, expected.want, expected.got)
+		}
 	}
 	if host.version != "herdr 1.2.3-test" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != 5 {
 		t.Fatalf("host identity = %#v", host)
