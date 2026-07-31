@@ -278,7 +278,6 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`.herdr-sandbox`,
 		`MUI_ICON`,
 		`MUI_UNICON`,
-		`MUI_WELCOMEFINISHPAGE_BITMAP`,
 		`icon.ico`,
 		`welcome-328x628.bmp`,
 		`herdr.exe`,
