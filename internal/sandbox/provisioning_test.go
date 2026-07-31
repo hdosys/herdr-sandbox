@@ -675,6 +675,7 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"function Assert-ProvisioningCacheTree",
 		"Assert-ProvisioningCacheTree -Path $directory.FullName",
 		"function Test-ProvisioningWinGetPackageInstalled",
+		"function Confirm-ProvisioningWinGetReadback",
 		"function Test-ProvisioningPortablePackageInstalled",
 		"function Test-ProvisioningRustupInstalled",
 		"function Test-ProvisioningGeistMonoFontInstalled",
@@ -683,6 +684,7 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"already matches requested version:",
 		"online package already matches requested version:",
 		"installed package does not match resolved version",
+		"installation command succeeded, but WinGet could not confirm package",
 		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
 		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
 		"if (($existingSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|'))",
@@ -1058,9 +1060,11 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Install-ProvisioningOnlineWinGetPackage' }, $true)
-if ($null -eq $definition) { throw 'Missing online WinGet installer function.' }
-Invoke-Expression $definition.Extent.Text
+foreach ($name in @('Confirm-ProvisioningWinGetReadback', 'Install-ProvisioningOnlineWinGetPackage')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing online WinGet function: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
 $script:searchCalls = 0
 $script:installArguments = @()
 $script:installCalls = 0
@@ -1446,6 +1450,36 @@ if (-not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $metadata
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("WinGet list parser regression: %v: %s", err, output)
+	}
+}
+
+func TestWinGetReadbackMismatchWarnsAndContinuesInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Confirm-ProvisioningWinGetReadback' }, $true)
+Invoke-Expression $definition.Extent.Text
+$metadata = [pscustomobject]@{ Id = '7zip.7zip'; Version = '26.02' }
+$warnings = @()
+Confirm-ProvisioningWinGetReadback -Role '7-Zip' -Metadata $metadata -Verified $false -WarningVariable warnings
+$warningText = (@($warnings | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
+if ($warnings.Count -ne 1 -or $warningText -notmatch '7zip\.7zip' -or
+    $warningText -notmatch '26\.02' -or $warningText -notmatch 'Provisioning will continue') {
+    throw "Unexpected WinGet read-back warning: $warningText"
+}
+$warnings = @()
+Confirm-ProvisioningWinGetReadback -Role '7-Zip' -Metadata $metadata -Verified $true -WarningVariable warnings
+if ($warnings.Count -ne 0) { throw 'Verified WinGet package emitted a warning.' }
+`, quote(baseScript))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("WinGet read-back warning regression: %v: %s", err, output)
 	}
 }
 

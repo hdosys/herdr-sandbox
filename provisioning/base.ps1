@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 35
+# herdr-sandbox-base-contract: 36
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -980,6 +980,22 @@ function Test-ProvisioningWinGetPackageInstalled {
     return Test-ProvisioningWinGetListOutput -Lines $lines -Metadata $Metadata
 }
 
+function Confirm-ProvisioningWinGetReadback {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata,
+        [Parameter(Mandatory = $true)]
+        [bool]$Verified
+    )
+
+    if ($Verified) {
+        return
+    }
+    Write-Warning "$Role installation command succeeded, but WinGet could not confirm package $($Metadata.Id) at resolved version $($Metadata.Version). Provisioning will continue; verify the package if its tooling is required."
+}
+
 function Test-ProvisioningPortablePackageInstalled {
     param(
         [Parameter(Mandatory = $true)]
@@ -1522,8 +1538,11 @@ function Install-ProvisioningCachedPackage {
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
             -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
-        if (-not (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
-                -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments)) {
+        $installed = Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
+            -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments
+        if ($DownloadSource -eq 'WinGet') {
+            Confirm-ProvisioningWinGetReadback -Role $Role -Metadata $metadata -Verified $installed
+        } elseif (-not $installed) {
             throw "$Role installed package does not match resolved version $($metadata.Version)."
         }
         if (-not $cacheHit) {
@@ -1656,9 +1675,8 @@ function Install-ProvisioningOnlineWinGetPackage {
     }
     Invoke-ProvisioningNative -Role "$Role online installation" -FilePath 'winget.exe' -ArgumentList $arguments | Out-Null
     Update-ProvisioningPath
-    if (-not (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata)) {
-        throw "$Role installed package does not match resolved version $resolvedVersion."
-    }
+    $installed = Test-ProvisioningWinGetPackageInstalled -Metadata $metadata
+    Confirm-ProvisioningWinGetReadback -Role $Role -Metadata $metadata -Verified $installed
 }
 
 function Assert-ProvisioningCommand {

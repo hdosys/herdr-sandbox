@@ -25,7 +25,7 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 35"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 36"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	workspaceManifestSchema            = 1

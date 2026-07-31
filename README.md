@@ -281,7 +281,7 @@ The first mutating `up` creates:
 | `workspaces` | Additional unique workspace names mapped to absolute host project roots. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
-| `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. |
+| `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
 #### Audio policy
 

@@ -35,6 +35,7 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		"winget-packages.json",
 		"user.ps1",
 		"workspaces.json",
+		"$unknownProjectScriptNames",
 		"-Phase 'Registry'",
 		"-Phase 'Development'",
 		"-WorkspacesDirectory 'C:\\Workspaces' -PackagePlanPath $packagePlanPath",
@@ -104,6 +105,10 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 	}
 	if strings.Contains(script, "-ArgumentList @('--version') -join") {
 		t.Fatal("bootstrap must join Invoke-Native output after command invocation")
+	}
+	mandatoryProfile := "-not (Test-Path -LiteralPath (Join-Path $projectProvisioningDirectory ($workspaceName + '.ps1')) -PathType Leaf)"
+	if strings.Contains(script, mandatoryProfile) {
+		t.Fatal("bootstrap still requires one provisioning profile per workspace")
 	}
 }
 

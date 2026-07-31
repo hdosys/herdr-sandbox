@@ -607,7 +607,6 @@ try {
             $workspaceName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
             $workspaceDirectory -cne $expectedDirectory -or
             -not (Test-Path -LiteralPath $workspaceDirectory -PathType Container) -or
-            -not (Test-Path -LiteralPath (Join-Path $projectProvisioningDirectory ($workspaceName + '.ps1')) -PathType Leaf) -or
             $workspaceNames.ContainsKey($workspaceName.ToLowerInvariant())) {
             throw "Workspace manifest entry is invalid: $workspaceName"
         }
@@ -616,8 +615,8 @@ try {
     }
     $projectScriptNames = @(Get-ChildItem -LiteralPath $projectProvisioningDirectory -File -Filter '*.ps1' |
         ForEach-Object { $_.BaseName.ToLowerInvariant() } | Sort-Object)
-    $manifestNames = @($workspaceNames.Keys | Sort-Object)
-    if (($projectScriptNames -join '|') -cne ($manifestNames -join '|') -or $activeWorkspaceMatches -ne 1) {
+    $unknownProjectScriptNames = @($projectScriptNames | Where-Object { -not $workspaceNames.ContainsKey($_) })
+    if ($unknownProjectScriptNames.Count -ne 0 -or $activeWorkspaceMatches -ne 1) {
         throw 'Workspace manifest does not match the selected project scripts and active workspace.'
     }
 
