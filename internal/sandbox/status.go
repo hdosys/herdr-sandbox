@@ -175,10 +175,21 @@ func writeConfigurationHandoff(statusDirectory string, status configurationHando
 
 func readOptionalStatus[T any](path string) (T, bool, error) {
 	var value T
-	file, err := os.Open(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return value, false, nil
 	}
+	if err != nil {
+		return value, false, err
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return value, false, err
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxStatusFileBytes {
+		return value, false, errors.New("status file is not one bounded regular non-reparse file")
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return value, false, err
 	}
@@ -196,7 +207,11 @@ func readOptionalStatus[T any](path string) (T, bool, error) {
 	if err != nil {
 		return value, false, err
 	}
-	if err := validateJSONObjectShape(data, "status file", allowedFields); err != nil {
+	shapeValidator := validateJSONObjectShape
+	if _, exact := any(value).(explorerRestartStatus); exact {
+		shapeValidator = validateExactJSONObjectShape
+	}
+	if err := shapeValidator(data, "status file", allowedFields); err != nil {
 		return value, false, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -224,6 +239,8 @@ func statusFields(value any) ([]string, error) {
 		return []string{"schemaVersion", "outcome", "phase", "message"}, nil
 	case failureStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
+	case explorerRestartStatus:
+		return []string{"schemaVersion", "restartId", "taskName", "state", "sessionId", "stoppedPids", "startedPids", "message"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported status type %T", value)
 	}

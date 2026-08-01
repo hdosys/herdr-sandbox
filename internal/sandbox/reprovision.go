@@ -12,17 +12,37 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
-	reprovisionResultSchema = 1
-	maximumWSBSize          = 1024 * 1024
+	reprovisionResultSchema        = 2
+	explorerRestartStatusSchema    = 1
+	explorerRestartStatusPending   = "pending"
+	explorerRestartStatusSucceeded = "succeeded"
+	explorerRestartStatusFailed    = "failed"
+	explorerRestartStatusTimeout   = 90 * time.Second
+	maximumWSBSize                 = 1024 * 1024
 )
 
 type reprovisionResult struct {
+	SchemaVersion            int    `json:"schemaVersion"`
+	ArchiveSHA256            string `json:"archiveSha256"`
+	ProjectCount             int    `json:"projectCount"`
+	ExplorerRestartScheduled bool   `json:"explorerRestartScheduled"`
+	ExplorerRestartID        string `json:"explorerRestartId"`
+	ExplorerRestartTaskName  string `json:"explorerRestartTaskName"`
+}
+
+type explorerRestartStatus struct {
 	SchemaVersion int    `json:"schemaVersion"`
-	ArchiveSHA256 string `json:"archiveSha256"`
-	ProjectCount  int    `json:"projectCount"`
+	RestartID     string `json:"restartId"`
+	TaskName      string `json:"taskName"`
+	State         string `json:"state"`
+	SessionID     int    `json:"sessionId"`
+	StoppedPIDs   []int  `json:"stoppedPids"`
+	StartedPIDs   []int  `json:"startedPids"`
+	Message       string `json:"message"`
 }
 
 func reprovisionReadySession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, hostHerdr HostHerdr) (connection Connection, resultErr error) {
@@ -270,6 +290,38 @@ func prepareRetainedProvisioningSnapshot(ctx context.Context, plan runPlan, prov
 }
 
 func runRetainedProvisioning(ctx context.Context, connection Connection, snapshot provisioningSnapshot) error {
+	restartID, err := newRunID()
+	if err != nil {
+		return fmt.Errorf("create retained Explorer restart identity: %w", err)
+	}
+	restartTaskName := "HerdrSandbox-ExplorerRestart-" + restartID
+	restartStatusPath := filepath.Join(connection.StatusDirectory, "explorer-restart-"+restartID+".json")
+	if err := removeExplorerRestartStatus(restartStatusPath); err != nil {
+		return err
+	}
+	finishRestart := func(required bool) (bool, error) {
+		_, found, readErr := readOptionalStatus[explorerRestartStatus](restartStatusPath)
+		var waitErr error
+		if readErr != nil {
+			waitErr = fmt.Errorf("read retained Explorer restart status before wait: %w", readErr)
+		} else if !found {
+			if required {
+				waitErr = errors.New("retained provisioning did not publish scheduled Explorer restart status")
+			}
+		} else {
+			restartContext, cancelRestart := context.WithTimeout(context.WithoutCancel(ctx), explorerRestartStatusTimeout)
+			_, waitErr = waitForExplorerRestartStatus(restartContext, restartStatusPath, restartID, restartTaskName)
+			cancelRestart()
+		}
+		cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		cleanupErr := cleanupRetainedExplorerRestartTask(cleanupContext, connection, restartTaskName)
+		cancelCleanup()
+		return found, errors.Join(waitErr, cleanupErr)
+	}
+	finishError := func(cause error) error {
+		_, finishErr := finishRestart(false)
+		return errors.Join(cause, finishErr)
+	}
 	archive, err := buildReprovisionArchive(snapshot)
 	if err != nil {
 		return err
@@ -277,17 +329,159 @@ func runRetainedProvisioning(ctx context.Context, connection Connection, snapsho
 	defer clear(archive)
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	projectCount := workspaceProvisioningProfileCount(snapshot.Workspaces)
-	launcher := buildReprovisionLauncher(digest, len(archive), projectCount)
+	launcher := buildReprovisionLauncher(digest, len(archive), projectCount, restartID, restartTaskName)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcher, "run retained provisioning")
 	if err != nil {
-		return err
+		return finishError(err)
 	}
 	result, err := decodeReprovisionResult(output)
 	if err != nil {
-		return err
+		return finishError(err)
 	}
 	if result.SchemaVersion != reprovisionResultSchema || result.ArchiveSHA256 != digest || result.ProjectCount != projectCount {
-		return fmt.Errorf("verify retained provisioning result: schema=%d digest=%q projects=%d", result.SchemaVersion, result.ArchiveSHA256, result.ProjectCount)
+		return finishError(fmt.Errorf("verify retained provisioning result: schema=%d digest=%q projects=%d", result.SchemaVersion, result.ArchiveSHA256, result.ProjectCount))
+	}
+	if !result.ExplorerRestartScheduled {
+		if result.ExplorerRestartID != "" || result.ExplorerRestartTaskName != "" {
+			return finishError(errors.New("retained provisioning returned Explorer restart identity without scheduling a restart"))
+		}
+		found, finishErr := finishRestart(false)
+		if found {
+			return errors.Join(errors.New("retained provisioning published Explorer restart status without scheduling a restart"), finishErr)
+		}
+		return finishErr
+	}
+	if result.ExplorerRestartID != restartID || result.ExplorerRestartTaskName != restartTaskName {
+		return finishError(errors.New("retained provisioning returned unexpected Explorer restart identity"))
+	}
+	_, err = finishRestart(true)
+	return err
+}
+
+func cleanupRetainedExplorerRestartTask(ctx context.Context, connection Connection, taskName string) error {
+	if !strings.HasPrefix(taskName, "HerdrSandbox-ExplorerRestart-") || len(taskName) > 128 {
+		return errors.New("retained Explorer restart task name is invalid")
+	}
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$service = New-Object -ComObject 'Schedule.Service'
+$service.Connect()
+$root = $service.GetFolder('\')
+$tasks = @($root.GetTasks(1) | Where-Object { [string]$_.Name -ceq '%s' })
+if ($tasks.Count -gt 1) { throw 'Explorer restart task identity is ambiguous.' }
+if ($tasks.Count -eq 1) {
+    foreach ($instance in @($tasks[0].GetInstances(0))) { $instance.Stop() }
+    $root.DeleteTask('%s', 0)
+}
+$remaining = @($root.GetTasks(1) | Where-Object { [string]$_.Name -ceq '%s' })
+if ($remaining.Count -ne 0) { throw 'Explorer restart task cleanup verification failed.' }
+Write-Output 'verified'`, taskName, taskName, taskName)
+	output, err := runSSHPowerShell(ctx, connection, bytes.NewReader(nil), script, "clean retained Explorer restart task", 1024)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(output)) != "verified" {
+		return fmt.Errorf("clean retained Explorer restart task returned unexpected output: %s", boundedText(output))
+	}
+	return nil
+}
+
+func removeExplorerRestartStatus(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect retained Explorer restart status: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect retained Explorer restart status reparse state: %w", err)
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxStatusFileBytes {
+		return errors.New("retained Explorer restart status is not one bounded regular non-reparse file")
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove prior retained Explorer restart status: %w", err)
+	}
+	return nil
+}
+
+func waitForExplorerRestartStatus(ctx context.Context, path, restartID, taskName string) (explorerRestartStatus, error) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status, found, err := readOptionalStatus[explorerRestartStatus](path)
+		if err != nil {
+			return explorerRestartStatus{}, fmt.Errorf("read retained Explorer restart status: %w", err)
+		}
+		if found {
+			if err := status.validate(); err != nil {
+				return explorerRestartStatus{}, fmt.Errorf("validate retained Explorer restart status: %w", err)
+			}
+			if status.RestartID != restartID || status.TaskName != taskName {
+				return explorerRestartStatus{}, errors.New("retained Explorer restart status identity does not match the request")
+			}
+			switch status.State {
+			case explorerRestartStatusSucceeded:
+				return status, nil
+			case explorerRestartStatusFailed:
+				return explorerRestartStatus{}, fmt.Errorf("retained Explorer restart failed: %s", status.Message)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return explorerRestartStatus{}, fmt.Errorf("wait for retained Explorer restart status: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (status explorerRestartStatus) validate() error {
+	if status.SchemaVersion != explorerRestartStatusSchema || status.SessionID <= 0 ||
+		strings.TrimSpace(status.RestartID) != status.RestartID || status.RestartID == "" || len(status.RestartID) > 128 ||
+		status.TaskName != "HerdrSandbox-ExplorerRestart-"+status.RestartID {
+		return errors.New("Explorer restart status schema or session is invalid")
+	}
+	validatePIDs := func(name string, values []int) error {
+		seen := make(map[int]bool, len(values))
+		for _, value := range values {
+			if value <= 0 || seen[value] {
+				return fmt.Errorf("Explorer restart status %s PIDs are invalid", name)
+			}
+			seen[value] = true
+		}
+		return nil
+	}
+	if err := validatePIDs("stopped", status.StoppedPIDs); err != nil {
+		return err
+	}
+	if err := validatePIDs("started", status.StartedPIDs); err != nil {
+		return err
+	}
+	switch status.State {
+	case explorerRestartStatusPending:
+		if len(status.StoppedPIDs) == 0 || len(status.StartedPIDs) != 0 || status.Message != "" {
+			return errors.New("pending Explorer restart status has terminal data")
+		}
+	case explorerRestartStatusSucceeded:
+		if len(status.StoppedPIDs) == 0 || len(status.StartedPIDs) == 0 || status.Message != "" {
+			return errors.New("succeeded Explorer restart status is incomplete")
+		}
+		stopped := make(map[int]bool, len(status.StoppedPIDs))
+		for _, value := range status.StoppedPIDs {
+			stopped[value] = true
+		}
+		for _, value := range status.StartedPIDs {
+			if stopped[value] {
+				return errors.New("Explorer restart status reused one stopped PID")
+			}
+		}
+	case explorerRestartStatusFailed:
+		if strings.TrimSpace(status.Message) == "" || len(status.Message) > 4096 {
+			return errors.New("failed Explorer restart status message is invalid")
+		}
+	default:
+		return fmt.Errorf("Explorer restart status state is invalid: %q", status.State)
 	}
 	return nil
 }
@@ -363,7 +557,7 @@ func workspaceProvisioningProfileCount(workspaces []workspacePlan) int {
 	return count
 }
 
-func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int) string {
+func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int, explorerRestartID, explorerRestartTaskName string) string {
 	staging := guestArchiveStagingPowerShell("reprovision-"+expectedDigest[:16], "Retained provisioning")
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -403,6 +597,9 @@ try {
     $reparse = @(Get-ChildItem -LiteralPath $expanded -Force -Recurse | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
     if ($reparse.Count -ne 0) { throw 'Retained provisioning input contains a reparse point.' }
     $env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'
+    $env:HERDR_SANDBOX_EXPLORER_RESTART_ID = '%s'
+    $env:HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME = '%s'
+    Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ErrorAction SilentlyContinue
     $captured = @()
     try {
         $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') *>&1)
@@ -412,17 +609,29 @@ try {
         [Console]::Error.WriteLine(($detail -join [Environment]::NewLine))
         throw
     }
-    Write-Output ([ordered]@{ schemaVersion = %d; archiveSha256 = $digest; projectCount = $projects.Count } | ConvertTo-Json -Compress)
+    $explorerRestartScheduled = [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ceq '1'
+    $explorerRestartID = if ($explorerRestartScheduled) { [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_ID } else { '' }
+    $explorerRestartTaskName = if ($explorerRestartScheduled) { [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME } else { '' }
+    Write-Output ([ordered]@{ schemaVersion = %d; archiveSha256 = $digest; projectCount = $projects.Count; explorerRestartScheduled = $explorerRestartScheduled; explorerRestartId = $explorerRestartID; explorerRestartTaskName = $explorerRestartTaskName } | ConvertTo-Json -Compress)
 } finally {
+    Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME -ErrorAction SilentlyContinue
     Remove-Item Env:HERDR_SANDBOX_STATUS_DIRECTORY -ErrorAction SilentlyContinue
     Remove-GuestArchiveStaging
 }
-exit 0`, staging, archiveLength, expectedDigest, projectCount, reprovisionResultSchema)
+exit 0`, staging, archiveLength, expectedDigest, projectCount, explorerRestartID, explorerRestartTaskName, reprovisionResultSchema)
 }
 
 func decodeReprovisionResult(data []byte) (reprovisionResult, error) {
+	data = bytes.TrimSpace(data)
+	if err := validateExactJSONObjectShape(data, "retained provisioning result", []string{
+		"schemaVersion", "archiveSha256", "projectCount", "explorerRestartScheduled", "explorerRestartId", "explorerRestartTaskName",
+	}); err != nil {
+		return reprovisionResult{}, err
+	}
 	var result reprovisionResult
-	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(data)))
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return reprovisionResult{}, fmt.Errorf("decode retained provisioning result: %w: %s", err, boundedText(data))

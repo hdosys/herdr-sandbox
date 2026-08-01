@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 36
+# herdr-sandbox-base-contract: 37
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -1839,6 +1839,223 @@ function Restart-ProvisioningExplorerShell {
         [string]$Role
     )
 
+    $initialExplorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
+    if ($initialExplorerProcesses.Count -eq 0) {
+        throw "Explorer shell was not running before the required $Role restart."
+    }
+    $explorerSessionIDs = @($initialExplorerProcesses | ForEach-Object { [int]$_.SessionId } | Sort-Object -Unique)
+    if ($explorerSessionIDs.Count -ne 1) {
+        throw "Explorer shell spans unexpected sessions before the required $Role restart: $($explorerSessionIDs -join ', ')"
+    }
+    $currentSessionID = [int](Get-Process -Id $PID).SessionId
+    $explorerSessionID = [int]$explorerSessionIDs[0]
+    if ($currentSessionID -ne $explorerSessionID) {
+        $stoppedExplorerProcessIDs = @($initialExplorerProcesses | ForEach-Object { [int]$_.Id })
+        $statusDirectory = [string]$env:HERDR_SANDBOX_STATUS_DIRECTORY
+        if ([string]::IsNullOrWhiteSpace($statusDirectory) -or -not [IO.Path]::IsPathRooted($statusDirectory) -or
+            -not (Test-Path -LiteralPath $statusDirectory -PathType Container) -or
+            ((Get-Item -LiteralPath $statusDirectory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Explorer restart status directory is unavailable or unsafe: $statusDirectory"
+        }
+        $restartID = [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_ID
+        $taskName = [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME
+        if ($restartID -notmatch '^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$' -or
+            $taskName -cne ('HerdrSandbox-ExplorerRestart-' + $restartID)) {
+            throw 'Explorer restart identity is invalid.'
+        }
+        $restartStatusPath = Join-Path $statusDirectory ('explorer-restart-' + $restartID + '.json')
+        if (Test-Path -LiteralPath $restartStatusPath) {
+            $existingStatus = Get-Item -LiteralPath $restartStatusPath -Force
+            if (($existingStatus.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $existingStatus.PSIsContainer -or $existingStatus.Length -le 0 -or $existingStatus.Length -gt 65536) {
+                throw "Prior Explorer restart status is unsafe: $restartStatusPath"
+            }
+            Remove-Item -LiteralPath $restartStatusPath -Force
+        }
+        $pendingStatusPath = $restartStatusPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+        $pendingStatus = [ordered]@{
+            schemaVersion = 1
+            restartId = $restartID
+            taskName = $taskName
+            state = 'pending'
+            sessionId = $explorerSessionID
+            stoppedPids = @($stoppedExplorerProcessIDs)
+            startedPids = @()
+            message = ''
+        } | ConvertTo-Json -Compress
+        [IO.File]::WriteAllText($pendingStatusPath, $pendingStatus, (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::Move($pendingStatusPath, $restartStatusPath)
+        $taskService = New-Object -ComObject 'Schedule.Service'
+        $taskService.Connect()
+        $taskRoot = $taskService.GetFolder('\')
+        $registeredTask = $null
+        $runningTask = $null
+        try {
+            $restartScript = @'
+$ErrorActionPreference = 'Stop'
+function Publish-ExplorerRestartStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$State,
+        [Parameter(Mandatory = $true)][int]$SessionID,
+        [int[]]$StoppedPIDs = @(),
+        [int[]]$StartedPIDs = @(),
+        [string]$Message = ''
+    )
+    $record = [ordered]@{
+        schemaVersion = 1
+        restartId = '__RESTART_ID__'
+        taskName = '__TASK_NAME__'
+        state = $State
+        sessionId = $SessionID
+        stoppedPids = @($StoppedPIDs | Sort-Object -Unique)
+        startedPids = @($StartedPIDs | Sort-Object -Unique)
+        message = $Message
+    } | ConvertTo-Json -Compress
+    $temporaryPath = '__STATUS_PATH__.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $backupPath = '__STATUS_PATH__.' + [Guid]::NewGuid().ToString('N') + '.bak'
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $record, (New-Object Text.UTF8Encoding($false)))
+        if (Test-Path -LiteralPath '__STATUS_PATH__' -PathType Leaf) {
+            [IO.File]::Replace($temporaryPath, '__STATUS_PATH__', $backupPath, $true)
+        } else {
+            [IO.File]::Move($temporaryPath, '__STATUS_PATH__')
+        }
+    } finally {
+        foreach ($path in @($temporaryPath, $backupPath)) {
+            if (Test-Path -LiteralPath $path) { [IO.File]::Delete($path) }
+        }
+    }
+}
+
+$sessionID = [int](Get-Process -Id $PID).SessionId
+$expectedSessionID = __SESSION_ID__
+$stoppedExplorerProcessIDs = @()
+$newExplorerProcesses = @()
+try {
+    if ($sessionID -ne $expectedSessionID) {
+        throw "Explorer restart task ran in session $sessionID instead of $expectedSessionID."
+    }
+    $ownerDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ($null -ne (Get-Process -Id __OWNER_PID__ -ErrorAction SilentlyContinue)) {
+        if ([DateTime]::UtcNow -ge $ownerDeadline) {
+            throw 'Retained provisioning process did not exit before Explorer restart.'
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    $configuredShell = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' `
+        -Name 'Shell' -ErrorAction Stop).Shell
+    if ($configuredShell -ine 'explorer.exe') {
+        throw "Winlogon shell is not explorer.exe: $configuredShell"
+    }
+    $explorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
+        Where-Object { [int]$_.SessionId -eq $sessionID })
+    $stoppedExplorerProcessIDs = @($explorerProcesses | ForEach-Object { [int]$_.Id })
+    if ($stoppedExplorerProcessIDs.Count -eq 0) {
+        throw "Interactive Explorer is not running in session $sessionID."
+    }
+    $explorerProcesses | Stop-Process -Force -ErrorAction Stop
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class HerdrSandboxShellWindow {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processID);
+}
+"@
+    $expectedExplorerPath = Join-Path $env:WINDIR 'explorer.exe'
+    $startDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $newExplorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
+            Where-Object { [int]$_.SessionId -eq $sessionID -and $stoppedExplorerProcessIDs -notcontains [int]$_.Id })
+        $shellWindow = [HerdrSandboxShellWindow]::GetShellWindow()
+        $shellProcessID = [uint32]0
+        if ($shellWindow -ne [IntPtr]::Zero) {
+            $null = [HerdrSandboxShellWindow]::GetWindowThreadProcessId($shellWindow, [ref]$shellProcessID)
+        }
+        $shellProcess = Get-Process -Id ([int]$shellProcessID) -ErrorAction SilentlyContinue
+        $shellMatches = $null -ne $shellProcess -and $newExplorerProcesses.Id -contains [int]$shellProcess.Id -and
+            [int]$shellProcess.SessionId -eq $sessionID -and [string]$shellProcess.Path -ieq $expectedExplorerPath
+        if ($shellMatches) { break }
+        if ([DateTime]::UtcNow -ge $startDeadline) {
+            throw "Winlogon replacement did not become the registered interactive Explorer shell within 30 seconds: PID=$shellProcessID"
+        }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
+    $cleanupService = New-Object -ComObject 'Schedule.Service'
+    $cleanupService.Connect()
+    $cleanupService.GetFolder('\').DeleteTask('__TASK_NAME__', 0)
+    Publish-ExplorerRestartStatus -State 'succeeded' -SessionID $sessionID `
+        -StoppedPIDs $stoppedExplorerProcessIDs -StartedPIDs @($newExplorerProcesses.Id)
+} catch {
+    $message = [string]$_.Exception.Message
+    try {
+        $cleanupService = New-Object -ComObject 'Schedule.Service'
+        $cleanupService.Connect()
+        $cleanupService.GetFolder('\').DeleteTask('__TASK_NAME__', 0)
+    } catch {
+        $message += '; task cleanup failed: ' + [string]$_.Exception.Message
+    }
+    if ($message.Length -gt 4096) { $message = $message.Substring(0, 4096) }
+    try {
+        Publish-ExplorerRestartStatus -State 'failed' -SessionID $sessionID `
+            -StoppedPIDs $stoppedExplorerProcessIDs -StartedPIDs @($newExplorerProcesses.Id) -Message $message
+    } catch { }
+    exit 1
+}
+'@
+            $restartScript = $restartScript.Replace('__OWNER_PID__', [string]$PID).
+                Replace('__RESTART_ID__', $restartID).
+                Replace('__STATUS_PATH__', $restartStatusPath.Replace("'", "''")).
+                Replace('__TASK_NAME__', $taskName.Replace("'", "''")).
+                Replace('__SESSION_ID__', [string]$explorerSessionID)
+            $restartCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($restartScript))
+            $definition = $taskService.NewTask(0)
+            $definition.RegistrationInfo.Description = "One-shot Explorer restart after $Role"
+            $definition.Settings.Enabled = $true
+            $definition.Settings.Hidden = $true
+            $definition.Settings.AllowDemandStart = $true
+            $definition.Settings.ExecutionTimeLimit = 'PT2M'
+            $definition.Principal.UserId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            $definition.Principal.LogonType = 3
+            $definition.Principal.RunLevel = 1
+            $action = $definition.Actions.Create(0)
+            $action.Path = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $action.Arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $restartCommand"
+            $registeredTask = $taskRoot.RegisterTaskDefinition($taskName, $definition, 2, $null, $null, 3, $null)
+            $runningTask = $registeredTask.Run($null)
+            foreach ($comObject in @($runningTask, $registeredTask, $action, $definition, $taskRoot, $taskService)) {
+                if ($null -ne $comObject) {
+                    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($comObject)
+                }
+            }
+            $runningTask = $null
+            $registeredTask = $null
+            $taskRoot = $null
+            $taskService = $null
+            $env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED = '1'
+            Write-Host "Explorer shell restart scheduled in interactive session $explorerSessionID after $Role."
+            return
+        } catch {
+            $scheduleError = $_.Exception
+            $cleanupErrors = @()
+            if ($null -ne $runningTask -and [int]$runningTask.State -eq 4) {
+                try { $runningTask.Stop() } catch { $cleanupErrors += [string]$_.Exception.Message }
+            }
+            if ($null -ne $registeredTask) {
+                try { $taskRoot.DeleteTask($taskName, 0) } catch { $cleanupErrors += [string]$_.Exception.Message }
+            }
+            if ($cleanupErrors.Count -eq 0) {
+                if (Test-Path -LiteralPath $restartStatusPath) {
+                    Remove-Item -LiteralPath $restartStatusPath -Force
+                }
+                throw $scheduleError
+            }
+            throw "Explorer restart scheduling failed: $($scheduleError.Message); task cleanup also failed: $($cleanupErrors -join '; ')"
+        }
+    }
+
     Write-Host "Stopping all Explorer processes after $Role..."
     $stoppedExplorerProcessIDs = @()
     $explorerStopDeadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -1924,6 +2141,29 @@ function Ensure-ProvisioningTaskbarPins {
 
     $pinElements = New-Object 'System.Collections.Generic.List[string]'
     $pinNames = New-Object 'System.Collections.Generic.List[string]'
+    $edgeStartApps = @(Get-StartApps -ErrorAction Stop |
+        Where-Object { [string]$_.AppID -ceq 'MSEdge' })
+    if ($edgeStartApps.Count -ne 1) {
+        throw "Microsoft Edge desktop application ID resolved to $($edgeStartApps.Count) Start applications: MSEdge"
+    }
+    $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="MSEdge" />') | Out-Null
+    $pinNames.Add('Microsoft Edge') | Out-Null
+    $explorerStartApps = @(Get-StartApps -ErrorAction Stop |
+        Where-Object { [string]$_.AppID -ceq 'Microsoft.Windows.Explorer' })
+    if ($explorerStartApps.Count -ne 1) {
+        throw "File Explorer desktop application ID resolved to $($explorerStartApps.Count) Start applications: Microsoft.Windows.Explorer"
+    }
+    $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="Microsoft.Windows.Explorer" />') | Out-Null
+    $pinNames.Add('File Explorer') | Out-Null
+    if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
+        $filePilotShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\File Pilot.lnk'
+        if (-not (Test-Path -LiteralPath $filePilotShortcut -PathType Leaf) -or
+            ((Get-Item -LiteralPath $filePilotShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "File Pilot taskbar shortcut is missing or unsafe: $filePilotShortcut"
+        }
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />') | Out-Null
+        $pinNames.Add('File Pilot') | Out-Null
+    }
     $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
     if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
         if ([string]::IsNullOrWhiteSpace($TerminalPackageFamily)) {
@@ -1947,15 +2187,6 @@ function Ensure-ProvisioningTaskbarPins {
         $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="WinDirStat" />') | Out-Null
         $pinNames.Add('WinDirStat') | Out-Null
     }
-    if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
-        $filePilotShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\File Pilot.lnk'
-        if (-not (Test-Path -LiteralPath $filePilotShortcut -PathType Leaf) -or
-            ((Get-Item -LiteralPath $filePilotShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "File Pilot taskbar shortcut is missing or unsafe: $filePilotShortcut"
-        }
-        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />') | Out-Null
-        $pinNames.Add('File Pilot') | Out-Null
-    }
     if ($pinElements.Count -eq 0) {
         Write-Host 'No selected taskbar applications; taskbar policy skipped.'
         return
@@ -1965,7 +2196,7 @@ function Ensure-ProvisioningTaskbarPins {
         'xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout" ' +
         'xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout" ' +
         'xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout" Version="1">' +
-        '<CustomTaskbarLayoutCollection><defaultlayout:TaskbarLayout><taskbar:TaskbarPinList>' +
+        '<CustomTaskbarLayoutCollection PinListPlacement="Replace"><defaultlayout:TaskbarLayout><taskbar:TaskbarPinList>' +
         ($pinElements -join '') +
         '</taskbar:TaskbarPinList></defaultlayout:TaskbarLayout></CustomTaskbarLayoutCollection>' +
         '</LayoutModificationTemplate>'
@@ -2008,6 +2239,7 @@ function Ensure-ProvisioningTaskbarPins {
     if ($verifiedInstances.Count -ne 1 -or [string]$verifiedInstances[0].StartLayout -cne $layout) {
         throw 'Taskbar policy read-back did not match the canonical decoded layout.'
     }
+    Restart-ProvisioningExplorerShell -Role 'taskbar policy change'
     Write-Host "Taskbar pins applied: $($pinNames -join ', ')"
 }
 
@@ -2878,9 +3110,6 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     Write-Output "Windows Terminal $WindowsTerminalEdition ready: $($terminalCommand.Source)"
 }
 
-Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
-    -TerminalPackageFamily $terminalPackageFamily
-
 foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     $packageID = [string]$package.id
     Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
@@ -2999,5 +3228,7 @@ if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
             -DelayMilliseconds 0 -BestEffort | Out-Null
     }
 }
+Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
+    -TerminalPackageFamily $terminalPackageFamily
 $provisioningStopwatch.Stop()
 Write-ProvisioningTiming -Role 'complete development provisioning' -Seconds $provisioningStopwatch.Elapsed.TotalSeconds

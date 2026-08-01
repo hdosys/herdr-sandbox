@@ -170,13 +170,14 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 }
 
 func TestDecodeReprovisionResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":1,"archiveSha256":"abc","projectCount":3}`)
+	valid := []byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"20260801-080000-1234abcd","explorerRestartTaskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd"}`)
 	result, err := decodeReprovisionResult(valid)
-	if err != nil || result.ProjectCount != 3 {
+	if err != nil || result.ProjectCount != 3 || !result.ExplorerRestartScheduled {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
-		[]byte(`{"schemaVersion":1,"archiveSha256":"abc","projectCount":3,"extra":true}`),
+		[]byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"id","explorerRestartTaskName":"task","extra":true}`),
+		[]byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartId":"id","explorerRestartTaskName":"task"}`),
 		append(append([]byte{}, valid...), []byte(` {}`)...),
 	} {
 		if _, err := decodeReprovisionResult(invalid); err == nil {
@@ -185,9 +186,48 @@ func TestDecodeReprovisionResultIsStrict(t *testing.T) {
 	}
 }
 
+func TestExplorerRestartStatusContract(t *testing.T) {
+	restartID := "20260801-080000-1234abcd"
+	taskName := "HerdrSandbox-ExplorerRestart-" + restartID
+	valid := []explorerRestartStatus{
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusPending, SessionID: 1, StoppedPIDs: []int{10}},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusSucceeded, SessionID: 1, StoppedPIDs: []int{10}, StartedPIDs: []int{11}},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusFailed, SessionID: 1, Message: "restart failed"},
+	}
+	for _, status := range valid {
+		if err := status.validate(); err != nil {
+			t.Fatalf("valid Explorer restart status %#v: %v", status, err)
+		}
+	}
+	invalid := []explorerRestartStatus{
+		{SchemaVersion: 2, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusPending, SessionID: 1, StoppedPIDs: []int{10}},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusPending, SessionID: 0, StoppedPIDs: []int{10}},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusPending, SessionID: 1},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusSucceeded, SessionID: 1, StoppedPIDs: []int{10}, StartedPIDs: []int{10}},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: explorerRestartStatusFailed, SessionID: 1},
+		{SchemaVersion: 1, RestartID: restartID, TaskName: taskName, State: "unknown", SessionID: 1, StoppedPIDs: []int{10}},
+	}
+	for _, status := range invalid {
+		if err := status.validate(); err == nil {
+			t.Fatalf("invalid Explorer restart status succeeded: %#v", status)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "explorer-restart.json")
+	data := []byte(`{"schemaVersion":1,"restartId":"20260801-080000-1234abcd","taskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd","state":"succeeded","sessionId":1,"stoppedPids":[10],"startedPids":[11],"message":""}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decoded, found, err := readOptionalStatus[explorerRestartStatus](path)
+	if err != nil || !found || decoded.RestartID != restartID {
+		t.Fatalf("read Explorer restart status = %#v, found=%t, error=%v", decoded, found, err)
+	}
+}
+
 func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	launcher := buildReprovisionLauncher(digest, 1234, 2)
+	restartID := "20260801-080000-1234abcd"
+	taskName := "HerdrSandbox-ExplorerRestart-" + restartID
+	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName)
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedArchiveLength = [long]1234",
@@ -199,6 +239,10 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		"Assert-GuestArchiveTree",
 		"New-Item -ItemType Directory -Path $projectsDirectory -Force",
 		`$env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'`,
+		"HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED",
+		"explorerRestartScheduled = $explorerRestartScheduled",
+		restartID,
+		taskName,
 		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
 		"*>&1",
 	} {

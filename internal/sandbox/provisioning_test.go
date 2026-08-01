@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -352,7 +353,7 @@ func TestDefaultBaseUsesCanonicalGuestLayoutAndExactGitTrust(t *testing.T) {
 	}
 }
 
-func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsExplorerOnceEarly(t *testing.T) {
+func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsExplorerForRegistryAndTaskbarChanges(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		"[ValidateSet('Registry', 'Development')]",
@@ -364,12 +365,19 @@ func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsE
 		"$file.VersionInfo.ProductVersion",
 		"Get-AuthenticodeSignature -LiteralPath $executable",
 		"function Restart-ProvisioningExplorerShell",
+		"$currentSessionID = [int](Get-Process -Id $PID).SessionId",
+		"Winlogon replacement did not become the registered interactive Explorer shell",
+		"New-Object -ComObject 'Schedule.Service'",
+		"$definition.Principal.LogonType = 3",
+		"$taskRoot.RegisterTaskDefinition",
+		"$taskRoot.DeleteTask($taskName, 0)",
 		"Stopping all Explorer processes after $Role",
 		"$explorerProcesses.Count -eq 0",
 		"Starting one fresh Explorer shell",
 		"Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe')",
 		"Explorer shell restarted:",
 		"Restart-ProvisioningExplorerShell -Role 'registry changes'",
+		"Restart-ProvisioningExplorerShell -Role 'taskbar policy change'",
 		"Registry state already matches; Explorer restart skipped.",
 		"early registry customization",
 	} {
@@ -388,14 +396,14 @@ func TestDefaultBaseInstallsPowerShell7WithoutUsingItForProvisioningAndRestartsE
 			t.Fatalf("default Base executes PowerShell 7 during provisioning with %q", forbidden)
 		}
 	}
-	stopIndex := strings.Index(text, "$explorerProcesses | Stop-Process -Force")
-	zeroIndex := strings.Index(text, "if ($explorerProcesses.Count -eq 0) { break }")
-	startIndex := strings.Index(text, "Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe')")
+	stopIndex := strings.LastIndex(text, "$explorerProcesses | Stop-Process -Force")
+	zeroIndex := strings.LastIndex(text, "if ($explorerProcesses.Count -eq 0) { break }")
+	startIndex := strings.LastIndex(text, "Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe')")
 	if stopIndex < 0 || zeroIndex < 0 || startIndex < 0 || zeroIndex > stopIndex || startIndex < stopIndex {
 		t.Fatalf("Explorer stop/zero/start ordering is not explicit: zero=%d stop=%d start=%d", zeroIndex, stopIndex, startIndex)
 	}
-	if count := strings.Count(text, "Restart-ProvisioningExplorerShell -Role"); count != 1 {
-		t.Fatalf("Base invokes Explorer restart %d times, want exactly 1", count)
+	if count := strings.Count(text, "Restart-ProvisioningExplorerShell -Role"); count != 2 {
+		t.Fatalf("Base invokes Explorer restart %d times, want exactly 2", count)
 	}
 	powerShellInstallIndex := strings.Index(text, "Write-Output 'Installing PowerShell 7...'")
 	registryReturnIndex := strings.Index(text, "Write-ProvisioningTiming -Role 'early registry customization'")
@@ -646,13 +654,16 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 		"MDM_Policy_User_Config01_Start02",
 		`root\cimv2\mdm\dmmap`,
 		"./Vendor/MSFT/Policy/Config",
-		"<CustomTaskbarLayoutCollection>",
+		`<CustomTaskbarLayoutCollection PinListPlacement="Replace">`,
+		`<taskbar:DesktopApp DesktopApplicationID="MSEdge" />`,
+		`<taskbar:DesktopApp DesktopApplicationID="Microsoft.Windows.Explorer" />`,
 		"<taskbar:UWA AppUserModelID=\"",
 		"<taskbar:DesktopApp DesktopApplicationID=\"WinDirStat\" />",
 		`<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />`,
 		"[Net.WebUtility]::HtmlEncode($layout)",
 		"StartLayout -ceq $layout",
 		"Taskbar policy read-back did not match the canonical decoded layout",
+		"Restart-ProvisioningExplorerShell -Role 'taskbar policy change'",
 		"Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition",
 	} {
 		if !strings.Contains(text, required) {
@@ -664,8 +675,67 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 			t.Fatalf("default Base contains unsupported taskbar fallback %q", forbidden)
 		}
 	}
-	if strings.Contains(text, "Restart-ProvisioningExplorerShell -Role 'taskbar policy change'") {
-		t.Fatal("taskbar policy still restarts Explorer")
+	taskbarStart := strings.Index(text, "function Ensure-ProvisioningTaskbarPins")
+	if taskbarStart < 0 {
+		t.Fatal("taskbar function boundaries are missing")
+	}
+	taskbarEnd := strings.Index(text[taskbarStart:], "function Initialize-ProvisioningAudioEndpointType")
+	if taskbarEnd < 0 {
+		t.Fatal("taskbar function boundaries are missing")
+	}
+	taskbar := text[taskbarStart : taskbarStart+taskbarEnd]
+	edgeIndex := strings.Index(taskbar, `DesktopApplicationID="MSEdge"`)
+	explorerIndex := strings.Index(taskbar, `DesktopApplicationID="Microsoft.Windows.Explorer"`)
+	filePilotIndex := strings.Index(taskbar, `DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk"`)
+	terminalIndex := strings.Index(taskbar, `<taskbar:UWA AppUserModelID="`)
+	winDirStatIndex := strings.Index(taskbar, `DesktopApplicationID="WinDirStat"`)
+	matchingIndex := strings.Index(taskbar, "Taskbar pins already match:")
+	writeIndex := strings.Index(taskbar, "$encodedLayout = [Net.WebUtility]::HtmlEncode($layout)")
+	readBackIndex := strings.Index(taskbar, "Taskbar policy read-back did not match the canonical decoded layout")
+	restartIndex := strings.Index(taskbar, "Restart-ProvisioningExplorerShell -Role 'taskbar policy change'")
+	if edgeIndex < 0 || explorerIndex < edgeIndex || filePilotIndex < explorerIndex || terminalIndex < filePilotIndex || winDirStatIndex < terminalIndex {
+		t.Fatalf("taskbar pin order is invalid: Edge=%d Explorer=%d File Pilot=%d Terminal=%d WinDirStat=%d", edgeIndex, explorerIndex, filePilotIndex, terminalIndex, winDirStatIndex)
+	}
+	if matchingIndex < 0 || writeIndex < matchingIndex || readBackIndex < writeIndex || restartIndex < readBackIndex {
+		t.Fatalf("taskbar match/write/read-back/restart ordering is invalid: match=%d write=%d readBack=%d restart=%d", matchingIndex, writeIndex, readBackIndex, restartIndex)
+	}
+}
+
+func TestRetainedExplorerRestartTaskParsesInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	text := readDefaultBaseProvisioning(t)
+	const opening = "$restartScript = @'\n"
+	start := strings.Index(text, opening)
+	if start < 0 {
+		t.Fatal("retained Explorer restart task script is missing")
+	}
+	start += len(opening)
+	end := strings.Index(text[start:], "\n'@")
+	if end < 0 {
+		t.Fatal("retained Explorer restart task terminator is missing")
+	}
+	nested := text[start : start+end]
+	for placeholder, replacement := range map[string]string{
+		"__OWNER_PID__":   "123",
+		"__RESTART_ID__":  "20260801-080000-1234abcd",
+		"__STATUS_PATH__": `C:\SandboxStatus\explorer-restart.json`,
+		"__TASK_NAME__":   "HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd",
+		"__SESSION_ID__":  "1",
+	} {
+		nested = strings.ReplaceAll(nested, placeholder, replacement)
+	}
+	payload := base64.StdEncoding.EncodeToString([]byte(nested))
+	script := fmt.Sprintf(`$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s'))
+$tokens = $null
+$errors = $null
+[void][Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw ($errors | ForEach-Object Message | Out-String) }
+`, payload)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("retained Explorer restart task parse: %v: %s", err, output)
 	}
 }
 
