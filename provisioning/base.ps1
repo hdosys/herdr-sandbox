@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 37
+# herdr-sandbox-base-contract: 38
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -528,6 +528,14 @@ function Search-ProvisioningWinGetPackages {
     if ($Exact) { $arguments += '--exact' }
     $lines = @(Invoke-ProvisioningNative -Role "$Role package search" -FilePath 'winget.exe' -ArgumentList $arguments |
         ForEach-Object { ([string]$_).TrimEnd() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $sourceUpdateFailures = @($lines | Where-Object {
+            $_ -match '^Failed in attempting to update the source:\s*\S(?:.*\S)?\s*$'
+        })
+    if ($sourceUpdateFailures.Count -ne 0) {
+        $diagnostic = [string]$sourceUpdateFailures[0]
+        if ($diagnostic.Length -gt 512) { $diagnostic = $diagnostic.Substring(0, 512) }
+        throw "$Role WinGet source update failed before package search: $diagnostic"
+    }
     $header = if ($lines.Count -gt 0) { [string]$lines[0] } else { '' }
     $idColumn = $header.IndexOf('Id', [StringComparison]::Ordinal)
     $versionColumn = $header.IndexOf('Version', [StringComparison]::Ordinal)

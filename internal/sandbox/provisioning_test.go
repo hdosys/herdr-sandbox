@@ -1107,6 +1107,12 @@ function Invoke-ProvisioningNative { return @('Nombre Id Version', '------------
 $accepted = $false
 try { $null = Search-ProvisioningWinGetPackages -Role 'Python' -IdQuery 'Python.Python.'; $accepted = $true } catch { }
 if ($accepted) { throw 'Localized WinGet search output was accepted.' }
+function Invoke-ProvisioningNative { return @('Failed in attempting to update the source: winget', 'Unexpected source detail') }
+$sourceFailure = ''
+try { $null = Search-ProvisioningWinGetPackages -Role 'File Pilot' -IdQuery 'Voidstar.FilePilot' -Exact } catch { $sourceFailure = [string]$_.Exception.Message }
+if ($sourceFailure -cne 'File Pilot WinGet source update failed before package search: Failed in attempting to update the source: winget') {
+    throw "WinGet source failure was not diagnosed directly: $sourceFailure"
+}
 `, quote(basePath))
 	scriptPath := filepath.Join(t.TempDir(), "winget-search-parser.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
