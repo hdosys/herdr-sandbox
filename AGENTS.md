@@ -84,12 +84,6 @@ in the global OpenCode configuration, not this repository.
   `.cmd`/`.bat` files. `cmd/task` is Go source, not permission for CMD scripts.
 - Windows PowerShell 5.1 exclusively owns bootstrap, Base, project/stack scripts,
   configuration sync, parser adapters, and verification.
-- Keep substantial repository-owned PowerShell programs in native `.ps1` files
-  under their existing owner (`internal/sandbox/assets`, `provisioning`, or
-  `packaging/windows`). Go may `//go:embed` those assets and retain only bounded
-  launcher/argument glue; do not add large multi-function PowerShell raw strings.
-  Parser and behavior tests consume the native or embedded asset directly and
-  never scrape Go source to recover script text.
 - Installed PowerShell 7 is interactive guest tooling only and provisioning must
   never invoke `pwsh.exe`.
 - Prefer direct Go process execution for application behavior and PowerShell for
