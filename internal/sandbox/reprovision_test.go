@@ -127,6 +127,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		baseProvisioningName:                 "base",
 		stackProvisioningName:                "stacks",
 		userProvisioningName:                 "user",
+		provisioningProcessName:              "process",
 		wingetPackagePlanFileName:            "packages",
 		workspaceManifestName:                "workspaces",
 		filepath.Join("projects", "one.ps1"): "project",
@@ -138,6 +139,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 	}
 	snapshot := provisioningSnapshot{
 		Directory:               directory,
+		ProcessOwnerPath:        filepath.Join(directory, provisioningProcessName),
 		ProjectScriptsDirectory: projects,
 		PackagePlanPath:         filepath.Join(directory, wingetPackagePlanFileName),
 		WorkspaceManifestPath:   filepath.Join(directory, workspaceManifestName),
@@ -244,6 +246,7 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		restartID,
 		taskName,
 		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
+		`-ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs')`,
 		"*>&1",
 	} {
 		if !strings.Contains(launcher, required) {

@@ -22,17 +22,20 @@ const (
 	baseProvisioningName               = productidentity.BaseScriptName
 	stackProvisioningName              = productidentity.StackScriptName
 	userProvisioningName               = productidentity.UserScriptName
+	provisioningProcessName            = "provisioning-process.cs"
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 38"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 39"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
+	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 1"
 	workspaceManifestSchema            = 1
 	maximumBaseScriptSize              = 1024 * 1024
 	maximumStackScriptSize             = 2 * 1024 * 1024
 	maximumUserScriptSize              = 1024 * 1024
 	maximumProjectScriptSize           = 1024 * 1024
+	maximumProvisioningProcessSize     = 512 * 1024
 	maximumWorkspaceDiscoveryEntries   = 4096
 	maximumWorkspaceExcludePatterns    = 64
 	maximumWorkspaceExcludePatternSize = 1024
@@ -302,6 +305,16 @@ func validateUserProvisioningContract(path string) error {
 	}
 	if strings.Contains(text, "# herdr-sandbox-base-contract:") {
 		return fmt.Errorf("user provisioning script must not contain an app-owned Base contract: %s", path)
+	}
+	return nil
+}
+
+func validateProvisioningProcessSource(data []byte) error {
+	if len(data) == 0 || len(data) > maximumProvisioningProcessSize {
+		return fmt.Errorf("embedded provisioning process source must be nonempty and no larger than %d bytes", maximumProvisioningProcessSize)
+	}
+	if !strings.Contains(string(data), provisioningProcessContract) {
+		return errors.New("embedded provisioning process source has an unsupported contract")
 	}
 	return nil
 }

@@ -105,6 +105,15 @@ func TestValidateUserProvisioningContract(t *testing.T) {
 	}
 }
 
+func TestValidateProvisioningProcessSource(t *testing.T) {
+	if err := validateProvisioningProcessSource(provisioningProcessSource); err != nil {
+		t.Fatalf("validate embedded provisioning process source: %v", err)
+	}
+	if err := validateProvisioningProcessSource([]byte("class Old {}")); err == nil {
+		t.Fatal("unsupported provisioning process source unexpectedly succeeded")
+	}
+}
+
 func TestProjectProvisioningRejectsReparseScriptAndParent(t *testing.T) {
 	t.Run("script", func(t *testing.T) {
 		root := t.TempDir()
@@ -1277,6 +1286,12 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	for _, required := range []string{
 		"[string]$PackagePlanPath",
 		"[string]$UserProvisioningPath",
+		"[string]$ProcessOwnerPath",
+		"[HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2",
+		"[HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3",
+		"function Start-ProvisioningNativeGroup",
+		"function Complete-ProvisioningNativeGroup",
+		"function Stop-ProvisioningNativeGroup",
 		"function Read-ProvisioningPackagePlan",
 		"function Test-ProvisioningPackageEnabled",
 		"function Get-ProvisioningPackageVersion",
@@ -1564,14 +1579,23 @@ func TestNativeProcessTreeWaitUsesReturnedExitCodeInWindowsPowerShell51(t *testi
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
 	baseScript := defaultProvisioningPath(t, baseProvisioningName)
+	processSource := filepath.Join(filepath.Dir(baseScript), "..", "internal", "sandbox", "assets", provisioningProcessName)
+	processSource, err := filepath.Abs(processSource)
+	if err != nil {
+		t.Fatal(err)
+	}
 	powerShell := mustWindowsPowerShellPath(t)
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-ProvisioningNative' }, $true)
-Invoke-Expression $definition.Extent.Text
+Add-Type -Path '%s'
+foreach ($name in @('New-ProvisioningNativeSpec', 'ConvertFrom-ProvisioningNativeOutput', 'Invoke-ProvisioningNative')) {
+    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
 function Write-ProvisioningProgress { param([string]$Message) }
 function Write-ProvisioningTiming { param([string]$Role, [double]$Seconds) }
 function Get-ProvisioningBoundedDiagnosticText { param([string]$Text, [int]$MaximumBytes) return $Text }
@@ -1585,7 +1609,7 @@ try {
     $failed = $true
 }
 if (-not $failed) { throw 'Process-tree wait ignored the returned nonzero exit code.' }
-`, quote(baseScript), quote(powerShell), encodePowerShell("exit 0"), quote(powerShell), encodePowerShell("exit 23"))
+`, quote(baseScript), quote(processSource), quote(powerShell), encodePowerShell("exit 0"), quote(powerShell), encodePowerShell("exit 23"))
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native process-tree wait regression: %v: %s", err, output)

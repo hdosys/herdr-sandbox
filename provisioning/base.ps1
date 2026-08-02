@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 38
+# herdr-sandbox-base-contract: 39
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -8,12 +8,35 @@ param(
     [string]$PackagePlanPath,
     [Parameter(Mandatory = $true)]
     [string]$UserProvisioningPath,
+    [Parameter(Mandatory = $true)]
+    [string]$ProcessOwnerPath,
     [switch]$AudioOutputEnabled,
     [switch]$AudioInputEnabled
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+
+if (-not [IO.Path]::IsPathRooted($ProcessOwnerPath) -or
+    -not (Test-Path -LiteralPath $ProcessOwnerPath -PathType Leaf)) {
+    throw "Provisioning process owner is missing: $ProcessOwnerPath"
+}
+$processOwnerFile = Get-Item -LiteralPath $ProcessOwnerPath -Force
+if (($processOwnerFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+    $processOwnerFile.Length -le 0 -or $processOwnerFile.Length -gt 524288 -or
+    -not [IO.File]::ReadAllText($ProcessOwnerPath).Contains('// herdr-sandbox-provisioning-process-contract: 1')) {
+    throw "Provisioning process owner has an unsupported identity: $ProcessOwnerPath"
+}
+if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
+    Add-Type -Path $ProcessOwnerPath
+}
+if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 1 -or
+    [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2 -or
+    [HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3) {
+    throw 'Provisioning process owner contract is invalid.'
+}
+$script:activeProvisioningNativeGroup = $null
+$script:activeProvisioningNativeRoles = @()
 
 function Get-ProvisioningBoundedDiagnosticText {
     param(
@@ -46,6 +69,14 @@ function Write-ProvisioningProgress {
         [string]$Message
     )
 
+    $activeRoles = @()
+    $activeRolesVariable = Get-Variable -Name 'activeProvisioningNativeRoles' -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $activeRolesVariable) {
+        $activeRoles = @($activeRolesVariable.Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    }
+    if ($activeRoles.Count -ne 0) {
+        $Message += ' (parallel: ' + ($activeRoles -join ', ') + ')'
+    }
     Write-Host "[development-provisioning] $Message"
     $statusDirectory = [string]$env:HERDR_SANDBOX_STATUS_DIRECTORY
     if ([string]::IsNullOrWhiteSpace($statusDirectory)) { return }
@@ -261,7 +292,7 @@ function Get-ProvisioningPackageVersion {
     return [string]$provisioningPackagePlan.Versions[$Id]
 }
 
-function Invoke-ProvisioningNative {
+function New-ProvisioningNativeSpec {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Role,
@@ -270,7 +301,8 @@ function Invoke-ProvisioningNative {
         [Parameter(Mandatory = $true)]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
-        [switch]$WaitForProcessTree
+        [int]$TimeoutSeconds = 1800,
+        [string]$WorkingDirectory = ''
     )
 
     $acceptedExitCodes = @{}
@@ -297,38 +329,165 @@ function Invoke-ProvisioningNative {
     if ($null -eq $command) {
         throw "$Role executable is not available: $resolvedFilePath"
     }
+    if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 7200) {
+        throw "$Role timeout must be between 1 and 7200 seconds."
+    }
+    if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) {
+        $location = Get-Location
+        if ([string]$location.Provider.Name -cne 'FileSystem') {
+            throw "$Role requires a filesystem working directory."
+        }
+        $WorkingDirectory = [string]$location.ProviderPath
+    }
+    if (-not [IO.Path]::IsPathRooted($WorkingDirectory) -or
+        -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
+        throw "$Role working directory is unavailable: $WorkingDirectory"
+    }
+
+    $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
+    $spec.Role = $Role
+    $spec.FilePath = [string]$command.Source
+    $spec.Arguments = [string[]]@($ArgumentList)
+    $spec.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    $spec.TimeoutMilliseconds = $TimeoutSeconds * 1000
+    $spec.SuccessExitCodes = [int[]]@($acceptedExitCodes.Keys | Sort-Object)
+    return $spec
+}
+
+function ConvertFrom-ProvisioningNativeOutput {
+    param([AllowEmptyString()][string]$Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return @() }
+    $trimmed = $Text.TrimEnd([char[]]@("`r", "`n"))
+    if ([string]::IsNullOrEmpty($trimmed)) { return @() }
+    return @($trimmed -split "`r?`n")
+}
+
+function Invoke-ProvisioningNative {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [Parameter(Mandatory = $true)]
+        [object]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+        [int[]]$SuccessExitCodes = @(0),
+        [switch]$WaitForProcessTree,
+        [int]$TimeoutSeconds = 1800,
+        [string]$WorkingDirectory = ''
+    )
+
+    $spec = New-ProvisioningNativeSpec -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
+        -SuccessExitCodes $SuccessExitCodes -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $previousErrorActionPreference = $ErrorActionPreference
     try {
-        $ErrorActionPreference = 'Continue'
-        if ($WaitForProcessTree) {
-            $process = Start-Process -FilePath $command.Source -ArgumentList $ArgumentList `
-                -WindowStyle Hidden -Wait -PassThru
-            try {
-                $exitCode = $process.ExitCode
-            } finally {
-                $process.Dispose()
-            }
-            $output = @()
-        } else {
-            $output = @(& $command.Source @ArgumentList 2>&1)
-            $exitCode = $LASTEXITCODE
-        }
+        # Every invocation now owns the complete tree; WaitForProcessTree remains a source-compatible marker.
+        $result = [HerdrSandbox.ProvisioningProcess]::Run($spec)
     } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
         $stopwatch.Stop()
     }
     Write-ProvisioningTiming -Role $Role -Seconds $stopwatch.Elapsed.TotalSeconds
-    if ($null -eq $exitCode) {
-        throw "$Role did not return a process exit code."
-    }
-    if (-not $acceptedExitCodes.ContainsKey([int]$exitCode)) {
+    $output = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+    if (-not $result.Succeeded) {
         $details = Get-ProvisioningBoundedDiagnosticText `
             -Text (($output -join [Environment]::NewLine).Trim()) -MaximumBytes 3000
-        throw "$Role failed with exit code $exitCode. $details"
+        if ($result.TimedOut) {
+            throw "$Role exceeded $TimeoutSeconds seconds. $details"
+        }
+        if ($result.Stopped) {
+            throw "$Role was stopped before completion. $details"
+        }
+        throw "$Role failed with exit code $($result.ExitCode). $details"
     }
     return $output
+}
+
+function Start-ProvisioningNativeGroup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Collections.IDictionary[]]$Tasks
+    )
+
+    if ($Tasks.Count -ne [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks) {
+        throw 'A provisioning native group requires exactly two tasks.'
+    }
+    if ($null -ne $script:activeProvisioningNativeGroup) {
+        throw 'A provisioning native group is already active.'
+    }
+    $allowedProperties = @('Role', 'FilePath', 'ArgumentList', 'SuccessExitCodes', 'TimeoutSeconds', 'WorkingDirectory')
+    $specs = @()
+    foreach ($task in $Tasks) {
+        $unknownProperties = @($task.Keys | Where-Object { [string]$_ -notin $allowedProperties })
+        if ($unknownProperties.Count -ne 0 -or -not $task.Contains('Role') -or -not $task.Contains('FilePath')) {
+            throw "Provisioning native group task has an unsupported contract: $($unknownProperties -join ', ')"
+        }
+        $arguments = if ($task.Contains('ArgumentList')) { [string[]]@($task['ArgumentList']) } else { [string[]]@() }
+        $exitCodes = if ($task.Contains('SuccessExitCodes')) { [int[]]@($task['SuccessExitCodes']) } else { [int[]]@(0) }
+        $timeout = if ($task.Contains('TimeoutSeconds')) { [int]$task['TimeoutSeconds'] } else { 1800 }
+        $workingDirectory = if ($task.Contains('WorkingDirectory')) { [string]$task['WorkingDirectory'] } else { '' }
+        $specs += New-ProvisioningNativeSpec -Role ([string]$task['Role']) -FilePath $task['FilePath'] `
+            -ArgumentList $arguments -SuccessExitCodes $exitCodes -TimeoutSeconds $timeout `
+            -WorkingDirectory $workingDirectory
+    }
+    $typedSpecs = [HerdrSandbox.ProvisioningProcessSpec[]]@($specs)
+    $roles = @($typedSpecs | ForEach-Object { $_.Role })
+    Write-ProvisioningProgress -Message ('Starting parallel work: ' + ($roles -join ', '))
+    $group = [HerdrSandbox.ProvisioningProcess]::StartGroup($typedSpecs)
+    $script:activeProvisioningNativeGroup = $group
+    $script:activeProvisioningNativeRoles = $roles
+    return $group
+}
+
+function Complete-ProvisioningNativeGroup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [HerdrSandbox.ProvisioningProcessGroup]$Group
+    )
+
+    if (-not [object]::ReferenceEquals($script:activeProvisioningNativeGroup, $Group)) {
+        throw 'Provisioning native group is not the active group.'
+    }
+    try {
+        $results = @($Group.Complete())
+    } finally {
+        $Group.Dispose()
+        $script:activeProvisioningNativeGroup = $null
+        $script:activeProvisioningNativeRoles = @()
+    }
+    $failures = @()
+    foreach ($result in $results) {
+        Write-ProvisioningTiming -Role ([string]$result.Role) -Seconds ([double]$result.ElapsedMilliseconds / 1000.0)
+        if (-not $result.Succeeded) {
+            $state = "exit code $($result.ExitCode)"
+            if ($result.TimedOut) { $state = 'timeout' }
+            elseif ($result.Stopped) { $state = 'stopped after sibling failure' }
+            $detail = Get-ProvisioningBoundedDiagnosticText -Text ([string]$result.Output) -MaximumBytes 3000
+            $failures += "$($result.Role): $state. $detail"
+        }
+    }
+    if ($failures.Count -ne 0) {
+        throw ('Parallel provisioning failed: ' + ($failures -join ' | '))
+    }
+    Write-ProvisioningProgress -Message ('Parallel work completed: ' + (($results | ForEach-Object { $_.Role }) -join ', '))
+    return $results
+}
+
+function Stop-ProvisioningNativeGroup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [HerdrSandbox.ProvisioningProcessGroup]$Group
+    )
+
+    if ([object]::ReferenceEquals($script:activeProvisioningNativeGroup, $Group)) {
+        try {
+            $Group.Stop()
+        } finally {
+            $Group.Dispose()
+            $script:activeProvisioningNativeGroup = $null
+            $script:activeProvisioningNativeRoles = @()
+        }
+    }
 }
 
 function Update-ProvisioningPath {

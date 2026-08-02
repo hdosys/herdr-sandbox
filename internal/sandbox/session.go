@@ -73,6 +73,7 @@ type runPlan struct {
 
 type provisioningSnapshot struct {
 	Directory                  string
+	ProcessOwnerPath           string
 	ProjectScriptsDirectory    string
 	PackagePlanPath            string
 	WorkspaceManifestPath      string
@@ -619,6 +620,13 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	if err := os.MkdirAll(snapshotDirectory, 0o700); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("create provisioning snapshot directory: %w", err)
 	}
+	if err := validateProvisioningProcessSource(provisioningProcessSource); err != nil {
+		return provisioningSnapshot{}, err
+	}
+	processOwnerPath := filepath.Join(snapshotDirectory, provisioningProcessName)
+	if err := os.WriteFile(processOwnerPath, provisioningProcessSource, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write provisioning process snapshot: %w", err)
+	}
 	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
 	if err != nil {
 		return provisioningSnapshot{}, err
@@ -681,6 +689,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}
 	return provisioningSnapshot{
 		Directory:                  snapshotDirectory,
+		ProcessOwnerPath:           processOwnerPath,
 		ProjectScriptsDirectory:    projectScriptsDirectory,
 		PackagePlanPath:            packagePlanPath,
 		WorkspaceManifestPath:      workspaceManifestPath,
