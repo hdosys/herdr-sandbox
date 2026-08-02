@@ -93,7 +93,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 - Adds only its own user `PATH` entry. A matching entry that existed before setup remains user-owned.
 - Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
 - Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`.
-- Uninstall removes app-owned runtime state, SSH integration, cache, application files, registration, and installer-owned `PATH`.
+- Uninstall never stops a running Sandbox. It removes app-owned runtime state, SSH integration, cache, application files, registration, and installer-owned `PATH`; a running Sandbox remains open but becomes unmanaged and must be closed manually.
 - **Also delete config.json and user.ps1** is off by default, so settings survive reinstall unless you explicitly select deletion.
 - Project profiles and unrelated SSH/install-directory content remain untouched. Uncertain ownership aborts before application removal.
 

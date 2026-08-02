@@ -50,6 +50,24 @@ func TestRemoveManagedSSHIncludeRejectsChangedOwnedBlock(t *testing.T) {
 	}
 }
 
+func TestInstallerCleanupNeverOwnsSandboxTermination(t *testing.T) {
+	source, err := os.ReadFile("uninstall.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"downAtWithExecutable",
+		"ensureNoRunningSandboxProcesses",
+		"runningSandboxProcesses(",
+		"windowsSandboxExecutable(",
+		"expectedWindowsSandboxExecutable(",
+	} {
+		if strings.Contains(string(source), forbidden) {
+			t.Errorf("installer cleanup retains Sandbox lifecycle path %q", forbidden)
+		}
+	}
+}
+
 func TestCleanInstallerDataRemovesOwnedStateAndPreservesProjectFiles(t *testing.T) {
 	root := t.TempDir()
 	paths := installerCleanPaths{
@@ -58,7 +76,6 @@ func TestCleanInstallerDataRemovesOwnedStateAndPreservesProjectFiles(t *testing.
 		CacheDirectory:         filepath.Join(root, "cache"),
 		InstallDirectory:       filepath.Join(root, "install"),
 		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
 		Configuration:          globalConfiguration{Workspaces: map[string]string{}},
 	}
 	for _, file := range []string{
@@ -84,24 +101,8 @@ func TestCleanInstallerDataRemovesOwnedStateAndPreservesProjectFiles(t *testing.
 	}, "\n")
 	writeUninstallFixture(t, filepath.Join(paths.UserHome, ".ssh", "config"), userSSH)
 
-	stopCalls := 0
-	stop := func(_ context.Context, dataDirectory, executable string) (DownResult, error) {
-		stopCalls++
-		if dataDirectory != paths.DataDirectory || executable != paths.SandboxExecutable {
-			t.Fatalf("stop paths = %q, %q", dataDirectory, executable)
-		}
-		for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
-			if _, err := os.Stat(path); err != nil {
-				t.Fatalf("owned root was removed before stop: %s: %v", path, err)
-			}
-		}
-		return DownResult{}, nil
-	}
-	if err := cleanInstallerDataAt(context.Background(), paths, true, stop, noInstallerSandboxProcesses); err != nil {
+	if err := cleanInstallerDataAt(context.Background(), paths, true); err != nil {
 		t.Fatalf("cleanInstallerDataAt: %v", err)
-	}
-	if stopCalls != 1 {
-		t.Fatalf("stop calls = %d", stopCalls)
 	}
 	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
@@ -127,7 +128,6 @@ func TestCleanInstallerDataDefaultPreservesConfigurationAndRemovesAllState(t *te
 		CacheDirectory:         filepath.Join(root, "cache"),
 		InstallDirectory:       filepath.Join(root, "install"),
 		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
 	}
 	for _, path := range []string{
 		filepath.Join(paths.DataDirectory, "unknown-state", "state.keep"),
@@ -137,9 +137,7 @@ func TestCleanInstallerDataDefaultPreservesConfigurationAndRemovesAllState(t *te
 	} {
 		writeUninstallFixture(t, path, "keep")
 	}
-	if err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		return DownResult{AlreadyStopped: true}, nil
-	}, noInstallerSandboxProcesses); err != nil {
+	if err := cleanInstallerDataAt(context.Background(), paths, false); err != nil {
 		t.Fatalf("default cleanInstallerDataAt: %v", err)
 	}
 	for _, path := range []string{paths.DataDirectory, paths.CacheDirectory} {
@@ -157,7 +155,7 @@ func TestCleanInstallerDataDefaultPreservesConfigurationAndRemovesAllState(t *te
 	}
 }
 
-func TestCleanInstallerDataPreflightsBeforeStopOrDeletion(t *testing.T) {
+func TestCleanInstallerDataPreflightsBeforeDeletion(t *testing.T) {
 	root := t.TempDir()
 	paths := installerCleanPaths{
 		DataDirectory:          filepath.Join(root, "local", applicationName),
@@ -165,19 +163,14 @@ func TestCleanInstallerDataPreflightsBeforeStopOrDeletion(t *testing.T) {
 		CacheDirectory:         filepath.Join(root, "cache"),
 		InstallDirectory:       filepath.Join(root, "install"),
 		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
 	}
 	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
 		writeUninstallFixture(t, filepath.Join(path, "keep.txt"), "keep")
 	}
 	writeUninstallFixture(t, filepath.Join(paths.UserHome, ".ssh", "config"), managedSSHIncludeStart+"\n")
-	stopCalled := false
-	err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		stopCalled = true
-		return DownResult{}, nil
-	}, noInstallerSandboxProcesses)
-	if err == nil || stopCalled {
-		t.Fatalf("preflight error = %v, stop called = %t", err, stopCalled)
+	err := cleanInstallerDataAt(context.Background(), paths, false)
+	if err == nil {
+		t.Fatalf("preflight error = %v", err)
 	}
 	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
 		if _, err := os.Stat(filepath.Join(path, "keep.txt")); err != nil {
@@ -194,7 +187,6 @@ func TestCleanInstallerDataRejectsNestedReparseWithoutTouchingTarget(t *testing.
 		CacheDirectory:         filepath.Join(root, "cache"),
 		InstallDirectory:       filepath.Join(root, "install"),
 		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
 	}
 	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
 		writeUninstallFixture(t, filepath.Join(path, "keep.txt"), "keep")
@@ -203,47 +195,13 @@ func TestCleanInstallerDataRejectsNestedReparseWithoutTouchingTarget(t *testing.
 	outsideMarker := filepath.Join(outside, "outside.keep")
 	writeUninstallFixture(t, outsideMarker, "outside")
 	createTestDirectoryLink(t, filepath.Join(paths.CacheDirectory, "unsafe-link"), outside)
-	stopCalled := false
-	err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		stopCalled = true
-		return DownResult{}, nil
-	}, noInstallerSandboxProcesses)
-	if err == nil || stopCalled || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
-		t.Fatalf("reparse preflight error = %v, stop called = %t", err, stopCalled)
+	err := cleanInstallerDataAt(context.Background(), paths, false)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
+		t.Fatalf("reparse preflight error = %v", err)
 	}
 	contents, readErr := os.ReadFile(outsideMarker)
 	if readErr != nil || string(contents) != "outside" {
 		t.Fatalf("external reparse target changed: %q, %v", contents, readErr)
-	}
-}
-
-func TestCleanInstallerDataStopFailurePreservesAllState(t *testing.T) {
-	root := t.TempDir()
-	paths := installerCleanPaths{
-		DataDirectory:          filepath.Join(root, "local", applicationName),
-		ConfigurationDirectory: filepath.Join(root, "roaming", applicationName),
-		CacheDirectory:         filepath.Join(root, "cache"),
-		InstallDirectory:       filepath.Join(root, "install"),
-		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
-	}
-	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
-		writeUninstallFixture(t, filepath.Join(path, "keep.txt"), "keep")
-	}
-	managedPath := filepath.Join(paths.DataDirectory, "ssh", "config")
-	sshConfig := managedSSHIncludeStart + "\nInclude " + quoteSSHPath(managedPath) + "\n" + managedSSHIncludeEnd + "\n"
-	sshPath := filepath.Join(paths.UserHome, ".ssh", "config")
-	writeUninstallFixture(t, sshPath, sshConfig)
-	err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		return DownResult{}, errors.New("fixture stop refusal")
-	}, noInstallerSandboxProcesses)
-	if err == nil || !strings.Contains(err.Error(), "fixture stop refusal") {
-		t.Fatalf("stop error = %v", err)
-	}
-	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory, sshPath} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("state changed after stop refusal: %s: %v", path, err)
-		}
 	}
 }
 
@@ -307,9 +265,7 @@ func TestCleanInstallerDataRemovesExactDefaultCacheAndPreservesSibling(t *testin
 	writeUninstallFixture(t, filepath.Join(paths.CacheDirectory, "payload.bin"), "cache")
 	sibling := filepath.Join(cacheParent, "project", "keep.txt")
 	writeUninstallFixture(t, sibling, "project")
-	if err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		return DownResult{AlreadyStopped: true}, nil
-	}, noInstallerSandboxProcesses); err != nil {
+	if err := cleanInstallerDataAt(context.Background(), paths, false); err != nil {
 		t.Fatalf("cleanInstallerDataAt exact cache: %v", err)
 	}
 	if _, err := os.Lstat(paths.CacheDirectory); !errors.Is(err, os.ErrNotExist) {
@@ -332,41 +288,11 @@ func TestCleanInstallerDataRemovesEmptyDefaultCacheParent(t *testing.T) {
 		UserHome:               filepath.Join(root, "home"),
 	}
 	writeUninstallFixture(t, filepath.Join(paths.CacheDirectory, "payload.bin"), "cache")
-	if err := cleanInstallerDataAt(context.Background(), paths, false, func(context.Context, string, string) (DownResult, error) {
-		return DownResult{AlreadyStopped: true}, nil
-	}, noInstallerSandboxProcesses); err != nil {
+	if err := cleanInstallerDataAt(context.Background(), paths, false); err != nil {
 		t.Fatalf("cleanInstallerDataAt empty cache parent: %v", err)
 	}
 	if _, err := os.Lstat(cacheParent); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("empty default cache parent remains: %v", err)
-	}
-}
-
-func TestCleanInstallerDataRefusesRemainingSandboxBeforeMutation(t *testing.T) {
-	root := t.TempDir()
-	paths := installerCleanPaths{
-		DataDirectory:          filepath.Join(root, "local", applicationName),
-		ConfigurationDirectory: filepath.Join(root, "roaming", applicationName),
-		CacheDirectory:         filepath.Join(root, "cache"),
-		InstallDirectory:       filepath.Join(root, "install"),
-		UserHome:               filepath.Join(root, "home"),
-		SandboxExecutable:      filepath.Join(root, "WindowsSandbox.exe"),
-	}
-	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
-		writeUninstallFixture(t, filepath.Join(path, "keep.txt"), "keep")
-	}
-	err := cleanInstallerDataAt(context.Background(), paths, true, func(context.Context, string, string) (DownResult, error) {
-		return DownResult{}, nil
-	}, func(context.Context) error {
-		return errors.New("fixture unmanaged Sandbox remains")
-	})
-	if err == nil || !strings.Contains(err.Error(), "unmanaged Sandbox remains") {
-		t.Fatalf("remaining-Sandbox error = %v", err)
-	}
-	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory} {
-		if _, err := os.Stat(filepath.Join(path, "keep.txt")); err != nil {
-			t.Fatalf("state changed after remaining-Sandbox refusal: %s: %v", path, err)
-		}
 	}
 }
 
@@ -396,5 +322,3 @@ func writeUninstallFixture(t *testing.T, path, contents string) {
 		t.Fatal(err)
 	}
 }
-
-func noInstallerSandboxProcesses(context.Context) error { return nil }

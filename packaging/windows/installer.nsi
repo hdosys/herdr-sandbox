@@ -113,13 +113,14 @@ VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_set
 !define MUI_WELCOMEPAGE_TEXT "This setup installs ${APP_DISPLAY_NAME} for your Windows account and creates its default configuration when missing.$\r$\n$\r$\nNo administrator access is required. Open a new terminal after setup so it can find ${APP_NAME} on PATH."
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
-!define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\n${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.$\r$\n$\r$\nOpen a new terminal and go to a project directory.$\r$\n$\r$\nFor a new project, run:$\r$\n${APP_NAME} init$\r$\n$\r$\nFor an existing profile, run:$\r$\n${APP_NAME} up"
-!define MUI_FINISHPAGE_LINK "View setup and usage guide"
+!define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\n${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.$\r$\n$\r$\nOpen a new terminal and go to a project directory.$\r$\n$\r$\nFor a new project, run:$\r$\n${APP_NAME} init$\r$\n$\r$\nFor an existing profile, run:$\r$\n${APP_NAME} up$\r$\n$\r$\nTo edit settings, run:$\r$\n${APP_NAME} config"
+!define MUI_FINISHPAGE_LINK "Open setup and usage guide"
 !define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage
 !insertmacro MUI_PAGE_FINISH
 UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -136,6 +137,18 @@ Function SelectInstallerWelcomeBitmap
     ${ElseIf} $0 >= 108
         File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_125}"
     ${EndIf}
+FunctionEnd
+
+Function PolishInstallerFinishPage
+    System::Store "S"
+    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Link, @r0)'
+    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r0, i 2)'
+    System::Call '*$0(i.r1, i.r2, i.r3, i.r4)'
+    IntOp $3 $3 - $1
+    IntOp $4 $4 - $2
+    IntOp $2 $2 - $4
+    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Link, p 0, i r1, i r2, i r3, i r4, i 0x14)'
+    System::Store "L"
 FunctionEnd
 
 Function .onInit
@@ -173,9 +186,9 @@ Function un.DeleteConfigurationPage
         Abort
     ${EndIf}
 
-    ${NSD_CreateLabel} 0 0 100% 62u "Uninstall always removes ${APP_DISPLAY_NAME} machine-local state, SSH integration, and the configured package/tool cache. Select this option to also remove ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}. Project ${APP_PROJECT_DIRECTORY} profiles are not removed."
+    ${NSD_CreateLabel} 0 0 100% 72u "Uninstall removes ${APP_DISPLAY_NAME} machine-local state, SSH integration, and the configured package/tool cache. A running Sandbox stays open but becomes unmanaged; close it manually when finished. Select this option to also remove ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}. Project ${APP_PROJECT_DIRECTORY} profiles are not removed."
     Pop $0
-    ${NSD_CreateCheckbox} 0 72u 100% 14u "Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}"
+    ${NSD_CreateCheckbox} 0 82u 100% 14u "Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}"
     Pop $DeleteConfigurationCheckbox
     ${If} $DeleteConfigurationOnUninstall == "1"
         ${NSD_Check} $DeleteConfigurationCheckbox
@@ -387,7 +400,7 @@ Section "Uninstall"
         ${EndIf}
     ${EndIf}
 
-    DetailPrint "Stopping the app-owned Sandbox and removing ${APP_DISPLAY_NAME} state, SSH integration, and cache..."
+    DetailPrint "Removing ${APP_DISPLAY_NAME} state, SSH integration, and cache; any running Sandbox stays open..."
     ${If} $DeleteConfigurationOnUninstall == "1"
         nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --delete-configuration'
     ${Else}

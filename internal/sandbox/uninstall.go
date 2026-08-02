@@ -17,7 +17,6 @@ type installerCleanPaths struct {
 	DefaultCacheParent     string
 	InstallDirectory       string
 	UserHome               string
-	SandboxExecutable      string
 	Configuration          globalConfiguration
 }
 
@@ -57,7 +56,7 @@ func CleanInstallerData(ctx context.Context, deleteConfiguration bool) error {
 	paths, resolveErr := resolveInstallerCleanPaths()
 	var cleanErr error
 	if resolveErr == nil {
-		cleanErr = cleanInstallerDataAt(ctx, paths, deleteConfiguration, downAtWithExecutable, ensureNoRunningSandboxProcesses)
+		cleanErr = cleanInstallerDataAt(ctx, paths, deleteConfiguration)
 	}
 	releaseErr := release()
 	if resolveErr != nil {
@@ -116,10 +115,6 @@ func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 	if !filepath.IsAbs(executable) {
 		return installerCleanPaths{}, fmt.Errorf("installed executable is not absolute: %q", executable)
 	}
-	sandboxExecutable, err := expectedWindowsSandboxExecutable()
-	if err != nil {
-		return installerCleanPaths{}, err
-	}
 	paths := installerCleanPaths{
 		DataDirectory:          filepath.Clean(dataDirectory),
 		ConfigurationDirectory: configurationDirectory,
@@ -127,7 +122,6 @@ func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 		DefaultCacheParent:     defaultCacheParent,
 		InstallDirectory:       filepath.Dir(filepath.Clean(executable)),
 		UserHome:               filepath.Clean(userHome),
-		SandboxExecutable:      sandboxExecutable,
 		Configuration:          configuration,
 	}
 	if err := validateInstallerCacheRemoval(paths); err != nil {
@@ -184,10 +178,7 @@ func validateInstallerCacheRemoval(paths installerCleanPaths) error {
 	return nil
 }
 
-func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, deleteConfiguration bool,
-	stop func(context.Context, string, string) (DownResult, error),
-	ensureNoSandbox func(context.Context) error,
-) error {
+func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, deleteConfiguration bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -209,12 +200,6 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 		}
 		plans = append(plans, plan)
 	}
-	if _, err := stop(ctx, paths.DataDirectory, paths.SandboxExecutable); err != nil {
-		return fmt.Errorf("stop app-owned Windows Sandbox before clean uninstall: %w", err)
-	}
-	if err := ensureNoSandbox(ctx); err != nil {
-		return err
-	}
 	if err := applyInstallerSSHRemoval(sshPlan); err != nil {
 		return err
 	}
@@ -234,17 +219,6 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 		if err := removeEmptyInstallerCacheParent(paths.DefaultCacheParent); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func ensureNoRunningSandboxProcesses(ctx context.Context) error {
-	processes, err := runningSandboxProcesses(ctx)
-	if err != nil {
-		return fmt.Errorf("verify no Windows Sandbox remains before uninstall cleanup: %w", err)
-	}
-	if len(processes) != 0 {
-		return fmt.Errorf("refusing uninstall cleanup while Windows Sandbox process(es) remain: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
 	}
 	return nil
 }
