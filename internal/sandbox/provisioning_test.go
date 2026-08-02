@@ -230,6 +230,22 @@ func TestDefaultBaseInstallsGitHubCLIThroughCachedMSIAdapter(t *testing.T) {
 	}
 }
 
+func TestDefaultBaseInstallsActionlintThroughCachedPortableAdapter(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint')",
+		"-Role 'actionlint' -Id 'rhysd.actionlint'",
+		"-InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'actionlint.exe'",
+		"Assert-ProvisioningCommand -Role 'actionlint' -Name 'actionlint.exe'",
+		"-VersionArguments @('-version')",
+		"actionlint ready:",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing actionlint contract %q", required)
+		}
+	}
+}
+
 func TestDefaultBaseInstallsTailscaleWithoutAuthentication(t *testing.T) {
 	text := readDefaultBaseProvisioning(t)
 	for _, required := range []string{

@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 40
+# herdr-sandbox-base-contract: 41
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -213,6 +213,7 @@ function Read-ProvisioningPackagePlan {
         'Starship.Starship',
         'junegunn.fzf',
         'BurntSushi.ripgrep.MSVC',
+        'rhysd.actionlint',
         'Git.Git',
         'GitHub.cli',
         'Tailscale.Tailscale',
@@ -3091,6 +3092,16 @@ if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
     $ripgrepVersion = Assert-ProvisioningCommand -Role 'ripgrep' -Name 'rg.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^ripgrep \d+\.\d+\.\d+'
     Write-Output "ripgrep ready: $ripgrepVersion"
+}
+
+if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
+    Write-Output 'Installing actionlint...'
+    Install-ProvisioningWinGetPackage -Role 'actionlint' -Id 'rhysd.actionlint' `
+        -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') `
+        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'actionlint.exe'
+    $actionlintVersion = Assert-ProvisioningCommand -Role 'actionlint' -Name 'actionlint.exe' `
+        -VersionArguments @('-version') -ExpectedPattern '^\d+\.\d+\.\d+'
+    Write-Output "actionlint ready: $actionlintVersion"
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {

@@ -17,6 +17,7 @@ const (
 	packageStarship        = "Starship.Starship"
 	packageFZF             = "junegunn.fzf"
 	packageRipgrep         = "BurntSushi.ripgrep.MSVC"
+	packageActionlint      = "rhysd.actionlint"
 	packageGit             = "Git.Git"
 	packageGitHubCLI       = "GitHub.cli"
 	packageTailscale       = "Tailscale.Tailscale"
@@ -33,6 +34,7 @@ var basePackageIDs = []string{
 	packageStarship,
 	packageFZF,
 	packageRipgrep,
+	packageActionlint,
 	packageGit,
 	packageGitHubCLI,
 	packageTailscale,
@@ -87,6 +89,7 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 		packageStarship,
 		packageFZF,
 		packageRipgrep,
+		packageActionlint,
 		packageGit,
 		packageGitHubCLI,
 		packageTailscale,

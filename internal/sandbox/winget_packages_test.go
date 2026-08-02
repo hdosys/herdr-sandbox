@@ -15,7 +15,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 	for _, id := range []string{
 		packagePowerShell, packageStarship, packageFZF, packageRipgrep, packageGit,
-		packageGitHubCLI, packageTailscale, packageOpenCode, packageWinDirStat, packageFilePilot,
+		packageActionlint, packageGitHubCLI, packageTailscale, packageOpenCode, packageWinDirStat, packageFilePilot,
 		packageTerminalXAML, packageTerminalStable,
 	} {
 		if !defaults.enabled(id) {
