@@ -16,6 +16,7 @@ import (
 )
 
 const usage = `Usage:
+  herdr-sandbox config
   herdr-sandbox plan
   herdr-sandbox init [--stack dotnet|go|node|python|rust|zig]...
   herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
@@ -25,6 +26,7 @@ const usage = `Usage:
   herdr-sandbox clean
 
 Commands:
+  config  create the global config when absent and open it with the registered .json application
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
@@ -66,6 +68,7 @@ type commandDependencies struct {
 	validateAttach func(io.Reader, io.Writer, io.Writer) error
 	resolvePlan    func(context.Context, string) (sandbox.EffectivePlan, error)
 	initialize     func(string, []string) (sandbox.ProjectInitResult, error)
+	openConfig     func() (string, error)
 	seedInstaller  func() error
 	cleanInstaller func(context.Context, bool) error
 }
@@ -82,6 +85,7 @@ func defaultCommandDependencies() commandDependencies {
 		validateAttach: sandbox.ValidateInteractiveAttachStreams,
 		resolvePlan:    sandbox.ResolveEffectivePlan,
 		initialize:     sandbox.InitializeProject,
+		openConfig:     sandbox.OpenConfiguration,
 		seedInstaller:  sandbox.SeedInstallerConfiguration,
 		cleanInstaller: sandbox.CleanInstallerData,
 	}
@@ -100,6 +104,22 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	}
 	switch args[0] {
+	case "config":
+		if commandHelpRequested(args) {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "herdr-sandbox: config does not accept arguments\n\n%s", usage)
+			return 2
+		}
+		path, err := dependencies.openConfig()
+		if err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "Opened configuration: %s\n", path)
+		return 0
 	case "__installer-seed-configuration":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "herdr-sandbox: installer configuration seed does not accept arguments")

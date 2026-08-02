@@ -182,6 +182,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 
 | Command | Behavior |
 | --- | --- |
+| `herdr-sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
 | `herdr-sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
 | `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
@@ -228,7 +229,13 @@ For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profil
 
 ### Global configuration
 
-The first mutating `up` creates:
+Open the global configuration with the Windows application registered for `.json` files:
+
+```powershell
+herdr-sandbox config
+```
+
+The command creates `config.json` only when absent and never replaces existing settings. Setup or the first mutating `up` also creates the user extension when absent:
 
 ```text
 %APPDATA%\herdr-sandbox\config.json
