@@ -284,7 +284,7 @@ func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
 		"task = 'allow'",
 		"todowrite = 'allow'",
 		"doom_loop = 'allow'",
-		"$openCodeCommand.Source 'debug' 'config'",
+		"-FilePath $openCodeCommand.Source -ArgumentList @('debug', 'config')",
 		"OpenCode effective managed permission is not allow",
 	} {
 		if !strings.Contains(text, required) {
@@ -880,6 +880,86 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 	projectCall := strings.Index(base, "& $projectScript.FullName -ProjectDirectory $projectDirectory")
 	if dotSource < 0 || userCall <= dotSource || projectCall <= userCall {
 		t.Fatalf("provisioning order must be stack, user, project: stack=%d user=%d project=%d", dotSource, userCall, projectCall)
+	}
+}
+
+func TestRustAndVisualStudioUseOneFixedParallelGroup(t *testing.T) {
+	text := readDefaultStackProvisioning(t)
+	visualStudioStart := strings.Index(text, "function Install-StackVisualStudioBuildTools")
+	visualStudioEnd := strings.Index(text, "function Get-StackRustSHA256")
+	rustStart := strings.Index(text, "function Install-RustMSVCStack")
+	rustEnd := strings.Index(text, "function Install-CargoNextest")
+	if visualStudioStart < 0 || visualStudioEnd <= visualStudioStart || rustStart < 0 || rustEnd <= rustStart {
+		t.Fatal("Rust or Visual Studio stack owner is missing")
+	}
+	visualStudio := text[visualStudioStart:visualStudioEnd]
+	rust := text[rustStart:rustEnd]
+	for _, required := range []string{
+		"[Collections.IDictionary]$RustToolchainTask",
+		"Start-ProvisioningNativeGroup -Tasks @(",
+		"$RustToolchainTask,",
+		"Role = 'Visual Studio Build Tools offline installation'",
+		"TimeoutSeconds = 900",
+		"Complete-ProvisioningNativeGroup -Group $installationGroup",
+		"Stop-ProvisioningNativeGroup -Group $installationGroup",
+		"Wait-StackVisualStudioInstalled",
+	} {
+		if !strings.Contains(visualStudio, required) {
+			t.Errorf("Visual Studio parallel owner is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"$rustServer = [HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)",
+		"$null = $rustServer.Stop()",
+		"Role = 'Rust toolchain installation'",
+		"WorkingDirectory = $ProjectDirectory",
+		"Install-StackVisualStudioBuildTools -RustToolchainTask $rustToolchainTask",
+		"Invoke-ProvisioningNative -Role 'Rust default toolchain selection'",
+		"Assert-ProvisioningCommand -Role 'Rust'",
+	} {
+		if !strings.Contains(rust, required) {
+			t.Errorf("Rust parallel owner is missing %q", required)
+		}
+	}
+	if strings.Contains(text, "function Invoke-StackVisualStudioInstaller") ||
+		strings.Contains(rust, "Invoke-ProvisioningNative -Role 'Rust toolchain installation'") ||
+		strings.Contains(rust, "Start-Process -FilePath $pythonCommand.Source") ||
+		strings.Contains(visualStudio, "Start-Process -FilePath $guestLayoutBootstrapper") {
+		t.Fatal("Rust/Visual Studio retains a replaced direct process path")
+	}
+	serverReady := strings.Index(rust, "if (-not $serverReady)")
+	groupCall := strings.Index(rust, "Install-StackVisualStudioBuildTools -RustToolchainTask")
+	defaultSelection := strings.Index(rust, "Invoke-ProvisioningNative -Role 'Rust default toolchain selection'")
+	verification := strings.Index(rust, "Assert-ProvisioningCommand -Role 'Rust'")
+	if serverReady < 0 || groupCall <= serverReady || defaultSelection <= groupCall || verification <= defaultSelection {
+		t.Fatalf("Rust preparation/group/read-back ordering is invalid: server=%d group=%d default=%d verify=%d", serverReady, groupCall, defaultSelection, verification)
+	}
+}
+
+func TestDevelopmentNativeProcessesUseOwnedBoundary(t *testing.T) {
+	base := readDefaultBaseProvisioning(t)
+	stacks := readDefaultStackProvisioning(t)
+	for _, required := range []string{
+		"function Invoke-ProvisioningNativeResult",
+		"[HerdrSandbox.ProvisioningProcess]::Run($spec)",
+		"[HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)",
+	} {
+		if !strings.Contains(base+stacks, required) {
+			t.Errorf("development process owner is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"@(& winget.exe list",
+		"@(& $commands[0].FullName @VersionArguments",
+		"@(& $executable --version",
+		"@(& $openCodeCommand.Source 'debug' 'config'",
+		"@(& $gitCommand config --global --get-all safe.directory",
+		"@(& $vswhere '-latest'",
+		"Start-Process -FilePath $pythonCommand.Source",
+	} {
+		if strings.Contains(base+stacks, forbidden) {
+			t.Errorf("development path retains direct native invocation %q", forbidden)
+		}
 	}
 }
 
@@ -1591,7 +1671,7 @@ $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 Add-Type -Path '%s'
-foreach ($name in @('New-ProvisioningNativeSpec', 'ConvertFrom-ProvisioningNativeOutput', 'Invoke-ProvisioningNative')) {
+foreach ($name in @('New-ProvisioningNativeSpec', 'ConvertFrom-ProvisioningNativeOutput', 'Invoke-ProvisioningNativeResult', 'Invoke-ProvisioningNative')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if ($null -eq $definition) { throw "Missing function: $name" }
     Invoke-Expression $definition.Extent.Text

@@ -1,4 +1,4 @@
-// herdr-sandbox-provisioning-process-contract: 1
+// herdr-sandbox-provisioning-process-contract: 2
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -37,7 +37,7 @@ namespace HerdrSandbox
 
     public static class ProvisioningProcess
     {
-        public const int ContractVersion = 1;
+        public const int ContractVersion = 2;
         public const int MaximumGroupTasks = 2;
         public const int MaximumConcurrentDownloads = 3;
 
@@ -47,6 +47,11 @@ namespace HerdrSandbox
             {
                 return task.Complete();
             }
+        }
+
+        public static ProvisioningProcessTask Start(ProvisioningProcessSpec spec)
+        {
+            return ProvisioningProcessTask.Start(spec);
         }
 
         public static ProvisioningProcessGroup StartGroup(ProvisioningProcessSpec[] specs)
@@ -328,10 +333,11 @@ namespace HerdrSandbox
         }
     }
 
-    internal sealed class ProvisioningProcessTask : IDisposable
+    public sealed class ProvisioningProcessTask : IDisposable
     {
         private const int MaximumOutputBytes = 1024 * 1024;
         private const int CleanupTimeoutMilliseconds = 30000;
+        private const uint CompletionWaitMilliseconds = 250;
         private readonly ProvisioningProcessSpec spec;
         private readonly Stopwatch stopwatch;
         private readonly IntPtr processHandle;
@@ -369,6 +375,11 @@ namespace HerdrSandbox
             get { return completion; }
         }
 
+        public bool IsCompleted
+        {
+            get { return completion.IsCompleted; }
+        }
+
         internal int RemainingTimeoutMilliseconds
         {
             get
@@ -390,9 +401,10 @@ namespace HerdrSandbox
             IntPtr readPipe = IntPtr.Zero;
             IntPtr writePipe = IntPtr.Zero;
             IntPtr nullInput = IntPtr.Zero;
+            IntPtr attributeList = IntPtr.Zero;
+            IntPtr jobList = IntPtr.Zero;
+            bool attributeListInitialized = false;
             NativeMethods.PROCESS_INFORMATION process = new NativeMethods.PROCESS_INFORMATION();
-            bool processCreated = false;
-            bool processAssigned = false;
             try
             {
                 job = NativeMethods.CreateJobObject(IntPtr.Zero, null);
@@ -443,16 +455,44 @@ namespace HerdrSandbox
                     IntPtr.Zero);
                 NativeMethods.ThrowIfInvalid(nullInput, "open provisioning process null input");
 
-                NativeMethods.STARTUPINFO startup = new NativeMethods.STARTUPINFO();
-                startup.cb = Marshal.SizeOf(typeof(NativeMethods.STARTUPINFO));
-                startup.dwFlags = NativeMethods.STARTF_USESHOWWINDOW | NativeMethods.STARTF_USESTDHANDLES;
-                startup.wShowWindow = NativeMethods.SW_HIDE;
-                startup.hStdInput = nullInput;
-                startup.hStdOutput = writePipe;
-                startup.hStdError = writePipe;
+                UIntPtr attributeListSize = UIntPtr.Zero;
+                NativeMethods.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
+                if (attributeListSize == UIntPtr.Zero)
+                {
+                    NativeMethods.ThrowLastError("size provisioning process attribute list");
+                }
+                attributeList = Marshal.AllocHGlobal(new IntPtr(checked((long)attributeListSize.ToUInt64())));
+                if (!NativeMethods.InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeListSize))
+                {
+                    NativeMethods.ThrowLastError("initialize provisioning process attribute list");
+                }
+                attributeListInitialized = true;
+                jobList = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(jobList, job);
+                if (!NativeMethods.UpdateProcThreadAttribute(
+                    attributeList,
+                    0,
+                    new IntPtr(NativeMethods.PROC_THREAD_ATTRIBUTE_JOB_LIST),
+                    jobList,
+                    new UIntPtr((uint)IntPtr.Size),
+                    IntPtr.Zero,
+                    IntPtr.Zero))
+                {
+                    NativeMethods.ThrowLastError("configure atomic provisioning process job assignment");
+                }
+
+                NativeMethods.STARTUPINFOEX startup = new NativeMethods.STARTUPINFOEX();
+                startup.StartupInfo.cb = Marshal.SizeOf(typeof(NativeMethods.STARTUPINFOEX));
+                startup.StartupInfo.dwFlags = NativeMethods.STARTF_USESHOWWINDOW | NativeMethods.STARTF_USESTDHANDLES;
+                startup.StartupInfo.wShowWindow = NativeMethods.SW_HIDE;
+                startup.StartupInfo.hStdInput = nullInput;
+                startup.StartupInfo.hStdOutput = writePipe;
+                startup.StartupInfo.hStdError = writePipe;
+                startup.AttributeList = attributeList;
                 StringBuilder commandLine = new StringBuilder(BuildCommandLine(spec.FilePath, spec.Arguments));
-                uint flags = NativeMethods.CREATE_SUSPENDED | NativeMethods.CREATE_NEW_CONSOLE | NativeMethods.CREATE_UNICODE_ENVIRONMENT;
-                if (!NativeMethods.CreateProcess(
+                uint flags = NativeMethods.CREATE_SUSPENDED | NativeMethods.CREATE_NEW_CONSOLE |
+                    NativeMethods.CREATE_UNICODE_ENVIRONMENT | NativeMethods.EXTENDED_STARTUPINFO_PRESENT;
+                if (!NativeMethods.CreateProcessExtended(
                     spec.FilePath,
                     commandLine,
                     IntPtr.Zero,
@@ -466,12 +506,6 @@ namespace HerdrSandbox
                 {
                     NativeMethods.ThrowLastError("create provisioning process " + spec.Role);
                 }
-                processCreated = true;
-                if (!NativeMethods.AssignProcessToJobObject(job, process.Process))
-                {
-                    NativeMethods.ThrowLastError("assign provisioning process tree " + spec.Role);
-                }
-                processAssigned = true;
 
                 NativeMethods.CloseHandle(writePipe);
                 writePipe = IntPtr.Zero;
@@ -506,16 +540,20 @@ namespace HerdrSandbox
                 process.Thread = IntPtr.Zero;
                 return owned;
             }
-            catch
-            {
-                if (processCreated && !processAssigned && process.Process != IntPtr.Zero)
-                {
-                    NativeMethods.TerminateProcess(process.Process, 1);
-                }
-                throw;
-            }
             finally
             {
+                if (attributeListInitialized)
+                {
+                    NativeMethods.DeleteProcThreadAttributeList(attributeList);
+                }
+                if (jobList != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(jobList);
+                }
+                if (attributeList != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(attributeList);
+                }
                 NativeMethods.CloseIfValid(process.Thread);
                 NativeMethods.CloseIfValid(process.Process);
                 NativeMethods.CloseIfValid(nullInput);
@@ -526,12 +564,18 @@ namespace HerdrSandbox
             }
         }
 
-        internal ProvisioningProcessResult Complete()
+        public ProvisioningProcessResult Complete()
         {
             if (Task.WaitAny(new Task[] { completion }, RemainingTimeoutMilliseconds) < 0)
             {
                 Stop(true);
             }
+            return WaitAfterStop();
+        }
+
+        public ProvisioningProcessResult Stop()
+        {
+            Stop(false);
             return WaitAfterStop();
         }
 
@@ -587,9 +631,24 @@ namespace HerdrSandbox
 
         private ProvisioningProcessResult CompleteOwnedProcessTree()
         {
-            bool sawProcess = false;
             while (true)
             {
+                NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting =
+                    new NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION();
+                if (!NativeMethods.QueryInformationJobObject(
+                    jobHandle,
+                    NativeMethods.JobObjectBasicAccountingInformation,
+                    ref accounting,
+                    Marshal.SizeOf(typeof(NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION)),
+                    IntPtr.Zero))
+                {
+                    NativeMethods.ThrowLastError("query provisioning process tree " + spec.Role);
+                }
+                if (accounting.ActiveProcesses == 0)
+                {
+                    break;
+                }
+
                 uint message;
                 UIntPtr completionKey;
                 IntPtr processID;
@@ -598,17 +657,13 @@ namespace HerdrSandbox
                     out message,
                     out completionKey,
                     out processID,
-                    NativeMethods.INFINITE))
+                    CompletionWaitMilliseconds))
                 {
-                    NativeMethods.ThrowLastError("wait for provisioning process tree " + spec.Role);
-                }
-                if (message == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS)
-                {
-                    sawProcess = true;
-                }
-                if (message == NativeMethods.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO && sawProcess)
-                {
-                    break;
+                    int error = Marshal.GetLastWin32Error();
+                    if (error != NativeMethods.WAIT_TIMEOUT)
+                    {
+                        throw new Win32Exception(error, "wait for provisioning process tree " + spec.Role);
+                    }
                 }
             }
             if (NativeMethods.WaitForSingleObject(processHandle, CleanupTimeoutMilliseconds) != NativeMethods.WAIT_OBJECT_0)
@@ -842,23 +897,36 @@ namespace HerdrSandbox
             }
             return new BoundedOutput
             {
-                Text = new UTF8Encoding(false, false).GetString(selected.ToArray()),
+                Text = DecodeOutput(selected.ToArray()),
                 TotalBytes = totalBytes,
                 Truncated = truncated
             };
+        }
+
+        private static string DecodeOutput(byte[] bytes)
+        {
+            try
+            {
+                return new UTF8Encoding(false, true).GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                return Encoding.GetEncoding((int)NativeMethods.GetOEMCP()).GetString(bytes);
+            }
         }
     }
 
     internal static class NativeMethods
     {
+        internal const int JobObjectBasicAccountingInformation = 1;
         internal const int JobObjectAssociateCompletionPortInformation = 7;
         internal const int JobObjectExtendedLimitInformation = 9;
         internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
-        internal const uint JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
-        internal const uint JOB_OBJECT_MSG_NEW_PROCESS = 6;
+        internal const int PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
         internal const uint CREATE_SUSPENDED = 0x00000004;
         internal const uint CREATE_NEW_CONSOLE = 0x00000010;
         internal const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+        internal const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
         internal const int STARTF_USESHOWWINDOW = 0x00000001;
         internal const int STARTF_USESTDHANDLES = 0x00000100;
         internal const short SW_HIDE = 0;
@@ -868,8 +936,8 @@ namespace HerdrSandbox
         internal const uint FILE_SHARE_WRITE = 0x00000002;
         internal const uint OPEN_EXISTING = 3;
         internal const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
-        internal const uint INFINITE = 0xffffffff;
         internal const uint WAIT_OBJECT_0 = 0;
+        internal const int WAIT_TIMEOUT = 258;
         internal const int ERROR_ACCESS_DENIED = 5;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -902,6 +970,13 @@ namespace HerdrSandbox
             internal IntPtr hStdInput;
             internal IntPtr hStdOutput;
             internal IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct STARTUPINFOEX
+        {
+            internal STARTUPINFO StartupInfo;
+            internal IntPtr AttributeList;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -950,6 +1025,19 @@ namespace HerdrSandbox
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
+        {
+            internal long TotalUserTime;
+            internal long TotalKernelTime;
+            internal long ThisPeriodTotalUserTime;
+            internal long ThisPeriodTotalKernelTime;
+            internal uint TotalPageFaultCount;
+            internal uint TotalProcesses;
+            internal uint ActiveProcesses;
+            internal uint TotalTerminatedProcesses;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct JOBOBJECT_ASSOCIATE_COMPLETION_PORT
         {
             internal IntPtr CompletionKey;
@@ -993,6 +1081,15 @@ namespace HerdrSandbox
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool QueryInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            ref JOBOBJECT_BASIC_ACCOUNTING_INFORMATION information,
+            int informationLength,
+            IntPtr returnLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool CreatePipe(
             out IntPtr readPipe,
             out IntPtr writePipe,
@@ -1013,9 +1110,31 @@ namespace HerdrSandbox
             uint flagsAndAttributes,
             IntPtr templateFile);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool CreateProcess(
+        internal static extern bool InitializeProcThreadAttributeList(
+            IntPtr attributeList,
+            int attributeCount,
+            uint flags,
+            ref UIntPtr size);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool UpdateProcThreadAttribute(
+            IntPtr attributeList,
+            uint flags,
+            IntPtr attribute,
+            IntPtr value,
+            UIntPtr size,
+            IntPtr previousValue,
+            IntPtr returnSize);
+
+        [DllImport("kernel32.dll")]
+        internal static extern void DeleteProcThreadAttributeList(IntPtr attributeList);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateProcessW")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool CreateProcessExtended(
             string applicationName,
             StringBuilder commandLine,
             IntPtr processAttributes,
@@ -1024,12 +1143,8 @@ namespace HerdrSandbox
             uint creationFlags,
             IntPtr environment,
             string currentDirectory,
-            ref STARTUPINFO startupInfo,
+            ref STARTUPINFOEX startupInfo,
             out PROCESS_INFORMATION processInformation);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern uint ResumeThread(IntPtr thread);
@@ -1039,11 +1154,10 @@ namespace HerdrSandbox
         internal static extern bool TerminateJobObject(IntPtr job, uint exitCode);
 
         [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool TerminateProcess(IntPtr process, uint exitCode);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern uint WaitForSingleObject(IntPtr handle, int milliseconds);
+
+        [DllImport("kernel32.dll")]
+        internal static extern uint GetOEMCP();
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

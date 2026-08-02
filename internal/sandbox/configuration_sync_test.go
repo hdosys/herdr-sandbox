@@ -44,8 +44,15 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	writeTestFile(t, filepath.Join(githubCLI, "hosts.yml"), "github.com:\n  user: fixture\n")
 	writeTestFile(t, filepath.Join(githubCLI, "extensions", "excluded.yml"), "excluded")
 	githubAuthentication := []byte(`{"schemaVersion":1,"accounts":[{"hostname":"github.com","login":"fixture","active":true,"gitProtocol":"https","token":"fixture-token"}]}`)
-	herdrConfig := filepath.Join(root, "herdr-config.toml")
+	herdrConfigDirectory := filepath.Join(root, "herdr")
+	if err := os.MkdirAll(filepath.Join(herdrConfigDirectory, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	herdrConfig := filepath.Join(herdrConfigDirectory, "config.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n[theme]\nname = \"one-light\"\n")
+	writeTestFile(t, filepath.Join(herdrConfigDirectory, "keys.toml"), "[keys]\nprefix = \"ctrl+a\"\n")
+	writeTestFile(t, filepath.Join(herdrConfigDirectory, "herdr-client.log"), "excluded")
+	writeTestFile(t, filepath.Join(herdrConfigDirectory, "nested", "excluded.toml"), "excluded")
 	gitConfig := filepath.Join(root, ".gitconfig")
 	writeTestFile(t, gitConfig, "[user]\nname = Test User\n")
 	settings := filepath.Join(root, "settings.json")
@@ -143,6 +150,11 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	if entries["github-cli/extensions/excluded.yml"] {
 		t.Fatal("archive contains GitHub CLI extensions")
 	}
+	for _, excluded := range []string{"herdr/keys.toml", "herdr/herdr-client.log", "herdr/nested/excluded.toml"} {
+		if entries[excluded] {
+			t.Fatalf("archive contains excluded Herdr state %s", excluded)
+		}
+	}
 	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != 10 {
 		t.Fatalf("payload file count = %d, err = %v", count, err)
 	}
@@ -219,6 +231,9 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if sources.GitConfig != "" || sources.GitHubCLIConfiguration != "" || sources.CodingAgents.OpenCodeDirectory != "" ||
 		sources.StarshipPreset != "" || sources.WindowsTerminalEdition != "" {
 		t.Fatalf("disabled integration sources = %#v", sources)
+	}
+	if sources.HerdrConfig != filepath.Join(root, "herdr", "config.toml") {
+		t.Fatalf("Herdr configuration source = %q, want only config.toml", sources.HerdrConfig)
 	}
 	herdrConfig := filepath.Join(root, "herdr.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")

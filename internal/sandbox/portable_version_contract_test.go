@@ -9,7 +9,7 @@ func TestPortablePackageVersionArgumentsDefaultAndZigOverride(t *testing.T) {
 	base := readDefaultBaseProvisioning(t)
 	for _, required := range []string{
 		"[string[]]$PortableVersionArguments = @('--version')",
-		"& $commands[0].FullName @VersionArguments",
+		"-FilePath $commands[0].FullName -ArgumentList $VersionArguments",
 		"-PortableVersionArguments $PortableVersionArguments",
 	} {
 		if !strings.Contains(base, required) {

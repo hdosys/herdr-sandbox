@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 39
+# herdr-sandbox-base-contract: 40
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -24,13 +24,13 @@ if (-not [IO.Path]::IsPathRooted($ProcessOwnerPath) -or
 $processOwnerFile = Get-Item -LiteralPath $ProcessOwnerPath -Force
 if (($processOwnerFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
     $processOwnerFile.Length -le 0 -or $processOwnerFile.Length -gt 524288 -or
-    -not [IO.File]::ReadAllText($ProcessOwnerPath).Contains('// herdr-sandbox-provisioning-process-contract: 1')) {
+    -not [IO.File]::ReadAllText($ProcessOwnerPath).Contains('// herdr-sandbox-provisioning-process-contract: 2')) {
     throw "Provisioning process owner has an unsupported identity: $ProcessOwnerPath"
 }
 if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
     Add-Type -Path $ProcessOwnerPath
 }
-if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 1 -or
+if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 2 -or
     [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2 -or
     [HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3) {
     throw 'Provisioning process owner contract is invalid.'
@@ -363,7 +363,7 @@ function ConvertFrom-ProvisioningNativeOutput {
     return @($trimmed -split "`r?`n")
 }
 
-function Invoke-ProvisioningNative {
+function Invoke-ProvisioningNativeResult {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Role,
@@ -382,12 +382,32 @@ function Invoke-ProvisioningNative {
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        # Every invocation now owns the complete tree; WaitForProcessTree remains a source-compatible marker.
         $result = [HerdrSandbox.ProvisioningProcess]::Run($spec)
     } finally {
         $stopwatch.Stop()
     }
     Write-ProvisioningTiming -Role $Role -Seconds $stopwatch.Elapsed.TotalSeconds
+    return $result
+}
+
+function Invoke-ProvisioningNative {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [Parameter(Mandatory = $true)]
+        [object]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+        [int[]]$SuccessExitCodes = @(0),
+        [switch]$WaitForProcessTree,
+        [int]$TimeoutSeconds = 1800,
+        [string]$WorkingDirectory = ''
+    )
+
+    # Every invocation owns the complete tree; WaitForProcessTree remains a source-compatible marker.
+    $result = Invoke-ProvisioningNativeResult -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
+        -SuccessExitCodes $SuccessExitCodes -WaitForProcessTree:$WaitForProcessTree `
+        -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $output = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
     if (-not $result.Succeeded) {
         $details = Get-ProvisioningBoundedDiagnosticText `
@@ -1131,19 +1151,15 @@ function Test-ProvisioningWinGetPackageInstalled {
         [object]$Metadata
     )
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $lines = @(& winget.exe list --id $Metadata.Id --exact --source winget `
-            --accept-source-agreements --disable-interactivity 2>&1 |
-            ForEach-Object { [string]$_ })
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
-    if ($exitCode -ne 0) {
+    $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) installed-package inspection" `
+        -FilePath 'winget.exe' -ArgumentList @(
+            'list', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
+            '--accept-source-agreements', '--disable-interactivity'
+        )
+    if ($result.ExitCode -ne 0) {
         return $false
     }
+    $lines = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
     return Test-ProvisioningWinGetListOutput -Lines $lines -Metadata $Metadata
 }
 
@@ -1194,14 +1210,10 @@ function Test-ProvisioningPortablePackageInstalled {
         if ($commands.Count -ne 1) {
             return $false
         }
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = 'Continue'
-            $versionOutput = @(& $commands[0].FullName @VersionArguments 2>&1 | ForEach-Object { [string]$_ })
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
+        $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) portable version inspection" `
+            -FilePath $commands[0].FullName -ArgumentList $VersionArguments
+        $versionOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+        $exitCode = $result.ExitCode
         $versionPattern = '(?<![0-9A-Za-z])' + [Regex]::Escape([string]$Metadata.Version) + '(?![0-9A-Za-z])'
         if ($exitCode -ne 0 -or ($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
             return $false
@@ -1232,14 +1244,10 @@ function Test-ProvisioningRustupInstalled {
         if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
             return $false
         }
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = 'Continue'
-            $versionOutput = @(& $executable --version 2>&1 | ForEach-Object { [string]$_ })
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-        }
+        $result = Invoke-ProvisioningNativeResult -Role 'Rustup installed-version inspection' `
+            -FilePath $executable -ArgumentList @('--version')
+        $versionOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+        $exitCode = $result.ExitCode
         $versionPattern = '^rustup ' + [Regex]::Escape([string]$Metadata.Version) +
             ' \([0-9a-f]{7,40} [0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
         return $exitCode -eq 0 -and @($versionOutput | Where-Object { $_ -match $versionPattern }).Count -eq 1
@@ -3194,14 +3202,10 @@ export default async () => ({
         }
     }
     $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $resolvedConfigOutput = @(& $openCodeCommand.Source 'debug' 'config' 2>&1)
-        $resolvedConfigExitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $resolvedConfigResult = Invoke-ProvisioningNativeResult -Role 'OpenCode managed configuration validation' `
+        -FilePath $openCodeCommand.Source -ArgumentList @('debug', 'config')
+    $resolvedConfigOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$resolvedConfigResult.Output))
+    $resolvedConfigExitCode = $resolvedConfigResult.ExitCode
     if ($resolvedConfigExitCode -ne 0) {
         throw "OpenCode managed configuration validation failed with exit code $resolvedConfigExitCode."
     }
@@ -3324,15 +3328,11 @@ if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     $gitVersion = Assert-ProvisioningCommand -Role 'Git' -Name 'git.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^git version '
     $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $existingSafeDirectories = @(& $gitCommand config --global --get-all safe.directory 2>&1 |
-            ForEach-Object { [string]$_ })
-        $safeDirectoryExitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $safeDirectoryResult = Invoke-ProvisioningNativeResult -Role 'Git safe-directory inspection' `
+        -FilePath $gitCommand -ArgumentList @('config', '--global', '--get-all', 'safe.directory') `
+        -SuccessExitCodes @(0, 1)
+    $existingSafeDirectories = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$safeDirectoryResult.Output))
+    $safeDirectoryExitCode = $safeDirectoryResult.ExitCode
     if ($safeDirectoryExitCode -notin @(0, 1)) {
         throw "Git safe-directory inspection failed with exit code $safeDirectoryExitCode."
     }

@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 4
+# herdr-sandbox-stacks-contract: 5
 
 function Get-StackWebResponseText {
     param(
@@ -321,35 +321,6 @@ function Test-StackVisualStudioLayoutSlot {
     }
 }
 
-function Invoke-StackVisualStudioInstaller {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
-        [int]$TimeoutSeconds = 900
-    )
-
-    Write-ProvisioningProgress -Message 'Visual Studio Build Tools offline installation'
-    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $process = $null
-    try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-            -WindowStyle Hidden -PassThru
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
-            throw "Visual Studio Build Tools installer exceeded $TimeoutSeconds seconds."
-        }
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0) {
-            throw "Visual Studio Build Tools installer failed with exit code $($process.ExitCode)."
-        }
-    } finally {
-        if ($null -ne $process) { $process.Dispose() }
-        $stopwatch.Stop()
-        Write-ProvisioningTiming -Role 'Visual Studio Build Tools offline installation' `
-            -Seconds $stopwatch.Elapsed.TotalSeconds
-    }
-}
-
 function Wait-StackVisualStudioInstalled {
     param([int]$TimeoutSeconds = 120)
 
@@ -357,16 +328,14 @@ function Wait-StackVisualStudioInstalled {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
-            $previousErrorActionPreference = $ErrorActionPreference
-            try {
-                $ErrorActionPreference = 'Continue'
-                $installationPath = @(& $vswhere '-latest' '-products' '*' '-requires' `
-                    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' `
-                    'Microsoft.VisualStudio.Component.Windows11SDK.26100' '-property' 'installationPath' 2>&1)
-                $exitCode = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $previousErrorActionPreference
-            }
+            $result = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation readiness inspection' `
+                -FilePath $vswhere -ArgumentList @(
+                    '-latest', '-products', '*', '-requires',
+                    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+                    'Microsoft.VisualStudio.Component.Windows11SDK.26100', '-property', 'installationPath'
+                ) -TimeoutSeconds 30
+            $installationPath = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+            $exitCode = $result.ExitCode
             if ($exitCode -eq 0 -and ($installationPath -join ' ').Trim() -ieq 'C:\HerdrSandbox\toolchains\visual-studio') {
                 return
             }
@@ -488,6 +457,11 @@ function Set-StackVisualStudioFirewallRule {
 }
 
 function Install-StackVisualStudioBuildTools {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Collections.IDictionary]$RustToolchainTask
+    )
+
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $cacheRoot = 'C:\HerdrSandbox\cache\vsbt'
     $guestLayout = 'C:\HerdrSandbox\visual-studio\layout'
@@ -543,7 +517,25 @@ function Install-StackVisualStudioBuildTools {
             Set-StackVisualStudioFirewallRule -Name $rule.Name -Direction $rule.Direction `
                 -Program $rule.Program
         }
-        Invoke-StackVisualStudioInstaller -FilePath $guestLayoutBootstrapper -ArgumentList $installationArguments
+        $installationGroup = Start-ProvisioningNativeGroup -Tasks @(
+            $RustToolchainTask,
+            [ordered]@{
+                Role = 'Visual Studio Build Tools offline installation'
+                FilePath = $guestLayoutBootstrapper
+                ArgumentList = $installationArguments
+                WorkingDirectory = $guestLayout
+                TimeoutSeconds = 900
+            }
+        )
+        $installationCompleted = $false
+        try {
+            Complete-ProvisioningNativeGroup -Group $installationGroup | Out-Null
+            $installationCompleted = $true
+        } finally {
+            if (-not $installationCompleted) {
+                Stop-ProvisioningNativeGroup -Group $installationGroup
+            }
+        }
         Wait-StackVisualStudioInstalled
         foreach ($slot in @($slotA, $slotB)) {
             if ($slot -ine $selectedSlot -and (Test-Path -LiteralPath $slot)) {
@@ -1311,11 +1303,11 @@ try {
     $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^Python 3\.\d+\.\d+$'
     $pythonCommand = Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $rustServerOutput = Join-Path $rustGuestStage 'server.stdout.log'
-    $rustServerError = Join-Path $rustGuestStage 'server.stderr.log'
-    $rustServer = Start-Process -FilePath $pythonCommand.Source -ArgumentList @(
-        '-I', '-u', '-m', 'http.server', '--bind', '127.0.0.1', '--directory', $rustMirrorRoot, [string]$rustPort
-    ) -WindowStyle Hidden -RedirectStandardOutput $rustServerOutput -RedirectStandardError $rustServerError -PassThru
+    $rustServerSpec = New-ProvisioningNativeSpec -Role 'Rust distribution mirror server' `
+        -FilePath $pythonCommand.Source -ArgumentList @(
+            '-I', '-u', '-m', 'http.server', '--bind', '127.0.0.1', '--directory', $rustMirrorRoot, [string]$rustPort
+        ) -TimeoutSeconds 1900 -WorkingDirectory $rustGuestStage
+    $rustServer = [HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)
     $probeURI = "$rustDistServer/$($rustDistribution.SidecarRelativePath.Replace('\', '/'))"
     $probeUTF8 = New-Object Text.UTF8Encoding($false, $true)
     $expectedProbeBody = $probeUTF8.GetString([byte[]]$rustDistribution.SidecarBytes)
@@ -1323,9 +1315,11 @@ try {
     $serverReady = $false
     $lastProbeError = ''
     do {
-        if ($rustServer.HasExited) {
-            $serverFailure = if (Test-Path -LiteralPath $rustServerError) { [IO.File]::ReadAllText($rustServerError) } else { '' }
-            throw "Rust mirror server exited early. $serverFailure"
+        if ($rustServer.IsCompleted) {
+            $serverResult = $rustServer.Complete()
+            $serverFailure = Get-ProvisioningBoundedDiagnosticText -Text ([string]$serverResult.Output) `
+                -MaximumBytes 3000
+            throw "Rust mirror server exited early with exit code $($serverResult.ExitCode). $serverFailure"
         }
         try {
             $response = Invoke-WebRequest -Uri $probeURI -UseBasicParsing -TimeoutSec 1
@@ -1346,10 +1340,19 @@ try {
         throw "Rust mirror readiness timed out: $lastProbeError"
     }
 
-    Invoke-ProvisioningNative -Role 'Rust toolchain installation' -FilePath 'rustup.exe' -ArgumentList @(
-        'toolchain', 'install', $rustToolchain, '--profile', 'minimal', '--component', 'rustfmt',
-        '--component', 'clippy', '--target', $rustTriple, '--no-self-update'
-    ) | Out-Null
+    $rustupCommand = Get-Command 'rustup.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $rustToolchainTask = [ordered]@{
+        Role = 'Rust toolchain installation'
+        FilePath = $rustupCommand.Source
+        ArgumentList = @(
+            'toolchain', 'install', $rustToolchain, '--profile', 'minimal', '--component', 'rustfmt',
+            '--component', 'clippy', '--target', $rustTriple, '--no-self-update'
+        )
+        WorkingDirectory = $ProjectDirectory
+        TimeoutSeconds = 1800
+    }
+    Write-Output 'Installing Visual Studio C++ Build Tools alongside the Rust toolchain...'
+    Install-StackVisualStudioBuildTools -RustToolchainTask $rustToolchainTask
     Invoke-ProvisioningNative -Role 'Rust default toolchain selection' -FilePath 'rustup.exe' `
         -ArgumentList @('default', $rustToolchain) | Out-Null
     Invoke-ProvisioningNative -Role 'Rustup automatic self-update disable' -FilePath 'rustup.exe' `
@@ -1373,12 +1376,7 @@ try {
 } finally {
     if ($null -ne $rustServer) {
         try {
-            if (-not $rustServer.HasExited) {
-                Stop-Process -InputObject $rustServer -Force -ErrorAction Stop
-            }
-            if (-not $rustServer.WaitForExit(5000)) {
-                throw "Rust mirror server did not stop: PID $($rustServer.Id)"
-            }
+            $null = $rustServer.Stop()
         } catch {
             $rustCleanupFailure = $_
         } finally {
@@ -1429,8 +1427,6 @@ $rustVersion = Assert-ProvisioningCommand -Role 'Rust' -Name 'rustc.exe' `
 $cargoVersion = Assert-ProvisioningCommand -Role 'Cargo' -Name 'cargo.exe' `
     -VersionArguments @('--version') -ExpectedPattern ("^cargo $toolchainPattern ")
 
-Write-Output 'Installing Visual Studio C++ Build Tools...'
-Install-StackVisualStudioBuildTools
 Write-Output "Rustup ready: $rustupVersion"
 Write-Output "Rust ready: $rustVersion"
 Write-Output "Cargo ready: $cargoVersion"

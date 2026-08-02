@@ -26,10 +26,10 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 39"
-	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 4"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 40"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 5"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
-	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 1"
+	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 2"
 	workspaceManifestSchema            = 1
 	maximumBaseScriptSize              = 1024 * 1024
 	maximumStackScriptSize             = 2 * 1024 * 1024
