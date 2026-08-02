@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 41
+# herdr-sandbox-base-contract: 42
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -35,8 +35,8 @@ if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 2 -or
     [HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3) {
     throw 'Provisioning process owner contract is invalid.'
 }
-$script:activeProvisioningNativeGroup = $null
-$script:activeProvisioningNativeRoles = @()
+$global:HerdrSandboxActiveProvisioningNativeGroup = $null
+$global:HerdrSandboxActiveProvisioningNativeRoles = @()
 
 function Get-ProvisioningBoundedDiagnosticText {
     param(
@@ -70,7 +70,7 @@ function Write-ProvisioningProgress {
     )
 
     $activeRoles = @()
-    $activeRolesVariable = Get-Variable -Name 'activeProvisioningNativeRoles' -Scope Script -ErrorAction SilentlyContinue
+    $activeRolesVariable = Get-Variable -Name 'HerdrSandboxActiveProvisioningNativeRoles' -Scope Global -ErrorAction SilentlyContinue
     if ($null -ne $activeRolesVariable) {
         $activeRoles = @($activeRolesVariable.Value | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     }
@@ -433,7 +433,7 @@ function Start-ProvisioningNativeGroup {
     if ($Tasks.Count -ne [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks) {
         throw 'A provisioning native group requires exactly two tasks.'
     }
-    if ($null -ne $script:activeProvisioningNativeGroup) {
+    if ($null -ne $global:HerdrSandboxActiveProvisioningNativeGroup) {
         throw 'A provisioning native group is already active.'
     }
     $allowedProperties = @('Role', 'FilePath', 'ArgumentList', 'SuccessExitCodes', 'TimeoutSeconds', 'WorkingDirectory')
@@ -455,8 +455,8 @@ function Start-ProvisioningNativeGroup {
     $roles = @($typedSpecs | ForEach-Object { $_.Role })
     Write-ProvisioningProgress -Message ('Starting parallel work: ' + ($roles -join ', '))
     $group = [HerdrSandbox.ProvisioningProcess]::StartGroup($typedSpecs)
-    $script:activeProvisioningNativeGroup = $group
-    $script:activeProvisioningNativeRoles = $roles
+    $global:HerdrSandboxActiveProvisioningNativeGroup = $group
+    $global:HerdrSandboxActiveProvisioningNativeRoles = $roles
     return $group
 }
 
@@ -466,15 +466,15 @@ function Complete-ProvisioningNativeGroup {
         [HerdrSandbox.ProvisioningProcessGroup]$Group
     )
 
-    if (-not [object]::ReferenceEquals($script:activeProvisioningNativeGroup, $Group)) {
+    if (-not [object]::ReferenceEquals($global:HerdrSandboxActiveProvisioningNativeGroup, $Group)) {
         throw 'Provisioning native group is not the active group.'
     }
     try {
         $results = @($Group.Complete())
     } finally {
         $Group.Dispose()
-        $script:activeProvisioningNativeGroup = $null
-        $script:activeProvisioningNativeRoles = @()
+        $global:HerdrSandboxActiveProvisioningNativeGroup = $null
+        $global:HerdrSandboxActiveProvisioningNativeRoles = @()
     }
     $failures = @()
     foreach ($result in $results) {
@@ -500,13 +500,13 @@ function Stop-ProvisioningNativeGroup {
         [HerdrSandbox.ProvisioningProcessGroup]$Group
     )
 
-    if ([object]::ReferenceEquals($script:activeProvisioningNativeGroup, $Group)) {
+    if ([object]::ReferenceEquals($global:HerdrSandboxActiveProvisioningNativeGroup, $Group)) {
         try {
             $Group.Stop()
         } finally {
             $Group.Dispose()
-            $script:activeProvisioningNativeGroup = $null
-            $script:activeProvisioningNativeRoles = @()
+            $global:HerdrSandboxActiveProvisioningNativeGroup = $null
+            $global:HerdrSandboxActiveProvisioningNativeRoles = @()
         }
     }
 }

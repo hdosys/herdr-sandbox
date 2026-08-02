@@ -84,6 +84,18 @@ while (-not (Test-Path -LiteralPath (Join-Path $Root 'sibling.ready') -PathType 
 }
 exit 23
 `)
+	groupCallerFixture := write("group-caller.ps1", `param(
+    [string]$PowerShell,
+    [string]$Barrier,
+    [string]$Root
+)
+$group = Start-ProvisioningNativeGroup -Tasks @(
+    @{ Role = 'left'; FilePath = $PowerShell; ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $Barrier, 'left', $Root); TimeoutSeconds = 10 },
+    @{ Role = 'right'; FilePath = $PowerShell; ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $Barrier, 'right', $Root); TimeoutSeconds = 10 }
+)
+try { return @(Complete-ProvisioningNativeGroup -Group $group) }
+finally { Stop-ProvisioningNativeGroup -Group $group }
+`)
 
 	argumentValues := []string{"", "plain", "with space", "Grüße", `quote"value`, `trailing\`, `slashes\\\"quote`}
 	encodedValues := make([]string, 0, len(argumentValues))
@@ -110,8 +122,8 @@ foreach ($name in @('New-ProvisioningNativeSpec', 'Start-ProvisioningNativeGroup
 function Write-ProvisioningProgress { param([string]$Message) }
 function Write-ProvisioningTiming { param([string]$Role, [double]$Seconds) }
 function Get-ProvisioningBoundedDiagnosticText { param([string]$Text, [int]$MaximumBytes) return $Text }
-$script:activeProvisioningNativeGroup = $null
-$script:activeProvisioningNativeRoles = @()
+$global:HerdrSandboxActiveProvisioningNativeGroup = $null
+$global:HerdrSandboxActiveProvisioningNativeRoles = @()
 function New-Spec([string]$Role, [string[]]$Arguments, [int[]]$Success = @(0), [int]$Timeout = 10000) {
     $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
     $spec.Role = $Role
@@ -164,15 +176,10 @@ if (-not $largeResult.Succeeded -or -not $largeResult.OutputTruncated -or $large
     throw "Bounded output result failed: $($largeResult | Format-List | Out-String)"
 }
 
-$barrierGroup = Start-ProvisioningNativeGroup -Tasks @(
-    @{ Role = 'left'; FilePath = '%s'; ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s', 'left', '%s'); TimeoutSeconds = 10 },
-    @{ Role = 'right'; FilePath = '%s'; ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s', 'right', '%s'); TimeoutSeconds = 10 }
-)
-try { $barrierResults = @(Complete-ProvisioningNativeGroup -Group $barrierGroup) }
-finally { Stop-ProvisioningNativeGroup -Group $barrierGroup }
+$barrierResults = @(& '%s' '%s' '%s' '%s')
 if ($barrierResults.Count -ne 2 -or @($barrierResults | Where-Object { -not $_.Succeeded }).Count -ne 0 -or
     [string]$barrierResults[0].Output -notlike '*BARRIER:left*' -or [string]$barrierResults[1].Output -notlike '*BARRIER:right*' -or
-    $null -ne $script:activeProvisioningNativeGroup -or $script:activeProvisioningNativeRoles.Count -ne 0) {
+    $null -ne $global:HerdrSandboxActiveProvisioningNativeGroup -or $global:HerdrSandboxActiveProvisioningNativeRoles.Count -ne 0) {
     throw "Barrier group failed: $($barrierResults | Format-List | Out-String)"
 }
 
@@ -198,7 +205,7 @@ if (-not $timeoutResult.TimedOut -or $timeoutResult.Succeeded) {
 }
 `, quote(processSource), quote(baseScript), quote(powerShell), quote(root), strings.Join(powerShellValues, ", "), quote(argumentFixture), expectedArguments,
 		quote(rawOutputFixture), quote(rawOutputFixture),
-		quote(powerShell), quote(barrierFixture), quote(root), quote(powerShell), quote(barrierFixture), quote(root), quote(failureFixture), quote(root),
+		quote(groupCallerFixture), quote(powerShell), quote(barrierFixture), quote(root), quote(failureFixture), quote(root),
 		quote(siblingFixture), quote(root), quote(powerShell), quote(grandchildFixture), quote(root))
 	harnessPath := write("process-owner-regression.ps1", harness)
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
