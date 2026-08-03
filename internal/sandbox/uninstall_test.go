@@ -205,7 +205,7 @@ func TestCleanInstallerDataRejectsNestedReparseWithoutTouchingTarget(t *testing.
 	}
 }
 
-func TestValidateInstallerCacheRemovalRejectsProjectAndInstallOverlap(t *testing.T) {
+func TestValidateInstallerRemovalSafetyRejectsMappedAndOwnedOverlap(t *testing.T) {
 	root := t.TempDir()
 	base := installerCleanPaths{
 		DataDirectory:          filepath.Join(root, "local", applicationName),
@@ -218,6 +218,7 @@ func TestValidateInstallerCacheRemovalRejectsProjectAndInstallOverlap(t *testing
 		"configuration": filepath.Join(base.ConfigurationDirectory, "cache"),
 		"install":       base.InstallDirectory,
 		"workspace":     filepath.Join(root, "project", "cache"),
+		"folder mount":  filepath.Join(root, "shared", "cache"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			paths := base
@@ -225,14 +226,19 @@ func TestValidateInstallerCacheRemovalRejectsProjectAndInstallOverlap(t *testing
 			if name == "workspace" {
 				paths.Configuration.Workspaces = map[string]string{"project": filepath.Join(root, "project")}
 			}
-			if err := validateInstallerCacheRemoval(paths); err == nil {
+			if name == "folder mount" {
+				paths.Configuration.Mounts = map[string]mountConfiguration{
+					"shared": {Path: filepath.Join(root, "shared"), ReadOnly: false},
+				}
+			}
+			if err := validateInstallerRemovalSafety(paths, false); err == nil {
 				t.Fatal("unsafe cache overlap unexpectedly validated")
 			}
 		})
 	}
 }
 
-func TestValidateInstallerCacheRemovalAllowsWorkspaceBesideDefaultCache(t *testing.T) {
+func TestValidateInstallerRemovalSafetyAllowsWorkspaceBesideDefaultCache(t *testing.T) {
 	root := t.TempDir()
 	cacheParent := filepath.Join(root, applicationName)
 	paths := installerCleanPaths{
@@ -246,8 +252,67 @@ func TestValidateInstallerCacheRemovalAllowsWorkspaceBesideDefaultCache(t *testi
 			"project": filepath.Join(cacheParent, "project"),
 		}},
 	}
-	if err := validateInstallerCacheRemoval(paths); err != nil {
+	if err := validateInstallerRemovalSafety(paths, false); err != nil {
 		t.Fatalf("workspace beside default cache was rejected: %v", err)
+	}
+}
+
+func TestValidateInstallerRemovalSafetyPreservesFolderMounts(t *testing.T) {
+	root := t.TempDir()
+	base := installerCleanPaths{
+		DataDirectory:          filepath.Join(root, "local", applicationName),
+		ConfigurationDirectory: filepath.Join(root, "roaming", applicationName),
+		CacheDirectory:         filepath.Join(root, "cache"),
+		InstallDirectory:       filepath.Join(root, "install"),
+		UserHome:               filepath.Join(root, "home"),
+		Configuration:          globalConfiguration{Mounts: map[string]mountConfiguration{}},
+	}
+	tests := []struct {
+		name                string
+		mount               string
+		deleteConfiguration bool
+		wantError           bool
+	}{
+		{name: "machine-local state", mount: filepath.Join(base.DataDirectory, "shared"), wantError: true},
+		{name: "configuration preserved", mount: filepath.Join(base.ConfigurationDirectory, "shared")},
+		{name: "configuration deleted", mount: filepath.Join(base.ConfigurationDirectory, "shared"), deleteConfiguration: true, wantError: true},
+		{name: "separate folder", mount: filepath.Join(root, "shared")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paths := base
+			paths.Configuration.Mounts = map[string]mountConfiguration{"shared": {Path: test.mount, ReadOnly: false}}
+			err := validateInstallerRemovalSafety(paths, test.deleteConfiguration)
+			if test.wantError && err == nil {
+				t.Fatal("folder mount inside a recursive removal root unexpectedly validated")
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("safe folder mount was rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateInstallerRemovalSafetyRejectsFolderMountAlias(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "cache")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "cache-alias")
+	createTestDirectoryLink(t, alias, cache)
+	paths := installerCleanPaths{
+		DataDirectory:          filepath.Join(root, "local", applicationName),
+		ConfigurationDirectory: filepath.Join(root, "roaming", applicationName),
+		CacheDirectory:         cache,
+		InstallDirectory:       filepath.Join(root, "install"),
+		UserHome:               filepath.Join(root, "home"),
+		Configuration: globalConfiguration{Mounts: map[string]mountConfiguration{
+			"alias": {Path: alias, ReadOnly: true},
+		}},
+	}
+	if err := validateInstallerRemovalSafety(paths, false); err == nil {
+		t.Fatal("folder mount alias of the recursive cache root unexpectedly validated")
 	}
 }
 

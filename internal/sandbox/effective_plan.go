@@ -24,6 +24,13 @@ type EffectiveWorkspace struct {
 	Stacks         []string
 }
 
+type EffectiveMount struct {
+	Name           string
+	HostDirectory  string
+	GuestDirectory string
+	ReadOnly       bool
+}
+
 type EffectiveStackPackage struct {
 	Stack        string
 	PackageOwner string
@@ -46,6 +53,7 @@ type EffectivePlan struct {
 	GlobalStacks         []string
 	Packages             []EffectivePackage
 	StackPackages        []EffectiveStackPackage
+	Mounts               []EffectiveMount
 	Workspaces           []EffectiveWorkspace
 	RequiresVisualStudio bool
 	ReadyChanges         []string
@@ -125,6 +133,14 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 			GuestDirectory: workspace.GuestDirectory,
 			Active:         workspace.Active,
 			Stacks:         stacks,
+		})
+	}
+	for _, mount := range provisioning.Mounts {
+		plan.Mounts = append(plan.Mounts, EffectiveMount{
+			Name:           mount.Name,
+			HostDirectory:  mount.HostDirectory,
+			GuestDirectory: mount.GuestDirectory,
+			ReadOnly:       mount.ReadOnly,
 		})
 	}
 	selectedStacks := make(map[projectStack]bool)

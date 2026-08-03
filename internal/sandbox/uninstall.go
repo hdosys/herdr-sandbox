@@ -124,13 +124,10 @@ func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 		UserHome:               filepath.Clean(userHome),
 		Configuration:          configuration,
 	}
-	if err := validateInstallerCacheRemoval(paths); err != nil {
-		return installerCleanPaths{}, err
-	}
 	return paths, nil
 }
 
-func validateInstallerCacheRemoval(paths installerCleanPaths) error {
+func validateInstallerRemovalSafety(paths installerCleanPaths, deleteConfiguration bool) error {
 	if !filepath.IsAbs(paths.CacheDirectory) {
 		return fmt.Errorf("uninstall cache directory is not absolute: %q", paths.CacheDirectory)
 	}
@@ -175,11 +172,73 @@ func validateInstallerCacheRemoval(paths installerCleanPaths) error {
 			}
 		}
 	}
+	removalRoots := installerRemovalRoots(paths, deleteConfiguration)
+	for name, mount := range paths.Configuration.Mounts {
+		directory := strings.TrimSpace(mount.Path)
+		if directory == "" || !filepath.IsAbs(directory) {
+			return fmt.Errorf("configured folder mount %q is not an absolute path; refusing clean uninstall", name)
+		}
+		directory = filepath.Clean(directory)
+		for _, root := range removalRoots {
+			overlap, err := installerPathsOverlap(directory, root.path)
+			if err != nil {
+				return fmt.Errorf("validate folder mount %q against %s removal: %w", name, root.role, err)
+			}
+			if overlap {
+				return fmt.Errorf("configured folder mount %q overlaps the %s and cannot be preserved during uninstall: %s", name, root.role, directory)
+			}
+		}
+	}
 	return nil
+}
+
+func installerPathsOverlap(left, right string) (bool, error) {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if hostPathsOverlap(left, right) {
+		return true, nil
+	}
+	leftIdentity, leftExists, err := installerPhysicalDirectoryIdentity(left)
+	if err != nil {
+		return false, err
+	}
+	rightIdentity, rightExists, err := installerPhysicalDirectoryIdentity(right)
+	if err != nil {
+		return false, err
+	}
+	if !leftExists || !rightExists {
+		return false, nil
+	}
+	return hostPathsOverlap(leftIdentity, rightIdentity), nil
+}
+
+func installerPhysicalDirectoryIdentity(path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("inspect directory %s: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", false, fmt.Errorf("path is not a directory: %s", path)
+	}
+	canonical, err := canonicalMappedDirectory(path)
+	if err != nil {
+		return "", false, err
+	}
+	identity, err := physicalMappedDirectory(canonical)
+	if err != nil {
+		return "", false, err
+	}
+	return identity, true, nil
 }
 
 func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, deleteConfiguration bool) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateInstallerRemovalSafety(paths, deleteConfiguration); err != nil {
 		return err
 	}
 	sshPlan, err := planInstallerSSHRemoval(paths.UserHome, paths.DataDirectory)

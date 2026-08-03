@@ -25,6 +25,7 @@ const (
 	provisioningProcessName            = "provisioning-process.cs"
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
+	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 42"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 5"
@@ -36,6 +37,7 @@ const (
 	maximumUserScriptSize              = 1024 * 1024
 	maximumProjectScriptSize           = 1024 * 1024
 	maximumProvisioningProcessSize     = 512 * 1024
+	maximumMounts                      = 16
 	maximumWorkspaceDiscoveryEntries   = 4096
 	maximumWorkspaceExcludePatterns    = 64
 	maximumWorkspaceExcludePatternSize = 1024
@@ -48,7 +50,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mounts\": {},\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [],\n    \"versions\": {}\n  },\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"workspaces\": {}\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -62,6 +64,13 @@ type workspacePlan struct {
 	ProvisioningPath string
 	Active           bool
 	Stacks           []projectStack
+}
+
+type mountPlan struct {
+	Name           string
+	HostDirectory  string
+	GuestDirectory string
+	ReadOnly       bool
 }
 
 type guestWorkspaceManifest struct {
@@ -130,6 +139,7 @@ type provisioningPlan struct {
 	PackageConfiguration wingetPackageConfiguration
 	Packages             wingetPackagePlan
 	WindowsTerminal      windowsTerminalConfiguration
+	Mounts               []mountPlan
 	Workspaces           []workspacePlan
 }
 
@@ -139,10 +149,16 @@ type globalConfiguration struct {
 	AudioOutput        bool                             `json:"audio"`
 	AudioInput         bool                             `json:"audioInput"`
 	Tailscale          bool                             `json:"tailscale"`
+	Mounts             map[string]mountConfiguration    `json:"mounts"`
 	CodingAgentSync    codingAgentSyncConfiguration     `json:"codingAgentSync"`
 	WingetPackages     wingetPackageConfiguration       `json:"wingetPackages"`
 	WorkspaceDiscovery *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
 	Workspaces         map[string]string                `json:"workspaces"`
+}
+
+type mountConfiguration struct {
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"readOnly"`
 }
 
 type workspaceDiscoveryConfiguration struct {
@@ -385,6 +401,24 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	if err != nil {
 		return provisioningPlan{}, err
 	}
+	mountNames := make([]string, 0, len(configuration.Mounts))
+	for name := range configuration.Mounts {
+		mountNames = append(mountNames, name)
+	}
+	sort.Strings(mountNames)
+	mounts := make([]mountPlan, 0, len(mountNames))
+	mountErrors := []error{}
+	for _, name := range mountNames {
+		mount, err := newMountPlan(name, configuration.Mounts[name])
+		if err != nil {
+			mountErrors = append(mountErrors, fmt.Errorf("mount %q: %w", name, err))
+			continue
+		}
+		mounts = append(mounts, mount)
+	}
+	if len(mountErrors) > 0 {
+		return provisioningPlan{}, fmt.Errorf("folder mount validation failed: %w", errors.Join(mountErrors...))
+	}
 	configured := configuration.Workspaces
 
 	names := make([]string, 0, len(configured))
@@ -471,12 +505,41 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	}
 	for left := range workspaces {
 		for right := left + 1; right < len(workspaces); right++ {
-			if hostPathsOverlap(workspaces[left].HostDirectory, workspaces[right].HostDirectory) {
+			overlap, err := mappedDirectoriesOverlap(workspaces[left].HostDirectory, workspaces[right].HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare workspace paths %s and %s: %w", workspaces[left].HostDirectory, workspaces[right].HostDirectory, err)
+			}
+			if overlap {
 				return provisioningPlan{}, fmt.Errorf("workspace paths overlap: %s and %s", workspaces[left].HostDirectory, workspaces[right].HostDirectory)
 			}
 		}
 	}
+	for left := range mounts {
+		for right := left + 1; right < len(mounts); right++ {
+			overlap, err := mappedDirectoriesOverlap(mounts[left].HostDirectory, mounts[right].HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare folder mount paths %s and %s: %w", mounts[left].HostDirectory, mounts[right].HostDirectory, err)
+			}
+			if overlap {
+				return provisioningPlan{}, fmt.Errorf("folder mount paths overlap: %s and %s", mounts[left].HostDirectory, mounts[right].HostDirectory)
+			}
+		}
+		for _, workspace := range workspaces {
+			overlap, err := mappedDirectoriesOverlap(mounts[left].HostDirectory, workspace.HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare folder mount %q with workspace %q: %w", mounts[left].Name, workspace.Name, err)
+			}
+			if overlap {
+				return provisioningPlan{}, fmt.Errorf("folder mount %q overlaps workspace %q: %s", mounts[left].Name, workspace.Name, mounts[left].HostDirectory)
+			}
+		}
+	}
 	if cacheDirectory != "" {
+		for _, mount := range mounts {
+			if hostPathsOverlap(cacheDirectory, mount.HostDirectory) {
+				return provisioningPlan{}, fmt.Errorf("cache directory overlaps folder mount %q: %s", mount.Name, mount.HostDirectory)
+			}
+		}
 		for _, workspace := range workspaces {
 			if hostPathsOverlap(cacheDirectory, workspace.HostDirectory) {
 				return provisioningPlan{}, fmt.Errorf("cache directory overlaps workspace %q: %s", workspace.Name, workspace.HostDirectory)
@@ -500,6 +563,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		Tailscale:            configuration.Tailscale,
 		CodingAgentSync:      configuration.CodingAgentSync,
 		PackageConfiguration: configuration.WingetPackages,
+		Mounts:               mounts,
 		Workspaces:           workspaces,
 	}, nil
 }
@@ -510,6 +574,7 @@ func loadGlobalConfiguration(path string) (globalConfiguration, error) {
 		MemoryMB:        &defaultMemory,
 		CodingAgentSync: defaultCodingAgentSyncConfiguration(),
 		WingetPackages:  defaultWingetPackageConfiguration(),
+		Mounts:          map[string]mountConfiguration{},
 		Workspaces:      map[string]string{},
 	}
 	file, err := os.Open(path)
@@ -595,6 +660,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 			if err := json.Unmarshal(raw, &config.Tailscale); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
+		case "mounts":
+			mounts, err := decodeConfiguredMounts(decoder)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.Mounts = mounts
 		case "workspaces":
 			workspaces, err := decodeConfiguredWorkspaces(decoder)
 			if err != nil {
@@ -800,6 +871,104 @@ func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncC
 	return configuration, nil
 }
 
+func decodeConfiguredMounts(decoder *json.Decoder) (map[string]mountConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if opening != json.Delim('{') {
+		return nil, errors.New("must be a JSON object")
+	}
+	mounts := map[string]mountConfiguration{}
+	seen := map[string]bool{}
+	for decoder.More() {
+		if len(mounts) >= maximumMounts {
+			return nil, fmt.Errorf("mount count exceeds limit %d", maximumMounts)
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return nil, errors.New("mount name must be a string")
+		}
+		identity := strings.ToLower(name)
+		if seen[identity] {
+			return nil, fmt.Errorf("duplicate mount name %q", name)
+		}
+		seen[identity] = true
+		configuration, err := decodeMountConfiguration(decoder)
+		if err != nil {
+			return nil, fmt.Errorf("mount %q: %w", name, err)
+		}
+		mounts[name] = configuration
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if closing != json.Delim('}') {
+		return nil, errors.New("mount object is not closed")
+	}
+	return mounts, nil
+}
+
+func decodeMountConfiguration(decoder *json.Decoder) (mountConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return mountConfiguration{}, err
+	}
+	if opening != json.Delim('{') {
+		return mountConfiguration{}, errors.New("must be a JSON object")
+	}
+	var configuration mountConfiguration
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return mountConfiguration{}, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return mountConfiguration{}, errors.New("mount field name must be a string")
+		}
+		if seen[name] {
+			return mountConfiguration{}, fmt.Errorf("duplicate field %q", name)
+		}
+		seen[name] = true
+		raw, err := decodeNonNullJSONValue(decoder, name)
+		if err != nil {
+			return mountConfiguration{}, err
+		}
+		switch name {
+		case "path":
+			if err := json.Unmarshal(raw, &configuration.Path); err != nil {
+				return mountConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+			}
+		case "readOnly":
+			if err := json.Unmarshal(raw, &configuration.ReadOnly); err != nil {
+				return mountConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+			}
+		default:
+			return mountConfiguration{}, fmt.Errorf("unknown field %q", name)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return mountConfiguration{}, err
+	}
+	if closing != json.Delim('}') {
+		return mountConfiguration{}, errors.New("mount entry is not closed")
+	}
+	for _, required := range []string{"path", "readOnly"} {
+		if !seen[required] {
+			return mountConfiguration{}, fmt.Errorf("missing required field %q", required)
+		}
+	}
+	return configuration, nil
+}
+
 func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error) {
 	opening, err := decoder.Token()
 	if err != nil {
@@ -997,6 +1166,36 @@ func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]w
 	return workspaces, errors.Join(workspaceErrors...)
 }
 
+func newMountPlan(name string, configuration mountConfiguration) (mountPlan, error) {
+	if !workspaceNamePattern.MatchString(name) {
+		return mountPlan{}, errors.New("name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+	}
+	if !filepath.IsAbs(configuration.Path) {
+		return mountPlan{}, fmt.Errorf("path is not absolute: %q", configuration.Path)
+	}
+	directory, err := canonicalMappedDirectory(configuration.Path)
+	if err != nil {
+		return mountPlan{}, fmt.Errorf("inspect directory: %w", err)
+	}
+	volumeRoot := filepath.Clean(filepath.VolumeName(directory) + string(os.PathSeparator))
+	if strings.EqualFold(directory, volumeRoot) {
+		return mountPlan{}, fmt.Errorf("path must not map an entire volume: %s", directory)
+	}
+	identity, err := physicalMappedDirectory(directory)
+	if err != nil {
+		return mountPlan{}, err
+	}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("folder mount "+name, identity); err != nil {
+		return mountPlan{}, err
+	}
+	return mountPlan{
+		Name:           name,
+		HostDirectory:  directory,
+		GuestDirectory: guestMountDirectory(name),
+		ReadOnly:       configuration.ReadOnly,
+	}, nil
+}
+
 func newWorkspacePlan(name, directory string) (workspacePlan, error) {
 	if !workspaceNamePattern.MatchString(name) {
 		return workspacePlan{}, errors.New("name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -1060,6 +1259,36 @@ func canonicalWorkspacePlans(workspaces []workspacePlan) ([]workspacePlan, error
 	}
 	if len(workspaceErrors) > 0 {
 		return nil, fmt.Errorf("workspace validation failed: %w", errors.Join(workspaceErrors...))
+	}
+	return result, nil
+}
+
+func canonicalMountPlans(mounts []mountPlan) ([]mountPlan, error) {
+	if len(mounts) > maximumMounts {
+		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
+	}
+	result := append([]mountPlan(nil), mounts...)
+	mountErrors := []error{}
+	for index := range result {
+		if !workspaceNamePattern.MatchString(result[index].Name) {
+			mountErrors = append(mountErrors, fmt.Errorf("folder mount name is invalid: %q", result[index].Name))
+			continue
+		}
+		expectedGuest := guestMountDirectory(result[index].Name)
+		if !strings.EqualFold(filepath.Clean(result[index].GuestDirectory), expectedGuest) {
+			mountErrors = append(mountErrors, fmt.Errorf("folder mount %q guest directory = %q, want %q", result[index].Name, result[index].GuestDirectory, expectedGuest))
+			continue
+		}
+		directory, err := canonicalMappedDirectory(result[index].HostDirectory)
+		if err != nil {
+			mountErrors = append(mountErrors, fmt.Errorf("folder mount %q: %w", result[index].Name, err))
+			continue
+		}
+		result[index].HostDirectory = directory
+		result[index].GuestDirectory = expectedGuest
+	}
+	if len(mountErrors) > 0 {
+		return nil, fmt.Errorf("folder mount validation failed: %w", errors.Join(mountErrors...))
 	}
 	return result, nil
 }
@@ -1215,6 +1444,10 @@ func guestWorkspaceDirectory(name string) string {
 	return guestWorkspacesDirectory + `\` + name
 }
 
+func guestMountDirectory(name string) string {
+	return guestMountsDirectory + `\` + name
+}
+
 func hostPathsOverlap(left, right string) bool {
 	return hostPathContains(left, right) || hostPathContains(right, left)
 }
@@ -1229,6 +1462,18 @@ func workspaceDirectoriesEqual(left, right string) (bool, error) {
 		return false, err
 	}
 	return strings.EqualFold(leftIdentity, rightIdentity), nil
+}
+
+func mappedDirectoriesOverlap(left, right string) (bool, error) {
+	leftIdentity, err := physicalMappedDirectory(left)
+	if err != nil {
+		return false, err
+	}
+	rightIdentity, err := physicalMappedDirectory(right)
+	if err != nil {
+		return false, err
+	}
+	return hostPathsOverlap(leftIdentity, rightIdentity), nil
 }
 
 func hostPathContains(directory, path string) bool {

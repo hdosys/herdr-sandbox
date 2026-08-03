@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
 		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox down", "herdr-sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -498,6 +498,10 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
 		},
 		StackPackages: []sandbox.EffectiveStackPackage{{Stack: "go", PackageOwner: "GoLang.Go"}},
+		Mounts: []sandbox.EffectiveMount{
+			{Name: "reference", HostDirectory: `E:\reference`, GuestDirectory: `C:\Mounts\reference`, ReadOnly: true},
+			{Name: "worktrees", HostDirectory: `E:\worktrees`, GuestDirectory: `C:\Mounts\worktrees`},
+		},
 		Workspaces: []sandbox.EffectiveWorkspace{
 			{Name: "project", HostDirectory: `D:\project`, GuestDirectory: `C:\Workspaces\project`, Active: true, Stacks: []string{"rust", "go"}},
 			{Name: "shared", HostDirectory: `D:\shared`, GuestDirectory: `C:\Workspaces\shared`},
@@ -511,6 +515,8 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
+		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",
+		"  - worktrees\n    Host: E:\\worktrees\n    Guest: C:\\Mounts\\worktrees\n    Access: read/write",
 		"Workspaces\n  * project (active)\n    Host: D:\\project\n    Guest: C:\\Workspaces\\project\n    Stacks:\n      - go\n      - rust",
 		"  - shared\n    Host: D:\\shared", "Ready Sandbox changes\n  - memory: 16384 -> 32768\n  - workspaces changed",
 		"Next: Run `herdr-sandbox up` to apply this plan.",

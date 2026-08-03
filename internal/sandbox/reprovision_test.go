@@ -64,7 +64,7 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 			Active:           true,
 		}},
 	}
-	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Mounts, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		t.Fatal(err)
 	}

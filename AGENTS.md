@@ -93,11 +93,11 @@ in the global OpenCode configuration, not this repository.
 ## Sandbox and security boundaries
 
 - Keep host mappings narrow. Bootstrap/provisioning input is read-only; only the
-  explicit per-run status directory, app-owned package/tool cache, and project
-  roots selected by `%APPDATA%\herdr-sandbox\config.json` or the nearest
-  `.herdr-sandbox\provision.ps1` may be guest-writable.
-- Never map host home/app data, credentials, private SSH keys, unrelated repos, or
-  a parent broader than the selected project root.
+  explicit per-run status directory, app-owned package/tool cache, project roots,
+  and explicitly configured named folder mounts may be guest-writable. Folder
+  mounts require an exact read-only selection and remain outside workspace state.
+- Never map host home/app data, credentials, private SSH keys, or a parent broader
+  than the exact project or generic folder root selected by the user.
 - Approved coding-agent config/authentication may be streamed only over the
   verified SSH channel; never stage it in host run state, log it, commit it, or
   scrape machine-bound keyring credentials.

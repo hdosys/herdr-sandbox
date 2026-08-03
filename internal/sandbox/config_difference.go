@@ -21,7 +21,7 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("decode expected Sandbox launch contract: %w", err)
 	}
-	differences := make([]string, 0, 6)
+	differences := make([]string, 0, 7)
 	if actual.MemoryInMB != expected.MemoryInMB {
 		differences = append(differences, "memory")
 	}
@@ -40,6 +40,9 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	expectedMappings := indexWSBMappings(expected.MappedFolders.Folders)
 	if !sameWSBMapping(actualMappings[strings.ToLower(guestCacheDirectory)], expectedMappings[strings.ToLower(guestCacheDirectory)]) {
 		differences = append(differences, "cache")
+	}
+	if !sameWSBMountMappings(actualMappings, expectedMappings) {
+		differences = append(differences, "folder mounts")
 	}
 	if !sameWSBWorkspaceMappings(actualMappings, expectedMappings) {
 		differences = append(differences, "workspaces")
@@ -126,6 +129,20 @@ func sameWSBWorkspaceMappings(left, right map[string]wsbMappedFolder) bool {
 	return true
 }
 
+func sameWSBMountMappings(left, right map[string]wsbMappedFolder) bool {
+	leftMounts := wsbMountMappings(left)
+	rightMounts := wsbMountMappings(right)
+	if len(leftMounts) != len(rightMounts) {
+		return false
+	}
+	for identity, mapping := range leftMounts {
+		if !sameWSBMapping(mapping, rightMounts[identity]) {
+			return false
+		}
+	}
+	return true
+}
+
 func wsbWorkspaceMappings(mappings map[string]wsbMappedFolder) map[string]wsbMappedFolder {
 	prefix := strings.ToLower(guestWorkspacesDirectory + `\`)
 	result := map[string]wsbMappedFolder{}
@@ -137,12 +154,36 @@ func wsbWorkspaceMappings(mappings map[string]wsbMappedFolder) map[string]wsbMap
 	return result
 }
 
-func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool {
-	if len(actual) != len(expected) {
-		return true
+func wsbMountMappings(mappings map[string]wsbMappedFolder) map[string]wsbMappedFolder {
+	prefix := strings.ToLower(guestMountsDirectory + `\`)
+	result := map[string]wsbMappedFolder{}
+	for identity, mapping := range mappings {
+		if strings.HasPrefix(identity, prefix) {
+			result[identity] = mapping
+		}
 	}
-	for identity := range actual {
-		if _, found := expected[identity]; !found {
+	return result
+}
+
+func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool {
+	for _, mappings := range []map[string]wsbMappedFolder{actual, expected} {
+		for identity := range mappings {
+			if !isKnownWSBMapping(identity) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isKnownWSBMapping(identity string) bool {
+	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory} {
+		if identity == strings.ToLower(exact) {
+			return true
+		}
+	}
+	for _, root := range []string{guestMountsDirectory, guestWorkspacesDirectory} {
+		if strings.HasPrefix(identity, strings.ToLower(root+`\`)) {
 			return true
 		}
 	}

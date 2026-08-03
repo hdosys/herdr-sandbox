@@ -11,7 +11,7 @@ import (
 
 func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	workspaces := []workspacePlan{{Name: "one", HostDirectory: `D:\Projects\one`, GuestDirectory: `C:\Workspaces\one`}}
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache`, workspaces, 8192, false, false)
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache`, nil, workspaces, 8192, false, false)
 	if err != nil {
 		t.Fatalf("renderConfig: %v", err)
 	}
@@ -62,8 +62,39 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	}
 }
 
+func TestRenderConfigMapsNamedFoldersWithExplicitAccessOutsideWorkspaces(t *testing.T) {
+	mounts := []mountPlan{
+		{Name: "reference", HostDirectory: `D:\Reference`, GuestDirectory: `C:\Mounts\reference`, ReadOnly: true},
+		{Name: "worktrees", HostDirectory: `E:\Worktrees`, GuestDirectory: `C:\Mounts\worktrees`, ReadOnly: false},
+	}
+	workspaces := []workspacePlan{{Name: "project", HostDirectory: `F:\Project`, GuestDirectory: `C:\Workspaces\project`}}
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `G:\cache`, mounts, workspaces, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config wsbConfiguration
+	if err := xml.Unmarshal(encoded, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.MappedFolders.Folders) != 6 {
+		t.Fatalf("mapped folders = %#v", config.MappedFolders.Folders)
+	}
+	for index, expected := range []wsbMappedFolder{
+		{HostFolder: `D:\Reference`, SandboxFolder: `C:\Mounts\reference`, ReadOnly: true},
+		{HostFolder: `E:\Worktrees`, SandboxFolder: `C:\Mounts\worktrees`, ReadOnly: false},
+	} {
+		if actual := config.MappedFolders.Folders[index+1]; actual != expected {
+			t.Fatalf("folder mount %d = %#v, want %#v", index, actual, expected)
+		}
+	}
+	workspace := config.MappedFolders.Folders[3]
+	if workspace.SandboxFolder != `C:\Workspaces\project` || workspace.ReadOnly {
+		t.Fatalf("workspace mapping = %#v", workspace)
+	}
+}
+
 func TestRenderConfigAudioOutputOptInKeepsMicrophoneDisabled(t *testing.T) {
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, 4096, true, false)
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, nil, 4096, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +108,7 @@ func TestRenderConfigAudioOutputOptInKeepsMicrophoneDisabled(t *testing.T) {
 }
 
 func TestRenderConfigAudioInputOptInKeepsOutputDisabled(t *testing.T) {
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, 4096, false, true)
+	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, nil, 4096, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +182,7 @@ func TestAudioSelectionsBindThroughStartProcessInWindowsPowerShell51(t *testing.
 
 func TestRenderConfigEscapesHostPaths(t *testing.T) {
 	workspaces := []workspacePlan{{Name: "a-b", HostDirectory: `D:\Projects\A&B`, GuestDirectory: `C:\Workspaces\a-b`}}
-	encoded, err := renderConfig(`C:\Runs\A&B\input`, `C:\Runs\A&B\status`, `E:\cache&A`, workspaces, 4096, false, false)
+	encoded, err := renderConfig(`C:\Runs\A&B\input`, `C:\Runs\A&B\status`, `E:\cache&A`, nil, workspaces, 4096, false, false)
 	if err != nil {
 		t.Fatalf("renderConfig: %v", err)
 	}
@@ -286,8 +317,28 @@ func TestRenderConfigRejectsUnsafeLayout(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := renderConfig(test.input, test.status, test.cache, []workspacePlan{test.workspace}, test.memory, false, false); err == nil {
+			if _, err := renderConfig(test.input, test.status, test.cache, nil, []workspacePlan{test.workspace}, test.memory, false, false); err == nil {
 				t.Fatal("renderConfig unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestRenderConfigRejectsUnsafeFolderMountLayouts(t *testing.T) {
+	workspace := workspacePlan{Name: "project", HostDirectory: `D:\Project`, GuestDirectory: `C:\Workspaces\project`}
+	tests := map[string][]mountPlan{
+		"workspace overlap": {{Name: "shared", HostDirectory: `D:\Project\shared`, GuestDirectory: `C:\Mounts\shared`, ReadOnly: true}},
+		"duplicate hosts": {
+			{Name: "first", HostDirectory: `E:\Shared`, GuestDirectory: `C:\Mounts\first`, ReadOnly: true},
+			{Name: "second", HostDirectory: `E:\Shared\nested`, GuestDirectory: `C:\Mounts\second`, ReadOnly: false},
+		},
+		"arbitrary guest path": {{Name: "shared", HostDirectory: `E:\Shared`, GuestDirectory: `C:\Windows`, ReadOnly: true}},
+		"invalid name":         {{Name: `..\shared`, HostDirectory: `E:\Shared`, GuestDirectory: `C:\Mounts\..\shared`, ReadOnly: true}},
+	}
+	for name, mounts := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := renderConfig(`C:\Runs\input`, `C:\Runs\status`, `F:\Cache`, mounts, []workspacePlan{workspace}, 4096, false, false); err == nil {
+				t.Fatal("unsafe folder mount layout unexpectedly succeeded")
 			}
 		})
 	}

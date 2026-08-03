@@ -204,7 +204,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 - Cleanup clears stale run and SSH state only when process evidence proves no Sandbox launcher or client remains. Changed, unmanaged, reparse-bearing, or uncertain state is preserved and reported.
 - A freely acquired lifecycle lock records an abandoned retained operation as interrupted before another mutation can begin.
 - `up` reuses only an exact ready app-owned instance. Inspect refused state with `status`, then use `down` only when the CLI identifies the app-owned guest.
-- Changing Tailscale, audio, memory, cache, or workspace mappings requires `down` before the next `up`.
+- Changing Tailscale, audio, memory, cache, folder mounts, or workspace mappings requires `down` before the next `up`.
 
 </details>
 
@@ -257,6 +257,16 @@ The command creates `config.json` only when absent and never replaces existing s
   "audio": false,
   "audioInput": false,
   "tailscale": false,
+  "mounts": {
+    "reference": {
+      "path": "D:\\Reference",
+      "readOnly": true
+    },
+    "worktrees": {
+      "path": "E:\\Worktrees",
+      "readOnly": false
+    }
+  },
   "codingAgentSync": {
     "opencode": true,
     "claudeCode": true,
@@ -289,12 +299,19 @@ The command creates `config.json` only when absent and never replaces existing s
 | `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
 | `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
+| `mounts` | Up to 16 named non-workspace folder mounts. Every entry requires an absolute existing `path` and explicit `readOnly`; the guest destination is `C:\Mounts\<name>`. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
 | `workspaces` | Additional unique workspace names mapped to absolute host project roots. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
+
+#### Folder mounts
+
+Use `mounts` for host folders that should be available without becoming project workspaces. A mount named `worktrees` appears at `C:\Mounts\worktrees`; it does not become active, run `.herdr-sandbox\provision.ps1`, or create a Herdr workspace. Set `readOnly` to `true` for reference material. Set it to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
+
+Mapped folders expose host data across the isolation boundary. Herdr Sandbox rejects volume roots, reparse-bearing paths, protected host roots, and any overlap with another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. It also fixes every guest destination below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
 
 #### Audio policy
 
@@ -365,8 +382,8 @@ Persistent host state is split intentionally:
 
 ## Security boundaries
 
-- Writable host mappings are limited to selected project roots, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
-- The host home directory, general AppData, unrelated repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
+- Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
+- The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
 - Approved GitHub CLI and coding-agent credentials travel only over verified SSH and never enter persistent run input or logs. Machine-bound credentials require a guest login.
 - Tailscale auth-key and state bytes never enter mappings, status, diagnostics, command lines, or package cache.
 - Guest OpenCode managed policy resolves every permission to `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.

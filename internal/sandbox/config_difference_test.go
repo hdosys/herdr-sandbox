@@ -16,7 +16,7 @@ func TestDescribeWSBLaunchDifferencesNamesChangedFields(t *testing.T) {
 		HostDirectory:  filepath.Join(root, "project"),
 		GuestDirectory: guestWorkspaceDirectory("project"),
 	}
-	baseline, err := renderConfig(input, status, cache, []workspacePlan{workspace}, 4096, false, false)
+	baseline, err := renderConfig(input, status, cache, nil, []workspacePlan{workspace}, 4096, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestDescribeWSBLaunchDifferencesNamesChangedFields(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			changed, err := renderConfig(input, status, test.cache, []workspacePlan{test.workspace}, test.memory, test.audioOutput, test.audioInput)
+			changed, err := renderConfig(input, status, test.cache, nil, []workspacePlan{test.workspace}, test.memory, test.audioOutput, test.audioInput)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,9 +49,39 @@ func TestDescribeWSBLaunchDifferencesNamesChangedFields(t *testing.T) {
 	}
 }
 
+func TestDescribeWSBLaunchDifferencesNamesFolderMountChanges(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	status := filepath.Join(root, "status")
+	cache := filepath.Join(root, "cache")
+	mount := mountPlan{Name: "worktrees", HostDirectory: filepath.Join(root, "worktrees"), GuestDirectory: guestMountDirectory("worktrees")}
+	baseline, err := renderConfig(input, status, cache, nil, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := renderConfig(input, status, cache, []mountPlan{mount}, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differences, err := describeWSBLaunchDifferences(baseline, changed)
+	if err != nil || strings.Join(differences, ",") != "folder mounts" {
+		t.Fatalf("differences = %v, error = %v", differences, err)
+	}
+
+	mount.ReadOnly = true
+	readOnly, err := renderConfig(input, status, cache, []mountPlan{mount}, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differences, err = describeWSBLaunchDifferences(changed, readOnly)
+	if err != nil || strings.Join(differences, ",") != "folder mounts" {
+		t.Fatalf("access differences = %v, error = %v", differences, err)
+	}
+}
+
 func TestDescribeWSBLaunchDifferencesFallsBackForUnknownContractDrift(t *testing.T) {
 	root := t.TempDir()
-	config, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"),
+	config, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), nil,
 		[]workspacePlan{{Name: "project", HostDirectory: filepath.Join(root, "project"), GuestDirectory: guestWorkspaceDirectory("project")}}, 4096, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -66,11 +96,11 @@ func TestDescribeWSBLaunchDifferencesFallsBackForUnknownContractDrift(t *testing
 func TestDescribeWSBLaunchDifferencesReportsAudioAndOtherCommandDrift(t *testing.T) {
 	root := t.TempDir()
 	workspaces := []workspacePlan{{Name: "project", HostDirectory: filepath.Join(root, "project"), GuestDirectory: guestWorkspaceDirectory("project")}}
-	expected, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), workspaces, 4096, false, false)
+	expected, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), nil, workspaces, 4096, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	actual, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), workspaces, 4096, true, false)
+	actual, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), nil, workspaces, 4096, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}

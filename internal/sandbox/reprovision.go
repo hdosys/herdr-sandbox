@@ -46,6 +46,7 @@ type explorerRestartStatus struct {
 }
 
 func reprovisionReadySession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, hostHerdr HostHerdr) (connection Connection, resultErr error) {
+	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
 	fmt.Fprintf(options.Output, "Existing ready Sandbox run %s; re-running current provisioning in place...\n", plan.ID)
 	operation, err := startSessionOperation(plan.RunDirectory, plan.ID, operationKindReprovision,
@@ -200,14 +201,18 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err != nil {
 		return runPlan{}, nil, err
 	}
+	mounts, err := canonicalMountPlans(provisioning.Mounts)
+	if err != nil {
+		return runPlan{}, nil, err
+	}
 	workspaces, err := canonicalWorkspacePlans(provisioning.Workspaces)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
-	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, mounts, workspaces); err != nil {
 		return runPlan{}, nil, err
 	}
-	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
@@ -233,6 +238,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		Packages:          provisioning.Packages,
 		CodingAgentSync:   provisioning.CodingAgentSync,
 		WindowsTerminal:   provisioning.WindowsTerminal,
+		Mounts:            mounts,
 		ConfigPath:        active.ConfigPath,
 		PrivateKeyPath:    filepath.Join(dataDirectory, "identity", "id_ed25519"),
 		PublicKeyPath:     filepath.Join(dataDirectory, "identity", "id_ed25519.pub"),

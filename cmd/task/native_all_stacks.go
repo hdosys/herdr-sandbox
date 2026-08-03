@@ -74,11 +74,14 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksSmoke(ctx, fixture, environment, stdout, stderr); err != nil {
 		return err
 	}
+	if err := verifyNativeAllStacksMounts(fixture); err != nil {
+		return err
+	}
 	downNeeded = false
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: dotnet, go, node, python, rust, zig, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node, python, rust, zig, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -125,20 +128,24 @@ func waitForNativeAllStacksCleanup(ctx context.Context, directory string, enviro
 }
 
 type nativeAllStacksFixture struct {
-	Root         string
-	Project      string
-	AppData      string
-	LocalAppData string
-	UserProfile  string
+	Root          string
+	Project       string
+	AppData       string
+	LocalAppData  string
+	UserProfile   string
+	ReadOnlyMount string
+	WritableMount string
 }
 
 func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) {
 	fixture := nativeAllStacksFixture{
-		Root:         root,
-		Project:      filepath.Join(root, "project"),
-		AppData:      filepath.Join(root, "appdata"),
-		LocalAppData: filepath.Join(root, "localappdata"),
-		UserProfile:  filepath.Join(root, "userprofile"),
+		Root:          root,
+		Project:       filepath.Join(root, "project"),
+		AppData:       filepath.Join(root, "appdata"),
+		LocalAppData:  filepath.Join(root, "localappdata"),
+		UserProfile:   filepath.Join(root, "userprofile"),
+		ReadOnlyMount: filepath.Join(root, "mounts", "reference"),
+		WritableMount: filepath.Join(root, "mounts", "worktrees"),
 	}
 	marker := filepath.Join(root, ".herdr-sandbox-native-all-stacks")
 	if info, err := os.Lstat(root); err == nil {
@@ -161,12 +168,22 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
 	}
 
 	files := map[string]string{
-		filepath.Join(fixture.AppData, "herdr-sandbox", "config.json"): `{
+		filepath.Join(fixture.AppData, "herdr-sandbox", "config.json"): fmt.Sprintf(`{
   "cacheDirectory": "",
   "memoryMB": 32768,
   "audio": false,
   "audioInput": false,
   "tailscale": false,
+  "mounts": {
+    "reference": {
+      "path": %q,
+      "readOnly": true
+    },
+    "worktrees": {
+      "path": %q,
+      "readOnly": false
+    }
+  },
   "codingAgentSync": {
     "opencode": false,
     "claudeCode": false,
@@ -185,7 +202,9 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
   },
   "workspaces": {}
 }
-`,
+`, fixture.ReadOnlyMount, fixture.WritableMount),
+		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"): "read-only-mount-ok\n",
+		filepath.Join(fixture.WritableMount, "host-worktrees.txt"): "read-write-mount-ok\n",
 		filepath.Join(fixture.AppData, "herdr-sandbox", "user.ps1"): `# herdr-sandbox-user-contract: 1
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -312,12 +331,28 @@ test "answer" {
 	for _, absent := range []string{
 		filepath.Join(fixture.AppData, "GitHub CLI", "hosts.yml"),
 		filepath.Join(fixture.AppData, "herdr", "config.toml"),
+		filepath.Join(fixture.ReadOnlyMount, "guest-write-blocked.txt"),
+		filepath.Join(fixture.WritableMount, "guest-write.txt"),
 	} {
 		if err := os.Remove(absent); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nativeAllStacksFixture{}, fmt.Errorf("remove credential-bearing native fixture input %s: %w", absent, err)
 		}
 	}
 	return fixture, nil
+}
+
+func verifyNativeAllStacksMounts(fixture nativeAllStacksFixture) error {
+	if _, err := os.Lstat(filepath.Join(fixture.ReadOnlyMount, "guest-write-blocked.txt")); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read-only folder mount accepted a guest write: %v", err)
+	}
+	contents, err := os.ReadFile(filepath.Join(fixture.WritableMount, "guest-write.txt"))
+	if err != nil {
+		return fmt.Errorf("read writable folder-mount result: %w", err)
+	}
+	if string(contents) != "guest-write-ok\r\n" && string(contents) != "guest-write-ok\n" {
+		return fmt.Errorf("writable folder-mount result = %q", contents)
+	}
+	return nil
 }
 
 func writeNativeAllStacksFixtureFile(path, contents string) error {
@@ -448,6 +483,24 @@ function Invoke-SmokeTool([string]$Role, [string]$Executable, [string[]]$Argumen
 function Assert-SmokeOutput([string]$Role, [string]$Output, [string]$Expected) {
     if (-not $Output.Contains($Expected)) { throw "$Role output did not contain $Expected" }
 }
+
+$readOnlyMount = 'C:\Mounts\reference'
+$writableMount = 'C:\Mounts\worktrees'
+if ([IO.File]::ReadAllText((Join-Path $readOnlyMount 'host-reference.txt')).Trim() -cne 'read-only-mount-ok') {
+    throw 'Read-only folder mount content is unavailable.'
+}
+if ([IO.File]::ReadAllText((Join-Path $writableMount 'host-worktrees.txt')).Trim() -cne 'read-write-mount-ok') {
+    throw 'Writable folder mount content is unavailable.'
+}
+$readOnlyWriteBlocked = $false
+try {
+    [IO.File]::WriteAllText((Join-Path $readOnlyMount 'guest-write-blocked.txt'), ('unexpected' + [Environment]::NewLine), $utf8)
+} catch {
+    $readOnlyWriteBlocked = $true
+}
+if (-not $readOnlyWriteBlocked) { throw 'Read-only folder mount accepted a guest write.' }
+[IO.File]::WriteAllText((Join-Path $writableMount 'guest-write.txt'), ('guest-write-ok' + [Environment]::NewLine), $utf8)
+[Console]::Out.WriteLine('[all-stacks] folder mounts: read-only and read/write OK')
 
 $dotnet = (Get-Command 'dotnet.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source

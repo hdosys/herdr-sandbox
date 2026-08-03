@@ -38,6 +38,7 @@ Commands:
 Configuration:
   %APPDATA%\herdr-sandbox\config.json
   - workspaces and optional workspaceDiscovery
+  - named folder mounts with explicit read-only or read/write access
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
   - codingAgentSync choices
@@ -568,6 +569,21 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 		for _, entry := range plan.StackPackages {
 			fmt.Fprintf(output, "  - %s: %s\n", entry.Stack, entry.PackageOwner)
 		}
+	}
+
+	fmt.Fprintln(output, "\nFolder mounts")
+	if len(plan.Mounts) == 0 {
+		fmt.Fprintln(output, "  (none)")
+	}
+	for _, mount := range plan.Mounts {
+		access := "read/write"
+		if mount.ReadOnly {
+			access = "read-only"
+		}
+		fmt.Fprintf(output, "  - %s\n", mount.Name)
+		fmt.Fprintf(output, "    Host: %s\n", mount.HostDirectory)
+		fmt.Fprintf(output, "    Guest: %s\n", mount.GuestDirectory)
+		fmt.Fprintf(output, "    Access: %s\n", access)
 	}
 
 	fmt.Fprintln(output, "\nWorkspaces")

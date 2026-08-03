@@ -68,7 +68,10 @@ func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
 		strings.Join(arguments, ",") + ")"
 }
 
-func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+	if len(mounts) > maximumMounts {
+		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
+	}
 	if !filepath.IsAbs(inputDirectory) {
 		return nil, errors.New("Sandbox input directory must be absolute")
 	}
@@ -95,6 +98,30 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, worksp
 
 	mappings := []wsbMappedFolder{{HostFolder: cleanInput, SandboxFolder: guestInputDirectory, ReadOnly: true}}
 	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}}
+	for _, mount := range mounts {
+		if !workspaceNamePattern.MatchString(mount.Name) {
+			return nil, fmt.Errorf("folder mount name is invalid: %q", mount.Name)
+		}
+		if !filepath.IsAbs(mount.HostDirectory) || !filepath.IsAbs(mount.GuestDirectory) {
+			return nil, fmt.Errorf("folder mount %q paths must be absolute", mount.Name)
+		}
+		host := filepath.Clean(mount.HostDirectory)
+		guest := filepath.Clean(mount.GuestDirectory)
+		if !strings.EqualFold(guest, guestMountDirectory(mount.Name)) {
+			return nil, fmt.Errorf("folder mount %q has unsupported guest directory %s", mount.Name, guest)
+		}
+		for _, mappedHost := range hostMappings {
+			if hostPathsOverlap(host, mappedHost) {
+				return nil, fmt.Errorf("folder mount %q overlaps host mapping %s", mount.Name, mappedHost)
+			}
+		}
+		if _, exists := seenGuests[strings.ToLower(guest)]; exists {
+			return nil, fmt.Errorf("folder mount %q duplicates a guest mapping", mount.Name)
+		}
+		hostMappings = append(hostMappings, host)
+		seenGuests[strings.ToLower(guest)] = struct{}{}
+		mappings = append(mappings, wsbMappedFolder{HostFolder: host, SandboxFolder: guest, ReadOnly: mount.ReadOnly})
+	}
 	for _, workspace := range workspaces {
 		if !filepath.IsAbs(workspace.HostDirectory) || !filepath.IsAbs(workspace.GuestDirectory) {
 			return nil, fmt.Errorf("workspace %q paths must be absolute", workspace.Name)

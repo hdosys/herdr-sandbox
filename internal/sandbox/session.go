@@ -65,6 +65,7 @@ type runPlan struct {
 	ConfigPath                 string
 	PrivateKeyPath             string
 	PublicKeyPath              string
+	Mounts                     []mountPlan
 	Workspaces                 []workspacePlan
 	ActiveWorkspace            string
 	RequiresVisualStudioLayout bool
@@ -482,6 +483,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		Tailscale:         provisioning.Tailscale,
 		Packages:          provisioning.Packages,
 		CodingAgentSync:   provisioning.CodingAgentSync,
+		Mounts:            provisioning.Mounts,
 		Workspaces:        provisioning.Workspaces,
 		WindowsTerminal:   provisioning.WindowsTerminal,
 		SandboxExecutable: sandboxExecutable,
@@ -507,15 +509,20 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
+	plan.Mounts, err = canonicalMountPlans(plan.Mounts)
+	if err != nil {
+		return runPlan{}, err
+	}
 	plan.Workspaces, err = canonicalWorkspacePlans(plan.Workspaces)
 	if err != nil {
 		return runPlan{}, err
 	}
-	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Mounts, plan.Workspaces); err != nil {
 		return runPlan{}, err
 	}
+	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -559,8 +566,8 @@ type physicalMapping struct {
 	identity string
 }
 
-func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory string, workspaces []workspacePlan) error {
-	mappings := make([]physicalMapping, 0, len(workspaces)+3)
+func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
+	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+3)
 	for _, mapped := range []struct {
 		role string
 		path string
@@ -570,6 +577,13 @@ func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, ca
 			return err
 		}
 		mappings = append(mappings, physicalMapping{role: mapped.role, identity: identity})
+	}
+	for _, mount := range mounts {
+		identity, err := physicalMappedDirectory(mount.HostDirectory)
+		if err != nil {
+			return fmt.Errorf("folder mount %q: %w", mount.Name, err)
+		}
+		mappings = append(mappings, physicalMapping{role: "folder mount " + mount.Name, identity: identity})
 	}
 	for _, workspace := range workspaces {
 		identity, err := physicalMappedDirectory(workspace.HostDirectory)

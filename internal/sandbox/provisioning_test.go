@@ -1995,6 +1995,113 @@ func TestResolveProvisioningCombinesGlobalAndActiveWorkspaces(t *testing.T) {
 	}
 }
 
+func TestResolveProvisioningIncludesNamedFolderMountsOutsideWorkspaces(t *testing.T) {
+	root := t.TempDir()
+	defaults := filepath.Join(root, "defaults")
+	global := filepath.Join(root, "global")
+	active := createWorkspaceFixture(t, root, "active")
+	reference := filepath.Join(root, "reference")
+	worktrees := filepath.Join(root, "worktrees")
+	for _, directory := range []string{defaults, global, reference, worktrees} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contents, err := json.Marshal(struct {
+		Mounts     map[string]mountConfiguration `json:"mounts"`
+		Workspaces map[string]string             `json:"workspaces"`
+	}{
+		Mounts: map[string]mountConfiguration{
+			"worktrees": {Path: worktrees, ReadOnly: false},
+			"reference": {Path: reference, ReadOnly: true},
+		},
+		Workspaces: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(global, globalConfigurationName), string(contents))
+
+	plan, err := resolveProvisioningAt(filepath.Join(active, "src"), global, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Mounts) != 2 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
+		plan.Mounts[0].GuestDirectory != `C:\Mounts\reference` || plan.Mounts[1].Name != "worktrees" || plan.Mounts[1].ReadOnly ||
+		plan.Mounts[1].GuestDirectory != `C:\Mounts\worktrees` {
+		t.Fatalf("folder mounts = %#v", plan.Mounts)
+	}
+	if len(plan.Workspaces) != 1 || plan.Workspaces[0].Name != "active" || !plan.Workspaces[0].Active {
+		t.Fatalf("workspaces = %#v", plan.Workspaces)
+	}
+}
+
+func TestResolveProvisioningRejectsFolderMountOverlaps(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "shared")
+	child := filepath.Join(shared, "child")
+	for _, directory := range []string{shared, child} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := map[string]map[string]any{
+		"another mount": {
+			"mounts": map[string]any{
+				"parent": map[string]any{"path": shared, "readOnly": true},
+				"child":  map[string]any{"path": child, "readOnly": false},
+			},
+		},
+		"workspace": {
+			"mounts":     map[string]any{"shared": map[string]any{"path": shared, "readOnly": true}},
+			"workspaces": map[string]string{"project": shared},
+		},
+		"cache": {
+			"cacheDirectory": shared,
+			"mounts":         map[string]any{"shared": map[string]any{"path": shared, "readOnly": false}},
+		},
+	}
+	for name, configuration := range tests {
+		t.Run(name, func(t *testing.T) {
+			global := filepath.Join(root, strings.ReplaceAll(name, " ", "-"))
+			if err := os.MkdirAll(global, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(global, globalConfigurationName), string(data))
+			if _, err := resolveProvisioningAt(root, global, root); err == nil || !strings.Contains(strings.ToLower(err.Error()), "overlap") {
+				t.Fatalf("overlap error = %v", err)
+			}
+		})
+	}
+}
+
+func TestFolderMountValidationRejectsVolumeRootsAndExcessEntries(t *testing.T) {
+	volumeRoot := filepath.VolumeName(t.TempDir()) + string(os.PathSeparator)
+	if _, err := newMountPlan("volume", mountConfiguration{Path: volumeRoot, ReadOnly: true}); err == nil {
+		t.Fatal("volume-root folder mount unexpectedly succeeded")
+	}
+
+	mounts := make(map[string]mountConfiguration, maximumMounts+1)
+	for index := 0; index <= maximumMounts; index++ {
+		mounts[fmt.Sprintf("mount-%02d", index)] = mountConfiguration{Path: t.TempDir(), ReadOnly: true}
+	}
+	data, err := json.Marshal(map[string]any{"mounts": mounts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), globalConfigurationName)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadGlobalConfiguration(path); err == nil || !strings.Contains(err.Error(), "count exceeds") {
+		t.Fatalf("excess mount error = %v", err)
+	}
+}
+
 func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 	root := t.TempDir()
 	defaults := filepath.Join(root, "defaults")
@@ -2045,7 +2152,7 @@ func TestResolveProvisioningDiscoversDirectWorkspaceChildren(t *testing.T) {
 	if plan.Workspaces[3].ProvisioningPath != "" || plan.Workspaces[4].ProvisioningPath != "" {
 		t.Fatalf("unprofiled workspaces received provisioning paths: %#v", plan.Workspaces)
 	}
-	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Workspaces, plan.MemoryMB, plan.AudioOutput, plan.AudioInput)
+	encoded, err := renderConfig(filepath.Join(root, "run-input"), filepath.Join(root, "run-status"), filepath.Join(root, "cache"), plan.Mounts, plan.Workspaces, plan.MemoryMB, plan.AudioOutput, plan.AudioInput)
 	if err != nil {
 		t.Fatalf("render discovered workspace mappings: %v", err)
 	}
@@ -2289,6 +2396,14 @@ func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 		"null tailscale":           `{"tailscale":null,"workspaces":{}}`,
 		"nonboolean tailscale":     `{"tailscale":"true","workspaces":{}}`,
 		"duplicate tailscale":      `{"tailscale":true,"tailscale":false,"workspaces":{}}`,
+		"null mounts":              `{"mounts":null}`,
+		"nonobject mounts":         `{"mounts":[]}`,
+		"case duplicate mount":     `{"mounts":{"Shared":{"path":"C:\\one","readOnly":true},"shared":{"path":"C:\\two","readOnly":false}}}`,
+		"nonobject mount":          `{"mounts":{"shared":"C:\\shared"}}`,
+		"missing mount path":       `{"mounts":{"shared":{"readOnly":true}}}`,
+		"missing mount access":     `{"mounts":{"shared":{"path":"C:\\shared"}}}`,
+		"nonboolean mount access":  `{"mounts":{"shared":{"path":"C:\\shared","readOnly":"true"}}}`,
+		"unknown mount field":      `{"mounts":{"shared":{"path":"C:\\shared","readOnly":true,"guest":"C:\\Shared"}}}`,
 		"null workspaces":          `{"workspaces":null}`,
 		"case variant field":       `{"MemoryMB":32768,"workspaces":{}}`,
 		"duplicate field":          `{"memoryMB":32768,"memoryMB":16384,"workspaces":{}}`,
@@ -2322,7 +2437,7 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale || config.WorkspaceDiscovery != nil ||
 		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 0 ||
-		len(config.WingetPackages.Versions) != 0 || len(config.Workspaces) != 0 {
+		len(config.WingetPackages.Versions) != 0 || len(config.Mounts) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
 	}
 }
@@ -2406,6 +2521,7 @@ func TestResolveProvisioningUsesConfiguredCacheDirectory(t *testing.T) {
 	config, err := json.Marshal(globalConfiguration{
 		CacheDirectory: cache,
 		WingetPackages: defaultWingetPackageConfiguration(),
+		Mounts:         map[string]mountConfiguration{},
 		Workspaces:     map[string]string{},
 	})
 	if err != nil {
@@ -2502,7 +2618,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
-		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Workspaces == nil {
+		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Mounts == nil || config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
 	}
 	seededContents, err := os.ReadFile(filepath.Join(global, globalConfigurationName))
@@ -2514,6 +2630,9 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	}
 	if !bytes.Contains(seededContents, []byte(`"audioInput": false`)) {
 		t.Fatalf("seeded config does not expose the default-disabled microphone setting: %s", seededContents)
+	}
+	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
+		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)
 	}
 	user := filepath.Join(global, userProvisioningName)
 	custom := []byte(userProvisioningContract + "\nWrite-Output 'custom'\n")
