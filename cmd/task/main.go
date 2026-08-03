@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -208,11 +209,49 @@ if ($errors.Count -gt 0) {
 }
 
 func build(ctx context.Context, stdout, stderr io.Writer) error {
+	identity := buildIdentity{Version: "devel", Revision: "unknown"}
+	if revision, err := sourceRevision(ctx); err == nil {
+		identity.Revision = revision
+	}
+	return buildWithIdentity(ctx, identity, stdout, stderr)
+}
+
+type buildIdentity struct {
+	Version  string
+	Revision string
+}
+
+func buildRelease(ctx context.Context, version releaseVersion, stdout, stderr io.Writer) error {
+	revision, err := sourceRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve release source revision: %w", err)
+	}
+	return buildWithIdentity(ctx, buildIdentity{Version: version.Display, Revision: revision}, stdout, stderr)
+}
+
+func sourceRevision(ctx context.Context) (string, error) {
+	output, err := hiddenCommandContext(ctx, "git", "rev-parse", "--verify", "HEAD").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("run git rev-parse --verify HEAD: %w", err)
+	}
+	return normalizeSourceRevision(string(output))
+}
+
+func normalizeSourceRevision(value string) (string, error) {
+	revision := strings.TrimSpace(value)
+	decoded, err := hex.DecodeString(revision)
+	if err != nil || len(decoded) != 20 {
+		return "", fmt.Errorf("Git HEAD is not one full SHA-1 revision: %q", revision)
+	}
+	return strings.ToLower(revision), nil
+}
+
+func buildWithIdentity(ctx context.Context, identity buildIdentity, stdout, stderr io.Writer) error {
 	output := filepath.Join("build", "bin", productidentity.ExecutableName)
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
 	}
-	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output)...); err != nil {
+	if err := runCommand(ctx, stdout, stderr, "go", goBuildArgs(output, identity)...); err != nil {
 		return err
 	}
 	for _, asset := range []struct {
@@ -234,12 +273,13 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func goBuildArgs(output string) []string {
+func goBuildArgs(output string, identity buildIdentity) []string {
+	linkerFlags := fmt.Sprintf("-s -w -X herdr-sandbox/internal/productidentity.Version=%s -X herdr-sandbox/internal/productidentity.Revision=%s", identity.Version, identity.Revision)
 	return []string{
 		"build",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags", "-s -w",
+		"-ldflags", linkerFlags,
 		"-o", output,
 		"./cmd/herdr-sandbox",
 	}

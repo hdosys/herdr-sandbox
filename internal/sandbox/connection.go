@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var errAtomicWriteTargetChanged = errors.New("atomic write target changed")
 
 const (
 	managedSSHIncludeStart = "# BEGIN herdr-sandbox managed SSH include"
@@ -91,27 +94,34 @@ func installSSHHostAliasAt(dataDirectory, userHome, config string) error {
 		return fmt.Errorf("create user SSH directory: %w", err)
 	}
 	userConfigPath := filepath.Join(userSSHDirectory, "config")
-	existing, err := os.ReadFile(userConfigPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read user SSH config: %w", err)
+	for attempt := 1; attempt <= 3; attempt++ {
+		existing, err := os.ReadFile(userConfigPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read user SSH config: %w", err)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			existing = nil
+		}
+		updated, err := updateManagedSSHInclude(string(existing), managedPath)
+		if err != nil {
+			return fmt.Errorf("update user SSH config: %w", err)
+		}
+		if updated == string(existing) {
+			return nil
+		}
+		mode := os.FileMode(0o600)
+		if info, statErr := os.Stat(userConfigPath); statErr == nil {
+			mode = info.Mode().Perm()
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect user SSH config: %w", statErr)
+		}
+		if err := writeFileAtomicallyIfUnchanged(userConfigPath, existing, []byte(updated), mode); err == nil {
+			return nil
+		} else if !errors.Is(err, errAtomicWriteTargetChanged) {
+			return fmt.Errorf("write user SSH config: %w", err)
+		}
 	}
-	updated, err := updateManagedSSHInclude(string(existing), managedPath)
-	if err != nil {
-		return fmt.Errorf("update user SSH config: %w", err)
-	}
-	if updated == string(existing) {
-		return nil
-	}
-	mode := os.FileMode(0o600)
-	if info, statErr := os.Stat(userConfigPath); statErr == nil {
-		mode = info.Mode().Perm()
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("inspect user SSH config: %w", statErr)
-	}
-	if err := writeFileAtomically(userConfigPath, []byte(updated), mode); err != nil {
-		return fmt.Errorf("write user SSH config: %w", err)
-	}
-	return nil
+	return errors.New("user SSH config kept changing while installing the managed include")
 }
 
 func removeManagedSSHConfig(dataDirectory string) error {
@@ -227,6 +237,35 @@ func updateManagedSSHInclude(existing, managedPath string) (string, error) {
 }
 
 func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
+	return writeFileAtomicallyBeforeReplace(path, data, mode, nil)
+}
+
+func writeFileAtomicallyIfUnchanged(path string, expected, data []byte, mode os.FileMode) error {
+	return writeFileAtomicallyBeforeReplace(path, data, mode, func() error {
+		current, err := os.ReadFile(path)
+		if expected == nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return errAtomicWriteTargetChanged
+		}
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return errAtomicWriteTargetChanged
+			}
+			return err
+		}
+		if !bytes.Equal(current, expected) {
+			return errAtomicWriteTargetChanged
+		}
+		return nil
+	})
+}
+
+func writeFileAtomicallyBeforeReplace(path string, data []byte, mode os.FileMode, beforeReplace func() error) error {
 	directory := filepath.Dir(path)
 	temporary, err := os.CreateTemp(directory, ".herdr-sandbox-*")
 	if err != nil {
@@ -246,6 +285,11 @@ func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
 	}
 	if err := temporary.Close(); err != nil {
 		return err
+	}
+	if beforeReplace != nil {
+		if err := beforeReplace(); err != nil {
+			return err
+		}
 	}
 	return os.Rename(temporaryPath, path)
 }

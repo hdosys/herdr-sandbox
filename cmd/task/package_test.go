@@ -342,9 +342,13 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`BackupRuntimeFile`,
 		`BackupRuntimeFile "${APP_LICENSE}" $R1`,
+		`BackupRuntimeFile "uninstall.exe" $R2`,
 		`ReplaceRuntimeFile "${APP_LICENSE}"`,
 		`RestoreRuntimeFile`,
 		`RestoreRuntimeFile "${APP_LICENSE}" $R1`,
+		`RestoreRuntimeFile "uninstall.exe" $R2`,
+		`install_rollback:`,
+		`Goto install_rollback`,
 		`VIProductVersion "${FIXED_VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
@@ -409,6 +413,15 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	executableDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_EXECUTABLE}"`)
 	if cleanupIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= executableDeleteIndex {
 		t.Fatalf("clean uninstall must finish before executable deletion")
+	}
+	replacementIndex := strings.Index(source, `!insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"`)
+	rollbackIndex := strings.Index(source, `install_rollback:`)
+	doneIndex := strings.Index(source, `install_done:`)
+	if replacementIndex < 0 || rollbackIndex <= replacementIndex || doneIndex <= rollbackIndex {
+		t.Fatal("installer transaction labels are not ordered after payload replacement")
+	}
+	if strings.Contains(source[replacementIndex:rollbackIndex], "Abort") {
+		t.Fatal("post-replacement installer failure bypasses the rollback owner")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)

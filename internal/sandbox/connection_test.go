@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,6 +146,27 @@ func TestInstallSSHHostAliasPreservesUserConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(userConfig), existing) {
 		t.Fatalf("user SSH config was not preserved:\n%s", userConfig)
+	}
+}
+
+func TestAtomicSSHConfigWriteRejectsConcurrentContentChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("initial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("concurrent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := writeFileAtomicallyIfUnchanged(path, []byte("initial\n"), []byte("replacement\n"), 0o600)
+	if !errors.Is(err, errAtomicWriteTargetChanged) {
+		t.Fatalf("conditional atomic write error = %v, want changed target", err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "concurrent\n" {
+		t.Fatalf("conditional atomic write replaced concurrent contents: %q", contents)
 	}
 }
 

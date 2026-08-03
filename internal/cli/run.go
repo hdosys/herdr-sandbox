@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"herdr-sandbox/internal/productidentity"
 	"herdr-sandbox/internal/sandbox"
 )
 
 const usage = `Usage:
   herdr-sandbox config
+  herdr-sandbox version
   herdr-sandbox plan
   herdr-sandbox init [--stack dotnet|go|node|python|rust|zig]...
   herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
@@ -27,6 +29,7 @@ const usage = `Usage:
 
 Commands:
   config  create the global config when absent and open it with the registered .json application
+  version print the application version and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
@@ -105,6 +108,13 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	}
 	switch args[0] {
+	case "version":
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "herdr-sandbox: version does not accept arguments\n\n%s", usage)
+			return 2
+		}
+		fmt.Fprintf(stdout, "%s %s\n", productidentity.ApplicationName, productidentity.VersionSummary())
+		return 0
 	case "config":
 		if commandHelpRequested(args) {
 			fmt.Fprint(stdout, usage)

@@ -55,15 +55,27 @@ func TestGoBuildArgsUseStrippedProductionBuild(t *testing.T) {
 		"build",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags", "-s -w",
+		"-ldflags", "-s -w -X herdr-sandbox/internal/productidentity.Version=0.0.7 -X herdr-sandbox/internal/productidentity.Revision=0123456789abcdef0123456789abcdef01234567",
 		"-o", `build\bin\herdr-sandbox.exe`,
 		"./cmd/herdr-sandbox",
 	}
-	got := goBuildArgs(`build\bin\herdr-sandbox.exe`)
+	got := goBuildArgs(`build\bin\herdr-sandbox.exe`, buildIdentity{Version: "0.0.7", Revision: "0123456789abcdef0123456789abcdef01234567"})
 	if !slices.Equal(got, want) {
 		t.Fatalf("goBuildArgs = %#v, want %#v", got, want)
 	}
 	if strings.Contains(strings.Join(got, " "), "-buildid=") {
 		t.Fatalf("production build must keep Go's normal build ID: %#v", got)
+	}
+}
+
+func TestNormalizeSourceRevisionRequiresFullSHA1(t *testing.T) {
+	want := "0123456789abcdef0123456789abcdef01234567"
+	if got, err := normalizeSourceRevision("  " + strings.ToUpper(want) + "\r\n"); err != nil || got != want {
+		t.Fatalf("normalizeSourceRevision = %q, %v", got, err)
+	}
+	for _, revision := range []string{"", "abc", strings.Repeat("0", 39), strings.Repeat("g", 40), strings.Repeat("0", 41)} {
+		if _, err := normalizeSourceRevision(revision); err == nil {
+			t.Fatalf("invalid revision unexpectedly succeeded: %q", revision)
+		}
 	}
 }

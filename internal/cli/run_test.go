@@ -23,7 +23,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		t.Fatalf("exit code = %d", code)
 	}
 	for _, required := range []string{
-		"herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
+		"herdr-sandbox version", "herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
 		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox down", "herdr-sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
 		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale",
@@ -37,6 +37,14 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "__installer-") {
 		t.Fatalf("installer-only commands leaked into help: %q", stdout.String())
+	}
+}
+
+func TestRunPrintsVersionWithoutCrossingSandboxBoundary(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"version"}, &bytes.Buffer{}, &stdout, &stderr)
+	if code != 0 || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "herdr-sandbox ") {
+		t.Fatalf("version code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }
 

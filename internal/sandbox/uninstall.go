@@ -542,7 +542,7 @@ func applyInstallerSSHRemoval(plan installerSSHRemovalPlan) error {
 	if !bytes.Equal(current, plan.Existing) {
 		return errors.New("user SSH config contents changed before uninstall cleanup")
 	}
-	if err := writeFileAtomically(plan.Path, plan.Updated, plan.Mode); err != nil {
+	if err := writeFileAtomicallyIfUnchanged(plan.Path, plan.Existing, plan.Updated, plan.Mode); err != nil {
 		return fmt.Errorf("write user SSH config without managed block: %w", err)
 	}
 	written, err := os.ReadFile(plan.Path)

@@ -59,7 +59,7 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
-	if err := build(ctx, stdout, stderr); err != nil {
+	if err := buildRelease(ctx, version, stdout, stderr); err != nil {
 		return err
 	}
 	paths := releasePaths(".", version)

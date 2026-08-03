@@ -245,7 +245,6 @@ FunctionEnd
     ${Else}
         DetailPrint "Could not update the current-user PATH: $1"
         SetErrors
-        Abort
     ${EndIf}
     ${If} $0 == "10"
         DetailPrint "Notifying Windows about the PATH change..."
@@ -293,6 +292,11 @@ FunctionEnd
 !macroend
 
 Section "Install"
+    StrCpy $R5 "0"
+    StrCpy $R6 "0"
+    StrCpy $R7 "0"
+    StrCpy $R3 ""
+    StrCpy $4 "0"
     ClearErrors
     ReadRegStr $3 HKCU "${UNINSTALL_KEY}" "DisplayName"
     ${If} ${Errors}
@@ -302,10 +306,18 @@ Section "Install"
         MessageBox MB_ICONSTOP|MB_OK "The existing installer registration is not owned by ${APP_DISPLAY_NAME}. No files were changed." /SD IDOK
         Abort
     ${Else}
+        StrCpy $R5 "1"
+        ClearErrors
+        ReadRegStr $R3 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+        ${IfNot} ${Errors}
+            StrCpy $R6 "1"
+        ${EndIf}
         ClearErrors
         ReadRegDWORD $2 HKCU "${UNINSTALL_KEY}" "PathAdded"
         ${If} ${Errors}
             StrCpy $2 "0"
+        ${Else}
+            StrCpy $R7 "1"
         ${EndIf}
     ${EndIf}
 
@@ -326,6 +338,7 @@ Section "Install"
     !insertmacro BackupRuntimeFile "${APP_EXECUTABLE}" $7
     !insertmacro BackupRuntimeFile "${APP_LICENSE}" $R1
     !insertmacro BackupRuntimeFile "${APP_STACK_SCRIPT}" $8
+    !insertmacro BackupRuntimeFile "uninstall.exe" $R2
 
     StrCpy $9 "0"
     !insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"
@@ -333,17 +346,8 @@ Section "Install"
     !insertmacro ReplaceRuntimeFile "${APP_LICENSE}"
     !insertmacro ReplaceRuntimeFile "${APP_STACK_SCRIPT}"
     ${If} $9 != "0"
-        StrCpy $R0 "0"
-        !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
-        !insertmacro RestoreRuntimeFile "${APP_BASE_SCRIPT}" $6
-        !insertmacro RestoreRuntimeFile "${APP_LICENSE}" $R1
-        !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
-        ${If} $R0 == "0"
-            MessageBox MB_ICONSTOP|MB_OK "Could not update ${APP_DISPLAY_NAME}; the prior application files were restored. Close running commands and try again." /SD IDOK
-        ${Else}
-            MessageBox MB_ICONSTOP|MB_OK "Could not update ${APP_DISPLAY_NAME}, and rollback was incomplete. Close running commands and run setup again." /SD IDOK
-        ${EndIf}
-        Abort
+        StrCpy $R4 "Could not replace the complete ${APP_DISPLAY_NAME} application payload."
+        Goto install_rollback
     ${EndIf}
 
     DetailPrint "Creating the default user configuration when missing..."
@@ -351,16 +355,16 @@ Section "Install"
     Pop $0
     Pop $1
     ${If} $0 != "0"
-        MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} user configuration: $1" /SD IDOK
-        Abort
+        StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} user configuration: $1"
+        Goto install_rollback
     ${EndIf}
 
     SetOutPath "$INSTDIR"
     ClearErrors
     WriteUninstaller "$INSTDIR\uninstall.exe"
     ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} uninstaller." /SD IDOK
-        Abort
+        StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} uninstaller."
+        Goto install_rollback
     ${EndIf}
 
     ClearErrors
@@ -375,12 +379,17 @@ Section "Install"
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
     ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Could not register ${APP_DISPLAY_NAME} in Windows Installed Apps." /SD IDOK
-        Abort
+        StrCpy $R4 "Could not register ${APP_DISPLAY_NAME} in Windows Installed Apps."
+        Goto install_rollback
     ${EndIf}
 
     !insertmacro UpdateUserPath "Add"
     StrCpy $4 $0
+    ${If} $4 != "0"
+    ${AndIf} $4 != "10"
+        StrCpy $R4 "Could not update the current-user PATH: $1"
+        Goto install_rollback
+    ${EndIf}
     ${If} $2 == "1"
         StrCpy $5 "1"
     ${ElseIf} $4 == "10"
@@ -391,12 +400,57 @@ Section "Install"
     ClearErrors
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $5
     ${If} ${Errors}
-        ${If} $4 == "10"
-            !insertmacro UpdateUserPath "Remove"
-        ${EndIf}
-        MessageBox MB_ICONSTOP|MB_OK "Could not record ${APP_DISPLAY_NAME} PATH ownership." /SD IDOK
-        Abort
+        StrCpy $R4 "Could not record ${APP_DISPLAY_NAME} PATH ownership."
+        Goto install_rollback
     ${EndIf}
+    Goto install_done
+
+    install_rollback:
+    SetOutPath "$PLUGINSDIR"
+    StrCpy $R0 "0"
+    ${If} $4 == "10"
+        !insertmacro UpdateUserPath "Remove"
+        ${If} $0 != "0"
+        ${AndIf} $0 != "10"
+            StrCpy $R0 "1"
+        ${EndIf}
+    ${EndIf}
+    ${If} $R5 == "1"
+        ClearErrors
+        ${If} $R6 == "1"
+            WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" $R3
+        ${Else}
+            DeleteRegValue HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+        ${EndIf}
+        ${If} $R7 == "1"
+            WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $2
+        ${Else}
+            DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAdded"
+        ${EndIf}
+        ${If} ${Errors}
+            StrCpy $R0 "1"
+        ${EndIf}
+    ${Else}
+        ClearErrors
+        DeleteRegKey HKCU "${UNINSTALL_KEY}"
+        ${If} ${Errors}
+            StrCpy $R0 "1"
+        ${EndIf}
+    ${EndIf}
+    !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
+    !insertmacro RestoreRuntimeFile "${APP_BASE_SCRIPT}" $6
+    !insertmacro RestoreRuntimeFile "${APP_LICENSE}" $R1
+    !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
+    !insertmacro RestoreRuntimeFile "uninstall.exe" $R2
+    RMDir "$INSTDIR"
+    ${If} $R0 == "0"
+        MessageBox MB_ICONSTOP|MB_OK "$R4 The prior installer-owned state was restored. Close running commands and try again." /SD IDOK
+    ${Else}
+        MessageBox MB_ICONSTOP|MB_OK "$R4 Rollback was incomplete. Close running commands and run setup again." /SD IDOK
+    ${EndIf}
+    Abort
+
+    install_done:
 SectionEnd
 
 Section "Uninstall"
@@ -449,6 +503,11 @@ Section "Uninstall"
     ${EndIf}
     ${If} $2 == "1"
         !insertmacro UpdateUserPath "Remove"
+        ${If} $0 != "0"
+        ${AndIf} $0 != "10"
+            MessageBox MB_ICONSTOP|MB_OK "Could not remove the installer-owned ${APP_DISPLAY_NAME} PATH entry: $1" /SD IDOK
+            Abort
+        ${EndIf}
     ${EndIf}
     ${If} $4 == "1"
         ClearErrors
