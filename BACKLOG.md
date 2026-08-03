@@ -21,3 +21,16 @@ Open, planned, blocked, or deferred product work only. User-visible rules belong
 - Consider checksum-validated Cargo `.crate` archive seeding only after the package/Rust mirror path passes natively. Keep Cargo index/Git databases, extracted sources, installed binaries, and target outputs guest-local because Cargo exposes no supported split-cache paths and trusts existing archives without rehashing them.
 - Evaluate the Windows 11 24H2+ `wsb.exe` management API as a second implementation only if it removes lifecycle complexity without dropping supported Windows 10 behavior.
 - Pin and verify managed external tool versions/hashes when moving beyond the fast MVP's stable package-manager path.
+- Design an optional persistent-worktree mode for public-project users whose
+  workflow needs long-lived linked checkouts instead of the default shared checkout
+  plus disposable integration fallback. Add one explicit absolute
+  `worktreeDirectory` setting, map that dedicated root once at Sandbox launch to a
+  fixed writable guest root so repository/session children can be created without
+  another Sandbox restart, and never map a broader parent, home, AppData, cache, or
+  unrelated directory implicitly. Define strict physical-path/non-reparse and
+  non-overlap validation, per-repository/session identity, active-owner leases,
+  crash recovery, startup/terminal garbage collection through `git worktree`, and
+  preservation across `clean` and uninstall. Native verification must create and
+  use worktrees for multiple selected repositories after launch, retain active and
+  recover abandoned work, remove completed trees/branches plus stale metadata, and
+  prove unrelated host content is neither mapped nor deleted.
