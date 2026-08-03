@@ -69,6 +69,7 @@ Unicode true
 !include "x64.nsh"
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
+!define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
 
 Var DeleteConfigurationOnUninstall
 Var DeleteConfigurationCheckbox
@@ -272,10 +273,9 @@ FunctionEnd
     ${EndIf}
     ${If} $0 == "10"
         DetailPrint "Notifying Windows about the PATH change..."
-        System::Call 'User32::SendNotifyMessageW(p ${HWND_BROADCAST}, i ${WM_WININICHANGE}, p 0, w "Environment") i.r3'
-        ${If} $3 == "0"
-            MessageBox MB_ICONEXCLAMATION|MB_OK "The user PATH was saved, but Windows did not accept the change notification. Sign out or restart Windows before using ${APP_DISPLAY_NAME} from a terminal." /SD IDOK
-        ${EndIf}
+        ; WM_SETTINGCHANGE requires this synchronous API because Environment is a
+        ; pointer. Keep its per-window timeout short so a hung window cannot hold setup.
+        System::Call 'User32::SendMessageTimeoutW(p ${HWND_BROADCAST}, i ${WM_SETTINGCHANGE}, p 0, w "Environment", i 0x2, i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}, *p .r3)'
     ${EndIf}
 !macroend
 
