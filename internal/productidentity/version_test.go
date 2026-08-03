@@ -12,7 +12,7 @@ func TestVersionSummaryIncludesBoundedRevision(t *testing.T) {
 	}
 	Version = ""
 	Revision = "unknown"
-	if got := VersionSummary(); got != "devel" {
+	if got := VersionSummary(); got != "devel (revision unknown)" {
 		t.Fatalf("development VersionSummary = %q", got)
 	}
 }

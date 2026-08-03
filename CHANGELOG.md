@@ -29,8 +29,8 @@ release notes remain available on the
 - Bounded subprocess capture now terminates an output-flooding process tree after
   one MiB instead of growing host memory without limit.
 - External diagnostics replace terminal-control characters before display.
-- User SSH config updates retry only while the exact previously read contents are
-  unchanged, preventing silent lost updates from concurrent edits.
+- User SSH config updates reread and retry when a concurrent edit is observed
+  before atomic replacement, substantially narrowing the prior lost-update window.
 - Installer failures after payload replacement now restore the prior application
   files, uninstaller, registration version/PATH ownership, and newly added PATH
   entry through one rollback path.

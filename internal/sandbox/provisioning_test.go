@@ -192,6 +192,24 @@ func TestProtectedRootMappingValidationAllowsOrdinaryDescendantsButRejectsSensit
 	}
 }
 
+func TestSensitiveRootMappingValidationRejectsParentOfCredentialJunction(t *testing.T) {
+	mappingRoot := t.TempDir()
+	credentialTarget := t.TempDir()
+	credentialLink := filepath.Join(mappingRoot, "credentials")
+	createTestDirectoryLink(t, credentialLink, credentialTarget)
+	for _, name := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(name, t.TempDir())
+	}
+	t.Setenv("GH_CONFIG_DIR", credentialLink)
+	mappingIdentity, err := physicalMappedDirectory(mappingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("folder mount tools", mappingIdentity); err == nil || !strings.Contains(err.Error(), "security-sensitive") {
+		t.Fatalf("credential-junction parent mapping error = %v", err)
+	}
+}
+
 func TestCanonicalWorkspacePlansRebindProvisioningScriptToPhysicalRoot(t *testing.T) {
 	root := t.TempDir()
 	project := createWorkspaceFixture(t, root, "project")

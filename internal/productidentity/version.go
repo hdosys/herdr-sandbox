@@ -14,7 +14,7 @@ func VersionSummary() string {
 	}
 	revision := strings.TrimSpace(Revision)
 	if revision == "" || revision == "unknown" {
-		return version
+		return version + " (revision unknown)"
 	}
 	if len(revision) > 12 {
 		revision = revision[:12]

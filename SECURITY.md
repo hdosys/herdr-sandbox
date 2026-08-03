@@ -63,9 +63,11 @@ These are deliberate non-guarantees:
   two-fresh-Sandbox and peer-connectivity gate passes.
 
 If the threat model forbids credential exfiltration, set every `codingAgentSync`
-choice to `false`, use read-only mounts wherever possible, do not authenticate
-inside the guest, and enforce outbound-network restrictions outside this product.
-Provisioning still needs network access for uncached packages.
+choice to `false`, remove `GitHub.cli` from the Base package plan (or use a host
+profile with no authenticated `gh.exe` account), use read-only mounts wherever
+possible, do not authenticate inside the guest, and enforce outbound-network
+restrictions outside this product. Provisioning still needs network access for
+uncached packages.
 
 ## Packages and releases
 

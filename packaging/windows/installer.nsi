@@ -72,6 +72,7 @@ Unicode true
 
 Var DeleteConfigurationOnUninstall
 Var DeleteConfigurationCheckbox
+Var InstallTransactionActive
 
 Name "${APP_DISPLAY_NAME}"
 OutFile "${OUTPUT_FILE}"
@@ -97,6 +98,7 @@ VIAddVersionKey "LegalCopyright" "${APP_COPYRIGHT}"
 VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_setup.exe"
 
 !define MUI_ABORTWARNING
+!define MUI_CUSTOMFUNCTION_ABORT PreventInstallTransactionAbort
 !define INSTALLER_WELCOME_BITMAP_100 "${__FILEDIR__}\assets\installer-welcome-finish-164x314.bmp"
 !define INSTALLER_WELCOME_BITMAP_125 "${__FILEDIR__}\assets\installer-welcome-finish-205x393.bmp"
 !define INSTALLER_WELCOME_BITMAP_150 "${__FILEDIR__}\assets\installer-welcome-finish-246x471.bmp"
@@ -179,6 +181,28 @@ Function .onInit
     SetRegView 64
     SetShellVarContext current
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
+    StrCpy $InstallTransactionActive "0"
+FunctionEnd
+
+Function PreventInstallTransactionAbort
+    ${If} $InstallTransactionActive == "1"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is completing or rolling back an installation transaction. Wait for setup to finish." /SD IDOK
+        Abort
+    ${EndIf}
+FunctionEnd
+
+Function DisableInstallCancellation
+    IfSilent done
+    GetDlgItem $R8 $HWNDPARENT 2
+    EnableWindow $R8 0
+    done:
+FunctionEnd
+
+Function EnableInstallCancellation
+    IfSilent done
+    GetDlgItem $R8 $HWNDPARENT 2
+    EnableWindow $R8 1
+    done:
 FunctionEnd
 
 Function un.onInit
@@ -295,6 +319,7 @@ Section "Install"
     StrCpy $R5 "0"
     StrCpy $R6 "0"
     StrCpy $R7 "0"
+    StrCpy $R9 "0"
     StrCpy $R3 ""
     StrCpy $4 "0"
     ClearErrors
@@ -340,6 +365,8 @@ Section "Install"
     !insertmacro BackupRuntimeFile "${APP_STACK_SCRIPT}" $8
     !insertmacro BackupRuntimeFile "uninstall.exe" $R2
 
+    StrCpy $InstallTransactionActive "1"
+    Call DisableInstallCancellation
     StrCpy $9 "0"
     !insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"
     !insertmacro ReplaceRuntimeFile "${APP_BASE_SCRIPT}"
@@ -360,6 +387,7 @@ Section "Install"
     ${EndIf}
 
     SetOutPath "$INSTDIR"
+    StrCpy $R9 "1"
     ClearErrors
     WriteUninstaller "$INSTDIR\uninstall.exe"
     ${If} ${Errors}
@@ -403,6 +431,8 @@ Section "Install"
         StrCpy $R4 "Could not record ${APP_DISPLAY_NAME} PATH ownership."
         Goto install_rollback
     ${EndIf}
+    StrCpy $InstallTransactionActive "0"
+    Call EnableInstallCancellation
     Goto install_done
 
     install_rollback:
@@ -415,26 +445,52 @@ Section "Install"
             StrCpy $R0 "1"
         ${EndIf}
     ${EndIf}
-    ${If} $R5 == "1"
-        ClearErrors
-        ${If} $R6 == "1"
-            WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" $R3
+    ${If} $R9 == "1"
+        ${If} $R5 == "1"
+            ${If} $R6 == "1"
+                ClearErrors
+                WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" $R3
+                ${If} ${Errors}
+                    StrCpy $R0 "1"
+                ${EndIf}
+            ${Else}
+                ClearErrors
+                ReadRegStr $R8 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+                ${IfNot} ${Errors}
+                    ClearErrors
+                    DeleteRegValue HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+                    ${If} ${Errors}
+                        StrCpy $R0 "1"
+                    ${EndIf}
+                ${EndIf}
+            ${EndIf}
+            ${If} $R7 == "1"
+                ClearErrors
+                WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $2
+                ${If} ${Errors}
+                    StrCpy $R0 "1"
+                ${EndIf}
+            ${Else}
+                ClearErrors
+                ReadRegDWORD $R8 HKCU "${UNINSTALL_KEY}" "PathAdded"
+                ${IfNot} ${Errors}
+                    ClearErrors
+                    DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAdded"
+                    ${If} ${Errors}
+                        StrCpy $R0 "1"
+                    ${EndIf}
+                ${EndIf}
+            ${EndIf}
         ${Else}
-            DeleteRegValue HKCU "${UNINSTALL_KEY}" "DisplayVersion"
-        ${EndIf}
-        ${If} $R7 == "1"
-            WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $2
-        ${Else}
-            DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAdded"
-        ${EndIf}
-        ${If} ${Errors}
-            StrCpy $R0 "1"
-        ${EndIf}
-    ${Else}
-        ClearErrors
-        DeleteRegKey HKCU "${UNINSTALL_KEY}"
-        ${If} ${Errors}
-            StrCpy $R0 "1"
+            ClearErrors
+            EnumRegValue $R8 HKCU "${UNINSTALL_KEY}" 0
+            ${IfNot} ${Errors}
+                ClearErrors
+                DeleteRegKey HKCU "${UNINSTALL_KEY}"
+                ${If} ${Errors}
+                    StrCpy $R0 "1"
+                ${EndIf}
+            ${EndIf}
         ${EndIf}
     ${EndIf}
     !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
@@ -443,6 +499,8 @@ Section "Install"
     !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
     !insertmacro RestoreRuntimeFile "uninstall.exe" $R2
     RMDir "$INSTDIR"
+    StrCpy $InstallTransactionActive "0"
+    Call EnableInstallCancellation
     ${If} $R0 == "0"
         MessageBox MB_ICONSTOP|MB_OK "$R4 The prior installer-owned state was restored. Close running commands and try again." /SD IDOK
     ${Else}

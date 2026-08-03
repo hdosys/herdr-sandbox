@@ -165,8 +165,9 @@ func windowsPowerShellExecutable() (string, error) {
 
 func boundedText(data []byte) string {
 	text := strings.ToValidUTF8(strings.TrimSpace(string(data)), "�")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.Map(func(value rune) rune {
-		if value == '\r' || value == '\n' || value == '\t' || unicode.IsPrint(value) {
+		if value == '\n' || value == '\t' || unicode.IsPrint(value) {
 			return value
 		}
 		return '�'

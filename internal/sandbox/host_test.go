@@ -38,11 +38,11 @@ func TestBoundedTextPreservesDiagnosticHeadAndTail(t *testing.T) {
 }
 
 func TestBoundedTextReplacesTerminalControlsAndPreservesLayout(t *testing.T) {
-	result := boundedText([]byte("before\x1b]0;forged\x07after\nnext\tcolumn"))
-	if strings.ContainsAny(result, "\x1b\x07") {
+	result := boundedText([]byte("before\x1b]0;forged\x07after\rrewritten\r\nnext\tcolumn"))
+	if strings.ContainsAny(result, "\x1b\x07\r") {
 		t.Fatalf("bounded text retained terminal controls: %q", result)
 	}
-	if !strings.Contains(result, "before�]0;forged�after\nnext\tcolumn") {
+	if !strings.Contains(result, "before�]0;forged�after�rewritten\nnext\tcolumn") {
 		t.Fatalf("bounded text lost safe diagnostic layout: %q", result)
 	}
 }

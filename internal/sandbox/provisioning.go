@@ -1432,6 +1432,13 @@ func validatePhysicalMappingDoesNotExposeSensitiveRoot(role, identity string) er
 		} else if err != nil {
 			return fmt.Errorf("%s: inspect security-sensitive directory %s: %w", role, path, err)
 		}
+		containsLexically, err := physicalMappingContainsLexicalPath(identity, path)
+		if err != nil {
+			return fmt.Errorf("%s: resolve lexical parents of security-sensitive directory %s: %w", role, path, err)
+		}
+		if containsLexically {
+			return fmt.Errorf("%s must not expose security-sensitive directory: %s", role, path)
+		}
 		sensitiveIdentity, err := physicalMappedDirectory(path)
 		if err != nil {
 			return fmt.Errorf("%s: resolve security-sensitive directory %s: %w", role, path, err)
@@ -1441,6 +1448,23 @@ func validatePhysicalMappingDoesNotExposeSensitiveRoot(role, identity string) er
 		}
 	}
 	return nil
+}
+
+func physicalMappingContainsLexicalPath(identity, path string) (bool, error) {
+	for ancestor := filepath.Dir(path); ; {
+		ancestorIdentity, err := physicalMappedDirectory(ancestor)
+		if err != nil {
+			return false, err
+		}
+		if hostPathContains(identity, ancestorIdentity) {
+			return true, nil
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return false, nil
+		}
+		ancestor = parent
+	}
 }
 
 func seedUserProvisioning(path string) error {

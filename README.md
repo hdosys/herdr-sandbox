@@ -189,7 +189,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 | Command | Behavior |
 | --- | --- |
 | `herdr-sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
-| `herdr-sandbox version` | Prints the embedded application version and abbreviated source revision when available. |
+| `herdr-sandbox version` | Prints the embedded application version and abbreviated source revision, or explicitly reports an unknown development revision. |
 | `herdr-sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
 | `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
