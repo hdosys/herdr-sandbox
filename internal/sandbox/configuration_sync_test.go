@@ -227,7 +227,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	t.Setenv("GH_CONFIG_DIR", "relative-must-not-be-read")
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{
-		Remove: []string{packageGit, packageGitHubCLI, packageOpenCode, packageStarship, packageTerminalStable},
+		Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageTerminalStable},
 		Add:    []string{}, Versions: map[string]string{},
 	}, terminal)
 	if err != nil {

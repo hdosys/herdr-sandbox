@@ -248,7 +248,7 @@ The command creates `config.json` only when absent and never replaces existing s
 %APPDATA%\herdr-sandbox\user.ps1
 ```
 
-`config.json` is strict JSON, so comments are not allowed. Example:
+`config.json` is strict JSON, so comments are not allowed. Replace the example paths with existing folders. Object keys such as `external` and `shared` are user-chosen names; they become the final guest-folder name rather than a fixed keyword. Optional sections can stay empty.
 
 ```json
 {
@@ -257,16 +257,6 @@ The command creates `config.json` only when absent and never replaces existing s
   "audio": false,
   "audioInput": false,
   "tailscale": false,
-  "mounts": {
-    "reference": {
-      "path": "D:\\Reference",
-      "readOnly": true
-    },
-    "worktrees": {
-      "path": "E:\\Worktrees",
-      "readOnly": false
-    }
-  },
   "codingAgentSync": {
     "opencode": true,
     "claudeCode": true,
@@ -274,10 +264,14 @@ The command creates `config.json` only when absent and never replaces existing s
     "githubCopilot": true,
     "pi": true
   },
-  "wingetPackages": {
-    "remove": [],
-    "add": [],
-    "versions": {}
+  "workspaces": {
+    "external": "E:\\Clients\\external"
+  },
+  "mounts": {
+    "shared": {
+      "path": "E:\\Shared",
+      "readOnly": true
+    }
   },
   "workspaceDiscovery": {
     "root": "D:\\Projects",
@@ -286,8 +280,12 @@ The command creates `config.json` only when absent and never replaces existing s
       "(?i)^temp-"
     ]
   },
-  "workspaces": {
-    "external": "E:\\Clients\\external"
+  "wingetPackages": {
+    "remove": [],
+    "add": [
+      "SST.opencode"
+    ],
+    "versions": {}
   }
 }
 ```
@@ -299,19 +297,13 @@ The command creates `config.json` only when absent and never replaces existing s
 | `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
 | `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
-| `mounts` | Up to 16 named non-workspace folder mounts. Every entry requires an absolute existing `path` and explicit `readOnly`; the guest destination is `C:\Mounts\<name>`. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
+| `workspaces` | User-named project roots mapped to `C:\Workspaces\<name>`. Names are arbitrary but unique; values are absolute existing host folders. |
+| `mounts` | Optional user-named non-workspace folders mapped to `C:\Mounts\<name>`. Every entry requires an absolute existing `path` and explicit `readOnly`; at most 16 are allowed. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
-| `workspaces` | Additional unique workspace names mapped to absolute host project roots. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
-| `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. |
+| `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs show `SST.opencode` as a replaceable example; remove or replace that entry to choose another coding agent. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
-
-#### Folder mounts
-
-Use `mounts` for host folders that should be available without becoming project workspaces. A mount named `worktrees` appears at `C:\Mounts\worktrees`; it does not become active, run `.herdr-sandbox\provision.ps1`, or create a Herdr workspace. Set `readOnly` to `true` for reference material. Set it to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
-
-Mapped folders expose host data across the isolation boundary. Herdr Sandbox rejects volume roots, reparse-bearing paths, protected host roots, and any overlap with another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. It also fixes every guest destination below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
 
 #### Audio policy
 
@@ -320,24 +312,6 @@ Both audio toggles default off. With both off, provisioning selects Windows **No
 Set `"audioInput": true` to share the host microphone and retain the shared audio services. Because capture and playback use those services together, guest applications can then unmute output even while `audio` remains false; these controls are not a security boundary against guest administrator code. Set `"audio": true` independently for deliberate playback. Changing either toggle requires `down` before the next `up`.
 
 No CPU-priority option is exposed because Windows Sandbox provides no supported per-instance control; changing the launcher priority would not reliably control guest vCPU scheduling.
-
-#### Agent packages
-
-To install every coding agent that currently has a verified WinGet package, set `wingetPackages` to this copy-paste object:
-
-```json
-{
-  "remove": [],
-  "add": [
-    "Anthropic.ClaudeCode",
-    "OpenAI.Codex",
-    "GitHub.Copilot"
-  ],
-  "versions": {}
-}
-```
-
-OpenCode (`SST.opencode`) is already a Base default and must not be added again. Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
 
 #### Coding-agent sync
 
@@ -351,13 +325,40 @@ Configuration sync is default-on when these host surfaces exist:
 | GitHub Copilot CLI | Copies approved config and reuses successfully imported GitHub CLI accounts. Native Credential Manager tokens stay host-bound. |
 | Pi | Copies approved agent configuration and portable `auth.json`. |
 
-The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op. This feature copies setup only; it does not install Claude Code, Codex, Copilot, or Pi.
+The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
 #### Workspace discovery
 
 - Discovery checks only direct child directories and never maps the root itself. Each Go/RE2 `exclude` expression is case-sensitive unless it uses `(?i)`; any match excludes that child.
 - Every selected child becomes a workspace even without `.herdr-sandbox\provision.ps1`. When that optional script exists it is validated and run; the folder name becomes the workspace name. Use `workspaces` for external projects or explicit names, which win when both select the same path.
 - The active project is added and deduplicated automatically. At most 16 physical, existing, nonoverlapping, non-reparse workspaces are allowed; a changed set requires `down` before the next `up`.
+
+#### Folder mounts
+
+Use optional `mounts` for host folders that should be available without becoming project workspaces. The key is arbitrary: a mount named `worktrees` appears at `C:\Mounts\worktrees`, while `shared` appears at `C:\Mounts\shared`. No `reference` key is required. Generic mounts do not become active, run `.herdr-sandbox\provision.ps1`, or create Herdr workspaces. Set `readOnly` to `true` for reference/shared material and to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
+
+Mapped folders expose host data across the isolation boundary. Herdr Sandbox rejects volume roots, reparse-bearing paths, protected host roots, and any overlap with another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. It also fixes every guest destination below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
+
+#### Agent packages
+
+OpenCode is not a mandatory Base package. Fresh configs list `SST.opencode` under `wingetPackages.add` as a visible example: replace that single ID with the preferred coding-agent package, or remove it to install no coding agent globally. No separate disable entry is required.
+
+To install every coding agent that currently has a verified WinGet package, use:
+
+```json
+{
+  "remove": [],
+  "add": [
+    "SST.opencode",
+    "Anthropic.ClaudeCode",
+    "OpenAI.Codex",
+    "GitHub.Copilot"
+  ],
+  "versions": {}
+}
+```
+
+Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
 
 #### Global extension ownership
 

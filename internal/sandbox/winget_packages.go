@@ -38,7 +38,6 @@ var basePackageIDs = []string{
 	packageGit,
 	packageGitHubCLI,
 	packageTailscale,
-	packageOpenCode,
 	packageWinDirStat,
 	packageFilePilot,
 	packageTerminalXAML,
@@ -75,7 +74,7 @@ type wingetPackagePlanEntry struct {
 }
 
 func defaultWingetPackageConfiguration() wingetPackageConfiguration {
-	return wingetPackageConfiguration{Remove: []string{}, Add: []string{}, Versions: map[string]string{}}
+	return wingetPackageConfiguration{Remove: []string{}, Add: []string{packageOpenCode}, Versions: map[string]string{}}
 }
 
 func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal windowsTerminalConfiguration) (wingetPackagePlan, error) {
@@ -93,7 +92,6 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 		packageGit,
 		packageGitHubCLI,
 		packageTailscale,
-		packageOpenCode,
 		packageWinDirStat,
 		packageFilePilot,
 		packageTerminalXAML,

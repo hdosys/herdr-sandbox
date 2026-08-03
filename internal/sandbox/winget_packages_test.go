@@ -15,7 +15,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 	for _, id := range []string{
 		packagePowerShell, packageStarship, packageFZF, packageRipgrep, packageGit,
-		packageActionlint, packageGitHubCLI, packageTailscale, packageOpenCode, packageWinDirStat, packageFilePilot,
+		packageActionlint, packageGitHubCLI, packageTailscale, packageWinDirStat, packageFilePilot,
 		packageTerminalXAML, packageTerminalStable,
 	} {
 		if !defaults.enabled(id) {
@@ -24,6 +24,9 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 	if defaults.enabled(packageTerminalPreview) {
 		t.Fatal("default stable plan contains Terminal Preview")
+	}
+	if len(defaults.Additions) != 1 || defaults.Additions[0].ID != packageOpenCode {
+		t.Fatalf("default optional additions = %#v", defaults.Additions)
 	}
 
 	configuration := wingetPackageConfiguration{
@@ -43,7 +46,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 			t.Fatalf("custom plan unexpectedly retained %s", id)
 		}
 	}
-	if !custom.enabled("7zip.7zip") || len(custom.Additions) != 1 || custom.Additions[0].Version != "26.00" {
+	if !custom.enabled("7zip.7zip") || custom.enabled(packageOpenCode) || len(custom.Additions) != 1 || custom.Additions[0].Version != "26.00" {
 		t.Fatalf("custom additions = %#v", custom.Additions)
 	}
 	gitVersion := ""
@@ -122,6 +125,15 @@ func TestDecodeWingetPackageConfigurationIsStrict(t *testing.T) {
 	}
 	if len(configuration.Remove) != 1 || len(configuration.Add) != 1 || configuration.Versions["7ZIP.7ZIP"] != "26.00" {
 		t.Fatalf("configuration = %#v", configuration)
+	}
+
+	decoder = json.NewDecoder(strings.NewReader(`{"add":[]}`))
+	configuration, err = decodeWingetPackageConfiguration(decoder)
+	if err != nil {
+		t.Fatalf("decode empty replacement additions: %v", err)
+	}
+	if len(configuration.Add) != 0 {
+		t.Fatalf("explicit empty additions retained defaults: %#v", configuration.Add)
 	}
 
 	invalid := map[string]string{

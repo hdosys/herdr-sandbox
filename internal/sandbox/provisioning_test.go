@@ -1418,6 +1418,11 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	if strings.Contains(additionBlock, "-Override") || strings.Contains(additionBlock, "Install-ProvisioningWinGetPackage") {
 		t.Fatal("generic package additions bypass the exact-ID online WinGet boundary")
 	}
+	openCodeSkip := strings.Index(additionBlock, "if ($packageID -ieq 'SST.opencode')")
+	onlineInstall := strings.Index(additionBlock, "Install-ProvisioningOnlineWinGetPackage")
+	if openCodeSkip < 0 || onlineInstall < 0 || openCodeSkip > onlineInstall {
+		t.Fatal("generic package additions do not defer OpenCode to its specialized adapter")
+	}
 }
 
 func TestDefaultBaseTreatsProjectProvisioningProfilesAsOptional(t *testing.T) {
@@ -2436,7 +2441,7 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale || config.WorkspaceDiscovery != nil ||
-		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 0 ||
+		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 1 || config.WingetPackages.Add[0] != packageOpenCode ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Mounts) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
 	}
@@ -2618,6 +2623,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
+		len(config.WingetPackages.Add) != 1 || config.WingetPackages.Add[0] != packageOpenCode ||
 		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Mounts == nil || config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
 	}
@@ -2633,6 +2639,17 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	}
 	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
 		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)
+	}
+	if !bytes.Contains(seededContents, []byte(`"add": [`+"\n"+`      "SST.opencode"`)) {
+		t.Fatalf("seeded config does not expose replaceable OpenCode addition: %s", seededContents)
+	}
+	remaining := seededContents
+	for _, field := range []string{`"cacheDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+		index := bytes.Index(remaining, []byte(field))
+		if index < 0 {
+			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)
+		}
+		remaining = remaining[index+len(field):]
 	}
 	user := filepath.Join(global, userProvisioningName)
 	custom := []byte(userProvisioningContract + "\nWrite-Output 'custom'\n")

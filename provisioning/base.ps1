@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 42
+# herdr-sandbox-base-contract: 43
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -217,7 +217,6 @@ function Read-ProvisioningPackagePlan {
         'Git.Git',
         'GitHub.cli',
         'Tailscale.Tailscale',
-        'SST.opencode',
         'WinDirStat.WinDirStat',
         'Voidstar.FilePilot',
         'Microsoft.UI.Xaml.2.8',
@@ -3294,6 +3293,9 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
 
 foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     $packageID = [string]$package.id
+    if ($packageID -ieq 'SST.opencode') {
+        continue
+    }
     Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
         -Id $packageID -Version ([string]$package.version)
 }
