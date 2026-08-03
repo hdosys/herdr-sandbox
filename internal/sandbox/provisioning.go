@@ -27,8 +27,8 @@ const (
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 45"
-	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 8"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 46"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 9"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 2"
 	workspaceManifestSchema            = 1

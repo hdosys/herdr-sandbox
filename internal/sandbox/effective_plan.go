@@ -81,6 +81,9 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		applyWorkspaceRequirements(&requirements)
 		requiresVisualStudio = requirements.RequiresVisualStudioLayout || stacksContain(userStacks, stackRustMSVC)
 	}
+	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
+		return EffectivePlan{}, err
+	}
 	cacheDirectory, err := effectiveCacheDirectory(provisioning.CacheDirectory)
 	if err != nil {
 		return EffectivePlan{}, err
@@ -180,6 +183,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "nextest.cargo-nextest"
 	case stackDotNet:
 		return "Microsoft.DotNet.SDK.10"
+	case stackGitSH:
+		return packageGit
 	case stackGo:
 		return "GoLang.Go"
 	case stackJust:

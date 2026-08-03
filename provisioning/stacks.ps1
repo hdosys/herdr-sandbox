@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 8
+# herdr-sandbox-stacks-contract: 9
 
 function Get-StackWebResponseText {
     param(
@@ -1281,13 +1281,60 @@ function Install-PythonStack {
         -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' -DeferCommandReadiness `
         -RequireAuthenticodeSignature
-    Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
-        -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' | Out-Null
+    $pythonPath = Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
+        -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe'
     $runtimeVersion = ($Version -split '\.')[0..2] -join '.'
     $pythonPattern = '^Python ' + [regex]::Escape($runtimeVersion) + '$'
     $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
         -VersionArguments @('--version') -ExpectedPattern $pythonPattern
     Write-Output "Python ready: $pythonVersion"
+    if ($Series -notmatch '^3\.') {
+        return
+    }
+    $pythonInfo = Get-Item -LiteralPath $pythonPath -Force
+    if (($pythonInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Python command is a reparse point: $pythonPath"
+    }
+    $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
+    foreach ($directory in @('C:\HerdrSandbox\tools', 'C:\HerdrSandbox\tools\python', $pythonAliasDirectory)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Python command directory is unsafe: $directory"
+        }
+    }
+    $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
+    if (Test-Path -LiteralPath $python3) {
+        $python3Info = Get-Item -LiteralPath $python3 -Force
+        if ($python3Info.PSIsContainer -or
+            ($python3Info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Python 3 command path is unsafe: $python3"
+        }
+    }
+    $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
+    $python3Hash = if (Test-Path -LiteralPath $python3 -PathType Leaf) {
+        (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
+    } else {
+        ''
+    }
+    if ($python3Hash -cne $pythonHash) {
+        Copy-Item -LiteralPath $pythonPath -Destination $python3 -Force
+        $python3Hash = (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
+    }
+    if ($python3Hash -cne $pythonHash) {
+        throw 'Python 3 command copy failed verification.'
+    }
+    Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
+    $resolvedPython3 = Wait-ProvisioningCommandAvailable -Role 'Python 3 command' -Name 'python3.exe'
+    if ([IO.Path]::GetFullPath($resolvedPython3) -ine [IO.Path]::GetFullPath($python3)) {
+        throw "Python 3 command resolved from an unexpected path: $resolvedPython3"
+    }
+    $python3Version = Assert-ProvisioningCommand -Role 'Python 3 command' -Name 'python3.exe' `
+        -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
+    Write-Output "Python 3 command ready: $python3Version"
 }
 
 function Install-ZigStack {
@@ -1660,77 +1707,8 @@ function Install-HerdrStack {
     }
 
     Install-PythonStack -Series '3.13'
-    $python = Get-Command 'python.exe' -CommandType Application -ErrorAction SilentlyContinue |
-        Where-Object { $_.Source -notlike '*\Microsoft\WindowsApps\python.exe' } |
-        Select-Object -First 1
-    if ($null -eq $python) {
-        throw 'Herdr Python tooling requires the installed Python command.'
-    }
-    $pythonInfo = Get-Item -LiteralPath $python.Source -Force
-    if (($pythonInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Herdr Python command is a reparse point: $($python.Source)"
-    }
-    $pythonAliasDirectory = 'C:\HerdrSandbox\tools\herdr\bin'
-    foreach ($directory in @('C:\HerdrSandbox\tools', 'C:\HerdrSandbox\tools\herdr', $pythonAliasDirectory)) {
-        if (-not (Test-Path -LiteralPath $directory)) {
-            New-Item -ItemType Directory -Path $directory -Force | Out-Null
-        }
-        $directoryInfo = Get-Item -LiteralPath $directory -Force
-        if (-not $directoryInfo.PSIsContainer -or
-            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Herdr Python command directory is unsafe: $directory"
-        }
-    }
-    $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
-    if (Test-Path -LiteralPath $python3) {
-        $python3Info = Get-Item -LiteralPath $python3 -Force
-        if ($python3Info.PSIsContainer -or
-            ($python3Info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Herdr Python 3 command path is unsafe: $python3"
-        }
-    }
-    $pythonHash = (Get-FileHash -LiteralPath $python.Source -Algorithm SHA256).Hash
-    $python3Hash = if (Test-Path -LiteralPath $python3 -PathType Leaf) {
-        (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
-    } else {
-        ''
-    }
-    if ($python3Hash -cne $pythonHash) {
-        Copy-Item -LiteralPath $python.Source -Destination $python3 -Force
-        $python3Hash = (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
-    }
-    if ($python3Hash -cne $pythonHash) {
-        throw 'Herdr Python 3 command copy failed verification.'
-    }
-    Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
-    $pythonVersion = Assert-ProvisioningCommand -Role 'Herdr Python' -Name 'python.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^Python 3\.13\.\d+$'
-    $python3Version = Assert-ProvisioningCommand -Role 'Herdr Python 3 command' -Name 'python3.exe' `
-        -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
-    Write-Output "Herdr Python 3 command ready: $python3Version"
     Install-ZigStack -Version '0.15.2'
     Install-RustMSVCStack -ProjectDirectory $projectRoot
-
-    $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($null -eq $git) {
-        throw 'Herdr shell tooling requires the Base Git package.'
-    }
-    $gitCommandDirectory = Split-Path -Parent $git.Source
-    if ((Split-Path -Leaf $gitCommandDirectory) -ine 'cmd') {
-        throw "Herdr shell tooling found an unsupported Git command directory: $gitCommandDirectory"
-    }
-    $gitRoot = Split-Path -Parent $gitCommandDirectory
-    $gitShellDirectory = Join-Path $gitRoot 'bin'
-    $gitShell = Join-Path $gitShellDirectory 'sh.exe'
-    if (-not (Test-Path -LiteralPath $gitShell -PathType Leaf) -or
-        ((Get-Item -LiteralPath $gitShell -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Herdr shell tooling is missing or unsafe: $gitShell"
-    }
-    Add-ProvisioningMachinePath -Directory $gitShellDirectory
-    $shellVersion = Assert-ProvisioningCommand -Role 'Herdr POSIX shell' -Name 'sh.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^GNU bash, version \d+\.\d+\.\d+\(\d+\)-release '
-    Write-Output "Herdr POSIX shell ready: $shellVersion"
 
     $expectedCargoTarget = 'C:\HerdrSandbox\build\cargo-target'
     if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR) -or

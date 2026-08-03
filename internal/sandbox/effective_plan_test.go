@@ -101,6 +101,35 @@ func TestBuildEffectivePlanInspectsGlobalStacksWithoutAWorkspace(t *testing.T) {
 	}
 }
 
+func TestBuildEffectivePlanRejectsHerdrWhenBaseGitIsRemoved(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "herdr")
+	configuration := filepath.Join(project, projectConfigurationName)
+	if err := os.MkdirAll(configuration, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(configuration, projectProvisioningName)
+	if err := os.WriteFile(profile, []byte("Install-HerdrStack -ProjectDirectory $ProjectDirectory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	terminal := testStableWindowsTerminalConfiguration()
+	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit}}, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = buildEffectivePlan(context.Background(), provisioningPlan{
+		BaseScript: filepath.Join("..", "..", "provisioning", baseProvisioningName), StackScript: filepath.Join("..", "..", "provisioning", stackProvisioningName),
+		UserScript: filepath.Join(root, "missing-user.ps1"), MemoryMB: defaultMemoryMB, CodingAgentSync: defaultCodingAgentSyncConfiguration(),
+		Packages: packages, WindowsTerminal: terminal, Workspaces: []workspacePlan{{Name: "herdr", HostDirectory: project, GuestDirectory: guestWorkspaceDirectory("herdr"), ProvisioningPath: profile, Active: true}},
+	}, filepath.Join(root, "missing-config.json"), false, false)
+	if err == nil || !strings.Contains(err.Error(), packageGit) || !strings.Contains(err.Error(), "sh.exe") {
+		t.Fatalf("Herdr plan without Base Git error = %v", err)
+	}
+}
+
 func TestBuildEffectivePlanExplainsEmptyWorkspaceNextAction(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)

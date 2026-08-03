@@ -30,6 +30,7 @@ const (
 	stackBun          projectStack = "bun"
 	stackCargoNextest projectStack = "cargo-nextest"
 	stackDotNet       projectStack = "dotnet"
+	stackGitSH        projectStack = "git-sh"
 	stackGo           projectStack = "go"
 	stackJust         projectStack = "just"
 	stackNode         projectStack = "node"
@@ -51,7 +52,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackBun, stackCargoNextest, stackDotNet, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
+	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
 		return true
 	default:
 		return false
@@ -161,6 +162,25 @@ func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	return result, nil
+}
+
+func validateGitShellPackageRequirement(workspaces []workspacePlan, userStacks []projectStack, packages wingetPackagePlan) error {
+	requiresGitShell := func(stacks []projectStack) bool {
+		for _, stack := range stacks {
+			if stack == stackGitSH {
+				return true
+			}
+		}
+		return false
+	}
+	required := requiresGitShell(userStacks)
+	for _, workspace := range workspaces {
+		required = required || requiresGitShell(workspace.Stacks)
+	}
+	if required && !packages.enabled(packageGit) {
+		return errors.New("the selected project requires Git for Windows sh.exe; restore Base package Git.Git by removing it from wingetPackages.remove")
+	}
+	return nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

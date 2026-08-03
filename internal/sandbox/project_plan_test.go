@@ -44,11 +44,33 @@ throw 'the AST adapter must not execute project code'
 	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
-	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|just|python|rust-msvc|zig" {
+	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
 	if strings.Join(projectStackStrings(userStacks), "|") != "rust-msvc" {
 		t.Fatalf("user stacks = %v", userStacks)
+	}
+}
+
+func TestValidateGitShellPackageRequirementRequiresRetainedGit(t *testing.T) {
+	terminal := testStableWindowsTerminalConfiguration()
+	withoutGit, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit}}, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaces := []workspacePlan{{Name: "herdr", Stacks: []projectStack{stackGitSH}}}
+	if err := validateGitShellPackageRequirement(workspaces, nil, withoutGit); err == nil || !strings.Contains(err.Error(), packageGit) {
+		t.Fatalf("missing Git shell requirement error = %v", err)
+	}
+	defaults, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateGitShellPackageRequirement(workspaces, nil, defaults); err != nil {
+		t.Fatalf("retained Git package rejected: %v", err)
+	}
+	if err := validateGitShellPackageRequirement([]workspacePlan{{Name: "plain"}}, nil, withoutGit); err != nil {
+		t.Fatalf("unrelated project rejected without Git: %v", err)
 	}
 }
 

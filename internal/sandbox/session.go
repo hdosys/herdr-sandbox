@@ -691,6 +691,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	if err != nil {
 		return provisioningSnapshot{}, err
 	}
+	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
+		return provisioningSnapshot{}, err
+	}
 	requirements := runPlan{Workspaces: workspaces}
 	applyWorkspaceRequirements(&requirements)
 	if stacksContain(userStacks, stackRustMSVC) {

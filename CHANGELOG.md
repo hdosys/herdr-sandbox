@@ -32,6 +32,9 @@ release notes remain available on the
 
 ### Fixed
 
+- Python 3 command compatibility and Git-for-Windows `sh` exposure now remain
+  with their runtime/package owners, including retained reprovisioning after
+  `Git\bin` becomes the active Git command directory.
 - Bounded subprocess capture now terminates an output-flooding process tree after
   one MiB instead of growing host memory without limit.
 - External diagnostics replace terminal-control characters before display.

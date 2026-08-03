@@ -21,13 +21,8 @@ func TestHerdrVirtualStackComposesMaintainedProjectRequirements(t *testing.T) {
 	requiredInOrder := []string{
 		"Cargo.toml",
 		"Install-PythonStack -Series '3.13'",
-		"C:\\HerdrSandbox\\tools\\herdr\\bin",
-		"Copy-Item -LiteralPath $python.Source -Destination $python3 -Force",
-		"Herdr Python 3 command ready:",
 		"Install-ZigStack -Version '0.15.2'",
 		"Install-RustMSVCStack -ProjectDirectory $projectRoot",
-		"Add-ProvisioningMachinePath -Directory $gitShellDirectory",
-		"Herdr POSIX shell ready:",
 		"C:\\HerdrSandbox\\build\\cargo-target",
 		"LIBGHOSTTY_VT_ZIG_OUT_DIR",
 		"Install-BunStack",
@@ -48,6 +43,8 @@ func TestHerdrVirtualStackComposesMaintainedProjectRequirements(t *testing.T) {
 		"Install-DotNetStack",
 		"Install-GoStack",
 		"Install-NodeStack",
+		"python3.exe",
+		"gitShellDirectory",
 	} {
 		if strings.Contains(section, forbidden) {
 			t.Fatalf("Herdr virtual stack duplicates or adds unrelated owner %q", forbidden)
@@ -56,9 +53,73 @@ func TestHerdrVirtualStackComposesMaintainedProjectRequirements(t *testing.T) {
 	if effectiveStackPackageOwner(stackBun) != "Oven-sh.Bun" || !projectStackOwnsPackage("oven-sh.bun") {
 		t.Fatal("Bun is not owned by the existing project-stack package path")
 	}
-	for _, required := range []string{"Get-FileHash -LiteralPath $python3 -Algorithm SHA256", "[regex]::Escape($pythonVersion)"} {
+	if effectiveStackPackageOwner(stackGitSH) != packageGit {
+		t.Fatal("Herdr Git shell requirement is not owned by the Base Git package")
+	}
+}
+
+func TestPythonStackOwnsPython3Command(t *testing.T) {
+	text := readDefaultStackProvisioning(t)
+	start := strings.Index(text, "function Install-PythonStack")
+	if start < 0 {
+		t.Fatal("Python stack section is missing")
+	}
+	end := strings.Index(text[start:], "function Install-ZigStack")
+	if end < 0 {
+		t.Fatal("Python stack section end is missing")
+	}
+	section := text[start : start+end]
+	last := -1
+	for _, required := range []string{
+		"$pythonPath = Wait-ProvisioningCommandAvailable",
+		"Python ready:",
+		"C:\\HerdrSandbox\\tools\\python\\bin",
+		"$pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash",
+		"Copy-Item -LiteralPath $pythonPath -Destination $python3 -Force",
+		"$resolvedPython3 = Wait-ProvisioningCommandAvailable",
+		"[regex]::Escape($pythonVersion)",
+		"Python 3 command ready:",
+	} {
+		index := strings.Index(section, required)
+		if index <= last {
+			t.Fatalf("Python stack is missing ordered Python 3 command requirement %q", required)
+		}
+		last = index
+	}
+	if !strings.Contains(section, "Get-FileHash -LiteralPath $python3 -Algorithm SHA256") {
+		t.Fatal("Python stack does not verify the copied Python 3 command")
+	}
+	if strings.Contains(section, "tools\\herdr") || strings.Contains(section, "Herdr Python") {
+		t.Fatal("generic Python command compatibility remains Herdr-specific")
+	}
+}
+
+func TestBaseGitOwnsGitForWindowsShell(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	start := strings.LastIndex(text, "if (Test-ProvisioningPackageEnabled -Id 'Git.Git')")
+	if start < 0 {
+		t.Fatal("Base Git verification section is missing")
+	}
+	section := text[start:]
+	last := -1
+	for _, required := range []string{
+		"$gitCommandDirectoryName = Split-Path -Leaf $gitCommandDirectory",
+		"$gitCommandDirectoryName -notin @('cmd', 'bin')",
+		"$gitShellDirectory = Join-Path $gitRoot 'bin'",
+		"$gitShell = Join-Path $gitShellDirectory 'sh.exe'",
+		"Add-ProvisioningMachinePath -Directory $gitShellDirectory",
+		"$resolvedGitShell = Wait-ProvisioningCommandAvailable",
+		"Git for Windows shell ready:",
+	} {
+		index := strings.Index(section, required)
+		if index <= last {
+			t.Fatalf("Base Git is missing ordered shell requirement %q", required)
+		}
+		last = index
+	}
+	for _, required := range []string{"[IO.FileAttributes]::ReparsePoint", "^GNU bash, version"} {
 		if !strings.Contains(section, required) {
-			t.Fatalf("Herdr Python 3 command does not enforce %q", required)
+			t.Fatalf("Base Git shell does not enforce %q", required)
 		}
 	}
 }
