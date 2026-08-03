@@ -49,9 +49,9 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 ## Deployment time
 
-Windows Sandbox avoids maintaining a separate VM image, guest setup, and guest update cycle. With a warm package/layout cache, common plans without Rust/MSVC take roughly **2–4 minutes**, Rust/MSVC plans with additional stacks roughly **4–6 minutes**, and the deliberate all-six maximum was observed at **6:14**.
+There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-These are orientation rather than an SLA. A cold first Rust/MSVC run can take longer—the one-time Visual Studio layout preparation alone was observed at **5:07**—while attaching to an already ready guest skips fresh deployment.
+Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js, Python, Rust/MSVC, and Zig**. It reached ready in **6:14**. A first run can take longer: downloading and verifying the Visual Studio layout took **5:07** once. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
