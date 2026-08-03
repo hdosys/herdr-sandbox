@@ -120,7 +120,6 @@ VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_set
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage
 !insertmacro MUI_PAGE_FINISH
 UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -137,18 +136,6 @@ Function SelectInstallerWelcomeBitmap
     ${ElseIf} $0 >= 108
         File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_125}"
     ${EndIf}
-FunctionEnd
-
-Function PolishInstallerFinishPage
-    System::Store "S"
-    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Link, @r0)'
-    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r0, i 2)'
-    System::Call '*$0(i.r1, i.r2, i.r3, i.r4)'
-    IntOp $3 $3 - $1
-    IntOp $4 $4 - $2
-    IntOp $2 $2 - $4
-    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Link, p 0, i r1, i r2, i r3, i r4, i 0x14)'
-    System::Store "L"
 FunctionEnd
 
 Function .onInit
