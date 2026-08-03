@@ -1087,6 +1087,9 @@ func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]w
 	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspaceDiscovery.root", rootIdentity); err != nil {
 		return nil, err
 	}
+	if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("workspaceDiscovery.root", rootIdentity); err != nil {
+		return nil, err
+	}
 
 	directory, err := os.Open(root)
 	if err != nil {
@@ -1186,6 +1189,9 @@ func newMountPlan(name string, configuration mountConfiguration) (mountPlan, err
 		return mountPlan{}, err
 	}
 	if err := validatePhysicalMappingDoesNotContainProtectedRoot("folder mount "+name, identity); err != nil {
+		return mountPlan{}, err
+	}
+	if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("folder mount "+name, identity); err != nil {
 		return mountPlan{}, err
 	}
 	return mountPlan{
@@ -1372,6 +1378,67 @@ func rejectLegacyUserBase(globalRoot string) error {
 		return fmt.Errorf("legacy user-owned Base found at %s; it was not modified and will not be executed: move only deliberate global extension commands into %s, route package choices to %s, archive the legacy file under a non-reserved name, then retry", legacyBase, userPath, filepath.Join(globalRoot, globalConfigurationName))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect legacy user-owned Base: %w", err)
+	}
+	return nil
+}
+
+func validatePhysicalMappingDoesNotExposeSensitiveRoot(role, identity string) error {
+	userProfile := strings.TrimSpace(os.Getenv("USERPROFILE"))
+	appData := strings.TrimSpace(os.Getenv("APPDATA"))
+	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+	paths := []string{
+		filepath.Join(userProfile, ".ssh"),
+		filepath.Join(userProfile, ".gnupg"),
+		filepath.Join(userProfile, ".aws"),
+		filepath.Join(userProfile, ".azure"),
+		filepath.Join(userProfile, ".docker"),
+		filepath.Join(userProfile, ".kube"),
+		filepath.Join(userProfile, ".claude"),
+		filepath.Join(userProfile, ".codex"),
+		filepath.Join(userProfile, ".copilot"),
+		filepath.Join(userProfile, ".config", "gh"),
+		filepath.Join(userProfile, ".config", "opencode"),
+		filepath.Join(userProfile, ".local", "share", "opencode"),
+		filepath.Join(userProfile, ".pi", "agent"),
+		filepath.Join(appData, "GitHub CLI"),
+		filepath.Join(appData, "Microsoft", "Credentials"),
+		filepath.Join(appData, "Microsoft", "Protect"),
+		filepath.Join(localAppData, "Microsoft", "Credentials"),
+		filepath.Join(localAppData, "Microsoft", "Vault"),
+	}
+	for _, environment := range []string{"GH_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "COPILOT_HOME", "PI_CODING_AGENT_DIR"} {
+		paths = append(paths, strings.TrimSpace(os.Getenv(environment)))
+	}
+	if root := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); root != "" {
+		paths = append(paths, filepath.Join(root, "gh"), filepath.Join(root, "opencode"))
+	}
+	if root := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); root != "" {
+		paths = append(paths, filepath.Join(root, "opencode"))
+	}
+
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			continue
+		}
+		path = filepath.Clean(path)
+		key := strings.ToLower(path)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("%s: inspect security-sensitive directory %s: %w", role, path, err)
+		}
+		sensitiveIdentity, err := physicalMappedDirectory(path)
+		if err != nil {
+			return fmt.Errorf("%s: resolve security-sensitive directory %s: %w", role, path, err)
+		}
+		if hostPathsOverlap(identity, sensitiveIdentity) {
+			return fmt.Errorf("%s must not expose security-sensitive directory: %s", role, path)
+		}
 	}
 	return nil
 }

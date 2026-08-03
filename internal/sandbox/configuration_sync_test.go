@@ -466,7 +466,8 @@ func TestClassifyHostWindowsTerminalThemeSelectsExplicitAndCustomThemes(t *testi
 		settings string
 		want     string
 	}{
-		{name: "default dark", settings: `{}`, want: windowsTerminalDarkTheme},
+		{name: "default system fallback", settings: `{}`, want: windowsTerminalDarkTheme},
+		{name: "explicit system fallback", settings: `{"theme":"system"}`, want: windowsTerminalDarkTheme},
 		{name: "built in light", settings: `{"theme":"light"}`, want: windowsTerminalLightTheme},
 		{name: "built in dark", settings: `{"theme":"dark"}`, want: windowsTerminalDarkTheme},
 		{name: "custom light", settings: `{"theme":"fixture","themes":[{"name":"fixture","window":{"applicationTheme":"light"}}]}`, want: windowsTerminalLightTheme},
@@ -479,7 +480,6 @@ func TestClassifyHostWindowsTerminalThemeSelectsExplicitAndCustomThemes(t *testi
 		})
 	}
 	for _, settings := range []string{
-		`{"theme":"system"}`,
 		`{"theme":{"light":"light","dark":"dark"}}`,
 		`{"theme":"missing","themes":[]}`,
 		`{"theme":"fixture","themes":[{"name":"fixture","window":{"applicationTheme":"system"}}]}`,
@@ -493,6 +493,47 @@ func TestClassifyHostWindowsTerminalThemeSelectsExplicitAndCustomThemes(t *testi
 	}
 	if preset, err := starshipPresetForWindowsTerminalTheme(windowsTerminalDarkTheme); err != nil || preset != starshipPastelPowerlinePreset {
 		t.Fatalf("dark preset = %q, err = %v", preset, err)
+	}
+}
+
+func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitConfiguration(t *testing.T) {
+	root := t.TempDir()
+	packagePlan := filepath.Join(root, wingetPackagePlanFileName)
+	writeTestFile(t, packagePlan, `{}`)
+	herdrConfig := filepath.Join(root, "herdr-config.toml")
+	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
+
+	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+		GitConfig:          filepath.Join(root, "missing", ".gitconfig"),
+		GitConfigDirectory: filepath.Join(root, "missing", "config", "git"),
+		GitIgnore:          filepath.Join(root, "missing", ".gitignore_global"),
+		GitAttributes:      filepath.Join(root, "missing", ".gitattributes"),
+		HerdrConfig:        herdrConfig,
+		PackagePlan:        packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n"))
+	if err != nil {
+		t.Fatalf("build archive without host Git configuration: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range reader.File {
+		if strings.HasPrefix(file.Name, "git/") {
+			t.Fatalf("archive synthesized missing host Git configuration: %s", file.Name)
+		}
+	}
+}
+
+func TestExportGitHubCLIAuthenticationAllowsMissingHostCommand(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	payload, count, err := exportGitHubCLIAuthentication(t.Context(), t.TempDir())
+	if err != nil || count != 0 {
+		t.Fatalf("missing host GitHub CLI export count = %d, err = %v", count, err)
+	}
+	authentication, err := decodeGitHubCLIAuthentication(payload)
+	if err != nil || len(authentication.Accounts) != 0 {
+		t.Fatalf("empty host GitHub CLI authentication = %#v, err = %v", authentication, err)
 	}
 }
 

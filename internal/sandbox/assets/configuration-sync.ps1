@@ -338,7 +338,9 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     if ($gitEnabled) {
         [Console]::Error.WriteLine('[config-sync] apply-git')
         $gitConfig = Join-Path $expanded 'git\.gitconfig'
-        Copy-VerifiedConfigurationFile -Source $gitConfig -Destination (Join-Path $env:USERPROFILE '.gitconfig')
+        if (Test-Path -LiteralPath $gitConfig -PathType Leaf) {
+            Copy-VerifiedConfigurationFile -Source $gitConfig -Destination (Join-Path $env:USERPROFILE '.gitconfig')
+        }
         $gitConfigSource = Join-Path $expanded 'git\config'
         if (Test-Path -LiteralPath $gitConfigSource -PathType Container) {
             $gitConfigDestination = Join-Path $env:USERPROFILE '.config\git'

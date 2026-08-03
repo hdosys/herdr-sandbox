@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -164,6 +165,12 @@ func windowsPowerShellExecutable() (string, error) {
 
 func boundedText(data []byte) string {
 	text := strings.ToValidUTF8(strings.TrimSpace(string(data)), "�")
+	text = strings.Map(func(value rune) rune {
+		if value == '\r' || value == '\n' || value == '\t' || unicode.IsPrint(value) {
+			return value
+		}
+		return '�'
+	}, text)
 	const maximumBytes = 2000
 	if len(text) <= maximumBytes {
 		return text

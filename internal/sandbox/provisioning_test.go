@@ -151,11 +151,15 @@ func TestProjectProvisioningRejectsReparseScriptAndParent(t *testing.T) {
 	})
 }
 
-func TestProtectedRootMappingValidationAllowsOnlyNarrowDescendants(t *testing.T) {
+func TestProtectedRootMappingValidationAllowsOrdinaryDescendantsButRejectsSensitiveRoots(t *testing.T) {
 	protected := t.TempDir()
 	child := filepath.Join(protected, "selected-project")
-	if err := os.MkdirAll(child, 0o700); err != nil {
-		t.Fatal(err)
+	sensitive := filepath.Join(protected, ".ssh")
+	sensitiveChild := filepath.Join(sensitive, "keys")
+	for _, directory := range []string{child, sensitiveChild} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, name := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
 		t.Setenv(name, protected)
@@ -173,6 +177,18 @@ func TestProtectedRootMappingValidationAllowsOnlyNarrowDescendants(t *testing.T)
 	}
 	if err := validatePhysicalMappingDoesNotContainProtectedRoot("workspace", childIdentity); err != nil {
 		t.Fatalf("narrow protected-root descendant was rejected: %v", err)
+	}
+	if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("workspace", childIdentity); err != nil {
+		t.Fatalf("ordinary protected-root descendant was rejected: %v", err)
+	}
+	for _, path := range []string{sensitive, sensitiveChild} {
+		identity, err := physicalMappedDirectory(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("folder mount secrets", identity); err == nil || !strings.Contains(err.Error(), "security-sensitive") {
+			t.Fatalf("sensitive mapping error for %s = %v", path, err)
+		}
 	}
 }
 

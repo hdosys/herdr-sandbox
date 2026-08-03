@@ -22,6 +22,7 @@ const (
 	processTreeHelperMode = "HERDR_SANDBOX_PROCESS_TREE_HELPER"
 	processTreePIDFile    = "HERDR_SANDBOX_PROCESS_TREE_PID_FILE"
 	successHelperMode     = "HERDR_SANDBOX_SUCCESS_HELPER"
+	largeOutputHelperMode = "HERDR_SANDBOX_LARGE_OUTPUT_HELPER"
 	parentWaitsForChild   = "parent-waits"
 	parentExitsAfterSpawn = "parent-exits"
 	grandchildSleeps      = "grandchild"
@@ -36,6 +37,25 @@ func TestCommandCombinedOutputUsesOwnedRunPath(t *testing.T) {
 	}
 	if string(output) != "owned" {
 		t.Fatalf("CombinedOutput = %q, want owned", output)
+	}
+}
+
+func TestCommandCombinedOutputStopsAtMemoryLimit(t *testing.T) {
+	command := CommandContext(t.Context(), os.Args[0], "-test.run=^TestLargeOutputCommandHelper$")
+	command.Env = append(os.Environ(), largeOutputHelperMode+"=1")
+	output, err := command.CombinedOutput()
+	if !errors.Is(err, errCombinedOutputLimit) {
+		t.Fatalf("CombinedOutput error = %v, want output limit", err)
+	}
+	if len(output) != maximumCombinedOutputBytes {
+		t.Fatalf("CombinedOutput length = %d, want %d", len(output), maximumCombinedOutputBytes)
+	}
+}
+
+func TestLargeOutputCommandHelper(t *testing.T) {
+	if os.Getenv(largeOutputHelperMode) == "1" {
+		fmt.Fprint(os.Stdout, strings.Repeat("x", maximumCombinedOutputBytes+1))
+		os.Exit(0)
 	}
 }
 

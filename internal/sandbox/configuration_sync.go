@@ -163,7 +163,11 @@ func classifyHostWindowsTerminalTheme(contents []byte) (string, error) {
 		return themeName, nil
 	}
 	if themeName == "system" {
-		return "", errors.New(`theme "system" does not identify an explicit light or dark application theme`)
+		// Windows Terminal defaults to the dynamic system theme. Starship needs
+		// one deterministic preset for a guest that does not observe later host
+		// theme changes, so use the established dark baseline instead of making
+		// an otherwise valid host setting block startup.
+		return windowsTerminalDarkTheme, nil
 	}
 	themesValue, exists := settings["themes"]
 	if !exists {
@@ -327,17 +331,20 @@ func exportGitHubCLIAuthentication(ctx context.Context, configurationDirectory s
 	}
 	executable, err := exec.LookPath("gh.exe")
 	if err != nil {
-		return nil, 0, errors.New("GitHub CLI gh.exe is not on PATH")
+		if errors.Is(err, exec.ErrNotFound) {
+			return emptyGitHubCLIAuthenticationPayload()
+		}
+		return nil, 0, fmt.Errorf("find GitHub CLI gh.exe: %w", err)
 	}
 	environment := githubCLICommandEnvironment(configurationDirectory)
 	statusOutput, err := runBoundedGitHubCLI(ctx, executable, environment, maximumGitHubCLIStatusSize, "auth", "status", "--json", "hosts")
-	if err != nil {
-		return nil, 0, fmt.Errorf("inspect host GitHub CLI authentication: %w", err)
-	}
 	var status githubCLIAuthStatus
 	decoder := json.NewDecoder(bytes.NewReader(statusOutput))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&status); err != nil {
+	if decodeErr := decoder.Decode(&status); decodeErr != nil {
+		if err != nil && len(statusOutput) == 0 {
+			return emptyGitHubCLIAuthenticationPayload()
+		}
 		return nil, 0, errors.New("decode host GitHub CLI authentication status")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
@@ -424,6 +431,14 @@ func exportGitHubCLIAuthentication(ctx context.Context, configurationDirectory s
 	return payload, len(authentication.Accounts), nil
 }
 
+func emptyGitHubCLIAuthenticationPayload() ([]byte, int, error) {
+	payload, err := json.Marshal(githubCLIAuthentication{SchemaVersion: 1, Accounts: []githubCLIAccount{}})
+	if err != nil {
+		return nil, 0, fmt.Errorf("encode empty host GitHub CLI authentication: %w", err)
+	}
+	return payload, 0, nil
+}
+
 func withCanonicalGitHubCLIAccountLogin(account githubCLIAccount, output []byte) (githubCLIAccount, error) {
 	account.Login = strings.TrimSpace(string(output))
 	if err := validateGitHubCLIAccount(account, true); err != nil {
@@ -486,7 +501,7 @@ func runBoundedGitHubCLI(ctx context.Context, executable string, environment []s
 		return nil, fmt.Errorf("read GitHub CLI output: %w", readErr)
 	}
 	if waitErr != nil {
-		return nil, fmt.Errorf("GitHub CLI command failed: %w", waitErr)
+		return bytes.TrimSpace(output), fmt.Errorf("GitHub CLI command failed: %w", waitErr)
 	}
 	return bytes.TrimSpace(output), nil
 }
@@ -844,8 +859,12 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 
 	if sources.GitConfig != "" {
 		if err := add(sources.GitConfig, filepath.Join("git", ".gitconfig")); err != nil {
-			return nil, fmt.Errorf("archive global Git config: %w", err)
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("archive global Git config: %w", err)
+			}
 		}
+	}
+	if sources.GitConfigDirectory != "" {
 		if info, err := os.Stat(sources.GitConfigDirectory); err == nil && info.IsDir() {
 			if err := addConfigurationTree(sources.GitConfigDirectory, filepath.Join("git", "config"), nil, add); err != nil {
 				return nil, err
@@ -853,20 +872,23 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("inspect Git config directory: %w", err)
 		}
-		for _, optional := range []struct {
-			source      string
-			destination string
-		}{
-			{source: sources.GitIgnore, destination: filepath.Join("git", ".gitignore_global")},
-			{source: sources.GitAttributes, destination: filepath.Join("git", ".gitattributes")},
-		} {
-			if info, err := os.Stat(optional.source); err == nil && info.Mode().IsRegular() {
-				if err := add(optional.source, optional.destination); err != nil {
-					return nil, err
-				}
-			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("inspect optional Git config file: %w", err)
+	}
+	for _, optional := range []struct {
+		source      string
+		destination string
+	}{
+		{source: sources.GitIgnore, destination: filepath.Join("git", ".gitignore_global")},
+		{source: sources.GitAttributes, destination: filepath.Join("git", ".gitattributes")},
+	} {
+		if optional.source == "" {
+			continue
+		}
+		if info, err := os.Stat(optional.source); err == nil && info.Mode().IsRegular() {
+			if err := add(optional.source, optional.destination); err != nil {
+				return nil, err
 			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect optional Git config file: %w", err)
 		}
 	}
 

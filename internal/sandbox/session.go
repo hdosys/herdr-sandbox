@@ -623,6 +623,9 @@ func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, ca
 		if err := validatePhysicalMappingDoesNotContainProtectedRoot(mapped.role, mapped.identity); err != nil {
 			return err
 		}
+		if err := validatePhysicalMappingDoesNotExposeSensitiveRoot(mapped.role, mapped.identity); err != nil {
+			return err
+		}
 	}
 	return nil
 }
