@@ -9,7 +9,7 @@
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Deployment time](#deployment-time) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Deployment time](#deployment-time) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
@@ -94,7 +94,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and upgrades the four packaged files as one rollback-aware set.
+- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and upgrades the four packaged files as one rollback-aware set. A later seed, uninstaller, registration, or PATH failure restores the prior files, uninstaller, version/PATH ownership, and any PATH entry added by that attempt.
 - Creates `config.json` and `user.ps1` only when absent; setup and upgrades never replace existing user settings.
 - Adds only its own user `PATH` entry. A matching entry that existed before setup remains user-owned.
 - Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
@@ -189,6 +189,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 | Command | Behavior |
 | --- | --- |
 | `herdr-sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
+| `herdr-sandbox version` | Prints the embedded application version and abbreviated source revision when available. |
 | `herdr-sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
 | `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
@@ -325,7 +326,7 @@ Configuration sync is default-on when these host surfaces exist:
 | GitHub Copilot CLI | Copies approved config and reuses successfully imported GitHub CLI accounts. Native Credential Manager tokens stay host-bound. |
 | Pi | Copies approved agent configuration and portable `auth.json`. |
 
-The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
+The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
 #### Workspace discovery
 
@@ -337,7 +338,7 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 
 Use optional `mounts` for host folders that should be available without becoming project workspaces. The key is arbitrary: a mount named `worktrees` appears at `C:\Mounts\worktrees`, while `shared` appears at `C:\Mounts\shared`. No `reference` key is required. Generic mounts do not become active, run `.herdr-sandbox\provision.ps1`, or create Herdr workspaces. Set `readOnly` to `true` for reference/shared material and to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
 
-Mapped folders expose host data across the isolation boundary. Herdr Sandbox rejects volume roots, reparse-bearing paths, protected host roots, and any overlap with another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. It also fixes every guest destination below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
+Mapped folders expose host data across the isolation boundary. Ordinary explicitly selected descendants of the user profile remain valid, but Herdr Sandbox rejects volume roots, reparse-bearing paths, whole protected roots, and known credential locations such as `.ssh`, `.gnupg`, cloud/container config, coding-agent authentication roots, GitHub CLI state, and Windows credential stores. A parent containing one of those locations and a descendant inside one are both rejected. Mounts also may not overlap another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. Every guest destination remains fixed below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
 
 #### Agent packages
 
@@ -382,6 +383,10 @@ Persistent host state is split intentionally:
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
 
 ## Security boundaries
+
+See [`SECURITY.md`](SECURITY.md) for vulnerability reporting, the complete threat
+model, and practical guidance for credential-free or externally network-restricted
+use.
 
 - Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
 - The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.

@@ -15,6 +15,10 @@ the global workflow or recreate project `.opencode/` configuration.
   outcomes.
 - `ARCHITECTURE.md` owns technical boundaries, state, external integrations, and
   verification architecture.
+- `SECURITY.md` owns the public threat model, supported security-reporting path,
+  accepted security trade-offs, and release-verification guidance.
+- `CHANGELOG.md` owns concise user-visible changes not yet or already grouped by
+  release; GitHub Releases retain exact published artifact notes.
 - `BACKLOG.md` owns open product work.
 - `AGENT_IMPROVEMENTS.md` owns evidence-backed repository-specific agent, tooling,
   and test improvements.
