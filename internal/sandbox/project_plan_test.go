@@ -31,12 +31,7 @@ Install-GoStack -Version '1.26.5'
 Install-DotNetStack
 throw 'the AST adapter must not execute project code'
 `)
-	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `function Install-ProjectTools {
-    Install-CargoNextest
-}
-Install-RustMSVCStack -ProjectDirectory 'C:\Workspaces\herdr'
-Install-ZigStack -Version '0.15.2'
-Install-Just
+	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `Install-HerdrStack -ProjectDirectory 'C:\Workspaces\herdr'
 `)
 	workspaces := []workspacePlan{
 		{Name: "alpha", ProvisioningPath: projectsDirectory + `\alpha.ps1`},
@@ -49,7 +44,7 @@ Install-Just
 	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
-	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "cargo-nextest|just|rust-msvc|zig" {
+	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "cargo-nextest|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
 	if strings.Join(projectStackStrings(userStacks), "|") != "rust-msvc" {

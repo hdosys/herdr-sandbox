@@ -548,6 +548,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		want  string
 	}{
 		{name: "flags", args: []string{"init", "--stack", "go", "--stack", "dotnet"}, want: "go|dotnet"},
+		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "guided", args: []string{"init"}, input: "python, rust\n", want: "python|rust"},
 	}
 	for _, test := range tests {

@@ -81,7 +81,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, python, rust, zig, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, the Herdr virtual stack, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -223,10 +223,17 @@ Set-StrictMode -Version 2.0
 
 Install-DotNetStack
 Install-GoStack -ProjectDirectory $ProjectDirectory
+Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-NodeStack
-Install-PythonStack
-Install-RustMSVCStack -ProjectDirectory $ProjectDirectory
-Install-ZigStack
+`,
+		filepath.Join(fixture.Project, "Cargo.toml"): `[package]
+name = "herdr-native-all-stacks"
+version = "0.0.0"
+edition = "2021"
+`,
+		filepath.Join(fixture.Project, "rust-toolchain.toml"): `[toolchain]
+channel = "1.96.1"
+components = ["clippy", "rustfmt"]
 `,
 		filepath.Join(fixture.Project, "go.mod"): `module example.com/herdr-native-all-stacks
 
@@ -507,6 +514,8 @@ $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python = (Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $cargo = (Get-Command 'cargo.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$nextest = (Get-Command 'cargo-nextest.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$just = (Get-Command 'just.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $rustc = (Get-Command 'rustc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $zig = (Get-Command 'zig.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
@@ -562,7 +571,14 @@ $pythonOutput = Invoke-SmokeTool 'python-run' $python @($pythonFile)
 Assert-SmokeOutput 'python-run' $pythonOutput 'python-smoke-ok'
 
 $null = Invoke-SmokeTool 'cargo-version' $cargo @('--version')
+$null = Invoke-SmokeTool 'cargo-nextest-version' $nextest @('--version')
+$null = Invoke-SmokeTool 'just-version' $just @('--version')
 $null = Invoke-SmokeTool 'rustc-version' $rustc @('--version')
+$expectedLibghosttyOutput = 'C:\HerdrSandbox\build\cargo-target\zig-out'
+if ($env:LIBGHOSTTY_VT_ZIG_OUT_DIR -cne $expectedLibghosttyOutput -or
+    -not (Test-Path -LiteralPath $expectedLibghosttyOutput -PathType Container)) {
+    throw "Herdr libghostty output environment is unavailable: $env:LIBGHOSTTY_VT_ZIG_OUT_DIR"
+}
 $rustRoot = Join-Path $root 'rust'
 $rustSource = Join-Path $rustRoot 'main.rs'
 $rustBinary = Join-Path $rustRoot 'smoke-rust.exe'
@@ -603,6 +619,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: dotnet, go, node, python, rust, zig')
+[Console]::Out.WriteLine('[all-stacks] PASS: dotnet, go, node, Herdr virtual stack')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

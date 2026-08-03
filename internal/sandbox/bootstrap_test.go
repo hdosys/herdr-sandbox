@@ -88,7 +88,7 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		}
 	}
 	lower := strings.ToLower(script)
-	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdr.dev/install", "github.com/hdosys/herdr-win/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdr\\", "active-workspace.txt"} {
+	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdrdev/herdr", "herdr.dev/install", "github.com/hdosys/herdr-win/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdr\\", "active-workspace.txt"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("bootstrap contains forbidden path %q", forbidden)
 		}

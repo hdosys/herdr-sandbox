@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const stackHerdrPreset projectStack = "herdr"
+
 // ProjectInitResult describes the one project profile created by InitializeProject.
 type ProjectInitResult struct {
 	Path   string
@@ -108,11 +110,12 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: dotnet, go, node, python, rust, or zig")
+		return nil, nil, errors.New("select at least one stack: dotnet, go, herdr, node, python, rust, or zig")
 	}
 	aliases := map[string]projectStack{
 		"dotnet": stackDotNet,
 		"go":     stackGo,
+		"herdr":  stackHerdrPreset,
 		"node":   stackNode,
 		"python": stackPython,
 		"rust":   stackRustMSVC,
@@ -125,13 +128,24 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, node, python, rust, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, herdr, node, python, rust, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
 		}
 		seen[stack] = true
 		result = append(result, stack)
+	}
+	if seen[stackHerdrPreset] {
+		for _, included := range []projectStack{stackPython, stackRustMSVC, stackZig} {
+			if seen[included] {
+				label := string(included)
+				if included == stackRustMSVC {
+					label = "rust"
+				}
+				return nil, nil, fmt.Errorf("stack %q already includes stack %q", stackHerdrPreset, label)
+			}
+		}
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	labels := make([]string, len(result))
@@ -166,6 +180,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-DotNetStack"
 		case stackGo:
 			call = "Install-GoStack -ProjectDirectory $ProjectDirectory"
+		case stackHerdrPreset:
+			call = "Install-HerdrStack -ProjectDirectory $ProjectDirectory"
 		case stackNode:
 			call = "Install-NodeStack"
 		case stackPython:

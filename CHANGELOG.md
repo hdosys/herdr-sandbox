@@ -15,6 +15,9 @@ release notes remain available on the
   latest-versus-pinned package behavior.
 - A disabled-by-default experimental `KhronosGroup.VulkanRT` package opt-in with
   strict physical-device verification through `vulkaninfo`.
+- An explicit virtual `herdr` project stack so official Herdr and Herdr-Win
+  checkouts can generate their maintained Windows toolchain profile with
+  `herdr-sandbox init --stack herdr`.
 
 ### Changed
 

@@ -17,6 +17,7 @@ $knownStacks = @{
     'Install-CargoNextest' = 'cargo-nextest'
     'Install-DotNetStack' = 'dotnet'
     'Install-GoStack' = 'go'
+    'Install-HerdrStack' = @('cargo-nextest', 'just', 'python', 'rust-msvc', 'zig')
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
     'Install-PythonStack' = 'python'
@@ -58,7 +59,9 @@ function Get-SelectedProvisioningStacks {
         return $null -ne $commandName -and $knownStacks.ContainsKey($commandName)
     }, $true))
     foreach ($command in $commands) {
-        $selected[[string]$knownStacks[$command.GetCommandName()]] = $true
+        foreach ($stack in @($knownStacks[$command.GetCommandName()])) {
+            $selected[[string]$stack] = $true
+        }
     }
     return @($selected.Keys | Sort-Object)
 }

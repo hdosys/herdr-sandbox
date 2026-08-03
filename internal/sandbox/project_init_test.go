@@ -45,8 +45,32 @@ func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 	}
 }
 
+func TestInitializeProjectWritesHerdrVirtualStack(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"herdr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "herdr" {
+		t.Fatalf("stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Install-HerdrStack -ProjectDirectory $ProjectDirectory") {
+		t.Fatalf("Herdr virtual profile = %s", text)
+	}
+	for _, expanded := range []string{"Install-PythonStack", "Install-ZigStack", "Install-RustMSVCStack", "Install-CargoNextest", "Install-Just"} {
+		if strings.Contains(text, expanded) {
+			t.Fatalf("init duplicated virtual stack implementation %q: %s", expanded, text)
+		}
+	}
+}
+
 func TestInitializeProjectRejectsSelectionsBeforeFilesystemMutation(t *testing.T) {
-	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}} {
+	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "zig"}} {
 		project := t.TempDir()
 		if _, err := InitializeProject(project, requested); err == nil {
 			t.Fatalf("selection %v unexpectedly succeeded", requested)

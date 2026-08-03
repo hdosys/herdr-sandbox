@@ -870,7 +870,7 @@ exit 0
 	}
 }
 
-func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *testing.T) {
+func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *testing.T) {
 	text := readDefaultStackProvisioning(t)
 	for _, required := range []string{
 		stackProvisioningContract,
@@ -884,6 +884,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 		"function Install-RustMSVCStack",
 		"function Install-CargoNextest",
 		"function Install-Just",
+		"function Install-HerdrStack",
 		"function Install-StackVisualStudioBuildTools",
 		"Assert-ProvisioningCacheTree -Path $slot",
 		"Get-StackRustManifestSnapshot -Channel 'stable'",
@@ -897,7 +898,6 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 		t.Fatal("stack library retains a hard-coded omitted-version default")
 	}
 	for _, forbidden := range []string{
-		"function Install-Herdr",
 		"function Get-Herdr",
 		"function Test-Herdr",
 		"function Assert-Herdr",

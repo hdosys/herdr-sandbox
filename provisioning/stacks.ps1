@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 6
+# herdr-sandbox-stacks-contract: 7
 
 function Get-StackWebResponseText {
     param(
@@ -1621,4 +1621,49 @@ function Install-Just {
     $justVersion = Assert-ProvisioningCommand -Role 'Just' -Name 'just.exe' `
         -VersionArguments @('--version') -ExpectedPattern $justPattern
     Write-Output "Just ready: $justVersion"
+}
+
+function Install-HerdrStack {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ProjectDirectory
+    )
+
+    if (-not [IO.Path]::IsPathRooted($ProjectDirectory)) {
+        throw "Herdr project directory must be absolute: $ProjectDirectory"
+    }
+    $projectRoot = [IO.Path]::GetFullPath($ProjectDirectory).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'Cargo.toml') -PathType Leaf)) {
+        throw "Herdr Cargo.toml is missing from mapped project: $projectRoot"
+    }
+
+    Install-PythonStack -Series '3.13'
+    Install-ZigStack -Version '0.15.2'
+    Install-RustMSVCStack -ProjectDirectory $projectRoot
+
+    $expectedCargoTarget = 'C:\HerdrSandbox\build\cargo-target'
+    if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR) -or
+        [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR).TrimEnd('\') -cne $expectedCargoTarget) {
+        throw "Herdr Rust stack returned an unexpected CARGO_TARGET_DIR: $env:CARGO_TARGET_DIR"
+    }
+    $libghosttyOutput = Join-Path $expectedCargoTarget 'zig-out'
+    if (-not (Test-Path -LiteralPath $libghosttyOutput)) {
+        New-Item -ItemType Directory -Path $libghosttyOutput -Force | Out-Null
+    }
+    $libghosttyOutputInfo = Get-Item -LiteralPath $libghosttyOutput -Force
+    if (-not $libghosttyOutputInfo.PSIsContainer -or
+        ($libghosttyOutputInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Herdr libghostty output directory is unsafe: $libghosttyOutput"
+    }
+    $env:LIBGHOSTTY_VT_ZIG_OUT_DIR = $libghosttyOutput
+    [Environment]::SetEnvironmentVariable('LIBGHOSTTY_VT_ZIG_OUT_DIR', $libghosttyOutput, 'Machine')
+    if ([Environment]::GetEnvironmentVariable('LIBGHOSTTY_VT_ZIG_OUT_DIR', 'Machine') -cne $libghosttyOutput) {
+        throw 'Herdr libghostty output environment verification failed.'
+    }
+
+    Install-CargoNextest
+    Install-Just
+    Write-Output 'Herdr development toolchain ready.'
 }
