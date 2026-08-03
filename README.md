@@ -69,7 +69,7 @@ Our full compatibility test installs all supported stacks in one Sandbox: **.NET
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows Terminal and internet access for cache misses.
-- An existing remote-capable `herdr.exe` from the maintainer's [`herdr-win`](https://github.com/hdosys/herdr-win) fork on host `PATH`.
+- An existing Windows `herdr.exe` with working `--remote` support on host `PATH`.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -78,7 +78,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-If `herdr.exe` is missing, install it from [`herdr-win`](https://github.com/hdosys/herdr-win) and place it on host `PATH`. `herdr-sandbox` verifies that command and copies the same digest-verified runtime into each fresh guest; it never installs, updates, or replaces host Herdr. Missing or unsupported builds point to `winget install --id hdosys.herdr-win --exact`.
+[`herdr-win`](https://github.com/hdosys/herdr-win) currently provides a Windows build with remote attach, but `herdr-sandbox` does not require that fork, package, installer, or managed layout. It capability-checks the `herdr.exe` already on `PATH`, copies the status-reported physical executable and optional complete ConPTY bundle into each fresh guest, and never installs, updates, or replaces host Herdr.
 
 ### Install herdr-sandbox
 

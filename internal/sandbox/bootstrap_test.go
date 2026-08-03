@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
+func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 	script := string(bootstrapScript)
 	for _, required := range []string{
 		"Net.SecurityProtocolType]::Tls12",
@@ -52,18 +52,18 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 		"OpenSSH default shell verification failed",
 		"bootstrap-release.json",
 		"host-herdr.json",
-		"herdr-install",
+		"herdr-runtime",
+		"function Read-HostHerdrRuntimeInput",
 		"Host Herdr runtime layout is unsupported",
 		"download.visualstudio.microsoft.com/download/pr/",
 		"VC_redist.x64.exe",
 		"@('/install', '/quiet', '/norestart')",
 		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
 		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
-		"$herdrRoot = Join-Path $herdrInstallRoot 'runtime'",
-		"$herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID",
 		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
-		"($managedRuntimePrefix + 'herdr-launcher.exe')",
-		"($managedRuntimePrefix + 'runtime.ready')",
+		"$standaloneLayout = 'herdr.exe'",
+		"'conpty/arm64/OpenConsole.exe'",
+		"'conpty/x64/OpenConsole.exe'",
 		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
 		"[Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')",
 		"Get-Command -Name 'herdr.exe' -CommandType Application",
@@ -117,7 +117,7 @@ func TestBootstrapUsesPowerShellAndHerdrWinOnly(t *testing.T) {
 func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	script := string(bootstrapScript)
 	needles := []string{
-		"$hostHerdrMetadata =",
+		"$hostHerdrInput = Read-HostHerdrRuntimeInput",
 		"-Phase 'Registry'",
 		"Get-PinnedBootstrapAsset -Role 'WinGet bundle'",
 		"Add-AppxPackage -Path $wingetBundle",
@@ -301,27 +301,104 @@ func TestBootstrapBoundsWinGetRegistrationRaceRetries(t *testing.T) {
 	}
 }
 
-func TestBootstrapPreservesManagedHerdrInstallTree(t *testing.T) {
+func TestBootstrapInstallsVerifiedPhysicalHerdrRuntime(t *testing.T) {
 	script := string(bootstrapScript)
 	for _, required := range []string{
-		"\\.(?<buildID>[0-9a-f]{12}\\.[0-9a-f]{12})$",
-		"$ExpectedHerdrBuildID = $herdrBuildIDMatch.Groups['buildID'].Value",
-		"$hostHerdrSourceDirectory = Join-Path $InputDirectory 'herdr-install'",
+		"$metadata.schemaVersion -isnot [int]",
+		"[int]$metadata.schemaVersion -ne 3",
+		"$metadata.files -isnot [System.Array]",
+		"$sourceDirectory = Join-Path $InputDirectory 'herdr-runtime'",
+		"$hostHerdrInput = Read-HostHerdrRuntimeInput -InputDirectory $InputDirectory",
 		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
-		"$herdrRoot = Join-Path $herdrInstallRoot 'runtime'",
-		"$herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID",
 		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
-		"herdr-managed-bin-v1`n",
-		"herdr-runtime-v1`nbuild_id=$ExpectedHerdrBuildID`n",
-		"herdr-pointer-v1`nbuild_id=$ExpectedHerdrBuildID`n",
-		"Guest-local Herdr managed install copy failed verification",
+		"$destinationPath = Join-Path $herdrBinDirectory $windowsRelativePath",
+		"$standaloneLayout = 'herdr.exe'",
+		"$actualLayout -cne $bundledLayout",
+		"Guest-local Herdr runtime copy failed verification",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("bootstrap managed Herdr layout contract is missing %q", required)
+			t.Fatalf("bootstrap physical Herdr runtime contract is missing %q", required)
 		}
 	}
-	if count := strings.Count(script, "($managedRuntimePrefix + '"); count != 8 {
-		t.Fatalf("bootstrap has %d parenthesized managed-runtime paths, want 8", count)
+	for _, forbidden := range []string{"$ExpectedHerdrBuildID", "herdr-managed-bin-v1", "herdr-runtime-v1", "herdr-pointer-v1", "herdr-launcher.exe"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("bootstrap retains managed Herdr install contract %q", forbidden)
+		}
+	}
+}
+
+func TestReadHostHerdrRuntimeInputRejectsJSONTypeCoercionInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("x")
+	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	entry := func(size string) string {
+		return fmt.Sprintf(`{"path":"herdr.exe","sha256":"%s","size":%s}`, digest, size)
+	}
+	manifest := func(schema, protocol, files string) string {
+		return fmt.Sprintf(`{"schemaVersion":%s,"version":"herdr 1.2.3","protocol":%s,"files":%s}`, schema, protocol, files)
+	}
+	writeInput := func(name, metadata string) string {
+		t.Helper()
+		root := filepath.Join(directory, name)
+		runtimeDirectory := filepath.Join(root, "herdr-runtime")
+		if err := os.MkdirAll(runtimeDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimeDirectory, "herdr.exe"), payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "host-herdr.json"), []byte(metadata), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return root
+	}
+	valid := writeInput("valid", manifest("3", "17", "["+entry("1")+"]"))
+	invalid := []string{
+		writeInput("schema-string", manifest(`"3"`, "17", "["+entry("1")+"]")),
+		writeInput("protocol-string", manifest("3", `"17"`, "["+entry("1")+"]")),
+		writeInput("protocol-boolean", manifest("3", "true", "["+entry("1")+"]")),
+		writeInput("size-string", manifest("3", "17", "["+entry(`"1"`)+"]")),
+		writeInput("size-boolean", manifest("3", "17", "["+entry("true")+"]")),
+		writeInput("files-object", manifest("3", "17", entry("1"))),
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	invalidLiterals := make([]string, 0, len(invalid))
+	for _, path := range invalid {
+		invalidLiterals = append(invalidLiterals, "'"+quote(path)+"'")
+	}
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw 'Bootstrap script has parse errors.' }
+foreach ($name in @('Get-BootstrapFileSHA256', 'Read-HostHerdrRuntimeInput')) {
+    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($null -eq $definition) { throw "Bootstrap function is missing: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$valid = Read-HostHerdrRuntimeInput -InputDirectory '%s'
+if ($valid.Version -cne 'herdr 1.2.3' -or $valid.Protocol -isnot [int] -or
+    [int]$valid.Protocol -ne 17 -or @($valid.Files).Count -ne 1) {
+    throw 'Valid host Herdr runtime metadata was rejected.'
+}
+foreach ($invalid in @(%s)) {
+    $accepted = $true
+    try { [void](Read-HostHerdrRuntimeInput -InputDirectory $invalid) } catch { $accepted = $false }
+    if ($accepted) { throw "Invalid host Herdr runtime metadata was accepted: $invalid" }
+}
+exit 0
+`, quote(bootstrapPath), quote(valid), strings.Join(invalidLiterals, ", "))
+	powerShell := mustWindowsPowerShellPath(t)
+	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("host Herdr runtime metadata PS5.1 regression: %v: %s", err, output)
 	}
 }
 

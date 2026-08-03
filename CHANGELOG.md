@@ -25,6 +25,10 @@ release notes remain available on the
 
 ### Changed
 
+- Host Herdr selection now accepts any Windows `herdr.exe` that proves the
+  required `--remote` capability. Guest provisioning copies the reported
+  physical executable and optional complete ConPTY bundle without depending on
+  a specific fork, package, installer, launcher, or managed-runtime layout.
 - Missing host Git configuration, GitHub CLI, and GitHub authentication are now
   clean no-ops during guest configuration sync.
 - Windows Terminal's supported `system` theme now uses the deterministic dark

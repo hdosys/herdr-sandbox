@@ -425,7 +425,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 func TestRunUpRejectsIncompatibleHostHerdrBeforeCleanup(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
-		return sandbox.HostHerdr{}, errors.New("remote mode is unsupported; run winget install")
+		return sandbox.HostHerdr{}, errors.New("remote mode is unsupported; install a compatible Windows Herdr build")
 	}
 	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
 		t.Fatal("incompatible host Herdr reached cleanup")

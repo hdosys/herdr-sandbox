@@ -437,6 +437,100 @@ function Get-PowerShell7Installation {
     }
 }
 
+function Read-HostHerdrRuntimeInput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InputDirectory
+    )
+
+    $metadataPath = Join-Path $InputDirectory 'host-herdr.json'
+    $sourceDirectory = Join-Path $InputDirectory 'herdr-runtime'
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
+        throw 'Verified host Herdr runtime input is missing.'
+    }
+    try {
+        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+    } catch {
+        throw "Host Herdr runtime metadata is not valid JSON: $($_.Exception.Message)"
+    }
+    if ($metadata -isnot [pscustomobject]) {
+        throw 'Host Herdr runtime metadata must be one object.'
+    }
+    $metadataProperties = @($metadata.PSObject.Properties.Name | Sort-Object)
+    if (($metadataProperties -join '|') -cne 'files|protocol|schemaVersion|version' -or
+        $metadata.schemaVersion -isnot [int] -or
+        [int]$metadata.schemaVersion -ne 3) {
+        throw 'Host Herdr runtime metadata has an unsupported contract.'
+    }
+    if ($metadata.version -isnot [string] -or
+        ([string]$metadata.version) -notmatch '^herdr [^\r\n]{1,250}$' -or
+        $metadata.protocol -isnot [int] -or
+        [int]$metadata.protocol -lt 1) {
+        throw 'Host Herdr runtime identity is invalid.'
+    }
+    if ($metadata.files -isnot [System.Array]) {
+        throw 'Host Herdr runtime files must be an array.'
+    }
+    $files = [object[]]$metadata.files
+    if ($files.Count -notin @(1, 5)) {
+        throw "Host Herdr runtime file count is invalid: $($files.Count)"
+    }
+    $paths = New-Object System.Collections.Generic.List[string]
+    $seenPaths = @{}
+    foreach ($file in $files) {
+        if ($file -isnot [pscustomobject]) {
+            throw 'Host Herdr runtime file metadata must be an object.'
+        }
+        $entryProperties = @($file.PSObject.Properties.Name | Sort-Object)
+        if (($entryProperties -join '|') -cne 'path|sha256|size' -or
+            $file.path -isnot [string] -or
+            $file.sha256 -isnot [string] -or
+            ($file.size -isnot [int] -and $file.size -isnot [long])) {
+            throw 'Host Herdr runtime file metadata has invalid types.'
+        }
+        $relativePath = [string]$file.path
+        $expectedSHA256 = [string]$file.sha256
+        $expectedSize = [long]$file.size
+        if ($relativePath -notmatch '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$' -or
+            $expectedSHA256 -notmatch '^[0-9a-f]{64}$' -or
+            $expectedSize -lt 1 -or $expectedSize -gt 268435456 -or
+            $seenPaths.ContainsKey($relativePath)) {
+            throw "Host Herdr runtime file metadata is invalid: $relativePath"
+        }
+        $seenPaths[$relativePath] = $true
+        $paths.Add($relativePath)
+        $sourcePath = Join-Path $sourceDirectory $relativePath.Replace('/', '\')
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "Host Herdr runtime input is missing: $relativePath"
+        }
+        $sourceFile = Get-Item -LiteralPath $sourcePath -Force
+        if (($sourceFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            [long]$sourceFile.Length -ne $expectedSize -or
+            (Get-BootstrapFileSHA256 -Path $sourcePath) -cne $expectedSHA256) {
+            throw "Host Herdr runtime input failed verification: $relativePath"
+        }
+    }
+    $actualLayout = (@($paths) | Sort-Object) -join '|'
+    $standaloneLayout = 'herdr.exe'
+    $bundledLayout = (@(
+        'herdr.exe',
+        'conpty/arm64/OpenConsole.exe',
+        'conpty/conpty.dll',
+        'conpty/herdr-conpty.json',
+        'conpty/x64/OpenConsole.exe'
+    ) | Sort-Object) -join '|'
+    if ($actualLayout -cne $standaloneLayout -and $actualLayout -cne $bundledLayout) {
+        throw "Host Herdr runtime layout is unsupported: $actualLayout"
+    }
+    return [pscustomobject]@{
+        Version = [string]$metadata.version
+        Protocol = [int]$metadata.protocol
+        Files = $files
+        SourceDirectory = $sourceDirectory
+    }
+}
+
 try {
     if (-not (Test-Path -LiteralPath $InputDirectory -PathType Container)) {
         throw "Sandbox input directory does not exist: $InputDirectory"
@@ -493,86 +587,11 @@ try {
         throw 'OpenSSH MSI SHA-256 is malformed.'
     }
 
-    $hostHerdrMetadataPath = Join-Path $InputDirectory 'host-herdr.json'
-    $hostHerdrSourceDirectory = Join-Path $InputDirectory 'herdr-install'
-    if (-not (Test-Path -LiteralPath $hostHerdrMetadataPath -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $hostHerdrSourceDirectory -PathType Container)) {
-        throw 'Verified host Herdr runtime input is missing.'
-    }
-    $hostHerdrMetadata = Get-Content -LiteralPath $hostHerdrMetadataPath -Raw | ConvertFrom-Json
-    $hostHerdrMetadataProperties = @($hostHerdrMetadata.PSObject.Properties.Name | Sort-Object)
-    if (($hostHerdrMetadataProperties -join '|') -cne 'files|protocol|schemaVersion|version' -or
-        [int]$hostHerdrMetadata.schemaVersion -ne 2) {
-        throw 'Host Herdr runtime metadata has an unsupported contract.'
-    }
-    $ExpectedHerdrVersion = [string]$hostHerdrMetadata.version
-    $ExpectedHerdrProtocol = [int]$hostHerdrMetadata.protocol
-    $herdrBuildIDMatch = [regex]::Match(
-        $ExpectedHerdrVersion, '\.(?<buildID>[0-9a-f]{12}\.[0-9a-f]{12})$')
-    if ($ExpectedHerdrVersion -notmatch '^herdr [^\r\n]{1,250}$' -or
-        $ExpectedHerdrProtocol -lt 1 -or -not $herdrBuildIDMatch.Success) {
-        throw 'Host Herdr runtime identity is invalid.'
-    }
-    $ExpectedHerdrBuildID = $herdrBuildIDMatch.Groups['buildID'].Value
-    $hostHerdrFiles = @($hostHerdrMetadata.files)
-    if ($hostHerdrFiles.Count -ne 10) {
-        throw "Host Herdr managed install file count is invalid: $($hostHerdrFiles.Count)"
-    }
-    $hostHerdrPaths = New-Object System.Collections.Generic.List[string]
-    $seenHostHerdrPaths = @{}
-    foreach ($hostHerdrFile in $hostHerdrFiles) {
-        $entryProperties = @($hostHerdrFile.PSObject.Properties.Name | Sort-Object)
-        $relativePath = [string]$hostHerdrFile.path
-        $expectedSHA256 = [string]$hostHerdrFile.sha256
-        $expectedSize = [long]$hostHerdrFile.size
-        if (($entryProperties -join '|') -cne 'path|sha256|size' -or
-            $relativePath -notmatch '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$' -or
-            $expectedSHA256 -notmatch '^[0-9a-f]{64}$' -or
-            $expectedSize -lt 1 -or $expectedSize -gt 268435456 -or
-            $seenHostHerdrPaths.ContainsKey($relativePath)) {
-            throw "Host Herdr runtime file metadata is invalid: $relativePath"
-        }
-        $seenHostHerdrPaths[$relativePath] = $true
-        $hostHerdrPaths.Add($relativePath)
-        $sourcePath = Join-Path $hostHerdrSourceDirectory $relativePath.Replace('/', '\')
-        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-            throw "Host Herdr runtime input is missing: $relativePath"
-        }
-        $sourceFile = Get-Item -LiteralPath $sourcePath -Force
-        if (($sourceFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            [long]$sourceFile.Length -ne $expectedSize -or
-            (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedSHA256) {
-            throw "Host Herdr runtime input failed verification: $relativePath"
-        }
-    }
-    $actualHostHerdrLayout = (@($hostHerdrPaths) | Sort-Object) -join '|'
-    $managedRuntimePrefix = 'runtime/' + $ExpectedHerdrBuildID + '/'
-    $managedHostHerdrLayout = @(
-        'bin/herdr.exe',
-        'bin/managed-install-v1/marker',
-        ($managedRuntimePrefix + 'conpty/arm64/OpenConsole.exe'),
-        ($managedRuntimePrefix + 'conpty/conpty.dll'),
-        ($managedRuntimePrefix + 'conpty/herdr-conpty.json'),
-        ($managedRuntimePrefix + 'conpty/x64/OpenConsole.exe'),
-        ($managedRuntimePrefix + 'herdr-launcher.exe'),
-        ($managedRuntimePrefix + 'herdr.exe'),
-        ($managedRuntimePrefix + 'runtime.ready'),
-        'state/active'
-    ) | Sort-Object
-    if ($actualHostHerdrLayout -cne ($managedHostHerdrLayout -join '|')) {
-        throw "Host Herdr runtime layout is unsupported: $actualHostHerdrLayout"
-    }
-    $expectedHostHerdrRecords = [ordered]@{
-        'bin/managed-install-v1/marker' = "herdr-managed-bin-v1`n"
-        ($managedRuntimePrefix + 'runtime.ready') = "herdr-runtime-v1`nbuild_id=$ExpectedHerdrBuildID`n"
-        'state/active' = "herdr-pointer-v1`nbuild_id=$ExpectedHerdrBuildID`n"
-    }
-    foreach ($record in $expectedHostHerdrRecords.GetEnumerator()) {
-        $recordPath = Join-Path $hostHerdrSourceDirectory ([string]$record.Key).Replace('/', '\')
-        if ([IO.File]::ReadAllText($recordPath) -cne [string]$record.Value) {
-            throw "Host Herdr managed record does not match its exact contract: $($record.Key)"
-        }
-    }
+    $hostHerdrInput = Read-HostHerdrRuntimeInput -InputDirectory $InputDirectory
+    $ExpectedHerdrVersion = [string]$hostHerdrInput.Version
+    $ExpectedHerdrProtocol = [int]$hostHerdrInput.Protocol
+    $hostHerdrFiles = [object[]]$hostHerdrInput.Files
+    $hostHerdrSourceDirectory = [string]$hostHerdrInput.SourceDirectory
 
     $provisioningDirectory = Join-Path $InputDirectory 'provisioning'
     $baseProvisioning = Join-Path $provisioningDirectory 'base.ps1'
@@ -714,8 +733,6 @@ try {
 
     Write-ProgressStatus -Phase 'herdr-install' -Message 'Provisioning the verified host Herdr runtime'
     $herdrInstallRoot = 'C:\HerdrSandbox'
-    $herdrRoot = Join-Path $herdrInstallRoot 'runtime'
-    $herdrDirectory = Join-Path $herdrRoot $ExpectedHerdrBuildID
     $herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'
     foreach ($hostHerdrFile in $hostHerdrFiles) {
         $relativePath = [string]$hostHerdrFile.path
@@ -723,7 +740,7 @@ try {
         $expectedSize = [long]$hostHerdrFile.size
         $windowsRelativePath = $relativePath.Replace('/', '\')
         $sourcePath = Join-Path $hostHerdrSourceDirectory $windowsRelativePath
-        $destinationPath = Join-Path $herdrInstallRoot $windowsRelativePath
+        $destinationPath = Join-Path $herdrBinDirectory $windowsRelativePath
         if (Test-Path -LiteralPath $destinationPath) {
             throw "Refusing to replace existing Herdr installation file: $destinationPath"
         }
@@ -736,7 +753,7 @@ try {
         if (($destinationFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
             [long]$destinationFile.Length -ne $expectedSize -or
             (Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedSHA256) {
-            throw "Guest-local Herdr managed install copy failed verification: $relativePath"
+            throw "Guest-local Herdr runtime copy failed verification: $relativePath"
         }
     }
     $herdrExecutable = Join-Path $herdrBinDirectory 'herdr.exe'
