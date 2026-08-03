@@ -9,7 +9,7 @@
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Deployment time](#deployment-time) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
@@ -46,6 +46,22 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
 - **Stable private reachability with Tailscale (experimental):** opt in to preserve one tagged guest identity, Tailscale IP, and MagicDNS name across fresh Sandboxes without exposing services publicly.
+
+## Deployment time
+
+Windows Sandbox supplies the disposable Windows image, so users do not have to create and maintain a separate VM, complete a guest Windows setup, or wait for a separate guest update cycle. `herdr-sandbox` still installs and verifies the tools selected by the project plan, but persistent verified caches turn later fresh guests into a single-digit-minute operation rather than another machine build.
+
+Here, **warm** means a fresh Sandbox whose required package payloads—and the Visual Studio layout when Rust/MSVC is selected—already exist in the host cache. Current native phase timings give this practical orientation:
+
+| Warm project plan | Fresh launch to ready |
+| --- | ---: |
+| Common combinations without Rust/MSVC | approximately 2–4 minutes |
+| Rust/MSVC with additional selected stacks | approximately 4–6 minutes |
+| Deliberate maximum: all six supported stacks | 6 minutes 14 seconds observed |
+
+The selected-plan ranges are estimates reconstructed from the same measured all-stack phase timings; the all-six result is the end-to-end observation. CPU, storage, antivirus, package sources, and network conditions can move these numbers, so they are guidance rather than an SLA. Attaching to an already ready exact guest does not repeat fresh deployment.
+
+A cold first run can take longer because payloads must be downloaded. In the measured Rust/MSVC run, the one-time host Visual Studio layout download and verification alone took about 5 minutes 7 seconds before guest installation; later runs reused that layout. Normal projects install only their selected stacks, while `native-all-stacks` intentionally exercises every supported stack for compatibility coverage.
 
 ## Engineering approach
 
