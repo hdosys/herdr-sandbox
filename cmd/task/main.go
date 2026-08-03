@@ -29,7 +29,7 @@ Tasks:
   fmt              format Go source
   test [args...]   run go test ./... with optional extra arguments
   build            build build/bin/%s
-  native-all-stacks build and test all six stacks in one real Windows Sandbox
+  native-all-stacks build and test all six stacks plus Playwright Chromium in one real Windows Sandbox
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
 `, productidentity.ExecutableName)

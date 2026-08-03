@@ -81,7 +81,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node, python, rust, zig, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, python, rust, zig, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -535,6 +535,25 @@ $nodeFile = Join-Path $root 'node\smoke.js'
 Write-SmokeFile $nodeFile @('console.log("node-smoke-ok");')
 $nodeOutput = Invoke-SmokeTool 'node-run' $node @($nodeFile)
 Assert-SmokeOutput 'node-run' $nodeOutput 'node-smoke-ok'
+
+$playwrightVersions = @(Get-ChildItem -LiteralPath 'C:\HerdrSandbox\tools\playwright' -Directory -Force)
+if ($playwrightVersions.Count -ne 1 -or $playwrightVersions[0].Name -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Playwright tool version directories are invalid: $($playwrightVersions.Name -join ', ')"
+}
+$playwrightCLI = Join-Path $playwrightVersions[0].FullName 'node_modules\playwright\cli.js'
+if (-not (Test-Path -LiteralPath $playwrightCLI -PathType Leaf)) { throw "Playwright CLI is missing: $playwrightCLI" }
+$expectedPlaywrightBrowsers = 'C:\HerdrSandbox\tools\playwright-browsers'
+if ($env:PLAYWRIGHT_BROWSERS_PATH -cne $expectedPlaywrightBrowsers) {
+    throw "SSH session Playwright browser path is unexpected: $env:PLAYWRIGHT_BROWSERS_PATH"
+}
+$playwrightScreenshot = Join-Path $root 'node\playwright-chromium.png'
+$null = Invoke-SmokeTool 'playwright-chromium' $node @($playwrightCLI, 'screenshot', '-b', 'chromium', 'about:blank', $playwrightScreenshot)
+$playwrightScreenshotBytes = [IO.File]::ReadAllBytes($playwrightScreenshot)
+if ($playwrightScreenshotBytes.Length -lt 8 -or
+    (($playwrightScreenshotBytes[0..7] -join ',') -cne '137,80,78,71,13,10,26,10')) {
+    throw 'Playwright Chromium SSH smoke returned an invalid PNG screenshot.'
+}
+[Console]::Out.WriteLine('[all-stacks] playwright-chromium: headless launch OK')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'

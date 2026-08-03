@@ -843,6 +843,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsWithoutHerdrPrefixes(t *t
 		"function Resolve-StackPythonPackage",
 		"function Resolve-StackRustDistribution",
 		"function Install-GoStack",
+		"function Install-PlaywrightChromium",
 		"function Install-NodeStack",
 		"function Install-PythonStack",
 		"function Install-ZigStack",

@@ -43,6 +43,11 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
+	for _, required := range []string{"playwright-chromium", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH"} {
+		if !strings.Contains(nativeAllStacksSmokeScript, required) {
+			t.Fatalf("native smoke does not verify %s", required)
+		}
+	}
 	if len(configuration.Mounts) != 2 || configuration.Mounts["reference"].Path != fixture.ReadOnlyMount ||
 		!configuration.Mounts["reference"].ReadOnly || configuration.Mounts["worktrees"].Path != fixture.WritableMount ||
 		configuration.Mounts["worktrees"].ReadOnly {

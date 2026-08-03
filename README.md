@@ -41,7 +41,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Node.js, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
@@ -51,7 +51,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js, Python, Rust/MSVC, and Zig**. It reached ready in **6:14**. A first run can take longer: downloading and verifying the Visual Studio layout took **5:07** once. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js with Playwright Chromium, Python, Rust/MSVC, and Zig**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -218,7 +218,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | --- | --- |
 | Modern .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
-| Node.js LTS | `Install-NodeStack` |
+| Node.js LTS with Playwright Chromium | `Install-NodeStack` |
 | Python (latest stable) | `Install-PythonStack` |
 | Zig | `Install-ZigStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
@@ -226,8 +226,8 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Just | `Install-Just` |
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
-- An omitted version resolves the latest stable release once for cache, installation, and verification. An explicit version remains exact and never falls back silently.
-- Built-in stacks own toolchains, not application dependencies. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+- An omitted toolchain version resolves the latest stable release once for cache, installation, and verification. Playwright browser tooling defaults to the release-owned, age-checked `1.61.1`; `Install-NodeStack -PlaywrightVersion <x.y.z>` can align it to an exact project version. Exact versions never fall back silently.
+- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
@@ -501,7 +501,7 @@ go run ./cmd/task package v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig; it runs representative version/build/test commands over managed SSH, verifies Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js plus Playwright Chromium, Python, Rust/MSVC, and Zig; it launches Chromium headlessly over managed SSH, runs representative version/build/test commands, verifies Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
 - `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 

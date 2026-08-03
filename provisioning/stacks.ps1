@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 5
+# herdr-sandbox-stacks-contract: 6
 
 function Get-StackWebResponseText {
     param(
@@ -1027,11 +1027,136 @@ function Install-GoStack {
     Write-Output "Go ready: $goVersion"
 }
 
+function Install-PlaywrightChromium {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = '1.61.1'
+    )
+
+    $node = Get-Command 'node.exe' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $node) {
+        throw 'Playwright Chromium requires the Node.js stack.'
+    }
+    $npmCLI = Join-Path (Split-Path -Parent $node.Source) 'node_modules\npm\bin\npm-cli.js'
+    if (-not (Test-Path -LiteralPath $npmCLI -PathType Leaf) -or
+        ((Get-Item -LiteralPath $npmCLI -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Node.js npm CLI is missing or unsafe: $npmCLI"
+    }
+
+    $playwrightRoot = 'C:\HerdrSandbox\tools\playwright'
+    $toolRoot = Join-Path $playwrightRoot $Version
+    $browserRoot = 'C:\HerdrSandbox\tools\playwright-browsers'
+    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
+    $stagingRoot = 'C:\HerdrSandbox\staging'
+    foreach ($directory in @('C:\HerdrSandbox\tools', $playwrightRoot, $toolRoot, $browserRoot, $npmCache, $stagingRoot)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright guest-local directory is unsafe: $directory"
+        }
+    }
+
+    Write-Output "Installing Playwright $Version and Chromium..."
+    $env:npm_config_cache = $npmCache
+    $env:npm_config_update_notifier = 'false'
+    Invoke-ProvisioningNative -Role 'Playwright CLI installation' -FilePath $node.Source -ArgumentList @(
+        $npmCLI,
+        'install',
+        '--prefix', $toolRoot,
+        '--ignore-scripts',
+        '--omit=optional',
+        '--no-bin-links',
+        '--no-audit',
+        '--no-fund',
+        '--no-save',
+        '--package-lock=false',
+        "playwright@$Version"
+    ) | Out-Null
+
+    $playwrightDirectory = Join-Path $toolRoot 'node_modules\playwright'
+    $playwrightCoreDirectory = Join-Path $toolRoot 'node_modules\playwright-core'
+    foreach ($directory in @($playwrightDirectory, $playwrightCoreDirectory)) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container) -or
+            ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright package directory is missing or unsafe: $directory"
+        }
+    }
+    if (Test-Path -LiteralPath (Join-Path $toolRoot 'node_modules\fsevents')) {
+        throw 'Playwright installed the unsupported optional fsevents package on Windows.'
+    }
+
+    $playwrightPackagePath = Join-Path $playwrightDirectory 'package.json'
+    $playwrightCorePackagePath = Join-Path $playwrightCoreDirectory 'package.json'
+    $playwrightCLI = Join-Path $playwrightDirectory 'cli.js'
+    foreach ($file in @($playwrightPackagePath, $playwrightCorePackagePath, $playwrightCLI)) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or
+            ((Get-Item -LiteralPath $file -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright package file is missing or unsafe: $file"
+        }
+    }
+    try {
+        $playwrightPackage = [IO.File]::ReadAllText($playwrightPackagePath) | ConvertFrom-Json
+        $playwrightCorePackage = [IO.File]::ReadAllText($playwrightCorePackagePath) | ConvertFrom-Json
+    } catch {
+        throw "Playwright package identity is unreadable: $($_.Exception.Message)"
+    }
+    if ([string]$playwrightPackage.name -cne 'playwright' -or
+        [string]$playwrightPackage.version -cne $Version -or
+        [string]$playwrightPackage.dependencies.'playwright-core' -cne $Version -or
+        [string]$playwrightCorePackage.name -cne 'playwright-core' -or
+        [string]$playwrightCorePackage.version -cne $Version) {
+        throw "Playwright package identity does not match exact version $Version."
+    }
+    $cliVersion = ((Invoke-ProvisioningNative -Role 'Playwright CLI version check' `
+        -FilePath $node.Source -ArgumentList @($playwrightCLI, '--version')) -join [Environment]::NewLine).Trim()
+    if ($cliVersion -cne "Version $Version") {
+        throw "Playwright CLI version output is unexpected: $cliVersion"
+    }
+
+    $env:PLAYWRIGHT_BROWSERS_PATH = $browserRoot
+    $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = '120000'
+    [Environment]::SetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', $browserRoot, 'Machine')
+    if ([Environment]::GetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', 'Machine') -cne $browserRoot) {
+        throw 'Playwright browser path machine environment verification failed.'
+    }
+    Invoke-ProvisioningNative -Role 'Playwright Chromium installation' -FilePath $node.Source `
+        -ArgumentList @($playwrightCLI, 'install', 'chromium') | Out-Null
+
+    $screenshotPath = Join-Path $stagingRoot ("playwright-chromium-$([Guid]::NewGuid().ToString('N')).png")
+    try {
+        Invoke-ProvisioningNative -Role 'Playwright Chromium headless launch' -FilePath $node.Source `
+            -ArgumentList @($playwrightCLI, 'screenshot', '-b', 'chromium', 'about:blank', $screenshotPath) `
+            -TimeoutSeconds 120 | Out-Null
+        if (-not (Test-Path -LiteralPath $screenshotPath -PathType Leaf)) {
+            throw 'Playwright Chromium headless launch did not create its screenshot.'
+        }
+        $screenshotInfo = Get-Item -LiteralPath $screenshotPath -Force
+        $screenshotBytes = [IO.File]::ReadAllBytes($screenshotPath)
+        if (($screenshotInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $screenshotBytes.Length -lt 8 -or
+            (($screenshotBytes[0..7] -join ',') -cne '137,80,78,71,13,10,26,10')) {
+            throw 'Playwright Chromium headless launch returned an invalid PNG screenshot.'
+        }
+    } finally {
+        if (Test-Path -LiteralPath $screenshotPath -PathType Leaf) {
+            Remove-Item -LiteralPath $screenshotPath -Force
+        }
+    }
+    Write-Output "Playwright Chromium ready: $Version"
+}
+
 function Install-NodeStack {
     [CmdletBinding()]
     param(
         [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
-        [string]$Version = ''
+        [string]$Version = '',
+        [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$PlaywrightVersion = '1.61.1'
     )
 
     Write-Output 'Installing Node.js LTS...'
@@ -1046,6 +1171,7 @@ function Install-NodeStack {
     $nodeVersion = Assert-ProvisioningCommand -Role 'Node.js' -Name 'node.exe' `
         -VersionArguments @('--version') -ExpectedPattern $nodePattern
     Write-Output "Node.js ready: $nodeVersion"
+    Install-PlaywrightChromium -Version $PlaywrightVersion
 }
 
 function Resolve-StackPythonPackage {
