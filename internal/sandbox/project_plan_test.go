@@ -44,7 +44,7 @@ throw 'the AST adapter must not execute project code'
 	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
-	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "cargo-nextest|just|python|rust-msvc|zig" {
+	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
 	if strings.Join(projectStackStrings(userStacks), "|") != "rust-msvc" {

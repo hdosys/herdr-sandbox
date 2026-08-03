@@ -30,7 +30,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 			t.Fatalf("native fixture bypasses Herdr virtual composition with %s", duplicate)
 		}
 	}
-	for _, source := range []string{"Cargo.toml", "rust-toolchain.toml", "go.mod", "main.go", "main_test.go", "smoke.csproj", "Program.cs", "smoke.js", "smoke.py", "smoke.rs", "smoke.zig"} {
+	for _, source := range []string{"Cargo.toml", "rust-toolchain.toml", "go.mod", "main.go", "main_test.go", "smoke.csproj", "Program.cs", "smoke.js", "smoke.py", "smoke.rs", "smoke.zig", "justfile"} {
 		if info, err := os.Stat(filepath.Join(fixture.Project, source)); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			t.Fatalf("native fixture source %s is invalid: %v, %v", source, info, err)
 		}
@@ -48,7 +48,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"playwright-chromium", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "cargo-nextest-version", "just-version", "LIBGHOSTTY_VT_ZIG_OUT_DIR"} {
+	for _, required := range []string{"playwright-chromium", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "bun-run", "python3-version", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR"} {
 		if !strings.Contains(nativeAllStacksSmokeScript, required) {
 			t.Fatalf("native smoke does not verify %s", required)
 		}

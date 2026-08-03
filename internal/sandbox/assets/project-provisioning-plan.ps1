@@ -14,10 +14,11 @@ if (-not (Test-Path -LiteralPath $ProjectsDirectory -PathType Container)) {
 }
 
 $knownStacks = @{
+    'Install-BunStack' = 'bun'
     'Install-CargoNextest' = 'cargo-nextest'
     'Install-DotNetStack' = 'dotnet'
     'Install-GoStack' = 'go'
-    'Install-HerdrStack' = @('cargo-nextest', 'just', 'python', 'rust-msvc', 'zig')
+    'Install-HerdrStack' = @('bun', 'cargo-nextest', 'just', 'python', 'rust-msvc', 'zig')
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
     'Install-PythonStack' = 'python'

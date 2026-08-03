@@ -27,6 +27,7 @@ var projectProvisioningPlanScript []byte
 type projectStack string
 
 const (
+	stackBun          projectStack = "bun"
 	stackCargoNextest projectStack = "cargo-nextest"
 	stackDotNet       projectStack = "dotnet"
 	stackGo           projectStack = "go"
@@ -50,7 +51,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackCargoNextest, stackDotNet, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
+	case stackBun, stackCargoNextest, stackDotNet, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
 		return true
 	default:
 		return false

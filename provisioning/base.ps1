@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 44
+# herdr-sandbox-base-contract: 45
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -226,7 +226,7 @@ function Read-ProvisioningPackagePlan {
         $known[$id] = $true
     }
     $projectStackPackages = @{}
-    foreach ($id in @('Microsoft.DotNet.SDK.10', 'GoLang.Go', 'OpenJS.NodeJS.LTS', 'zig.zig', 'Rustlang.Rustup',
+    foreach ($id in @('Microsoft.DotNet.SDK.10', 'GoLang.Go', 'OpenJS.NodeJS.LTS', 'Oven-sh.Bun', 'zig.zig', 'Rustlang.Rustup',
         'nextest.cargo-nextest', 'Casey.Just')) {
         $projectStackPackages[$id] = $true
     }

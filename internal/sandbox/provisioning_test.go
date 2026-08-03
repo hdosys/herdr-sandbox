@@ -884,6 +884,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-RustMSVCStack",
 		"function Install-CargoNextest",
 		"function Install-Just",
+		"function Install-BunStack",
 		"function Install-HerdrStack",
 		"function Install-StackVisualStudioBuildTools",
 		"Assert-ProvisioningCacheTree -Path $slot",
@@ -917,7 +918,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		t.Fatalf("stack function ordering is invalid: zig=%d rust=%d nextest=%d", zigStart, rustStart, rustEnd)
 	}
 	rust := text[rustStart:rustEnd]
-	for _, unrelated := range []string{"-Id 'zig.zig'", "-Id 'nextest.cargo-nextest'", "-Id 'Casey.Just'"} {
+	for _, unrelated := range []string{"-Id 'zig.zig'", "-Id 'nextest.cargo-nextest'", "-Id 'Casey.Just'", "-Id 'Oven-sh.Bun'"} {
 		if strings.Contains(rust, unrelated) {
 			t.Fatalf("Rust stack contains unrelated package %q", unrelated)
 		}

@@ -279,6 +279,10 @@ console.log("node-ok")
 		filepath.Join(fixture.Project, "smoke.py"): `assert 21 * 2 == 42
 print("python-ok")
 `,
+		filepath.Join(fixture.Project, "justfile"): `herdr-toolchain-smoke:
+    python3 -c "print('python3-just-ok')"
+    bun -e "console.log('bun-just-ok')"
+`,
 		filepath.Join(fixture.Project, "smoke.rs"): `fn main() {
     assert_eq!(21 * 2, 42);
     println!("rust-ok");
@@ -513,10 +517,13 @@ $dotnet = (Get-Command 'dotnet.exe' -CommandType Application -ErrorAction Stop |
 $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python = (Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$python3 = (Get-Command 'python3.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$bun = (Get-Command 'bun.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $cargo = (Get-Command 'cargo.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $nextest = (Get-Command 'cargo-nextest.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $just = (Get-Command 'just.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $rustc = (Get-Command 'rustc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$sh = (Get-Command 'sh.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $zig = (Get-Command 'zig.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
 $null = Invoke-SmokeTool 'dotnet-version' $dotnet @('--version')
@@ -569,11 +576,25 @@ $pythonFile = Join-Path $root 'python\smoke.py'
 Write-SmokeFile $pythonFile @('print("python-smoke-ok")')
 $pythonOutput = Invoke-SmokeTool 'python-run' $python @($pythonFile)
 Assert-SmokeOutput 'python-run' $pythonOutput 'python-smoke-ok'
+$null = Invoke-SmokeTool 'python3-version' $python3 @('--version')
 
 $null = Invoke-SmokeTool 'cargo-version' $cargo @('--version')
+$null = Invoke-SmokeTool 'bun-version' $bun @('--version')
+$bunOutput = Invoke-SmokeTool 'bun-run' $bun @('-e','console.log("bun-smoke-ok")')
+Assert-SmokeOutput 'bun-run' $bunOutput 'bun-smoke-ok'
 $null = Invoke-SmokeTool 'cargo-nextest-version' $nextest @('--version')
 $null = Invoke-SmokeTool 'just-version' $just @('--version')
 $null = Invoke-SmokeTool 'rustc-version' $rustc @('--version')
+$null = Invoke-SmokeTool 'sh-version' $sh @('--version')
+$shellOutput = Invoke-SmokeTool 'sh-run' $sh @('-lc','printf sh-smoke-ok')
+Assert-SmokeOutput 'sh-run' $shellOutput 'sh-smoke-ok'
+$justRoot = 'C:\Workspaces\project'
+Push-Location $justRoot
+try {
+    $justOutput = Invoke-SmokeTool 'herdr-just-toolchain' $just @('herdr-toolchain-smoke')
+} finally { Pop-Location }
+Assert-SmokeOutput 'herdr-just-toolchain' $justOutput 'python3-just-ok'
+Assert-SmokeOutput 'herdr-just-toolchain' $justOutput 'bun-just-ok'
 $expectedLibghosttyOutput = 'C:\HerdrSandbox\build\cargo-target\zig-out'
 if ($env:LIBGHOSTTY_VT_ZIG_OUT_DIR -cne $expectedLibghosttyOutput -or
     -not (Test-Path -LiteralPath $expectedLibghosttyOutput -PathType Container)) {

@@ -147,7 +147,7 @@ For an official Herdr upstream checkout without a project profile, select its ma
 herdr-sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python, Rust/MSVC, Zig, Cargo Nextest, and Just, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -227,6 +227,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Modern .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
 | Node.js LTS with Playwright Chromium | `Install-NodeStack` |
+| Bun | `Install-BunStack` |
 | Python (latest stable) | `Install-PythonStack` |
 | Zig | `Install-ZigStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
@@ -234,7 +235,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Just | `Install-Just` |
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
-- `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the project-defined Python 3.13, Zig 0.15.2, Rust/MSVC, Cargo Nextest, and Just paths and keeps libghostty's generated Zig output in guest-local build state. `plan` expands it back into those concrete owners without executing the profile.
+- `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. Git for Windows supplies the required `sh.exe`, which the composition exposes through guest `PATH`; Bun remains latest stable unless explicitly versioned. It also keeps libghostty's generated Zig output in guest-local build state. `plan` expands the composition back into those concrete owners without executing the profile.
 - An omitted version always resolves the latest stable release once for installation and verification. Playwright resolves npm's current `latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. Exact versions never fall back silently.
 - Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
 
@@ -531,7 +532,7 @@ go run ./cmd/task package v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js plus Playwright Chromium, and the Herdr virtual stack (Python, Rust/MSVC, Zig, Nextest, and Just); it launches Chromium headlessly over managed SSH, runs representative version/build/test commands, verifies the libghostty guest-local output contract plus Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js plus Playwright Chromium, and the Herdr virtual stack (Python, Rust/MSVC, Zig, Bun, Nextest, Just, and `sh`); it launches Chromium headlessly over managed SSH, runs representative version/build/test commands, verifies the libghostty guest-local output contract plus Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
 - `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 

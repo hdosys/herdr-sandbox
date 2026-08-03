@@ -174,6 +174,8 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 
 func effectiveStackPackageOwner(stack projectStack) string {
 	switch stack {
+	case stackBun:
+		return "Oven-sh.Bun"
 	case stackCargoNextest:
 		return "nextest.cargo-nextest"
 	case stackDotNet:

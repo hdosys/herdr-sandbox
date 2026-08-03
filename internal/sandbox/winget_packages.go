@@ -50,6 +50,7 @@ var projectStackPackageIDs = []string{
 	"Microsoft.DotNet.SDK.10",
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
+	"Oven-sh.Bun",
 	"zig.zig",
 	"Rustlang.Rustup",
 	"nextest.cargo-nextest",
