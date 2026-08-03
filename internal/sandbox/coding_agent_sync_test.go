@@ -3,6 +3,7 @@ package sandbox
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -132,12 +133,15 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	}
 	writeTestFile(t, filepath.Join(openCode, "opencode.json"), `{}`)
 	writeTestFile(t, filepath.Join(openCode, "agents", "builder.md"), "agent")
+	writeTestFile(t, filepath.Join(openCode, "README.md"), "OpenCode workflow repository")
+	writeTestFile(t, filepath.Join(openCode, "removed.md"), "remove in guest")
 	writeTestFile(t, filepath.Join(openCode, "node_modules", "excluded.js"), "excluded")
 	openCodeAuth := filepath.Join(root, "opencode-auth.json")
 	writeTestFile(t, openCodeAuth, `{"provider":"fixture"}`)
 
 	writeTestFile(t, filepath.Join(claude, "settings.json"), `{}`)
 	writeTestFile(t, filepath.Join(claude, "agents", "reviewer.md"), "agent")
+	writeTestFile(t, filepath.Join(claude, "README.md"), "Claude workflow repository")
 	writeTestFile(t, filepath.Join(claude, "projects", "excluded.jsonl"), "excluded")
 	claudeAuth := filepath.Join(claude, ".credentials.json")
 	writeTestFile(t, claudeAuth, `{"claudeAiOauth":{"accessToken":"fixture"}}`)
@@ -147,6 +151,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, filepath.Join(codex, "config.toml"), `model = "fixture"`)
 	writeTestFile(t, filepath.Join(codex, "work.config.toml"), `model = "profile"`)
 	writeTestFile(t, filepath.Join(codex, "agents", "reviewer.toml"), `name = "reviewer"`)
+	writeTestFile(t, filepath.Join(codex, "README.md"), "Codex workflow repository")
 	writeTestFile(t, filepath.Join(codex, "skills", ".system", "excluded.md"), "excluded")
 	writeTestFile(t, filepath.Join(codex, "sessions", "excluded.jsonl"), "excluded")
 	writeTestFile(t, filepath.Join(codex, "auth.json"), `{"tokens":{"access_token":"fixture"}}`)
@@ -154,6 +159,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 
 	writeTestFile(t, filepath.Join(copilot, "settings.json"), `{}`)
 	writeTestFile(t, filepath.Join(copilot, "agents", "builder.agent.md"), "agent")
+	writeTestFile(t, filepath.Join(copilot, "README.md"), "Copilot workflow repository")
 	writeTestFile(t, filepath.Join(copilot, "config.json"), `{"token":"excluded"}`)
 	writeTestFile(t, filepath.Join(copilot, "session-state", "excluded.json"), "excluded")
 
@@ -161,10 +167,22 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, filepath.Join(pi, "models.json"), `{"providers":{}}`)
 	writeTestFile(t, filepath.Join(pi, "CLAUDE.md"), "pi instructions")
 	writeTestFile(t, filepath.Join(pi, "extensions", "fixture", "index.ts"), "export default {}")
+	writeTestFile(t, filepath.Join(pi, "README.md"), "Pi workflow repository")
 	writeTestFile(t, filepath.Join(pi, "extensions", "fixture", "node_modules", "excluded.js"), "excluded")
 	writeTestFile(t, filepath.Join(pi, "sessions", "excluded.jsonl"), "excluded")
 	writeTestFile(t, filepath.Join(pi, "auth.json"), `{"provider":{"type":"api_key","key":"fixture"}}`)
 	writeTestFile(t, filepath.Join(sharedSkills, "fixture", "SKILL.md"), "skill")
+	writeTestFile(t, filepath.Join(sharedSkills, "README.md"), "Shared skills repository")
+
+	initializeAgentGitRepository(t, openCode, "opencode", []string{"opencode.json", "agents/builder.md", "README.md", "removed.md"})
+	if err := os.Remove(filepath.Join(openCode, "removed.md")); err != nil {
+		t.Fatal(err)
+	}
+	initializeAgentGitRepository(t, claude, "claude", []string{"settings.json", "agents/reviewer.md", "README.md"})
+	initializeAgentGitRepository(t, codex, "codex", []string{"config.toml", "work.config.toml", "agents/reviewer.toml", "README.md"})
+	initializeAgentGitRepository(t, copilot, "copilot", []string{"settings.json", "agents/builder.agent.md", "README.md"})
+	initializeAgentGitRepository(t, pi, "pi", []string{"settings.json", "models.json", "CLAUDE.md", "extensions/fixture/index.ts", "README.md"})
+	initializeAgentGitRepository(t, sharedSkills, "shared-skills", []string{"fixture/SKILL.md", "README.md"})
 
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
@@ -180,7 +198,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	herdrConfig := filepath.Join(root, "herdr.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
 
-	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		CodingAgents: codingAgentConfigurationSources{
 			Selection:                defaultCodingAgentSyncConfiguration(),
 			OpenCodeDirectory:        openCode,
@@ -205,12 +223,12 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	entries, contents := readConfigurationArchiveForTest(t, data)
 	for _, required := range []string{
 		codingAgentSyncManifestArchivePath,
-		"opencode/opencode.json", "opencode/agents/builder.md", "opencode-auth/auth.json",
-		"claude-code/settings.json", "claude-code/agents/reviewer.md", "claude-code-auth/.credentials.json", "claude-code-state/.claude.json",
-		"codex/config.toml", "codex/work.config.toml", "codex/agents/reviewer.toml", "codex-auth/auth.json", "codex-auth/.credentials.json",
-		"github-copilot/settings.json", "github-copilot/agents/builder.agent.md",
-		"pi/settings.json", "pi/models.json", "pi/AGENTS.md", "pi/extensions/fixture/index.ts", "pi-auth/auth.json",
-		"shared-agent-skills/fixture/SKILL.md",
+		"opencode/opencode.json", "opencode/agents/builder.md", "opencode/README.md", "opencode/.git/config", "opencode/.git/HEAD", "opencode/.git/index", "opencode-auth/auth.json",
+		"claude-code/settings.json", "claude-code/agents/reviewer.md", "claude-code/README.md", "claude-code/.git/config", "claude-code/.git/HEAD", "claude-code/.git/index", "claude-code-auth/.credentials.json", "claude-code-state/.claude.json",
+		"codex/config.toml", "codex/work.config.toml", "codex/agents/reviewer.toml", "codex/README.md", "codex/.git/config", "codex/.git/HEAD", "codex/.git/index", "codex-auth/auth.json", "codex-auth/.credentials.json",
+		"github-copilot/settings.json", "github-copilot/agents/builder.agent.md", "github-copilot/README.md", "github-copilot/.git/config", "github-copilot/.git/HEAD", "github-copilot/.git/index",
+		"pi/settings.json", "pi/models.json", "pi/AGENTS.md", "pi/CLAUDE.md", "pi/extensions/fixture/index.ts", "pi/README.md", "pi/.git/config", "pi/.git/HEAD", "pi/.git/index", "pi-auth/auth.json",
+		"shared-agent-skills/fixture/SKILL.md", "shared-agent-skills/README.md", "shared-agent-skills/.git/config", "shared-agent-skills/.git/HEAD", "shared-agent-skills/.git/index",
 	} {
 		if !entries[required] {
 			t.Fatalf("archive is missing %s", required)
@@ -225,6 +243,30 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 		if entries[forbidden] {
 			t.Fatalf("archive contains excluded agent state %s", forbidden)
 		}
+	}
+	for entry := range entries {
+		if strings.Contains(entry, "/.git/hooks/") || strings.Contains(entry, "/.git/logs/") {
+			t.Fatalf("archive contains excluded Git runtime state %s", entry)
+		}
+	}
+	for _, root := range []string{"opencode", "claude-code", "codex", "github-copilot", "pi", "shared-agent-skills"} {
+		foundObject := false
+		for entry := range entries {
+			if strings.HasPrefix(entry, root+"/.git/objects/") {
+				foundObject = true
+				break
+			}
+		}
+		if !foundObject {
+			t.Fatalf("archive is missing Git objects for %s", root)
+		}
+	}
+	var syncManifest codingAgentSyncManifest
+	if err := json.Unmarshal(contents[codingAgentSyncManifestArchivePath], &syncManifest); err != nil {
+		t.Fatal(err)
+	}
+	if syncManifest.SchemaVersion != 2 || strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] {
+		t.Fatalf("coding-agent Git deletion manifest = %#v", syncManifest)
 	}
 	var claudeStateArchive map[string]any
 	if err := json.Unmarshal(contents["claude-code-state/.claude.json"], &claudeStateArchive); err != nil {
@@ -246,6 +288,175 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	}
 }
 
+func TestArchiveAgentGitRepositoryRestoresUpstreamAndTrackedChanges(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "opencode")
+	if err := os.MkdirAll(filepath.Join(repository, "agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+	writeTestFile(t, filepath.Join(repository, "agents", "builder.md"), "agent")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "before")
+	initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json", "agents/builder.md", "README.md"})
+	runAgentGitTest(t, repository, "update-ref", "refs/heads/feature.log", "HEAD")
+	runAgentGitTest(t, repository, "update-ref", "refs/heads/worker.pid", "HEAD")
+	runAgentGitTest(t, repository, "update-ref", "refs/heads/packed-refs.new", "HEAD")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "after")
+
+	archived := map[string][]byte{}
+	_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(source, destination string) error {
+		contents, readErr := os.ReadFile(source)
+		if readErr != nil {
+			return readErr
+		}
+		archived[filepath.ToSlash(destination)] = contents
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("archive agent Git repository: %v", err)
+	}
+	for _, required := range []string{"opencode/README.md", "opencode/.git/config", "opencode/.git/HEAD", "opencode/.git/index", "opencode/.git/refs/heads/feature.log", "opencode/.git/refs/heads/worker.pid", "opencode/.git/refs/heads/packed-refs.new"} {
+		if _, exists := archived[required]; !exists {
+			t.Fatalf("Git repository archive is missing %s", required)
+		}
+	}
+	for name := range archived {
+		if strings.Contains(name, "/.git/hooks/") || strings.Contains(name, "/.git/logs/") {
+			t.Fatalf("Git repository archive contains excluded state %s", name)
+		}
+	}
+
+	restored := filepath.Join(root, "restored")
+	for name, contents := range archived {
+		relative := strings.TrimPrefix(name, "opencode/")
+		destination := filepath.Join(restored, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.TrimSpace(runAgentGitTest(t, restored, "config", "--local", "--get", "remote.origin.url")); got != "https://example.invalid/opencode.git" {
+		t.Fatalf("restored remote URL = %q", got)
+	}
+	if got := strings.TrimSpace(runAgentGitTest(t, restored, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")); got != "origin/main" {
+		t.Fatalf("restored upstream = %q", got)
+	}
+	if got := strings.TrimSpace(runAgentGitTest(t, restored, "status", "--porcelain=v1")); got != "M README.md" {
+		t.Fatalf("restored tracked changes = %q", got)
+	}
+	runAgentGitTest(t, restored, "fsck", "--no-dangling")
+}
+
+func TestArchiveAgentGitRepositoryRejectsTrackedCredentialsAndGitFiles(t *testing.T) {
+	t.Run("tracked credential", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "codex")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "config.toml"), "model = 'fixture'")
+		writeTestFile(t, filepath.Join(repository, "auth.json"), `{"token":"fixture"}`)
+		initializeAgentGitRepository(t, repository, "codex", []string{"config.toml", "auth.json"})
+		_, err := archiveAgentGitRepository(context.Background(), repository, "codex", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "credential") || !strings.Contains(err.Error(), "auth.json") {
+			t.Fatalf("tracked credential error = %v", err)
+		}
+	})
+
+	t.Run("worktree git file", func(t *testing.T) {
+		repository := t.TempDir()
+		writeTestFile(t, filepath.Join(repository, ".git"), "gitdir: C:/outside")
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "physical .git directory") {
+			t.Fatalf("worktree Git file error = %v", err)
+		}
+	})
+
+	t.Run("active lock", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		writeTestFile(t, filepath.Join(repository, ".git", "index.lock"), "active")
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "locked") {
+			t.Fatalf("active Git lock error = %v", err)
+		}
+	})
+
+	t.Run("external object store", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		writeTestFile(t, filepath.Join(repository, ".git", "objects", "info", "alternates"), `C:\outside\objects`)
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "external object store") {
+			t.Fatalf("external Git object store error = %v", err)
+		}
+	})
+
+	t.Run("linked worktree metadata", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		if err := os.MkdirAll(filepath.Join(repository, ".git", "worktrees", "linked"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "worktrees") {
+			t.Fatalf("linked worktree metadata error = %v", err)
+		}
+	})
+
+	t.Run("active gc process", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		writeTestFile(t, filepath.Join(repository, ".git", "gc.pid"), "1234")
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "active process marker") {
+			t.Fatalf("active Git gc process error = %v", err)
+		}
+	})
+
+	t.Run("reftable", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		runAgentGitTest(t, repository, "init", "--initial-branch=main", "--ref-format=reftable")
+		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "physical root .git directory") {
+			t.Fatalf("reftable Git repository error = %v", err)
+		}
+	})
+}
+
+func TestAgentGitEnvironmentDropsInheritedOverrides(t *testing.T) {
+	environment := agentGitEnvironment([]string{"PATH=C:\\tools", "GIT_DIR=C:\\outside", "git_work_tree=C:\\worktree", "OTHER=value"})
+	joined := strings.ToUpper(strings.Join(environment, "\n"))
+	if strings.Contains(joined, "GIT_DIR=C:\\OUTSIDE") || strings.Contains(joined, "GIT_WORK_TREE=C:\\WORKTREE") {
+		t.Fatalf("inherited Git override survived: %q", environment)
+	}
+	for _, required := range []string{"GIT_CONFIG_GLOBAL=", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "OTHER=VALUE"} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("Git environment is missing %q: %q", required, environment)
+		}
+	}
+}
+
 func TestArchiveCodingAgentConfigurationSkipsDisabledAndMissingSources(t *testing.T) {
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
@@ -259,7 +470,7 @@ func TestArchiveCodingAgentConfigurationSkipsDisabledAndMissingSources(t *testin
 		total++
 		return err
 	}
-	if err := archiveCodingAgentConfiguration(codingAgentConfigurationSources{Selection: codingAgentSyncConfiguration{}}, func(string, string) error {
+	if err := archiveCodingAgentConfiguration(context.Background(), codingAgentConfigurationSources{Selection: codingAgentSyncConfiguration{}}, func(string, string) error {
 		t.Fatal("disabled coding-agent source was inspected")
 		return nil
 	}, addData); err != nil {
@@ -317,13 +528,15 @@ func TestCodingAgentPowerShellSyncPreservesAbsentAndExcludedStateAndRejectsJunct
 	root := t.TempDir()
 	sourceRoot := filepath.Join(root, "source")
 	destinationRoot := filepath.Join(root, "destination")
-	for _, directory := range []string{sourceRoot, filepath.Join(destinationRoot, "plugins", "cache")} {
+	for _, directory := range []string{filepath.Join(sourceRoot, ".git"), filepath.Join(destinationRoot, "plugins", "cache")} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	writeTestFile(t, filepath.Join(sourceRoot, "settings.json"), `{"enabled":true}`)
+	writeTestFile(t, filepath.Join(sourceRoot, ".git", "config"), "[remote \"origin\"]\n\turl = https://example.invalid/agent.git\n")
 	writeTestFile(t, filepath.Join(destinationRoot, "plugins", "cache", "keep.txt"), "keep")
+	writeTestFile(t, filepath.Join(destinationRoot, "removed.md"), "stale tracked file")
 	existingAuth := filepath.Join(root, "auth.json")
 	writeTestFile(t, existingAuth, "keep-auth")
 	junctionTarget := filepath.Join(root, "junction-target")
@@ -338,7 +551,18 @@ func TestCodingAgentPowerShellSyncPreservesAbsentAndExcludedStateAndRejectsJunct
 	script := string(contents[start:end]) + `
 Sync-VerifiedConfigurationRoot -Source $env:SYNC_SOURCE -Destination $env:SYNC_DESTINATION
 if (-not (Test-Path -LiteralPath (Join-Path $env:SYNC_DESTINATION 'settings.json') -PathType Leaf)) { throw 'Supplied configuration was not copied.' }
+if (-not (Test-Path -LiteralPath (Join-Path $env:SYNC_DESTINATION '.git\config') -PathType Leaf)) { throw 'Git repository metadata was not copied.' }
 if (-not (Test-Path -LiteralPath (Join-Path $env:SYNC_DESTINATION 'plugins\cache\keep.txt') -PathType Leaf)) { throw 'Excluded destination state was removed.' }
+Remove-VerifiedTrackedConfigurationFiles -Destination $env:SYNC_DESTINATION -Paths @('removed.md')
+if (Test-Path -LiteralPath (Join-Path $env:SYNC_DESTINATION 'removed.md')) { throw 'Tracked deletion was not applied.' }
+$unsafeDeletionRejected = $false
+try {
+    Remove-VerifiedTrackedConfigurationFiles -Destination $env:SYNC_DESTINATION -Paths @('../outside.txt')
+} catch {
+    if ($_.Exception.Message -notmatch 'unsafe') { throw }
+    $unsafeDeletionRejected = $true
+}
+if (-not $unsafeDeletionRejected) { throw 'Unsafe tracked deletion was accepted.' }
 Sync-OptionalConfigurationFile -Source $env:SYNC_MISSING_AUTH -Destination $env:SYNC_EXISTING_AUTH
 if ([IO.File]::ReadAllText($env:SYNC_EXISTING_AUTH) -cne 'keep-auth') { throw 'Absent authentication source changed the destination.' }
 $rejected = $false
@@ -362,6 +586,32 @@ if (-not $rejected) { throw 'Destination junction was not rejected.' }
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("coding-agent PowerShell sync regression: %v: %s", err, output)
 	}
+}
+
+func initializeAgentGitRepository(t *testing.T, directory, name string, tracked []string) {
+	t.Helper()
+	runAgentGitTest(t, directory, "init", "--initial-branch=main")
+	runAgentGitTest(t, directory, "config", "user.name", "Herdr Sandbox Test")
+	runAgentGitTest(t, directory, "config", "user.email", "herdr-sandbox@example.invalid")
+	arguments := append([]string{"add", "--"}, tracked...)
+	runAgentGitTest(t, directory, arguments...)
+	runAgentGitTest(t, directory, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "fixture")
+	runAgentGitTest(t, directory, "remote", "add", "origin", "https://example.invalid/"+name+".git")
+	runAgentGitTest(t, directory, "config", "branch.main.remote", "origin")
+	runAgentGitTest(t, directory, "config", "branch.main.merge", "refs/heads/main")
+	runAgentGitTest(t, directory, "update-ref", "refs/remotes/origin/main", "HEAD")
+}
+
+func runAgentGitTest(t *testing.T, directory string, arguments ...string) string {
+	t.Helper()
+	commandArguments := append([]string{"-C", directory}, arguments...)
+	command := hiddenCommand("git", commandArguments...)
+	command.Env = agentGitEnvironment(command.Env)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(arguments, " "), err, output)
+	}
+	return string(output)
 }
 
 func readConfigurationArchiveForTest(t *testing.T, data []byte) (map[string]bool, map[string][]byte) {

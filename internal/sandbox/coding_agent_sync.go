@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,27 +32,29 @@ type codingAgentConfigurationSources struct {
 }
 
 type codingAgentSyncManifest struct {
-	SchemaVersion int  `json:"schemaVersion"`
-	OpenCode      bool `json:"opencode"`
-	ClaudeCode    bool `json:"claudeCode"`
-	Codex         bool `json:"codex"`
-	GitHubCopilot bool `json:"githubCopilot"`
-	Pi            bool `json:"pi"`
+	SchemaVersion       int                 `json:"schemaVersion"`
+	OpenCode            bool                `json:"opencode"`
+	ClaudeCode          bool                `json:"claudeCode"`
+	Codex               bool                `json:"codex"`
+	GitHubCopilot       bool                `json:"githubCopilot"`
+	Pi                  bool                `json:"pi"`
+	GitTrackedDeletions map[string][]string `json:"gitTrackedDeletions"`
 }
 
-func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration) codingAgentSyncManifest {
+func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string) codingAgentSyncManifest {
 	return codingAgentSyncManifest{
-		SchemaVersion: 1,
-		OpenCode:      configuration.OpenCode,
-		ClaudeCode:    configuration.ClaudeCode,
-		Codex:         configuration.Codex,
-		GitHubCopilot: configuration.GitHubCopilot,
-		Pi:            configuration.Pi,
+		SchemaVersion:       2,
+		OpenCode:            configuration.OpenCode,
+		ClaudeCode:          configuration.ClaudeCode,
+		Codex:               configuration.Codex,
+		GitHubCopilot:       configuration.GitHubCopilot,
+		Pi:                  configuration.Pi,
+		GitTrackedDeletions: gitTrackedDeletions,
 	}
 }
 
-func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration) ([]byte, error) {
-	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration), "", "  ")
+func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string) ([]byte, error) {
+	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration, gitTrackedDeletions), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode coding-agent sync manifest: %w", err)
 	}
@@ -124,25 +127,48 @@ func configuredAgentRoot(userHome, environmentName string, defaultParts ...strin
 }
 
 func archiveCodingAgentConfiguration(
+	ctx context.Context,
 	sources codingAgentConfigurationSources,
 	add func(string, string) error,
 	addData func([]byte, string, string) error,
 ) error {
-	manifest, err := encodeCodingAgentSyncManifest(sources.Selection)
-	if err != nil {
-		return err
+	archivedDestinations := map[string]string{}
+	gitTrackedDeletions := map[string][]string{}
+	addConfiguration := func(source, destination string) error {
+		cleaned := filepath.Clean(destination)
+		if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" || cleaned == "." || cleaned == ".." ||
+			strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("coding-agent archive destination is unsafe: %q", destination)
+		}
+		identity := strings.ToLower(filepath.ToSlash(cleaned))
+		source = filepath.Clean(source)
+		if previous, exists := archivedDestinations[identity]; exists {
+			if strings.EqualFold(previous, source) {
+				return nil
+			}
+			return fmt.Errorf("coding-agent archive destination collision %q from %s and %s", destination, previous, source)
+		}
+		archivedDestinations[identity] = source
+		return add(source, cleaned)
 	}
-	if err := addData(manifest, codingAgentSyncManifestArchivePath, "coding-agent sync manifest"); err != nil {
+	archiveGit := func(directory, archiveRoot string) error {
+		deleted, err := archiveAgentGitRepository(ctx, directory, archiveRoot, addConfiguration)
+		if err == nil && len(deleted) > 0 {
+			gitTrackedDeletions[archiveRoot] = deleted
+		}
 		return err
 	}
 
 	if sources.Selection.OpenCode {
 		if err := archiveAllowedConfigurationRoot(sources.OpenCodeDirectory, "opencode",
 			[]string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "package.json", "package-lock.json", "bun.lock", "bun.lockb"},
-			[]string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"}, nil, add); err != nil {
+			[]string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"}, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode configuration: %w", err)
 		}
-		if err := addOptionalConfigurationFile(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json"), add); err != nil {
+		if err := archiveGit(sources.OpenCodeDirectory, "opencode"); err != nil {
+			return fmt.Errorf("archive OpenCode Git repository: %w", err)
+		}
+		if err := addOptionalConfigurationFile(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode authentication: %w", err)
 		}
 	}
@@ -150,11 +176,14 @@ func archiveCodingAgentConfiguration(
 	if sources.Selection.ClaudeCode {
 		if err := archiveAllowedConfigurationRoot(sources.ClaudeCodeDirectory, "claude-code",
 			[]string{"settings.json", "keybindings.json", "CLAUDE.md", "loop.md"},
-			[]string{"agents", "commands", "rules", "skills", "output-styles", "themes", "workflows"}, nil, add); err != nil {
+			[]string{"agents", "commands", "rules", "skills", "output-styles", "themes", "workflows"}, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code configuration: %w", err)
 		}
-		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "plugins", "known_marketplaces.json"), filepath.Join("claude-code", "plugins", "known_marketplaces.json"), add); err != nil {
+		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "plugins", "known_marketplaces.json"), filepath.Join("claude-code", "plugins", "known_marketplaces.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code marketplace configuration: %w", err)
+		}
+		if err := archiveGit(sources.ClaudeCodeDirectory, "claude-code"); err != nil {
+			return fmt.Errorf("archive Claude Code Git repository: %w", err)
 		}
 		state, exists, err := buildClaudeCodeUserState(sources.ClaudeCodeState)
 		if err != nil {
@@ -165,19 +194,22 @@ func archiveCodingAgentConfiguration(
 				return fmt.Errorf("archive Claude Code user MCP configuration: %w", err)
 			}
 		}
-		if err := addOptionalConfigurationFile(sources.ClaudeCodeAuthentication, filepath.Join("claude-code-auth", ".credentials.json"), add); err != nil {
+		if err := addOptionalConfigurationFile(sources.ClaudeCodeAuthentication, filepath.Join("claude-code-auth", ".credentials.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code authentication: %w", err)
 		}
 	}
 
 	if sources.Selection.Codex {
-		if err := archiveCodexConfiguration(sources.CodexDirectory, add); err != nil {
+		if err := archiveCodexConfiguration(sources.CodexDirectory, addConfiguration); err != nil {
 			return err
 		}
-		if err := addOptionalConfigurationFile(sources.CodexAuthentication, filepath.Join("codex-auth", "auth.json"), add); err != nil {
+		if err := archiveGit(sources.CodexDirectory, "codex"); err != nil {
+			return fmt.Errorf("archive Codex Git repository: %w", err)
+		}
+		if err := addOptionalConfigurationFile(sources.CodexAuthentication, filepath.Join("codex-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Codex authentication: %w", err)
 		}
-		if err := addOptionalConfigurationFile(sources.CodexMCPAuthentication, filepath.Join("codex-auth", ".credentials.json"), add); err != nil {
+		if err := addOptionalConfigurationFile(sources.CodexMCPAuthentication, filepath.Join("codex-auth", ".credentials.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Codex MCP authentication: %w", err)
 		}
 	}
@@ -185,31 +217,44 @@ func archiveCodingAgentConfiguration(
 	if sources.Selection.GitHubCopilot {
 		if err := archiveAllowedConfigurationRoot(sources.GitHubCopilotDirectory, "github-copilot",
 			[]string{"settings.json", "copilot-instructions.md", "mcp-config.json", "lsp-config.json"},
-			[]string{"instructions", "agents", "skills", "hooks", "extensions"}, nil, add); err != nil {
+			[]string{"instructions", "agents", "skills", "hooks", "extensions"}, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive GitHub Copilot configuration: %w", err)
+		}
+		if err := archiveGit(sources.GitHubCopilotDirectory, "github-copilot"); err != nil {
+			return fmt.Errorf("archive GitHub Copilot Git repository: %w", err)
 		}
 	}
 
 	if sources.Selection.Pi {
 		if err := archiveAllowedConfigurationRoot(sources.PiDirectory, "pi",
 			[]string{"settings.json", "models.json", "keybindings.json", "SYSTEM.md", "APPEND_SYSTEM.md", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"},
-			[]string{"prompts", "skills", "extensions", "themes"}, nil, add); err != nil {
+			[]string{"prompts", "skills", "extensions", "themes"}, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive Pi configuration: %w", err)
 		}
-		if err := archiveFirstOptionalConfigurationFile(sources.PiDirectory, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, filepath.Join("pi", "AGENTS.md"), add); err != nil {
+		if err := archiveFirstOptionalConfigurationFile(sources.PiDirectory, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, filepath.Join("pi", "AGENTS.md"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Pi instructions: %w", err)
 		}
-		if err := addOptionalConfigurationFile(sources.PiAuthentication, filepath.Join("pi-auth", "auth.json"), add); err != nil {
+		if err := archiveGit(sources.PiDirectory, "pi"); err != nil {
+			return fmt.Errorf("archive Pi Git repository: %w", err)
+		}
+		if err := addOptionalConfigurationFile(sources.PiAuthentication, filepath.Join("pi-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Pi authentication: %w", err)
 		}
 	}
 
 	if sources.SharedSkillsDirectory != "" {
-		if err := archiveOptionalConfigurationTree(sources.SharedSkillsDirectory, "shared-agent-skills", nil, add); err != nil {
+		if err := archiveOptionalConfigurationTree(sources.SharedSkillsDirectory, "shared-agent-skills", nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive shared agent skills: %w", err)
 		}
+		if err := archiveGit(sources.SharedSkillsDirectory, "shared-agent-skills"); err != nil {
+			return fmt.Errorf("archive shared agent skills Git repository: %w", err)
+		}
 	}
-	return nil
+	manifest, err := encodeCodingAgentSyncManifest(sources.Selection, gitTrackedDeletions)
+	if err != nil {
+		return err
+	}
+	return addData(manifest, codingAgentSyncManifestArchivePath, "coding-agent sync manifest")
 }
 
 func archiveCodexConfiguration(directory string, add func(string, string) error) error {

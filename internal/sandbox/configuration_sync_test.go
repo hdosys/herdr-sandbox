@@ -76,7 +76,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	}
 	writeTestFile(t, packagePlan, string(packagePlanData))
 
-	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitConfig:               gitConfig,
 		GitHubCLIConfiguration:  githubCLI,
 		GitHubCLIAuthentication: githubAuthentication,
@@ -194,7 +194,7 @@ func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitHubCLIHosts(t *test
 	herdrConfig := filepath.Join(root, "herdr-config.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
 
-	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitHubCLIConfiguration:  githubCLI,
 		GitHubCLIAuthentication: []byte(`{"schemaVersion":1,"accounts":[]}`),
 		HerdrConfig:             herdrConfig,
@@ -254,7 +254,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	writeTestFile(t, packagePlan, string(packagePlanData))
 	sources.HerdrConfig = herdrConfig
 	sources.PackagePlan = packagePlan
-	data, err := buildDevelopmentConfigurationArchive(sources, []byte("Write-Output 'apply fixture'\n"))
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), sources, []byte("Write-Output 'apply fixture'\n"))
 	if err != nil {
 		t.Fatalf("build minimal configuration archive: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitConfiguration(t *te
 	herdrConfig := filepath.Join(root, "herdr-config.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
 
-	data, err := buildDevelopmentConfigurationArchive(hostConfigurationSources{
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitConfig:          filepath.Join(root, "missing", ".gitconfig"),
 		GitConfigDirectory: filepath.Join(root, "missing", "config", "git"),
 		GitIgnore:          filepath.Join(root, "missing", ".gitignore_global"),

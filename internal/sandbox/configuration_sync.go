@@ -591,7 +591,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		defer clear(sources.GitHubCLIAuthentication)
 		expectedGitHubAccounts = accountCount
 	}
-	archive, err := buildDevelopmentConfigurationArchive(sources, configurationSyncScript)
+	archive, err := buildDevelopmentConfigurationArchive(ctx, sources, configurationSyncScript)
 	if err != nil {
 		return err
 	}
@@ -773,7 +773,7 @@ func defaultOpenCodeDirectories(userHome string) (string, string, error) {
 	return filepath.Join(configurationRoot, "opencode"), filepath.Join(dataRoot, "opencode"), nil
 }
 
-func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, applyScript []byte) ([]byte, error) {
+func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfigurationSources, applyScript []byte) ([]byte, error) {
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	total := int64(0)
@@ -910,7 +910,7 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		}
 	}
 
-	if err := archiveCodingAgentConfiguration(sources.CodingAgents, add, addData); err != nil {
+	if err := archiveCodingAgentConfiguration(ctx, sources.CodingAgents, add, addData); err != nil {
 		return nil, err
 	}
 	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig)

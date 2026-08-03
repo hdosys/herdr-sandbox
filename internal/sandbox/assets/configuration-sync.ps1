@@ -89,6 +89,41 @@ function Sync-VerifiedConfigurationRoot {
     if (-not (Test-Path -LiteralPath $Source -PathType Container)) { return }
     Copy-VerifiedConfigurationTree -Source $Source -Destination $Destination
 }
+function Remove-VerifiedTrackedConfigurationFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][object[]]$Paths
+    )
+    $destinationRoot = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
+    foreach ($pathValue in $Paths) {
+        if ($pathValue -isnot [string]) {
+            throw 'Tracked configuration deletion path is not a string.'
+        }
+        $relative = [string]$pathValue
+        $segments = @($relative -split '/')
+        if ([string]::IsNullOrWhiteSpace($relative) -or $relative.Length -gt 32767 -or
+            [IO.Path]::IsPathRooted($relative) -or $relative.Contains('\') -or $relative.Contains(':') -or
+            $relative -match '[\x00\r\n]' -or $segments.Count -eq 0 -or
+            @($segments | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -in @('.', '..') }).Count -ne 0) {
+            throw "Tracked configuration deletion path is unsafe: $relative"
+        }
+        $target = [IO.Path]::GetFullPath((Join-Path $Destination ($relative.Replace('/', '\'))))
+        if (-not $target.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Tracked configuration deletion escapes its destination: $relative"
+        }
+        Assert-ConfigurationDestinationPath -Path $target
+        if (Test-Path -LiteralPath $target) {
+            $item = Get-Item -LiteralPath $target -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Tracked configuration deletion target is unsafe: $target"
+            }
+            Remove-Item -LiteralPath $target -Force
+            if (Test-Path -LiteralPath $target) {
+                throw "Tracked configuration deletion failed: $target"
+            }
+        }
+    }
+}
 function Sync-OptionalConfigurationFile {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -259,12 +294,43 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
     $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
-    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|opencode|pi|schemaVersion' -or
-        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 1 -or
+    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|gitTrackedDeletions|githubCopilot|opencode|pi|schemaVersion' -or
+        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 2 -or
         $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
         $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or
-        $agentSync.pi -isnot [bool]) {
+        $agentSync.pi -isnot [bool] -or $null -eq $agentSync.gitTrackedDeletions) {
         throw 'Coding-agent sync manifest has an unsupported contract.'
+    }
+    $allowedGitDeletionRoots = @{
+        'opencode' = [bool]$agentSync.opencode
+        'claude-code' = [bool]$agentSync.claudeCode
+        'codex' = [bool]$agentSync.codex
+        'github-copilot' = [bool]$agentSync.githubCopilot
+        'pi' = [bool]$agentSync.pi
+        'shared-agent-skills' = ([bool]$agentSync.codex -or [bool]$agentSync.githubCopilot -or [bool]$agentSync.pi)
+    }
+    $gitDeletionCount = 0
+    foreach ($property in @($agentSync.gitTrackedDeletions.PSObject.Properties)) {
+        $rootName = [string]$property.Name
+        $paths = @($property.Value)
+        if (-not $allowedGitDeletionRoots.ContainsKey($rootName) -or -not [bool]$allowedGitDeletionRoots[$rootName] -or $paths.Count -eq 0) {
+            throw "Coding-agent Git deletion root is invalid: $rootName"
+        }
+        foreach ($pathValue in $paths) {
+            if ($pathValue -isnot [string]) {
+                throw "Coding-agent Git deletion path is invalid for $rootName."
+            }
+            $gitDeletionCount += 1
+        }
+    }
+    if ($gitDeletionCount -gt 4096) {
+        throw 'Coding-agent Git deletion count exceeds its limit.'
+    }
+    function Get-AgentGitTrackedDeletions {
+        param([Parameter(Mandatory = $true)][string]$Name)
+        $property = $agentSync.gitTrackedDeletions.PSObject.Properties[$Name]
+        if ($null -eq $property) { return @() }
+        return @($property.Value)
     }
     $gitEnabled = $enabledPackages.ContainsKey('Git.Git')
     $githubCLIEnabled = $enabledPackages.ContainsKey('GitHub.cli')
@@ -287,6 +353,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $openCodeSource = Join-Path $expanded 'opencode'
         $openCodeDestination = Join-Path $env:USERPROFILE '.config\opencode'
         Sync-VerifiedConfigurationRoot -Source $openCodeSource -Destination $openCodeDestination
+        Remove-VerifiedTrackedConfigurationFiles -Destination $openCodeDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'opencode')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'opencode-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.local\share\opencode\auth.json')
     }
 
@@ -294,6 +361,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         [Console]::Error.WriteLine('[config-sync] apply-claude-code')
         $claudeDestination = Join-Path $env:USERPROFILE '.claude'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'claude-code') -Destination $claudeDestination
+        Remove-VerifiedTrackedConfigurationFiles -Destination $claudeDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'claude-code')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $claudeDestination '.credentials.json')
         Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination (Join-Path $env:USERPROFILE '.claude.json')
     }
@@ -302,6 +370,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         [Console]::Error.WriteLine('[config-sync] apply-codex')
         $codexDestination = Join-Path $env:USERPROFILE '.codex'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'codex') -Destination $codexDestination
+        Remove-VerifiedTrackedConfigurationFiles -Destination $codexDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'codex')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\auth.json') -Destination (Join-Path $codexDestination 'auth.json')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\.credentials.json') -Destination (Join-Path $codexDestination '.credentials.json')
     }
@@ -310,12 +379,14 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         [Console]::Error.WriteLine('[config-sync] apply-github-copilot')
         $copilotDestination = Join-Path $env:USERPROFILE '.copilot'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'github-copilot') -Destination $copilotDestination
+        Remove-VerifiedTrackedConfigurationFiles -Destination $copilotDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'github-copilot')
     }
 
     if ([bool]$agentSync.pi) {
         [Console]::Error.WriteLine('[config-sync] apply-pi')
         $piDestination = Join-Path $env:USERPROFILE '.pi\agent'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'pi') -Destination $piDestination
+        Remove-VerifiedTrackedConfigurationFiles -Destination $piDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'pi')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $piDestination 'auth.json')
     }
 
@@ -325,6 +396,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $sharedSkillsSource = Join-Path $expanded 'shared-agent-skills'
         if (Test-Path -LiteralPath $sharedSkillsSource -PathType Container) {
             Copy-VerifiedConfigurationTree -Source $sharedSkillsSource -Destination $sharedSkillsDestination
+            Remove-VerifiedTrackedConfigurationFiles -Destination $sharedSkillsDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'shared-agent-skills')
         }
     }
 

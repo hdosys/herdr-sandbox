@@ -54,6 +54,12 @@ These are deliberate non-guarantees:
 - Networking is enabled. A credential deliberately copied into the guest can be
   used or exfiltrated by a compromised agent or project. Herdr Sandbox currently
   has no offline mode.
+- An enabled coding-agent configuration root that is a physical Git repository
+  contributes its tracked files, local repository config, refs, index, and object
+  history to the guest. Hooks, reflogs, worktree pointers, active-operation state,
+  and known credential/runtime paths are excluded or rejected, but remote URLs or
+  historical objects may still contain secrets. Disable that agent's sync unless
+  its complete configuration-repository history is safe for guest processes.
 - OpenCode's guest-managed policy grants all permissions. Defender cloud/security
   features and SmartScreen are intentionally restricted in the disposable guest.
   This favors an unrestricted development environment, not hostile-code

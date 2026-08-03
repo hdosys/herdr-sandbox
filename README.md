@@ -352,7 +352,9 @@ Configuration sync is default-on when these host surfaces exist:
 | GitHub Copilot CLI | Copies approved config and reuses successfully imported GitHub CLI accounts. Native Credential Manager tokens stay host-bound. |
 | Pi | Copies approved agent configuration and portable `auth.json`. |
 
-The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
+When an enabled agent root—or the shared skills root—is a standard physical Git worktree, sync also transfers its tracked files and bounded `.git` repository so the guest retains the current branch, remote, upstream, index, refs, objects, tracked edits, and tracked deletions. Git hooks, reflogs, linked-worktree pointers, active-operation state, external object stores, non-files ref storage, and known tracked credential/runtime paths are not accepted. Because Git objects and local repository configuration can contain historical or embedded secrets, disable that agent's sync unless its complete configuration-repository history is safe for the guest.
+
+The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, runtime history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
 #### Workspace discovery
 

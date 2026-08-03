@@ -19,6 +19,9 @@ release notes remain available on the
   checkouts can generate their maintained Windows toolchain profile—including
   Bun, Git for Windows `sh`, and the repository-required `python3` command—with
   `herdr-sandbox init --stack herdr`.
+- Git-backed OpenCode, Claude Code, Codex, GitHub Copilot, Pi, and shared-skills
+  configuration now retains tracked workflow files plus branch, remote, upstream,
+  index, refs, objects, tracked edits, and tracked deletions inside the guest.
 
 ### Changed
 
