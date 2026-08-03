@@ -477,7 +477,7 @@ go run ./cmd/task package v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig; it runs representative version/build/test commands over managed SSH, verifies Terminal and Starship transfer, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js, Python, Rust/MSVC, and Zig; it runs representative version/build/test commands over managed SSH, verifies Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
 - `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
