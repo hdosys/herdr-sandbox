@@ -226,7 +226,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Just | `Install-Just` |
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
-- An omitted toolchain version resolves the latest stable release once for cache, installation, and verification. Playwright browser tooling defaults to the release-owned, age-checked `1.61.1`; `Install-NodeStack -PlaywrightVersion <x.y.z>` can align it to an exact project version. Exact versions never fall back silently.
+- An omitted version always resolves the latest stable release once for installation and verification. Playwright resolves npm's current `latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. Exact versions never fall back silently.
 - Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.

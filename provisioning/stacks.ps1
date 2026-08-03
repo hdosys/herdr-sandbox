@@ -1030,8 +1030,8 @@ function Install-GoStack {
 function Install-PlaywrightChromium {
     [CmdletBinding()]
     param(
-        [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-        [string]$Version = '1.61.1'
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
     )
 
     $node = Get-Command 'node.exe' -CommandType Application -ErrorAction SilentlyContinue |
@@ -1046,11 +1046,10 @@ function Install-PlaywrightChromium {
     }
 
     $playwrightRoot = 'C:\HerdrSandbox\tools\playwright'
-    $toolRoot = Join-Path $playwrightRoot $Version
     $browserRoot = 'C:\HerdrSandbox\tools\playwright-browsers'
     $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
     $stagingRoot = 'C:\HerdrSandbox\staging'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $playwrightRoot, $toolRoot, $browserRoot, $npmCache, $stagingRoot)) {
+    foreach ($directory in @('C:\HerdrSandbox\tools', $playwrightRoot, $browserRoot, $npmCache, $stagingRoot)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -1060,10 +1059,36 @@ function Install-PlaywrightChromium {
             throw "Playwright guest-local directory is unsafe: $directory"
         }
     }
-
-    Write-Output "Installing Playwright $Version and Chromium..."
     $env:npm_config_cache = $npmCache
     $env:npm_config_update_notifier = 'false'
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $versionJSON = ((Invoke-ProvisioningNative -Role 'Playwright latest version resolution' `
+            -FilePath $node.Source -ArgumentList @($npmCLI, 'view', 'playwright@latest', 'version', '--json')) `
+            -join [Environment]::NewLine).Trim()
+        try {
+            $resolvedVersion = $versionJSON | ConvertFrom-Json
+        } catch {
+            throw "Playwright latest version resolution returned invalid JSON: $($_.Exception.Message)"
+        }
+        if ($resolvedVersion -isnot [string] -or
+            [string]$resolvedVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+            throw "Playwright latest version resolution returned an invalid stable version: $resolvedVersion"
+        }
+        $Version = [string]$resolvedVersion
+    }
+
+    $toolRoot = Join-Path $playwrightRoot $Version
+    if (-not (Test-Path -LiteralPath $toolRoot)) {
+        New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+    }
+    $toolRootInfo = Get-Item -LiteralPath $toolRoot -Force
+    if (-not $toolRootInfo.PSIsContainer -or
+        ($toolRootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Playwright versioned tool directory is unsafe: $toolRoot"
+    }
+
+    Write-Output "Installing Playwright $Version and Chromium..."
     Invoke-ProvisioningNative -Role 'Playwright CLI installation' -FilePath $node.Source -ArgumentList @(
         $npmCLI,
         'install',
@@ -1155,8 +1180,8 @@ function Install-NodeStack {
     param(
         [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
         [string]$Version = '',
-        [ValidatePattern('^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-        [string]$PlaywrightVersion = '1.61.1'
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$PlaywrightVersion = ''
     )
 
     Write-Output 'Installing Node.js LTS...'

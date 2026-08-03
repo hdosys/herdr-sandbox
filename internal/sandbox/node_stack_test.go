@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,9 +22,12 @@ func TestNodeStackOwnsVersionedGuestLocalPlaywrightChromium(t *testing.T) {
 	}
 	section := source[playwrightStart:pythonStart]
 	for _, required := range []string{
-		"[string]$Version = '1.61.1'",
-		"[string]$PlaywrightVersion = '1.61.1'",
+		"[string]$Version = ''",
+		"[string]$PlaywrightVersion = ''",
 		"node_modules\\npm\\bin\\npm-cli.js",
+		"$env:npm_config_cache = $npmCache",
+		"Playwright latest version resolution",
+		"@($npmCLI, 'view', 'playwright@latest', 'version', '--json')",
 		"C:\\HerdrSandbox\\tools\\playwright",
 		"C:\\HerdrSandbox\\tools\\playwright-browsers",
 		"--ignore-scripts",
@@ -43,5 +47,13 @@ func TestNodeStackOwnsVersionedGuestLocalPlaywrightChromium(t *testing.T) {
 		if strings.Contains(strings.ToLower(section), strings.ToLower(forbidden)) {
 			t.Fatalf("Node stack contains a second Playwright package owner %q", forbidden)
 		}
+	}
+	cacheSetup := strings.Index(section, "$env:npm_config_cache = $npmCache")
+	latestResolution := strings.Index(section, "Playwright latest version resolution")
+	if cacheSetup < 0 || latestResolution < 0 || cacheSetup > latestResolution {
+		t.Fatal("Playwright latest resolution can write outside the guest-local npm cache")
+	}
+	if pin := regexp.MustCompile(`playwright@\d+\.\d+\.\d+`).FindString(section); pin != "" {
+		t.Fatalf("Node stack contains an agent-selected default Playwright pin %q", pin)
 	}
 }
