@@ -22,6 +22,7 @@ const (
 	packageGitHubCLI       = "GitHub.cli"
 	packageTailscale       = "Tailscale.Tailscale"
 	packageOpenCode        = "SST.opencode"
+	packageVulkanRuntime   = "KhronosGroup.VulkanRT"
 	packageWinDirStat      = "WinDirStat.WinDirStat"
 	packageFilePilot       = "Voidstar.FilePilot"
 	packageTerminalXAML    = "Microsoft.UI.Xaml.2.8"

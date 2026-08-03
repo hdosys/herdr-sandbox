@@ -1426,6 +1426,7 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 		"function Read-ProvisioningPackagePlan",
 		"function Test-ProvisioningPackageEnabled",
 		"function Get-ProvisioningPackageVersion",
+		"function Assert-ProvisioningVulkanDevice",
 		"WinGet package plan is missing Core package Microsoft.PowerShell",
 		"if (Test-ProvisioningPackageEnabled -Id 'Git.Git')",
 		"if (Test-ProvisioningPackageEnabled -Id 'GitHub.cli')",
@@ -1433,6 +1434,9 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 		"foreach ($package in @($provisioningPackagePlan.Data.additions))",
 		"Install-ProvisioningOnlineWinGetPackage -Role \"additional WinGet package $packageID\"",
 		"-Id $packageID -Version ([string]$package.version)",
+		"if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT')",
+		"Invoke-ProvisioningNativeResult -Role 'Vulkan device inspection'",
+		"Vulkan Runtime did not expose a physical device",
 		"Search-ProvisioningWinGetPackages -Role $Role -IdQuery $Id -Exact",
 		"'--version', $resolvedVersion",
 		"Test-ProvisioningWinGetPackageInstalled -Metadata $metadata",
@@ -1457,6 +1461,10 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 	onlineInstall := strings.Index(additionBlock, "Install-ProvisioningOnlineWinGetPackage")
 	if openCodeSkip < 0 || onlineInstall < 0 || openCodeSkip > onlineInstall {
 		t.Fatal("generic package additions do not defer OpenCode to its specialized adapter")
+	}
+	vulkanVerification := strings.Index(additionBlock, "if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT')")
+	if vulkanVerification < 0 || vulkanVerification < onlineInstall {
+		t.Fatal("Vulkan device verification does not follow generic package installation")
 	}
 }
 

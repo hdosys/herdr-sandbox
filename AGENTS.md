@@ -61,6 +61,9 @@ in the global OpenCode configuration, not this repository.
   integration. Exercise changed deployment paths idempotently in that guest;
   replace it only for final reproducibility or when the isolation boundary changes.
   Preserve a ready guest for user-observed UI acceptance before replacement.
+- Treat every ready Sandbox as active production state. Never close, restart, or
+  replace it without explicit approval from the current user; report or defer a
+  fresh-native gate instead of consuming that instance.
 - Executable wiring belongs under `cmd/`, testable behavior under `internal/`, and
   recurring repository automation under `cmd/task`.
 - Start standard-library-only; prefer pure Go and avoid CGO/helper runtimes unless

@@ -306,6 +306,23 @@ The command creates `config.json` only when absent and never replaces existing s
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs show `SST.opencode` as a replaceable example; remove or replace that entry to choose another coding agent. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
+#### Experimental Vulkan
+
+Vulkan remains disabled by default. To install only the LunarG runtime and require a real vGPU-backed device, retain any other desired additions and add `KhronosGroup.VulkanRT`:
+
+```json
+"wingetPackages": {
+  "remove": [],
+  "add": [
+    "SST.opencode",
+    "KhronosGroup.VulkanRT"
+  ],
+  "versions": {}
+}
+```
+
+Provisioning runs `vulkaninfo --summary` and fails when no physical device is exposed. This experimental path does not install the Vulkan SDK, Microsoft's D3D mapping package, a host GPU driver, or enable vendor extensions.
+
 #### Audio policy
 
 Both audio toggles default off. With both off, provisioning selects Windows **No Sounds**, mutes the default render endpoint, and disables the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback by changing only their own volume.

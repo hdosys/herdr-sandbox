@@ -13,6 +13,8 @@ release notes remain available on the
 - A public security policy describing the host/guest trust boundary, credential
   and network trade-offs, supported reporting path, unsigned installer, and
   latest-versus-pinned package behavior.
+- A disabled-by-default experimental `KhronosGroup.VulkanRT` package opt-in with
+  strict physical-device verification through `vulkaninfo`.
 
 ### Changed
 

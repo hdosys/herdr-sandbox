@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 43
+# herdr-sandbox-base-contract: 44
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -1878,6 +1878,29 @@ function Assert-ProvisioningCommand {
     return $version
 }
 
+function Assert-ProvisioningVulkanDevice {
+    $command = Get-Command 'vulkaninfo.exe' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $command) {
+        throw 'Vulkan Runtime did not install vulkaninfo.exe on PATH.'
+    }
+    $result = Invoke-ProvisioningNativeResult -Role 'Vulkan device inspection' `
+        -FilePath $command.Source -ArgumentList @('--summary')
+    $lines = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+    if ($result.ExitCode -ne 0) {
+        throw "Vulkan device inspection failed with exit code $($result.ExitCode)."
+    }
+    $deviceNames = @($lines | ForEach-Object {
+            if ([string]$_ -match '^\s*deviceName\s*=\s*(?<name>.+?)\s*$') {
+                [string]$Matches['name']
+            }
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)
+    if ($deviceNames.Count -eq 0) {
+        throw 'Vulkan Runtime did not expose a physical device.'
+    }
+    return $deviceNames
+}
+
 function Get-ProvisioningPowerShell7Installation {
     $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue)
     if ($packages.Count -ne 1) {
@@ -3298,6 +3321,11 @@ foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     }
     Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
         -Id $packageID -Version ([string]$package.version)
+}
+
+if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT') {
+    $vulkanDevices = @(Assert-ProvisioningVulkanDevice)
+    Write-Output "Vulkan ready: $($vulkanDevices -join ', ')"
 }
 
 $workspaceManifestPath = Join-Path (Split-Path -Parent $ProjectProvisioningDirectory) 'workspaces.json'

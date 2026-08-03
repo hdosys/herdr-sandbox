@@ -67,6 +67,33 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 }
 
+func TestResolveWingetPackagePlanTreatsVulkanRuntimeAsOptionalAddition(t *testing.T) {
+	terminal := testStableWindowsTerminalConfiguration()
+	defaults, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	if err != nil {
+		t.Fatalf("resolve defaults: %v", err)
+	}
+	if defaults.enabled(packageVulkanRuntime) {
+		t.Fatal("default package plan unexpectedly enables experimental Vulkan")
+	}
+
+	configuration := wingetPackageConfiguration{
+		Remove: []string{},
+		Add:    []string{packageVulkanRuntime},
+		Versions: map[string]string{
+			packageVulkanRuntime: "1.4.350.0",
+		},
+	}
+	custom, err := resolveWingetPackagePlan(configuration, terminal)
+	if err != nil {
+		t.Fatalf("resolve Vulkan opt-in: %v", err)
+	}
+	if !custom.enabled(packageVulkanRuntime) || len(custom.Additions) != 1 ||
+		custom.Additions[0].ID != packageVulkanRuntime || custom.Additions[0].Version != "1.4.350.0" {
+		t.Fatalf("Vulkan opt-in package plan = %#v", custom)
+	}
+}
+
 func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	tests := map[string]wingetPackageConfiguration{
