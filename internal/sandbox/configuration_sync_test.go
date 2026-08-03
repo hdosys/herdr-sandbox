@@ -165,6 +165,15 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	if patched["defaultProfile"] != powerShellProfileGUID {
 		t.Fatalf("archived defaultProfile = %#v", patched["defaultProfile"])
 	}
+	profiles := patched["profiles"].(map[string]any)
+	if profiles["defaults"].(map[string]any)["startingDirectory"] != `C:\Workspaces\fixture` {
+		t.Fatalf("archived Terminal defaults = %#v", profiles["defaults"])
+	}
+	for _, value := range profiles["list"].([]any) {
+		if profile := value.(map[string]any); profile["startingDirectory"] != `C:\Workspaces\fixture` {
+			t.Fatalf("archived Terminal profile = %#v", profile)
+		}
+	}
 	if !strings.Contains(string(archivedHerdrConfig), `default_shell = "pwsh.exe"`) {
 		t.Fatalf("archived Herdr config = %q", archivedHerdrConfig)
 	}
@@ -275,19 +284,20 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	}
 }
 
-func TestPatchGuestWindowsTerminalSettingsUsesPowerShell7AndFont(t *testing.T) {
+func TestPatchGuestWindowsTerminalSettingsUsesPowerShell7FontAndActiveWorkspace(t *testing.T) {
 	input := []byte(`{
         "theme":"light",
         "defaultProfile":"{47302f9c-1ac4-566c-aa3e-8cf29889d6ab}",
         "profiles":{
-            "defaults":{"font":{"face":"Custom Nerd Font","size":12}},
+			"defaults":{"startingDirectory":"D:\\host-default","font":{"face":"Custom Nerd Font","size":12}},
             "list":[
 				{"guid":"{61C54BBD-C2C6-5271-96E7-009A87FF44BF}","hidden":false,"name":"Host shell","source":"host","startingDirectory":"D:\\\\","font":{"face":"Other Font"}},
                 {"guid":"{47302f9c-1ac4-566c-aa3e-8cf29889d6ab}","name":"Nushell"}
             ]
         }
     }`)
-	patched, err := patchGuestWindowsTerminalSettings(input)
+	const activeWorkspace = `C:\Workspaces\fixture`
+	patched, err := patchGuestWindowsTerminalSettings(input, activeWorkspace)
 	if err != nil {
 		t.Fatalf("patchGuestWindowsTerminalSettings: %v", err)
 	}
@@ -303,6 +313,9 @@ func TestPatchGuestWindowsTerminalSettingsUsesPowerShell7AndFont(t *testing.T) {
 	if defaults["font"].(map[string]any)["face"] != windowsTerminalGuestFont {
 		t.Fatalf("default font = %#v", defaults["font"])
 	}
+	if defaults["startingDirectory"] != activeWorkspace {
+		t.Fatalf("default startingDirectory = %#v", defaults["startingDirectory"])
+	}
 	list := profiles["list"].([]any)
 	powerShellFound := false
 	legacyVisible := false
@@ -311,14 +324,14 @@ func TestPatchGuestWindowsTerminalSettingsUsesPowerShell7AndFont(t *testing.T) {
 		if profile["font"].(map[string]any)["face"] != windowsTerminalGuestFont {
 			t.Fatalf("profile font = %#v", profile)
 		}
+		if profile["startingDirectory"] != activeWorkspace {
+			t.Fatalf("profile startingDirectory = %#v", profile)
+		}
 		guid, _ := profile["guid"].(string)
 		if strings.EqualFold(guid, powerShellProfileGUID) {
 			powerShellFound = true
 			if profile["commandline"] != powerShellCommandLine || profile["hidden"] != false || profile["name"] != "PowerShell" || profile["source"] != "Windows.Terminal.PowershellCore" {
 				t.Fatalf("PowerShell profile = %#v", profile)
-			}
-			if _, exists := profile["startingDirectory"]; exists {
-				t.Fatalf("PowerShell profile retained startingDirectory: %#v", profile)
 			}
 		} else if strings.EqualFold(guid, "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}") && profile["hidden"] == false {
 			legacyVisible = true
@@ -327,13 +340,13 @@ func TestPatchGuestWindowsTerminalSettingsUsesPowerShell7AndFont(t *testing.T) {
 	if !powerShellFound || !legacyVisible {
 		t.Fatalf("PowerShell profile state: found=%v legacyVisible=%v", powerShellFound, legacyVisible)
 	}
-	if _, err := patchGuestWindowsTerminalSettings([]byte(`{"profiles":{"list":[1]}}`)); err == nil {
+	if _, err := patchGuestWindowsTerminalSettings([]byte(`{"profiles":{"list":[1]}}`), activeWorkspace); err == nil {
 		t.Fatal("invalid Terminal profile unexpectedly succeeded")
 	}
 }
 
 func TestPatchGuestWindowsTerminalSettingsDoesNotSynthesizeLegacyProfile(t *testing.T) {
-	patched, err := patchGuestWindowsTerminalSettings([]byte(`{"profiles":{"defaults":{},"list":[]}}`))
+	patched, err := patchGuestWindowsTerminalSettings([]byte(`{"profiles":{"defaults":{},"list":[]}}`), `C:\Workspaces\fixture`)
 	if err != nil {
 		t.Fatalf("patchGuestWindowsTerminalSettings: %v", err)
 	}

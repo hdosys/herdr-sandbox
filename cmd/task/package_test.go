@@ -323,6 +323,11 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`${APP_NAME} config`,
 		`!define MUI_FINISHPAGE_LINK "Open setup and usage guide"`,
 		`!define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"`,
+		`!define MUI_PAGE_CUSTOMFUNCTION_SHOW PositionInstallerFinishLink`,
+		`Function PositionInstallerFinishLink`,
+		`USER32::DrawTextW`,
+		`USER32::SetWindowPos(p $mui.FinishPage.Text`,
+		`USER32::SetWindowPos(p $mui.FinishPage.Link`,
 		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
@@ -395,7 +400,6 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`Stopping the app-owned Sandbox`,
 		`MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage`,
 		`Function PolishInstallerFinishPage`,
-		`SetWindowPos(p $mui.FinishPage.Link`,
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)

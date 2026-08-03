@@ -120,6 +120,7 @@ VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_set
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW PositionInstallerFinishLink
 !insertmacro MUI_PAGE_FINISH
 UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -136,6 +137,38 @@ Function SelectInstallerWelcomeBitmap
     ${ElseIf} $0 >= 108
         File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_125}"
     ${EndIf}
+FunctionEnd
+
+Function PositionInstallerFinishLink
+    System::Store "S"
+    ${NSD_GetText} $mui.FinishPage.Text $0
+    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Text, @r1)'
+    System::Call '*$1(i.r2, i.r3, i.r4, i.r5)'
+    IntOp $4 $4 - $2
+    System::Call '*$1(i 0, i 0, i r4, i 0)'
+    System::Call 'USER32::GetDC(p $mui.FinishPage.Text) p.r6'
+    SendMessage $mui.FinishPage.Text ${WM_GETFONT} 0 0 $7
+    System::Call 'GDI32::SelectObject(p r6, p r7) p.s'
+    System::Call 'USER32::DrawTextW(p r6, w r0, i -1, p r1, i 0x00000C10)'
+    System::Call '*$1(i, i, i, i.r8)'
+    System::Call 'GDI32::SelectObject(p r6, p s)'
+    System::Call 'USER32::ReleaseDC(p $mui.FinishPage.Text, p r6)'
+
+    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Text, @r1)'
+    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r1, i 2)'
+    System::Call '*$1(i.r2, i.r3, i.r4, i.r5)'
+    IntOp $7 $4 - $2
+    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Text, p 0, i r2, i r3, i r7, i r8, i 0x14)'
+
+    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Link, @r1)'
+    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r1, i 2)'
+    System::Call '*$1(i.r2, i.r4, i.r5, i.r6)'
+    IntOp $7 $5 - $2
+    IntOp $9 $6 - $4
+    IntOp $8 $8 + $3
+    IntOp $8 $8 + $9
+    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Link, p 0, i r2, i r8, i r7, i r9, i 0x14)'
+    System::Store "L"
 FunctionEnd
 
 Function .onInit

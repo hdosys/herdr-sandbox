@@ -563,7 +563,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	provisioningInput = filepath.Clean(provisioningInput)
 	sources.PackagePlan = filepath.Join(provisioningInput, wingetPackagePlanFileName)
-	if packages.enabled(packageGit) {
+	if packages.enabled(packageGit) || sources.WindowsTerminalSettings != "" {
 		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
 	}
 	expectedGitHubAccounts := 0
@@ -807,8 +807,21 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 	if err := add(sources.PackagePlan, configurationPackagePlanArchivePath); err != nil {
 		return nil, fmt.Errorf("archive resolved WinGet package plan: %w", err)
 	}
+	activeWorkspace := ""
 	if sources.WorkspaceManifest != "" {
-		if err := add(sources.WorkspaceManifest, configurationWorkspaceManifestPath); err != nil {
+		workspaceManifest, found, err := readBoundedRegularFile(sources.WorkspaceManifest, maximumWorkspaceManifestBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read guest workspace manifest for configuration archive: %w", err)
+		}
+		if !found {
+			return nil, errors.New("guest workspace manifest for configuration archive is missing")
+		}
+		manifest, err := decodeGuestWorkspaceManifest(workspaceManifest)
+		if err != nil {
+			return nil, err
+		}
+		activeWorkspace = manifest.ActiveWorkspace
+		if err := addData(workspaceManifest, configurationWorkspaceManifestPath, sources.WorkspaceManifest); err != nil {
 			return nil, fmt.Errorf("archive guest workspace manifest: %w", err)
 		}
 	}
@@ -886,7 +899,10 @@ func buildDevelopmentConfigurationArchive(sources hostConfigurationSources, appl
 		return nil, fmt.Errorf("archive Herdr config: %w", err)
 	}
 	if sources.WindowsTerminalEdition != "" && sources.WindowsTerminalSettings != "" {
-		settings, err := buildGuestWindowsTerminalSettings(sources.WindowsTerminalSettings)
+		if activeWorkspace == "" {
+			return nil, errors.New("archive Windows Terminal settings: active guest workspace is missing")
+		}
+		settings, err := buildGuestWindowsTerminalSettings(sources.WindowsTerminalSettings, activeWorkspace)
 		if err != nil {
 			return nil, err
 		}
@@ -980,7 +996,7 @@ func patchGuestHerdrConfig(contents []byte) ([]byte, error) {
 	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"), nil
 }
 
-func buildGuestWindowsTerminalSettings(path string) ([]byte, error) {
+func buildGuestWindowsTerminalSettings(path, startingDirectory string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect Windows Terminal settings: %w", err)
@@ -992,10 +1008,10 @@ func buildGuestWindowsTerminalSettings(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Windows Terminal settings: %w", err)
 	}
-	return patchGuestWindowsTerminalSettings(contents)
+	return patchGuestWindowsTerminalSettings(contents, startingDirectory)
 }
 
-func patchGuestWindowsTerminalSettings(contents []byte) ([]byte, error) {
+func patchGuestWindowsTerminalSettings(contents []byte, startingDirectory string) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.UseNumber()
 	var settings map[string]any
@@ -1021,6 +1037,7 @@ func patchGuestWindowsTerminalSettings(contents []byte) ([]byte, error) {
 	if err := patchGuestTerminalFont(defaults); err != nil {
 		return nil, err
 	}
+	defaults["startingDirectory"] = startingDirectory
 
 	listValue, exists := profiles["list"]
 	if !exists {
@@ -1039,6 +1056,7 @@ func patchGuestWindowsTerminalSettings(contents []byte) ([]byte, error) {
 		if err := patchGuestTerminalFont(profile); err != nil {
 			return nil, fmt.Errorf("Windows Terminal profile %d: %w", index, err)
 		}
+		profile["startingDirectory"] = startingDirectory
 		guid, _ := profile["guid"].(string)
 		if strings.EqualFold(guid, powerShellProfileGUID) {
 			configureGuestPowerShellProfile(profile)
@@ -1051,6 +1069,7 @@ func patchGuestWindowsTerminalSettings(contents []byte) ([]byte, error) {
 			return nil, fmt.Errorf("configure PowerShell Terminal profile: %w", err)
 		}
 		configureGuestPowerShellProfile(profile)
+		profile["startingDirectory"] = startingDirectory
 		list = append(list, profile)
 	}
 	profiles["list"] = list
@@ -1099,7 +1118,6 @@ func configureGuestPowerShellProfile(profile map[string]any) {
 	profile["hidden"] = false
 	profile["commandline"] = powerShellCommandLine
 	profile["source"] = "Windows.Terminal.PowershellCore"
-	delete(profile, "startingDirectory")
 }
 
 func encodePowerShell(script string) string {

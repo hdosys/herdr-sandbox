@@ -121,13 +121,13 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, worksp
 		audioInput = "Enable"
 	}
 	config := wsbConfiguration{
-		VGPU:                 "Disable",
+		VGPU:                 "Enable",
 		Networking:           "Enable",
 		AudioInput:           audioInput,
 		VideoInput:           "Disable",
 		ProtectedClient:      "Disable",
 		PrinterRedirection:   "Disable",
-		ClipboardRedirection: "Disable",
+		ClipboardRedirection: "Enable",
 		MemoryInMB:           memoryMB,
 		MappedFolders:        wsbMappedFolders{Folders: mappings},
 		LogonCommand: wsbLogonCommand{Command: strings.Join([]string{

@@ -23,7 +23,7 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	if config.Networking != "Enable" || config.MemoryInMB != 8192 {
 		t.Fatalf("runtime config = networking %q, memory %d", config.Networking, config.MemoryInMB)
 	}
-	if config.VGPU != "Disable" || config.ClipboardRedirection != "Disable" || config.AudioInput != "Disable" {
+	if config.VGPU != "Enable" || config.ClipboardRedirection != "Enable" || config.AudioInput != "Disable" {
 		t.Fatalf("isolation config = vGPU %q, clipboard %q, audio input %q", config.VGPU, config.ClipboardRedirection, config.AudioInput)
 	}
 	if len(config.MappedFolders.Folders) != 4 {
