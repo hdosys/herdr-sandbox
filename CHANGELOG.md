@@ -22,6 +22,9 @@ release notes remain available on the
 - Git-backed OpenCode, Claude Code, Codex, GitHub Copilot, Pi, and shared-skills
   configuration now retains tracked workflow files plus branch, remote, upstream,
   index, refs, objects, tracked edits, and tracked deletions inside the guest.
+- A separate `playwright-cli` project stack installs the approved Playwright CLI
+  without browser binaries or update-check state and prepares the official
+  extension for manual attachment to the guest user's existing headed Edge profile.
 
 ### Changed
 
@@ -39,6 +42,14 @@ release notes remain available on the
 
 ### Fixed
 
+- GitHub CLI authentication now imports into disposable guest-only file storage
+  and requires Git before configuring and exactly reading back `gh` as the
+  host-specific Git credential helper, avoiding Windows Credential Manager/GCM
+  account dialogs while preserving HTTPS Git access.
+- OpenCode configuration sync now reapplies the guest-wide `allow` policy after
+  every host configuration copy, even when OpenCode is installed outside the
+  selected Base package plan, so host top-level and agent permission rules cannot
+  govern the Sandbox.
 - Ready guests now accept WinGet package-plan changes through retained
   reprovisioning when the same mappings differ only by Windows-insignificant
   letter casing or ordering, while unknown launch-contract drift still fails closed.

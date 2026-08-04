@@ -631,6 +631,42 @@ func TestGitHubCLICommandEnvironmentRemovesTokenOverrides(t *testing.T) {
 	}
 }
 
+func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testing.T) {
+	script := string(configurationSyncScript)
+	for _, required := range []string{
+		"'--with-token', '--insecure-storage', '--skip-ssh-key'",
+		"'auth', 'setup-git', '--hostname'",
+		"GitHub CLI Git credential-helper setup",
+		`$credentialHelperKey = "credential.https://$hostname.helper"`,
+		"$credentialHelpers.Count -ne 2",
+		"[string]$credentialHelpers[0] -cne ''",
+		"GitHub CLI authenticated-account import requires the Git.Git package",
+		`$expectedCredentialHelper = "!'" + $script:GitHubCLICommand + "' auth git-credential"`,
+		"[string]::Equals($credentialHelper, $expectedCredentialHelper, [StringComparison]::Ordinal)",
+		"$matches[0].tokenSource",
+		"Join-Path $githubCLIDestination 'hosts.yml'",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("guest GitHub CLI authentication is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"$credentialHelper.StartsWith('!')",
+		"$credentialHelper.IndexOf('gh.exe'",
+		"$credentialHelper.EndsWith(' auth git-credential'",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("guest GitHub CLI authentication retains broad helper check %q", forbidden)
+		}
+	}
+	login := strings.Index(script, "'--with-token', '--insecure-storage', '--skip-ssh-key'")
+	setupGit := strings.Index(script, "GitHub CLI Git credential-helper setup")
+	status := strings.Index(script, "GitHub CLI authentication verification")
+	if login < 0 || setupGit <= login || status <= setupGit {
+		t.Fatalf("GitHub CLI login/setup/status order = %d/%d/%d", login, setupGit, status)
+	}
+}
+
 func TestCanonicalGitHubCLIAccountLoginHandlesRenamedAccount(t *testing.T) {
 	account := githubCLIAccount{
 		Hostname: "github.com", Login: "legacy-user", Active: true,

@@ -27,16 +27,17 @@ var projectProvisioningPlanScript []byte
 type projectStack string
 
 const (
-	stackBun          projectStack = "bun"
-	stackCargoNextest projectStack = "cargo-nextest"
-	stackDotNet       projectStack = "dotnet"
-	stackGitSH        projectStack = "git-sh"
-	stackGo           projectStack = "go"
-	stackJust         projectStack = "just"
-	stackNode         projectStack = "node"
-	stackPython       projectStack = "python"
-	stackRustMSVC     projectStack = "rust-msvc"
-	stackZig          projectStack = "zig"
+	stackBun           projectStack = "bun"
+	stackCargoNextest  projectStack = "cargo-nextest"
+	stackDotNet        projectStack = "dotnet"
+	stackGitSH         projectStack = "git-sh"
+	stackGo            projectStack = "go"
+	stackJust          projectStack = "just"
+	stackNode          projectStack = "node"
+	stackPlaywrightCLI projectStack = "playwright-cli"
+	stackPython        projectStack = "python"
+	stackRustMSVC      projectStack = "rust-msvc"
+	stackZig           projectStack = "zig"
 )
 
 type projectProvisioningPlan struct {
@@ -52,7 +53,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPython, stackRustMSVC, stackZig:
+	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPlaywrightCLI, stackPython, stackRustMSVC, stackZig:
 		return true
 	default:
 		return false

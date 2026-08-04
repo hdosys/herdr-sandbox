@@ -629,8 +629,8 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if result.StarshipPreset != sources.StarshipPreset || result.StarshipConfigured != packages.enabled(packageStarship) {
 		return fmt.Errorf("verify guest Starship configuration: preset %q, expected %q", result.StarshipPreset, sources.StarshipPreset)
 	}
-	if result.OpenCodePermissionVerified != packages.enabled(packageOpenCode) {
-		return fmt.Errorf("verify guest OpenCode permissions: verified = %t, expected %t", result.OpenCodePermissionVerified, packages.enabled(packageOpenCode))
+	if packages.enabled(packageOpenCode) && !result.OpenCodePermissionVerified {
+		return errors.New("verify guest OpenCode permissions: selected OpenCode was not verified")
 	}
 	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
 		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)

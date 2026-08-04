@@ -41,7 +41,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, a separate Playwright CLI path for existing Edge, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
@@ -51,7 +51,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js with Playwright Chromium, Python, Rust/MSVC, and Zig**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python, Rust/MSVC, and Zig**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -149,7 +149,7 @@ For an official Herdr upstream checkout without a project profile, select its ma
 herdr-sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -229,6 +229,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Modern .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
 | Node.js LTS with Playwright Chromium | `Install-NodeStack` |
+| Playwright CLI attached to existing Edge | `Install-PlaywrightCLIStack` |
 | Bun | `Install-BunStack` |
 | Python (latest stable) | `Install-PythonStack` |
 | Zig | `Install-ZigStack` |
@@ -238,8 +239,33 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
 - `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state. `plan` expands the composition back into those concrete owners without executing the profile.
-- An omitted version always resolves the latest stable release once for installation and verification. Playwright resolves npm's current `latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. Exact versions never fall back silently.
-- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+- An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
+- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+
+#### Playwright CLI with the guest's existing Edge
+
+Select the dedicated stack when an agent should drive the already-running, headed main-user Edge profile instead of Playwright-managed Chromium:
+
+```powershell
+herdr-sandbox init --stack playwright-cli
+```
+
+The stack installs Node.js LTS and the exact approved Playwright CLI, exposes only `playwright-cli.cmd`, and registers Microsoft's official [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. Edge may require one manual enable/install action after its next launch. Click the extension icon, copy its `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value, and place that value only in the disposable guest environment:
+
+```powershell
+$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = '<token from the extension>'
+[Environment]::SetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', $env:PLAYWRIGHT_MCP_EXTENSION_TOKEN, 'User')
+```
+
+Attach every automation session to the same existing profile and detach without closing Edge:
+
+```powershell
+playwright-cli.cmd -s=edge-main attach --extension=msedge
+# Run playwright-cli.cmd -s=edge-main commands here.
+playwright-cli.cmd -s=edge-main detach
+```
+
+Without the token, the official extension asks the user to approve and select a tab. The token bypasses that dialog. A fresh Sandbox has a fresh Edge profile, so the manual extension/token step must currently be repeated. Do not use `playwright-cli open`, `install-browser`, `--persistent`, `--profile`, or another browser/profile with this stack.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
@@ -423,8 +449,9 @@ use.
 - Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
 - The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
 - Approved GitHub CLI and coding-agent credentials travel only over verified SSH and never enter persistent run input or logs. Machine-bound credentials require a guest login.
+- GitHub CLI tokens use disposable guest-only file storage, and HTTPS Git is wired to `gh auth git-credential` so Git Credential Manager cannot open an account prompt.
 - Tailscale auth-key and state bytes never enter mappings, status, diagnostics, command lines, or package cache.
-- Guest OpenCode managed policy resolves every permission to `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.
+- Every OpenCode configuration sync reapplies a guest-managed policy that replaces host top-level and per-agent permissions with `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.
 - The reviewed disposable-guest privacy profile intentionally restricts Defender cloud/security features, SmartScreen, automatic updates, telemetry, and related services. It is not a hardened production workstation profile.
 - Downloads and cache hits are validated against strict versions, metadata, hashes, signatures, or package identity as applicable.
 - Host Rust tooling is forbidden. Rust installation, builds, and tests belong only in the verified guest or GitHub Actions.

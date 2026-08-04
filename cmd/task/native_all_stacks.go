@@ -81,7 +81,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, the Herdr virtual stack, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, Playwright CLI registration, the Herdr virtual stack, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -225,6 +225,7 @@ Install-DotNetStack
 Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-NodeStack
+Install-PlaywrightCLIStack
 `,
 		filepath.Join(fixture.Project, "Cargo.toml"): `[package]
 name = "herdr-native-all-stacks"
@@ -525,6 +526,7 @@ $just = (Get-Command 'just.exe' -CommandType Application -ErrorAction Stop | Sel
 $rustc = (Get-Command 'rustc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $sh = (Get-Command 'sh.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $zig = (Get-Command 'zig.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$playwrightAgentCLI = (Get-Command 'playwright-cli.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
 $null = Invoke-SmokeTool 'dotnet-version' $dotnet @('--version')
 $dotnetRoot = Join-Path $root 'dotnet'
@@ -570,6 +572,19 @@ if ($playwrightScreenshotBytes.Length -lt 8 -or
     throw 'Playwright Chromium SSH smoke returned an invalid PNG screenshot.'
 }
 [Console]::Out.WriteLine('[all-stacks] playwright-chromium: headless launch OK')
+
+$playwrightAgentVersion = Invoke-SmokeTool 'playwright-cli-version' $playwrightAgentCLI @('--version')
+if ($playwrightAgentVersion -cne '0.1.17') { throw "Playwright CLI version is unexpected: $playwrightAgentVersion" }
+$playwrightPowerShellShim = Join-Path (Split-Path -Parent $playwrightAgentCLI) 'playwright-cli.ps1'
+if (Test-Path -LiteralPath $playwrightPowerShellShim) {
+    throw "Playwright CLI PowerShell shim remains installed: $playwrightPowerShellShim"
+}
+$playwrightExtensionKey = 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\Edge\Extensions\mmlmfjhmonkocbjadbfplnigmagldckm'
+$playwrightExtensionUpdateURL = [string](Get-ItemPropertyValue -LiteralPath $playwrightExtensionKey -Name 'update_url' -ErrorAction Stop)
+if ($playwrightExtensionUpdateURL -cne 'https://clients2.google.com/service/update2/crx') {
+    throw "Playwright Extension registration is unexpected: $playwrightExtensionUpdateURL"
+}
+[Console]::Out.WriteLine('[all-stacks] playwright-cli: exact CLI and official extension registration OK')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'

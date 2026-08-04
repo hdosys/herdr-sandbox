@@ -21,6 +21,7 @@ $knownStacks = @{
     'Install-HerdrStack' = @('bun', 'cargo-nextest', 'git-sh', 'just', 'python', 'rust-msvc', 'zig')
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
+    'Install-PlaywrightCLIStack' = 'playwright-cli'
     'Install-PythonStack' = 'python'
     'Install-RustMSVCStack' = 'rust-msvc'
     'Install-ZigStack' = 'zig'

@@ -54,6 +54,10 @@ These are deliberate non-guarantees:
 - Networking is enabled. A credential deliberately copied into the guest can be
   used or exfiltrated by a compromised agent or project. Herdr Sandbox currently
   has no offline mode.
+- Imported GitHub CLI tokens are intentionally stored in the disposable guest's
+  `hosts.yml`, not Windows Credential Manager, so noninteractive provisioning and
+  Git HTTPS never open a credential dialog. Any guest administrator can read that
+  file; closing the Sandbox is its cleanup boundary.
 - An enabled coding-agent configuration root that is a physical Git repository
   contributes its tracked files, local repository config, refs, index, and object
   history to the guest. Hooks, reflogs, worktree pointers, active-operation state,
@@ -64,6 +68,12 @@ These are deliberate non-guarantees:
   features and SmartScreen are intentionally restricted in the disposable guest.
   This favors an unrestricted development environment, not hostile-code
   containment within that guest.
+- Enabling the official Playwright Extension grants the selected guest agent
+  debugger access to the existing guest Edge profile, including controlled tabs,
+  cookies, and signed-in sessions. Its connection token belongs only in the
+  disposable guest environment; anyone with that token and guest process access
+  can bypass the extension's approval dialog until the token changes or the guest
+  is discarded.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale identity restoration remains experimental until the documented native
   two-fresh-Sandbox and peer-connectivity gate passes.

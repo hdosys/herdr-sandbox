@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -319,13 +320,20 @@ func TestDefaultBaseInstallsWinDirStatAndFilePilot(t *testing.T) {
 	}
 }
 
-func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
-	text := readDefaultBaseProvisioning(t)
+func TestConfigurationSyncForcesManagedOpenCodeAllowAllAfterTransfer(t *testing.T) {
+	text := string(configurationSyncScript)
 	for _, required := range []string{
-		"$openCodeManagedDirectory = Join-Path $env:ProgramData 'opencode'",
+		"function Get-OpenCodeAllowAllPermissions",
+		"function Install-OpenCodeAllowAllPolicy",
+		"function Enable-OpenCodeAllowAllPolicy",
+		"$openCodeInstalled = $null -ne (Get-Command 'opencode.exe'",
+		"if ([bool]$agentSync.opencode -or $openCodeEnabled -or $openCodeInstalled)",
+		"[config-sync] enforce-opencode-allow-all",
+		"-RequireExecutable ($openCodeEnabled -or $openCodeInstalled)",
+		"Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue",
 		"sandbox-allow-all.js",
-		"$openCodeAllowAllJSON = $openCodeAllowAllPermissions | ConvertTo-Json -Compress",
-		"const permissions = $openCodeAllowAllJSON",
+		"$allowAllJSON = $permissions | ConvertTo-Json -Compress",
+		"const permissions = $allowAllJSON",
 		"const allowAll = () => ({ ...permissions })",
 		"config.permission = allowAll()",
 		"for (const agent of Object.values(config.agent ?? {}))",
@@ -334,18 +342,174 @@ func TestDefaultBaseForcesManagedOpenCodeAllowAllAfterAgentMerge(t *testing.T) {
 		"task = 'allow'",
 		"todowrite = 'allow'",
 		"doom_loop = 'allow'",
-		"-FilePath $openCodeCommand.Source -ArgumentList @('debug', 'config')",
-		"OpenCode effective managed permission is not allow",
+		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
+		"OpenCode effective permissions were not replaced by the Sandbox allow-all policy",
+		"Assert-OpenCodeAllowAll",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("default Base is missing OpenCode allow-all contract %q", required)
+			t.Fatalf("configuration sync is missing OpenCode allow-all contract %q", required)
 		}
 	}
-	if strings.Contains(text, `"permission": "allow"`) {
-		t.Fatal("default Base still relies on the merge-unsafe scalar OpenCode permission")
+	apply := strings.Index(text, "[config-sync] apply-opencode")
+	enforce := strings.Index(text, "[config-sync] enforce-opencode-allow-all")
+	verify := strings.LastIndex(text, "$openCodePermissionVerified = [bool](Enable-OpenCodeAllowAllPolicy")
+	if apply < 0 || enforce <= apply || verify <= enforce {
+		t.Fatalf("OpenCode transfer/policy/verification order = %d/%d/%d", apply, enforce, verify)
 	}
 	if strings.Contains(text, `external_directory: "allow"`) {
 		t.Fatal("OpenCode managed plugin repeats the canonical permission table")
+	}
+	base := readDefaultBaseProvisioning(t)
+	for _, removed := range []string{"sandbox-allow-all.js", "OpenCode managed permission", "$openCodeManagedDirectory"} {
+		if strings.Contains(base, removed) {
+			t.Fatalf("Base retains duplicate OpenCode policy owner %q", removed)
+		}
+	}
+}
+
+func installOpenCodeAllowAllPolicyForTest(t *testing.T, programData string) string {
+	t.Helper()
+	start := bytes.Index(configurationSyncScript, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(configurationSyncScript, []byte("function Invoke-GuestGitHubCLI {"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync OpenCode policy helper block was not found")
+	}
+	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeAllowAllPolicy\n"
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	command.Env = append(os.Environ(), "ProgramData="+programData)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("install OpenCode allow-all policy: %v: %s", err, output)
+	}
+	return filepath.Join(programData, "opencode")
+}
+
+func TestConfigurationSyncWritesManagedOpenCodeAllowAllPolicy(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 OpenCode policy regression")
+	}
+	managed := installOpenCodeAllowAllPolicyForTest(t, filepath.Join(t.TempDir(), "program-data"))
+	configData, err := os.ReadFile(filepath.Join(managed, "opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var policy struct {
+		Permission map[string]string `json:"permission"`
+		Plugin     []string          `json:"plugin"`
+	}
+	if err := json.Unmarshal(configData, &policy); err != nil {
+		t.Fatalf("decode managed OpenCode config: %v", err)
+	}
+	if len(policy.Permission) != 18 || len(policy.Plugin) != 1 || !strings.HasSuffix(policy.Plugin[0], "/opencode/sandbox-allow-all.js") {
+		t.Fatalf("managed OpenCode policy = %#v", policy)
+	}
+	for name, value := range policy.Permission {
+		if value != "allow" {
+			t.Fatalf("managed permission %s = %q", name, value)
+		}
+	}
+	plugin, err := os.ReadFile(filepath.Join(managed, "sandbox-allow-all.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"config.permission = allowAll()", "agent.permission = allowAll()"} {
+		if !bytes.Contains(plugin, []byte(required)) {
+			t.Fatalf("managed OpenCode plugin is missing %q", required)
+		}
+	}
+}
+
+func TestCurrentOpenCodeManagedPluginReplacesTransferredPermissions(t *testing.T) {
+	if runtime.GOOS != "windows" || os.Getenv("HERDR_SANDBOX_TEST_REAL_OPENCODE") != "1" {
+		t.Skip("set HERDR_SANDBOX_TEST_REAL_OPENCODE=1 for the installed OpenCode boundary")
+	}
+	opencode, err := exec.LookPath("opencode.exe")
+	if err != nil {
+		t.Skip("OpenCode is not installed")
+	}
+
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "config")
+	dataRoot := filepath.Join(root, "data")
+	home := filepath.Join(root, "home")
+	project := filepath.Join(root, "project")
+	for _, directory := range []string{filepath.Join(configRoot, "opencode"), dataRoot, home, project} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(configRoot, "opencode", "opencode.json"), `{"permission":{"*":"deny","bash":{"*":"deny"}},"agent":{"locked":{"description":"locked","mode":"subagent","permission":{"*":"deny","bash":"deny"}}}}`)
+	writeTestFile(t, filepath.Join(project, "opencode.json"), `{"permission":{"edit":"deny"},"agent":{"project":{"description":"project","mode":"subagent","permission":{"*":"deny","edit":"deny"}}}}`)
+	programData := filepath.Join(root, "program-data")
+	start := bytes.Index(configurationSyncScript, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(configurationSyncScript, []byte("$digest = (Get-FileHash"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync OpenCode verification helper block was not found")
+	}
+	applyScript := string(configurationSyncScript[start:end]) + "\nif (-not (Enable-OpenCodeAllowAllPolicy -RequireExecutable $false)) { throw 'Installed OpenCode was not verified.' }\n"
+	applyPath := filepath.Join(root, "apply-opencode-policy.ps1")
+	writeTestFile(t, applyPath, applyScript)
+	apply := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", applyPath)
+	apply.Dir = project
+	apply.Env = append(os.Environ(),
+		"ProgramData="+programData,
+		"XDG_CONFIG_HOME="+configRoot,
+		"XDG_DATA_HOME="+dataRoot,
+		"USERPROFILE="+home,
+		"HOME="+home,
+		"OPENCODE_TEST_MANAGED_CONFIG_DIR="+filepath.Join(programData, "opencode"),
+		"OPENCODE_CONFIG=",
+		"OPENCODE_CONFIG_DIR=",
+		"OPENCODE_CONFIG_CONTENT=",
+	)
+	if output, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("apply OpenCode policy for externally installed CLI: %v: %s", err, output)
+	}
+	managed := filepath.Join(programData, "opencode")
+
+	command := hiddenCommand(opencode, "debug", "config")
+	command.Dir = project
+	command.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+configRoot,
+		"XDG_DATA_HOME="+dataRoot,
+		"USERPROFILE="+home,
+		"HOME="+home,
+		"OPENCODE_TEST_MANAGED_CONFIG_DIR="+managed,
+		"OPENCODE_CONFIG=",
+		"OPENCODE_CONFIG_DIR=",
+		"OPENCODE_CONFIG_CONTENT=",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("OpenCode managed plugin regression: %v: %s", err, output)
+	}
+	var resolved struct {
+		Permission map[string]any `json:"permission"`
+		Agent      map[string]struct {
+			Permission map[string]any `json:"permission"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(output, &resolved); err != nil {
+		t.Fatalf("decode OpenCode config: %v: %s", err, output)
+	}
+	if len(resolved.Permission) != 18 {
+		t.Fatalf("resolved top-level permissions = %#v", resolved.Permission)
+	}
+	for name, value := range resolved.Permission {
+		if value != "allow" {
+			t.Fatalf("top-level permission %s = %#v", name, value)
+		}
+	}
+	for _, agentName := range []string{"locked", "project"} {
+		if len(resolved.Agent[agentName].Permission) != 18 {
+			t.Fatalf("resolved agent permissions %s = %#v", agentName, resolved.Agent[agentName].Permission)
+		}
+	}
+	for agentName, agent := range resolved.Agent {
+		for permissionName, value := range agent.Permission {
+			if value != "allow" {
+				t.Fatalf("agent permission %s/%s = %#v", agentName, permissionName, value)
+			}
+		}
 	}
 }
 
@@ -815,7 +979,6 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"installed package does not match resolved version",
 		"installation command succeeded, but WinGet could not confirm package",
 		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
-		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
 		"if (($existingSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|'))",
 	} {
 		if !strings.Contains(text, required) {
@@ -877,8 +1040,10 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Resolve-StackPythonPackage",
 		"function Resolve-StackRustDistribution",
 		"function Install-GoStack",
+		"function Install-NodeRuntime",
 		"function Install-PlaywrightChromium",
 		"function Install-NodeStack",
+		"function Install-PlaywrightCLIStack",
 		"function Install-PythonStack",
 		"function Install-ZigStack",
 		"function Install-RustMSVCStack",

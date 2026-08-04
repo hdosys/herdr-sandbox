@@ -14,13 +14,14 @@ func TestNodeStackOwnsVersionedGuestLocalPlaywrightChromium(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(data)
+	runtimeStart := strings.Index(source, "function Install-NodeRuntime")
 	playwrightStart := strings.Index(source, "function Install-PlaywrightChromium")
 	nodeStart := strings.Index(source, "function Install-NodeStack")
-	pythonStart := strings.Index(source, "function Resolve-StackPythonPackage")
-	if playwrightStart < 0 || nodeStart <= playwrightStart || pythonStart <= nodeStart {
+	cliStart := strings.Index(source, "function Install-PlaywrightCLIStack")
+	if runtimeStart < 0 || playwrightStart <= runtimeStart || nodeStart <= playwrightStart || cliStart <= nodeStart {
 		t.Fatal("Node and Playwright stack sections are missing or out of order")
 	}
-	section := source[playwrightStart:pythonStart]
+	section := source[runtimeStart:cliStart]
 	for _, required := range []string{
 		"[string]$Version = ''",
 		"[string]$PlaywrightVersion = ''",

@@ -161,6 +161,87 @@ function Sync-ClaudeCodeUserState {
     }
     $script:CopiedConfigurationFiles += 1
 }
+function Get-OpenCodeAllowAllPermissions {
+    return [ordered]@{
+        '*' = 'allow'
+        read = 'allow'
+        edit = 'allow'
+        glob = 'allow'
+        grep = 'allow'
+        list = 'allow'
+        bash = 'allow'
+        task = 'allow'
+        external_directory = 'allow'
+        todowrite = 'allow'
+        question = 'allow'
+        webfetch = 'allow'
+        websearch = 'allow'
+        lsp = 'allow'
+        doom_loop = 'allow'
+        skill = 'allow'
+        plan_enter = 'allow'
+        plan_exit = 'allow'
+    }
+}
+function Install-OpenCodeAllowAllPolicy {
+    $programData = [string]$env:ProgramData
+    if ([string]::IsNullOrWhiteSpace($programData) -or -not [IO.Path]::IsPathRooted($programData)) {
+        throw 'OpenCode managed policy requires an absolute ProgramData path.'
+    }
+    $permissions = Get-OpenCodeAllowAllPermissions
+    $managedDirectory = Join-Path $programData 'opencode'
+    $managedPluginPath = Join-Path $managedDirectory 'sandbox-allow-all.js'
+    $managedConfigPath = Join-Path $managedDirectory 'opencode.json'
+    foreach ($path in @($managedPluginPath, $managedConfigPath)) {
+        Assert-ConfigurationDestinationPath -Path $path
+    }
+    New-Item -ItemType Directory -Path $managedDirectory -Force | Out-Null
+
+    $managedPluginURI = 'file:///' + $managedPluginPath.Replace('\', '/')
+    $allowAllJSON = $permissions | ConvertTo-Json -Compress
+    $managedPlugin = @"
+const permissions = $allowAllJSON
+const allowAll = () => ({ ...permissions })
+
+export default async () => ({
+  config: async (config) => {
+    config.permission = allowAll()
+    for (const agent of Object.values(config.agent ?? {})) {
+      agent.permission = allowAll()
+    }
+  },
+})
+"@
+    $managedConfig = ([ordered]@{
+        '$schema' = 'https://opencode.ai/config.json'
+        permission = $permissions
+        plugin = @($managedPluginURI)
+    } | ConvertTo-Json -Depth 6) + [Environment]::NewLine
+    $utf8NoBom = New-Object Text.UTF8Encoding($false)
+    foreach ($managedFile in @(
+        [pscustomobject]@{ Path = $managedPluginPath; Contents = $managedPlugin },
+        [pscustomobject]@{ Path = $managedConfigPath; Contents = $managedConfig }
+    )) {
+        if (-not (Test-Path -LiteralPath $managedFile.Path -PathType Leaf) -or
+            [IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents) {
+            [IO.File]::WriteAllText($managedFile.Path, $managedFile.Contents, $utf8NoBom)
+        }
+        if ([IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents) {
+            throw "OpenCode managed file verification failed: $($managedFile.Path)"
+        }
+    }
+
+    $verified = [IO.File]::ReadAllText($managedConfigPath) | ConvertFrom-Json
+    if (@($verified.plugin).Count -ne 1 -or [string]$verified.plugin[0] -cne $managedPluginURI) {
+        throw 'OpenCode managed plugin configuration was not written correctly.'
+    }
+    foreach ($permissionName in $permissions.Keys) {
+        $property = $verified.permission.PSObject.Properties[$permissionName]
+        if ($null -eq $property -or [string]$property.Value -cne 'allow') {
+            throw "OpenCode managed permission is not allow: $permissionName"
+        }
+    }
+}
 function Invoke-GuestGitHubCLI {
     param(
         [Parameter(Mandatory = $true)][string]$Role,
@@ -208,13 +289,15 @@ function Invoke-OpenCodeJSON {
     }
 }
 function Assert-OpenCodeAllowAll {
-    $requiredPermissions = @(
-        'read', 'edit', 'glob', 'grep', 'list', 'bash', 'task', 'external_directory',
-        'todowrite', 'question', 'webfetch', 'websearch', 'lsp', 'doom_loop', 'skill',
-        'plan_enter', 'plan_exit'
-    )
+    $allowAllPermissions = Get-OpenCodeAllowAllPermissions
+    $requiredPermissions = @($allowAllPermissions.Keys | Where-Object { $_ -cne '*' })
     $resolvedConfig = Invoke-OpenCodeJSON -Role 'OpenCode effective configuration inspection' -Arguments @('debug', 'config')
-    foreach ($permissionName in @('*') + $requiredPermissions) {
+    $resolvedPermissionNames = @($resolvedConfig.permission.PSObject.Properties.Name | Sort-Object)
+    $expectedPermissionNames = @($allowAllPermissions.Keys | Sort-Object)
+    if (($resolvedPermissionNames -join '|') -cne ($expectedPermissionNames -join '|')) {
+        throw 'OpenCode effective permissions were not replaced by the Sandbox allow-all policy.'
+    }
+    foreach ($permissionName in $allowAllPermissions.Keys) {
         $property = $resolvedConfig.permission.PSObject.Properties[$permissionName]
         if ($null -eq $property -or [string]$property.Value -cne 'allow') {
             throw "OpenCode effective permission is not allow: $permissionName"
@@ -253,6 +336,20 @@ function Assert-OpenCodeAllowAll {
             }
         }
     }
+}
+function Enable-OpenCodeAllowAllPolicy {
+    param([Parameter(Mandatory = $true)][bool]$RequireExecutable)
+    Install-OpenCodeAllowAllPolicy
+    $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $openCodeCommand) {
+        if ($RequireExecutable) {
+            throw 'OpenCode is selected but opencode.exe is unavailable during permission verification.'
+        }
+        return $false
+    }
+    $script:OpenCodeCommand = [string]$openCodeCommand.Source
+    Assert-OpenCodeAllowAll
+    return $true
 }
 $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -357,6 +454,14 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'opencode-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.local\share\opencode\auth.json')
     }
 
+    $openCodeInstalled = $null -ne (Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1)
+    if ([bool]$agentSync.opencode -or $openCodeEnabled -or $openCodeInstalled) {
+        [Console]::Error.WriteLine('[config-sync] enforce-opencode-allow-all')
+        $openCodePermissionVerified = [bool](Enable-OpenCodeAllowAllPolicy `
+            -RequireExecutable ($openCodeEnabled -or $openCodeInstalled))
+    }
+
     if ([bool]$agentSync.claudeCode) {
         [Console]::Error.WriteLine('[config-sync] apply-claude-code')
         $claudeDestination = Join-Path $env:USERPROFILE '.claude'
@@ -398,13 +503,6 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             Copy-VerifiedConfigurationTree -Source $sharedSkillsSource -Destination $sharedSkillsDestination
             Remove-VerifiedTrackedConfigurationFiles -Destination $sharedSkillsDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'shared-agent-skills')
         }
-    }
-
-    if ($openCodeEnabled) {
-        $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-        $script:OpenCodeCommand = [string]$openCodeCommand.Source
-        Assert-OpenCodeAllowAll
-        $openCodePermissionVerified = $true
     }
 
     if ($gitEnabled) {
@@ -509,8 +607,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     if ($githubAccounts.Count -gt 32) {
         throw 'GitHub CLI authentication input contains too many accounts.'
     }
+    if ($githubAccounts.Count -gt 0 -and -not $gitEnabled) {
+        throw 'GitHub CLI authenticated-account import requires the Git.Git package.'
+    }
     [Console]::Error.WriteLine('[config-sync] apply-github-authentication')
     $githubAccountIdentities = @{}
+    $githubAccountHosts = @{}
     foreach ($account in $githubAccounts) {
         $accountProperties = @($account.PSObject.Properties.Name | Sort-Object)
         $hostname = [string]$account.hostname
@@ -529,13 +631,28 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             throw 'GitHub CLI authentication input contains duplicate account metadata.'
         }
         $githubAccountIdentities[$identity] = $true
+        $githubAccountHosts[$hostname] = $true
         $loginArguments = @('auth', 'login', '--hostname', $hostname, '--git-protocol', $protocol,
-            '--with-token', '--skip-ssh-key')
+            '--with-token', '--insecure-storage', '--skip-ssh-key')
         $loginOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI authentication import' -Arguments $loginArguments -InputText $token -UseStandardInput)
         $account.token = ''
     }
     foreach ($account in @($githubAccounts | Where-Object { [bool]$_.active })) {
         $switchOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI active-account selection' -Arguments @('auth', 'switch', '--hostname', [string]$account.hostname, '--user', [string]$account.login))
+    }
+    foreach ($hostname in @($githubAccountHosts.Keys | Sort-Object)) {
+        $setupGitOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI Git credential-helper setup' -Arguments @('auth', 'setup-git', '--hostname', [string]$hostname))
+        $credentialHelperKey = "credential.https://$hostname.helper"
+        $credentialHelpers = @(& $gitCommand 'config' '--global' '--get-all' $credentialHelperKey)
+        if ($LASTEXITCODE -ne 0 -or $credentialHelpers.Count -ne 2 -or
+            [string]$credentialHelpers[0] -cne '') {
+            throw "GitHub CLI Git credential helper is missing for $hostname."
+        }
+        $credentialHelper = [string]$credentialHelpers[-1]
+        $expectedCredentialHelper = "!'" + $script:GitHubCLICommand + "' auth git-credential"
+        if (-not [string]::Equals($credentialHelper, $expectedCredentialHelper, [StringComparison]::Ordinal)) {
+            throw "GitHub CLI Git credential helper is invalid for $hostname."
+        }
     }
     $githubAuthenticationVerified = $true
     if ($githubAccounts.Count -gt 0) {
@@ -548,7 +665,8 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             }
             $matches = @($hostProperties[0].Value | Where-Object { [string]$_.login -ceq [string]$account.login })
             if ($matches.Count -ne 1 -or [string]$matches[0].state -cne 'success' -or
-                [bool]$matches[0].active -ne [bool]$account.active) {
+                [bool]$matches[0].active -ne [bool]$account.active -or
+                -not [string]::Equals([string]$matches[0].tokenSource, (Join-Path $githubCLIDestination 'hosts.yml'), [StringComparison]::OrdinalIgnoreCase)) {
                 throw 'GitHub CLI authentication verification failed for one expected account.'
             }
         }

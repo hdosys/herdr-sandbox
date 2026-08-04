@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 9
+# herdr-sandbox-stacks-contract: 10
 
 function Get-StackWebResponseText {
     param(
@@ -1027,6 +1027,41 @@ function Install-GoStack {
     Write-Output "Go ready: $goVersion"
 }
 
+function Install-NodeRuntime {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
+        [string]$Version = ''
+    )
+
+    Write-Output 'Installing Node.js LTS...'
+    Install-ProvisioningWinGetPackage -Role 'Node.js LTS' -Id 'OpenJS.NodeJS.LTS' -Version $Version `
+        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
+        -RequireAuthenticodeSignature
+    $nodePattern = if ([string]::IsNullOrWhiteSpace($Version)) {
+        '^v\d+\.\d+\.\d+$'
+    } else {
+        '^v' + [regex]::Escape($Version) + '$'
+    }
+    $nodeVersion = Assert-ProvisioningCommand -Role 'Node.js' -Name 'node.exe' `
+        -VersionArguments @('--version') -ExpectedPattern $nodePattern
+    Write-Output "Node.js ready: $nodeVersion"
+}
+
+function Get-StackNodeTools {
+    $node = Get-Command 'node.exe' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $node) {
+        throw 'Node.js runtime is unavailable.'
+    }
+    $npmCLI = Join-Path (Split-Path -Parent $node.Source) 'node_modules\npm\bin\npm-cli.js'
+    if (-not (Test-Path -LiteralPath $npmCLI -PathType Leaf) -or
+        ((Get-Item -LiteralPath $npmCLI -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Node.js npm CLI is missing or unsafe: $npmCLI"
+    }
+    return [pscustomobject]@{ Node = [string]$node.Source; NpmCLI = $npmCLI }
+}
+
 function Install-PlaywrightChromium {
     [CmdletBinding()]
     param(
@@ -1034,16 +1069,9 @@ function Install-PlaywrightChromium {
         [string]$Version = ''
     )
 
-    $node = Get-Command 'node.exe' -CommandType Application -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($null -eq $node) {
-        throw 'Playwright Chromium requires the Node.js stack.'
-    }
-    $npmCLI = Join-Path (Split-Path -Parent $node.Source) 'node_modules\npm\bin\npm-cli.js'
-    if (-not (Test-Path -LiteralPath $npmCLI -PathType Leaf) -or
-        ((Get-Item -LiteralPath $npmCLI -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Node.js npm CLI is missing or unsafe: $npmCLI"
-    }
+    $nodeTools = Get-StackNodeTools
+    $node = $nodeTools.Node
+    $npmCLI = $nodeTools.NpmCLI
 
     $playwrightRoot = 'C:\HerdrSandbox\tools\playwright'
     $browserRoot = 'C:\HerdrSandbox\tools\playwright-browsers'
@@ -1064,7 +1092,7 @@ function Install-PlaywrightChromium {
 
     if ([string]::IsNullOrWhiteSpace($Version)) {
         $versionJSON = ((Invoke-ProvisioningNative -Role 'Playwright latest version resolution' `
-            -FilePath $node.Source -ArgumentList @($npmCLI, 'view', 'playwright@latest', 'version', '--json')) `
+            -FilePath $node -ArgumentList @($npmCLI, 'view', 'playwright@latest', 'version', '--json')) `
             -join [Environment]::NewLine).Trim()
         try {
             $resolvedVersion = $versionJSON | ConvertFrom-Json
@@ -1089,7 +1117,7 @@ function Install-PlaywrightChromium {
     }
 
     Write-Output "Installing Playwright $Version and Chromium..."
-    Invoke-ProvisioningNative -Role 'Playwright CLI installation' -FilePath $node.Source -ArgumentList @(
+    Invoke-ProvisioningNative -Role 'Playwright CLI installation' -FilePath $node -ArgumentList @(
         $npmCLI,
         'install',
         '--prefix', $toolRoot,
@@ -1138,7 +1166,7 @@ function Install-PlaywrightChromium {
         throw "Playwright package identity does not match exact version $Version."
     }
     $cliVersion = ((Invoke-ProvisioningNative -Role 'Playwright CLI version check' `
-        -FilePath $node.Source -ArgumentList @($playwrightCLI, '--version')) -join [Environment]::NewLine).Trim()
+        -FilePath $node -ArgumentList @($playwrightCLI, '--version')) -join [Environment]::NewLine).Trim()
     if ($cliVersion -cne "Version $Version") {
         throw "Playwright CLI version output is unexpected: $cliVersion"
     }
@@ -1149,12 +1177,12 @@ function Install-PlaywrightChromium {
     if ([Environment]::GetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', 'Machine') -cne $browserRoot) {
         throw 'Playwright browser path machine environment verification failed.'
     }
-    Invoke-ProvisioningNative -Role 'Playwright Chromium installation' -FilePath $node.Source `
+    Invoke-ProvisioningNative -Role 'Playwright Chromium installation' -FilePath $node `
         -ArgumentList @($playwrightCLI, 'install', 'chromium') | Out-Null
 
     $screenshotPath = Join-Path $stagingRoot ("playwright-chromium-$([Guid]::NewGuid().ToString('N')).png")
     try {
-        Invoke-ProvisioningNative -Role 'Playwright Chromium headless launch' -FilePath $node.Source `
+        Invoke-ProvisioningNative -Role 'Playwright Chromium headless launch' -FilePath $node `
             -ArgumentList @($playwrightCLI, 'screenshot', '-b', 'chromium', 'about:blank', $screenshotPath) `
             -TimeoutSeconds 120 | Out-Null
         if (-not (Test-Path -LiteralPath $screenshotPath -PathType Leaf)) {
@@ -1184,19 +1212,149 @@ function Install-NodeStack {
         [string]$PlaywrightVersion = ''
     )
 
-    Write-Output 'Installing Node.js LTS...'
-    Install-ProvisioningWinGetPackage -Role 'Node.js LTS' -Id 'OpenJS.NodeJS.LTS' -Version $Version `
-        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
-        -RequireAuthenticodeSignature
-    $nodePattern = if ([string]::IsNullOrWhiteSpace($Version)) {
-        '^v\d+\.\d+\.\d+$'
-    } else {
-        '^v' + [regex]::Escape($Version) + '$'
-    }
-    $nodeVersion = Assert-ProvisioningCommand -Role 'Node.js' -Name 'node.exe' `
-        -VersionArguments @('--version') -ExpectedPattern $nodePattern
-    Write-Output "Node.js ready: $nodeVersion"
+    Install-NodeRuntime -Version $Version
     Install-PlaywrightChromium -Version $PlaywrightVersion
+}
+
+function Install-PlaywrightCLIStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
+        [string]$NodeVersion = '',
+        [ValidateSet('0.1.17')]
+        [string]$Version = '0.1.17'
+    )
+
+    Install-NodeRuntime -Version $NodeVersion
+    $nodeTools = Get-StackNodeTools
+    $node = $nodeTools.Node
+    $npmCLI = $nodeTools.NpmCLI
+    $playwrightVersion = '1.62.0-alpha-1783623505000'
+
+    $cliRoot = 'C:\HerdrSandbox\tools\playwright-cli'
+    $toolRoot = Join-Path $cliRoot $Version
+    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
+    foreach ($directory in @('C:\HerdrSandbox\tools', $cliRoot, $toolRoot, $npmCache)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright CLI guest-local directory is unsafe: $directory"
+        }
+    }
+    $env:npm_config_cache = $npmCache
+    $env:npm_config_update_notifier = 'false'
+    $env:NO_UPDATE_NOTIFIER = '1'
+    [Environment]::SetEnvironmentVariable('NO_UPDATE_NOTIFIER', '1', 'Machine')
+    if ([Environment]::GetEnvironmentVariable('NO_UPDATE_NOTIFIER', 'Machine') -cne '1') {
+        throw 'Playwright CLI update-notifier environment was not persisted.'
+    }
+
+    Write-Output "Installing Playwright CLI $Version without browser binaries..."
+    $previousBrowserDownload = $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+    try {
+        $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
+        Invoke-ProvisioningNative -Role 'Playwright CLI package installation' -FilePath $node -ArgumentList @(
+            $npmCLI,
+            'install',
+            '--global',
+            '--prefix', $toolRoot,
+            '--ignore-scripts',
+            '--omit=optional',
+            '--no-audit',
+            '--no-fund',
+            '--package-lock=false',
+            "@playwright/cli@$Version"
+        ) | Out-Null
+    } finally {
+        if ($null -eq $previousBrowserDownload) {
+            Remove-Item Env:\PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD -ErrorAction SilentlyContinue
+        } else {
+            $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = $previousBrowserDownload
+        }
+    }
+
+    $cliDirectory = Join-Path $toolRoot 'node_modules\@playwright\cli'
+    $playwrightDirectory = Join-Path $toolRoot 'node_modules\playwright'
+    $playwrightCoreDirectory = Join-Path $toolRoot 'node_modules\playwright-core'
+    $packagePaths = @(
+        (Join-Path $cliDirectory 'package.json'),
+        (Join-Path $playwrightDirectory 'package.json'),
+        (Join-Path $playwrightCoreDirectory 'package.json')
+    )
+    foreach ($path in $packagePaths) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright CLI package identity is missing or unsafe: $path"
+        }
+    }
+    try {
+        $cliPackage = [IO.File]::ReadAllText($packagePaths[0]) | ConvertFrom-Json
+        $playwrightPackage = [IO.File]::ReadAllText($packagePaths[1]) | ConvertFrom-Json
+        $playwrightCorePackage = [IO.File]::ReadAllText($packagePaths[2]) | ConvertFrom-Json
+    } catch {
+        throw "Playwright CLI package identity is unreadable: $($_.Exception.Message)"
+    }
+    if ([string]$cliPackage.name -cne '@playwright/cli' -or
+        [string]$cliPackage.version -cne $Version -or
+        [string]$cliPackage.dependencies.playwright -cne $playwrightVersion -or
+        [string]$cliPackage.dependencies.'playwright-core' -cne $playwrightVersion -or
+        [string]$playwrightPackage.name -cne 'playwright' -or
+        [string]$playwrightPackage.version -cne $playwrightVersion -or
+        [string]$playwrightCorePackage.name -cne 'playwright-core' -or
+        [string]$playwrightCorePackage.version -cne $playwrightVersion) {
+        throw "Playwright CLI dependency identity does not match $Version."
+    }
+    if (Test-Path -LiteralPath (Join-Path $toolRoot 'node_modules\fsevents')) {
+        throw 'Playwright CLI installed the unsupported optional fsevents package on Windows.'
+    }
+
+    $cliEntry = Join-Path $cliDirectory 'playwright-cli.js'
+    $cliCommand = Join-Path $toolRoot 'playwright-cli.cmd'
+    foreach ($path in @($cliEntry, $cliCommand)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright CLI command is missing or unsafe: $path"
+        }
+    }
+    $powerShellShim = Join-Path $toolRoot 'playwright-cli.ps1'
+    if (Test-Path -LiteralPath $powerShellShim) {
+        $powerShellShimInfo = Get-Item -LiteralPath $powerShellShim -Force
+        if ($powerShellShimInfo.PSIsContainer -or
+            ($powerShellShimInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright CLI PowerShell shim is unsafe: $powerShellShim"
+        }
+        Remove-Item -LiteralPath $powerShellShim -Force
+    }
+    Add-ProvisioningMachinePath -Directory $toolRoot
+    $resolvedCLI = Wait-ProvisioningCommandAvailable -Role 'Playwright CLI command' -Name 'playwright-cli.cmd'
+    if ([IO.Path]::GetFullPath($resolvedCLI) -ine [IO.Path]::GetFullPath($cliCommand)) {
+        throw "Playwright CLI command resolved from an unexpected path: $resolvedCLI"
+    }
+    $cliVersion = ((Invoke-ProvisioningNative -Role 'Playwright CLI version check' -FilePath $node `
+        -ArgumentList @($cliEntry, '--version')) -join [Environment]::NewLine).Trim()
+    if ($cliVersion -cne $Version) {
+        throw "Playwright CLI version output is unexpected: $cliVersion"
+    }
+
+    $extensionID = 'mmlmfjhmonkocbjadbfplnigmagldckm'
+    $extensionUpdateURL = 'https://clients2.google.com/service/update2/crx'
+    $externalExtensionKey = "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Edge\Extensions\$extensionID"
+    if (-not (Test-Path -LiteralPath $externalExtensionKey)) {
+        New-Item -Path $externalExtensionKey -Force | Out-Null
+    }
+    New-ItemProperty -LiteralPath $externalExtensionKey -Name 'update_url' -PropertyType String `
+        -Value $extensionUpdateURL -Force | Out-Null
+    $registeredUpdateURL = [string](Get-ItemPropertyValue -LiteralPath $externalExtensionKey `
+        -Name 'update_url' -ErrorAction Stop)
+    if ($registeredUpdateURL -cne $extensionUpdateURL) {
+        throw 'Playwright Extension registration verification failed.'
+    }
+
+    Write-Output "Playwright CLI ready: $Version"
+    Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
 }
 
 function Resolve-StackPythonPackage {

@@ -29,6 +29,7 @@ Invoke-Expression 'Install-RustMSVCStack'
 Install-GoStack
 Install-GoStack -Version '1.26.5'
 Install-DotNetStack
+Install-PlaywrightCLIStack
 throw 'the AST adapter must not execute project code'
 `)
 	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `Install-HerdrStack -ProjectDirectory 'C:\Workspaces\herdr'
@@ -41,7 +42,7 @@ throw 'the AST adapter must not execute project code'
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
 	}
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go|playwright-cli" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
