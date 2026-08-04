@@ -70,10 +70,13 @@ Unicode true
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
+!define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_UNINSTALL_KEY}.InstallerLifecycle.v1"
+!define APP_ERROR_ALREADY_EXISTS 183
 
 Var DeleteConfigurationOnUninstall
 Var DeleteConfigurationCheckbox
 Var InstallTransactionActive
+Var InstallerLifecycleMutexHandle
 
 Name "${APP_DISPLAY_NAME}"
 OutFile "${OUTPUT_FILE}"
@@ -174,11 +177,32 @@ Function PositionInstallerFinishLink
     System::Store "L"
 FunctionEnd
 
+!macro AcquireInstallerLifecycleMutex
+    ; Existence, rather than mutex ownership, is the process-lifetime gate. The
+    ; non-inheritable handle closes automatically on normal exit or a hard crash.
+    System::Call 'KERNEL32::SetLastError(i 0)'
+    System::Call 'KERNEL32::CreateMutexW(p 0, i 0, w "${APP_LIFECYCLE_MUTEX_NAME}") p.r1 ?e'
+    Pop $0
+    StrCpy $InstallerLifecycleMutexHandle $1
+    ${If} $1 == 0
+        MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
+        SetErrorLevel 1
+        Abort
+    ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
+        System::Call 'KERNEL32::CloseHandle(p $1)'
+        StrCpy $InstallerLifecycleMutexHandle 0
+        MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup or uninstall is already running. Wait for it to finish, then try again." /SD IDOK
+        SetErrorLevel 1
+        Abort
+    ${EndIf}
+!macroend
+
 Function .onInit
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
         Abort
     ${EndIf}
+    !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
     SetShellVarContext current
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
@@ -211,6 +235,7 @@ Function un.onInit
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
         Abort
     ${EndIf}
+    !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
     SetShellVarContext current
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"

@@ -368,6 +368,11 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`!define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100`,
 		`User32::SendMessageTimeoutW`,
 		`i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}`,
+		`!define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_UNINSTALL_KEY}.InstallerLifecycle.v1"`,
+		`KERNEL32::CreateMutexW`,
+		`KERNEL32::CloseHandle`,
+		`APP_ERROR_ALREADY_EXISTS 183`,
+		`Another ${APP_DISPLAY_NAME} setup or uninstall is already running.`,
 		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
 		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
 		`Delete "$INSTDIR\${APP_LICENSE}"`,
@@ -388,6 +393,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`$LOCALAPPDATA\herdr-sandbox`,
 		`SendMessage ${HWND_BROADCAST}`,
 		`SendNotifyMessage`,
+		`Global\${APP_UNINSTALL_KEY}`,
 		`!define PRODUCT_NAME`,
 		`Herdr Sandbox`,
 		`herdr-sandbox`,
@@ -430,6 +436,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	if strings.Contains(source[replacementIndex:rollbackIndex], "Abort") {
 		t.Fatal("post-replacement installer failure bypasses the rollback owner")
+	}
+	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
+		t.Fatal("setup and uninstall must share one process-lifetime lifecycle mutex")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)
