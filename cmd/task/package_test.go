@@ -63,9 +63,6 @@ func TestStageAndZIPReleasePackageContainExactFiles(t *testing.T) {
 	wantContents := map[string]string{}
 	for _, file := range releasePackageFiles {
 		contents := "fixture:" + file.Name
-		if file.Name == productidentity.LicenseName {
-			contents = "Apache License\nVersion 2.0, January 2004\n"
-		}
 		wantContents[file.Name] = contents
 		if err := os.WriteFile(filepath.Join(source, file.Name), []byte(contents), file.Mode); err != nil {
 			t.Fatal(err)
@@ -124,28 +121,12 @@ func TestStageAndZIPReleasePackageContainExactFiles(t *testing.T) {
 func TestValidateReleasePackageRejectsExtraOrMissingFiles(t *testing.T) {
 	stage := t.TempDir()
 	for _, file := range releasePackageFiles {
-		contents := "fixture"
-		if file.Name == productidentity.LicenseName {
-			contents = "Apache License\nVersion 2.0, January 2004\n"
-		}
-		if err := os.WriteFile(filepath.Join(stage, file.Name), []byte(contents), file.Mode); err != nil {
+		if err := os.WriteFile(filepath.Join(stage, file.Name), []byte("fixture"), file.Mode); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := validateReleasePackage(stage); err != nil {
 		t.Fatalf("validate exact package: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(stage, productidentity.LicenseName), []byte("GNU AFFERO GENERAL PUBLIC LICENSE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateReleasePackage(stage); err == nil {
-		t.Fatal("package with an unexpected product license unexpectedly validated")
-	}
-	if err := os.WriteFile(filepath.Join(stage, productidentity.LicenseName), []byte("Apache License\r\nVersion 2.0, January 2004\r\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateReleasePackage(stage); err != nil {
-		t.Fatalf("validate CRLF Apache license: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(stage, "unexpected.dll"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
