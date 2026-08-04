@@ -330,7 +330,7 @@ func splitAgentGitLines(output []byte) []string {
 }
 
 func sameAgentGitPath(left, right string) bool {
-	leftAbsolute, leftErr := filepath.Abs(left)
-	rightAbsolute, rightErr := filepath.Abs(right)
-	return leftErr == nil && rightErr == nil && strings.EqualFold(filepath.Clean(leftAbsolute), filepath.Clean(rightAbsolute))
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }

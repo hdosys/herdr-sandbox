@@ -1053,9 +1053,16 @@ func validateConfiguredCacheDirectory(directory string) (string, error) {
 			return "", fmt.Errorf("cacheDirectory must not contain a user profile or AppData root: %s", directory)
 		}
 	}
-	if info, err := os.Stat(directory); err == nil && !info.IsDir() {
-		return "", fmt.Errorf("cacheDirectory is not a directory: %s", directory)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if info, err := os.Stat(directory); err == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("cacheDirectory is not a directory: %s", directory)
+		}
+		physical, err := canonicalMappedDirectory(directory)
+		if err != nil {
+			return "", fmt.Errorf("validate cacheDirectory: %w", err)
+		}
+		return physical, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("inspect cacheDirectory: %w", err)
 	}
 	return directory, nil

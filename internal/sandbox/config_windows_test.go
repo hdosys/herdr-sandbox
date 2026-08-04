@@ -25,6 +25,24 @@ func TestCanonicalMappedDirectoryAcceptsDOSShortPath(t *testing.T) {
 	}
 }
 
+func TestAgentGitPathComparisonAcceptsDOSShortPath(t *testing.T) {
+	expected, shortPath := distinctWindowsShortPath(t)
+	if !sameAgentGitPath(expected, shortPath) {
+		t.Fatalf("agent Git paths do not identify the same directory: %q and %q", expected, shortPath)
+	}
+}
+
+func TestConfiguredCacheDirectoryCanonicalizesDOSShortPath(t *testing.T) {
+	expected, shortPath := distinctWindowsShortPath(t)
+	cacheDirectory, err := validateConfiguredCacheDirectory(shortPath)
+	if err != nil {
+		t.Fatalf("validateConfiguredCacheDirectory(%q): %v", shortPath, err)
+	}
+	if !strings.EqualFold(cacheDirectory, filepath.Clean(expected)) {
+		t.Fatalf("canonical short cache directory = %q, want %q", cacheDirectory, expected)
+	}
+}
+
 func TestProtectedRootMappingRejectsDOSShortPathAlias(t *testing.T) {
 	expected, shortPath := distinctWindowsShortPath(t)
 	for _, name := range []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA"} {

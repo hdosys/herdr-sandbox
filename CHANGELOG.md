@@ -59,6 +59,9 @@ release notes remain available on the
 - Git-backed coding-agent sync now accepts its deterministic manifest property
   order and empty tracked-deletion sets instead of rejecting enabled agent
   configuration during guest apply.
+- Git-backed agent roots and configured cache overlap checks now compare physical
+  Windows identities, so DOS 8.3 aliases neither reject valid repositories nor
+  bypass overlap checks.
 - Python 3 command compatibility and Git-for-Windows `sh` exposure now remain
   with their runtime/package owners, including retained reprovisioning after
   `Git\bin` becomes the active Git command directory.
