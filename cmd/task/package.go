@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"debug/pe"
@@ -249,6 +250,29 @@ func validateReleasePackage(stageDirectory string) error {
 	sort.Strings(got)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		return fmt.Errorf("release stage contents = %v, want exactly %v", got, want)
+	}
+	license, err := os.ReadFile(filepath.Join(stageDirectory, productidentity.LicenseName))
+	if err != nil {
+		return fmt.Errorf("read staged product license: %w", err)
+	}
+	if err := validateProductLicense(license); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProductLicense(data []byte) error {
+	normalized := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	header := normalized
+	if len(header) > 256 {
+		header = header[:256]
+	}
+	upper := bytes.ToUpper(normalized)
+	if !bytes.Contains(header, []byte("Apache License\n")) ||
+		!bytes.Contains(header, []byte("Version 2.0, January 2004\n")) ||
+		bytes.Contains(upper, []byte("AGPL")) ||
+		bytes.Contains(upper, []byte("AFFERO")) {
+		return errors.New("staged product license must be Apache License 2.0")
 	}
 	return nil
 }
