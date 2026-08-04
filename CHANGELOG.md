@@ -39,6 +39,12 @@ release notes remain available on the
 
 ### Fixed
 
+- Configuration archives larger than Win32-OpenSSH's redirected-stdin pipe
+  window now transfer through bounded guest staging before Windows PowerShell
+  verification, instead of timing out indefinitely at `receive-archive`.
+- Git-backed coding-agent sync now accepts its deterministic manifest property
+  order and empty tracked-deletion sets instead of rejecting enabled agent
+  configuration during guest apply.
 - Python 3 command compatibility and Git-for-Windows `sh` exposure now remain
   with their runtime/package owners, including retained reprovisioning after
   `Git\bin` becomes the active Git command directory.

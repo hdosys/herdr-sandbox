@@ -1,12 +1,134 @@
 package sandbox
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestNativeSSHArchiveTransportHandlesLargeInput(t *testing.T) {
+	runDirectory := strings.TrimSpace(os.Getenv("HERDR_SANDBOX_NATIVE_RUN_DIRECTORY"))
+	if runDirectory == "" {
+		t.Skip("set HERDR_SANDBOX_NATIVE_RUN_DIRECTORY for live guest SSH transport verification")
+	}
+	if !filepath.IsAbs(runDirectory) {
+		t.Fatalf("native run directory is not absolute: %q", runDirectory)
+	}
+	connection := Connection{
+		RunDirectory:  runDirectory,
+		SSHConfigPath: filepath.Join(runDirectory, ".ssh", "config"),
+		SSHTarget:     sshTargetName,
+	}
+	for _, size := range []int{1024 * 1024, 8 * 1024 * 1024, 32 * 1024 * 1024} {
+		t.Run(fmt.Sprintf("%d-bytes", size), func(t *testing.T) {
+			payload := make([]byte, size)
+			for index := range payload {
+				payload[index] = byte(index)
+			}
+			expectedDigest := fmt.Sprintf("%x", sha256.Sum256(payload))
+			launcher := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+[Console]::Error.WriteLine('[ssh-transport] receive-input')
+$expectedLength = [long]%d
+$inputStream = [Console]::OpenStandardInput()
+$outputStream = New-Object IO.MemoryStream
+try {
+    $remaining = $expectedLength
+    $buffer = New-Object byte[] 8192
+    while ($remaining -gt 0) {
+		$requested = [int][Math]::Min([long]$buffer.Length, $remaining)
+		$read = $inputStream.Read($buffer, 0, $requested)
+		if ($read -le 0) { throw "Input ended with $remaining bytes missing." }
+		$outputStream.Write($buffer, 0, $read)
+		$remaining -= $read
+    }
+    $data = $outputStream.ToArray()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = ([BitConverter]::ToString($sha256.ComputeHash($data))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+    [Console]::Out.WriteLine(('{0} {1}' -f $data.Length, $digest))
+} finally {
+    $outputStream.Dispose()
+}
+exit 0`, size)
+			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+			defer cancel()
+			output, err := runSSHArchivePowerShell(ctx, connection, payload, launcher, "verify SSH archive transport")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := strings.TrimSpace(string(output)), fmt.Sprintf("%d %s", size, expectedDigest); got != want {
+				t.Fatalf("SSH binary input result = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t *testing.T) {
+	inner := "Write-Output 'verified'"
+	command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, inner)
+	for _, required := range []string{
+		`C:\HerdrSandbox\staging`,
+		"transport-aaaaaaaaaaaaaaaa",
+		"[ssh-transport] receive-archive",
+		"$expectedTransportLength = [long]12345",
+		"New-Object byte[] 8192",
+		"Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue",
+		"Start-Process -FilePath 'powershell.exe'",
+		"'-WindowStyle','Hidden'",
+		"-RedirectStandardInput $archive",
+		"-NoNewWindow -Wait -PassThru",
+		encodePowerShell(inner),
+		"Remove-GuestArchiveStaging",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("SSH archive transport command is missing %q", required)
+		}
+	}
+	if strings.Contains(command, "pwsh.exe") {
+		t.Fatal("SSH archive transport starts a second PowerShell 7 process")
+	}
+	if len(command) > maximumSSHArchiveTransportCommandCharacters {
+		t.Fatalf("SSH archive transport command length = %d, maximum = %d", len(command), maximumSSHArchiveTransportCommandCharacters)
+	}
+	if runtime.GOOS == "windows" {
+		parserScript := fmt.Sprintf(`$tokens = $null
+$errors = $null
+[void][Management.Automation.Language.Parser]::ParseInput('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw ($errors | ForEach-Object { $_.ToString() } | Out-String) }
+`, strings.ReplaceAll(command, "'", "''"))
+		parser := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(parserScript))
+		if output, err := parser.CombinedOutput(); err != nil {
+			t.Fatalf("SSH archive transport PowerShell parse: %v: %s", err, output)
+		}
+	}
+}
+
+func TestSSHArchiveTransportCommandsFitWindowsCommandLine(t *testing.T) {
+	launchers := map[string]string{
+		"configuration": buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345),
+		"reprovision": buildReprovisionLauncher(
+			strings.Repeat("a", 64), 12345, 1,
+			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12",
+		),
+	}
+	for name, launcher := range launchers {
+		t.Run(name, func(t *testing.T) {
+			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, launcher)
+			if len(command) > maximumSSHArchiveTransportCommandCharacters {
+				t.Fatalf("SSH archive transport command length = %d, maximum = %d", len(command), maximumSSHArchiveTransportCommandCharacters)
+			}
+		})
+	}
+}
 
 func TestGuestArchiveStagingPowerShellPreservesReparseTargetAndCleansPhysicalInput(t *testing.T) {
 	if runtime.GOOS != "windows" {

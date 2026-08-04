@@ -698,9 +698,22 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 		SSHConfigPath: filepath.Join(runDirectory, ".ssh", "config"),
 		SSHTarget:     sshTargetName,
 	}
-	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	packagePlanPath := filepath.Join(runDirectory, "input", "provisioning", wingetPackagePlanFileName)
+	packagePlanData, err := os.ReadFile(packagePlanPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read native run package plan: %v", err)
+	}
+	var packages wingetPackagePlan
+	decoder := json.NewDecoder(bytes.NewReader(packagePlanData))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&packages); err != nil {
+		t.Fatalf("decode native run package plan: %v", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatal("decode native run package plan: trailing JSON data")
+	}
+	if err := packages.validate(terminal); err != nil {
+		t.Fatalf("validate native run package plan: %v", err)
 	}
 	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
@@ -801,6 +814,7 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("[config-sync] apply-codex"),
 		[]byte("[config-sync] apply-github-copilot"),
 		[]byte("[config-sync] apply-pi"),
+		[]byte("[AllowEmptyCollection()][object[]]$Paths"),
 	} {
 		if !bytes.Contains(remoteScript, required) {
 			t.Fatalf("remote configuration script is missing %q", required)

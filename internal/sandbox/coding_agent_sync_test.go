@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -285,6 +286,38 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	}
 	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != len(entries)-3 {
 		t.Fatalf("payload count = %d, entries = %d, err = %v", count, len(entries), err)
+	}
+}
+
+func TestCodingAgentSyncManifestMatchesPowerShellPropertyOrder(t *testing.T) {
+	manifest, err := encodeCodingAgentSyncManifest(defaultCodingAgentSyncConfiguration(), map[string][]string{
+		"opencode": {"removed.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "claudeCode|codex|githubCopilot|gitTrackedDeletions|opencode|pi|schemaVersion"
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(t.TempDir(), "coding-agent-sync.json")
+		if err := os.WriteFile(path, manifest, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := fmt.Sprintf(`$manifest = [IO.File]::ReadAllText('%s') | ConvertFrom-Json
+[Console]::Out.Write(($manifest.PSObject.Properties.Name | Sort-Object) -join '|')
+`, strings.ReplaceAll(path, "'", "''"))
+		command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+		var output bytes.Buffer
+		command.Stdout = &output
+		command.Stderr = io.Discard
+		if err := command.Run(); err != nil {
+			t.Fatalf("sort coding-agent manifest properties in Windows PowerShell 5.1: %v", err)
+		}
+		if got := strings.TrimSpace(output.String()); got != want {
+			t.Fatalf("PowerShell coding-agent manifest property order = %q, want %q", got, want)
+		}
+	}
+	if !bytes.Contains(configurationSyncScript, []byte("-cne '"+want+"'")) {
+		t.Fatalf("configuration sync does not accept coding-agent manifest property order %q", want)
 	}
 }
 

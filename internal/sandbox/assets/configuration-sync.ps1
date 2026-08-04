@@ -92,7 +92,7 @@ function Sync-VerifiedConfigurationRoot {
 function Remove-VerifiedTrackedConfigurationFiles {
     param(
         [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][object[]]$Paths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Paths
     )
     $destinationRoot = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
     foreach ($pathValue in $Paths) {
@@ -294,7 +294,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
     $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
-    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|gitTrackedDeletions|githubCopilot|opencode|pi|schemaVersion' -or
+    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|gitTrackedDeletions|opencode|pi|schemaVersion' -or
         $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 2 -or
         $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
         $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or

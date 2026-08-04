@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +11,9 @@ import (
 )
 
 const (
-	maximumSSHResultBytes = 1024 * 1024
-	maximumSSHErrorBytes  = 64 * 1024
+	maximumSSHResultBytes                       = 1024 * 1024
+	maximumSSHErrorBytes                        = 64 * 1024
+	maximumSSHArchiveTransportCommandCharacters = 30000
 )
 
 func guestArchiveStagingPowerShell(directoryName, role string) string {
@@ -120,7 +122,45 @@ func runSSHArchivePowerShell(ctx context.Context, connection Connection, archive
 	if len(archive) == 0 {
 		return nil, fmt.Errorf("%s archive is empty", role)
 	}
-	return runSSHPowerShell(ctx, connection, bytes.NewReader(archive), launcherScript, role, maximumSSHResultBytes)
+	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
+	transportCommand := buildSSHArchiveTransportCommand(digest, len(archive), launcherScript)
+	if len(transportCommand) > maximumSSHArchiveTransportCommandCharacters {
+		return nil, fmt.Errorf("%s SSH transport command exceeds %d characters", role, maximumSSHArchiveTransportCommandCharacters)
+	}
+	return runSSHRemoteCommandWithDiagnostics(ctx, connection, bytes.NewReader(archive), []string{transportCommand}, role, maximumSSHResultBytes, true)
+}
+
+func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcherScript string) string {
+	staging := guestArchiveStagingPowerShell("transport-"+expectedDigest[:16], "SSH archive transport")
+	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+%s
+$expectedTransportLength = [long]%d
+try {
+    [Console]::Error.WriteLine('[ssh-transport] receive-archive')
+    $inputStream = [Console]::OpenStandardInput()
+    $outputStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $remaining = $expectedTransportLength
+        $buffer = New-Object byte[] 8192
+        while ($remaining -gt 0) {
+            $requested = [int][Math]::Min([long]$buffer.Length, $remaining)
+            $read = $inputStream.Read($buffer, 0, $requested)
+            if ($read -le 0) { throw "SSH archive transport ended with $remaining bytes missing." }
+            $outputStream.Write($buffer, 0, $read)
+            $remaining -= $read
+        }
+        $outputStream.Flush($true)
+    } finally {
+        $outputStream.Dispose()
+    }
+    Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-EncodedCommand','%s') -RedirectStandardInput $archive -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+} finally {
+    Remove-GuestArchiveStaging
+}
+exit 0`, staging, expectedArchiveLength, encodePowerShell(launcherScript))
 }
 
 func runSSHPowerShell(ctx context.Context, connection Connection, input io.Reader, launcherScript, role string, maximumOutput int) ([]byte, error) {
@@ -132,6 +172,13 @@ func runSecretSSHPowerShell(ctx context.Context, connection Connection, input io
 }
 
 func runSSHPowerShellWithDiagnostics(ctx context.Context, connection Connection, input io.Reader, launcherScript, role string, maximumOutput int, includeRemoteDiagnostics bool) ([]byte, error) {
+	return runSSHRemoteCommandWithDiagnostics(ctx, connection, input, []string{
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+		"-EncodedCommand", encodePowerShell(launcherScript),
+	}, role, maximumOutput, includeRemoteDiagnostics)
+}
+
+func runSSHRemoteCommandWithDiagnostics(ctx context.Context, connection Connection, input io.Reader, remoteArguments []string, role string, maximumOutput int, includeRemoteDiagnostics bool) ([]byte, error) {
 	if maximumOutput <= 0 {
 		return nil, fmt.Errorf("%s output limit is invalid", role)
 	}
@@ -139,11 +186,9 @@ func runSSHPowerShellWithDiagnostics(ctx context.Context, connection Connection,
 	if err != nil {
 		return nil, errors.New("OpenSSH ssh.exe is not on PATH")
 	}
-	command := hiddenCommandContext(ctx, sshExecutable,
-		"-T", "-F", connection.SSHConfigPath, connection.SSHTarget,
-		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-		"-EncodedCommand", encodePowerShell(launcherScript),
-	)
+	arguments := []string{"-T", "-F", connection.SSHConfigPath, connection.SSHTarget}
+	arguments = append(arguments, remoteArguments...)
+	command := hiddenCommandContext(ctx, sshExecutable, arguments...)
 	command.Stdin = input
 	stdout := boundedCommandOutput{maximum: maximumOutput}
 	stderr := boundedCommandOutput{maximum: maximumSSHErrorBytes}
