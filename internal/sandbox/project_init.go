@@ -110,7 +110,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: dotnet, go, herdr, node, playwright-cli, python, rust, or zig")
+		return nil, nil, errors.New("select at least one stack: dotnet, go, herdr, node, playwright-cli, python, rust, tradingview, or zig")
 	}
 	aliases := map[string]projectStack{
 		"dotnet":         stackDotNet,
@@ -120,6 +120,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		"playwright-cli": stackPlaywrightCLI,
 		"python":         stackPython,
 		"rust":           stackRustMSVC,
+		"tradingview":    stackTradingView,
 		"zig":            stackZig,
 	}
 	labelsByStack := map[projectStack]string{stackRustMSVC: "rust"}
@@ -129,7 +130,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, herdr, node, playwright-cli, python, rust, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, herdr, node, playwright-cli, python, rust, tradingview, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -191,6 +192,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-PythonStack"
 		case stackRustMSVC:
 			call = "Install-RustMSVCStack -ProjectDirectory $ProjectDirectory"
+		case stackTradingView:
+			call = "Install-TradingViewStack"
 		case stackZig:
 			call = "Install-ZigStack"
 		default:

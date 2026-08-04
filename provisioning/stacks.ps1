@@ -1357,6 +1357,165 @@ function Install-PlaywrightCLIStack {
     Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
 }
 
+function Install-TradingViewStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
+        [string]$NodeVersion = '',
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$TVControlVersion = '',
+        [ValidatePattern('^$|^\d+\.\d+\.\d+\.\d+$')]
+        [string]$DesktopVersion = ''
+    )
+
+    $minimumWindowsBuild = 19042
+    $windowsBuild = [Environment]::OSVersion.Version.Build
+    if ($windowsBuild -lt $minimumWindowsBuild) {
+        throw "TradingView Desktop requires Windows build $minimumWindowsBuild or newer; current build is $windowsBuild."
+    }
+
+    $desktopPackageID = 'TradingView.TradingViewDesktop'
+    $desktopMetadata = Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' `
+        -Id $desktopPackageID -Version $DesktopVersion -InstallerType 'msix'
+    if ([string]$desktopMetadata.Id -cne $desktopPackageID -or
+        [string]$desktopMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw "TradingView Desktop metadata is unexpected: $($desktopMetadata.Id) $($desktopMetadata.Version)"
+    }
+    Install-ProvisioningCachedPackage -Role 'TradingView Desktop' -Metadata $desktopMetadata `
+        -DownloadSource 'WinGet' -Adapter 'MSIX' -RequireAuthenticodeSignature
+
+    $desktopPackages = @(Get-AppxPackage -Name 'TradingView.Desktop' -ErrorAction Stop)
+    if ($desktopPackages.Count -ne 1 -or
+        [string]$desktopPackages[0].Version -cne [string]$desktopMetadata.Version -or
+        [string]::IsNullOrWhiteSpace([string]$desktopPackages[0].InstallLocation)) {
+        throw "TradingView Desktop AppX identity does not match $($desktopMetadata.Version)."
+    }
+    $desktopExecutable = Join-Path ([string]$desktopPackages[0].InstallLocation) 'TradingView.exe'
+    $desktopExecutableInfo = Get-Item -LiteralPath $desktopExecutable -Force -ErrorAction Stop
+    if ($desktopExecutableInfo.PSIsContainer -or
+        ($desktopExecutableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "TradingView Desktop executable is unsafe: $desktopExecutable"
+    }
+
+    Install-NodeRuntime -Version $NodeVersion
+    $nodeTools = Get-StackNodeTools
+    $node = $nodeTools.Node
+    $npmCLI = $nodeTools.NpmCLI
+    $tvControlRoot = 'C:\HerdrSandbox\tools\tvcontrol'
+    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
+    foreach ($directory in @('C:\HerdrSandbox\tools', $tvControlRoot, $npmCache)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TVControl guest-local directory is unsafe: $directory"
+        }
+    }
+    $env:npm_config_cache = $npmCache
+    $env:npm_config_update_notifier = 'false'
+
+    if ([string]::IsNullOrWhiteSpace($TVControlVersion)) {
+        $versionJSON = ((Invoke-ProvisioningNative -Role 'TVControl latest version resolution' `
+            -FilePath $node -ArgumentList @($npmCLI, 'view', '@ferroxlabs/tvcontrol@latest', 'version', '--json')) `
+            -join [Environment]::NewLine).Trim()
+        try {
+            $resolvedVersion = $versionJSON | ConvertFrom-Json
+        } catch {
+            throw "TVControl latest version resolution returned invalid JSON: $($_.Exception.Message)"
+        }
+        if ($resolvedVersion -isnot [string] -or
+            [string]$resolvedVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+            throw "TVControl latest version resolution returned an invalid stable version: $resolvedVersion"
+        }
+        $TVControlVersion = [string]$resolvedVersion
+    }
+
+    $toolRoot = $tvControlRoot
+
+    Write-Output "Installing TVControl $TVControlVersion..."
+    Invoke-ProvisioningNative -Role 'TVControl package installation' -FilePath $node -ArgumentList @(
+        $npmCLI,
+        'install',
+        '--global',
+        '--prefix', $toolRoot,
+        '--ignore-scripts',
+        '--omit=optional',
+        '--no-audit',
+        '--no-fund',
+        '--package-lock=false',
+        "@ferroxlabs/tvcontrol@$TVControlVersion"
+    ) | Out-Null
+
+    $packageDirectory = Join-Path $toolRoot 'node_modules\@ferroxlabs\tvcontrol'
+    $packagePath = Join-Path $packageDirectory 'package.json'
+    if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf) -or
+        ((Get-Item -LiteralPath $packagePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "TVControl package identity is missing or unsafe: $packagePath"
+    }
+    try {
+        $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+    } catch {
+        throw "TVControl package identity is unreadable: $($_.Exception.Message)"
+    }
+    $tvBin = [string]$package.bin.tv
+    $tvControlBin = [string]$package.bin.tvcontrol
+    if ([string]$package.name -cne '@ferroxlabs/tvcontrol' -or
+        [string]$package.version -cne $TVControlVersion -or
+        [string]$package.engines.node -notmatch '^>=\d+\.\d+\.\d+$' -or
+        [string]::IsNullOrWhiteSpace($tvBin) -or $tvBin -cne $tvControlBin -or
+        $tvBin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or $tvBin.StartsWith('/') -or
+        @($tvBin.Split('/') | Where-Object { $_ -ceq '..' }).Count -ne 0) {
+        throw "TVControl package identity does not match exact version $TVControlVersion."
+    }
+    $cliEntry = Join-Path $packageDirectory ($tvBin.Replace('/', '\'))
+    $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
+    $cliEntryPath = [IO.Path]::GetFullPath($cliEntry)
+    if (-not $cliEntryPath.StartsWith($packageRootPath, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $cliEntryPath -PathType Leaf) -or
+        ((Get-Item -LiteralPath $cliEntryPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "TVControl CLI entry is missing or unsafe: $cliEntryPath"
+    }
+
+    $tvCommand = Join-Path $toolRoot 'tv.cmd'
+    $tvControlCommand = Join-Path $toolRoot 'tvcontrol.cmd'
+    foreach ($command in @($tvCommand, $tvControlCommand)) {
+        if (-not (Test-Path -LiteralPath $command -PathType Leaf) -or
+            ((Get-Item -LiteralPath $command -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TVControl command is missing or unsafe: $command"
+        }
+    }
+    foreach ($powerShellShim in @((Join-Path $toolRoot 'tv.ps1'), (Join-Path $toolRoot 'tvcontrol.ps1'))) {
+        if (Test-Path -LiteralPath $powerShellShim) {
+            $shimInfo = Get-Item -LiteralPath $powerShellShim -Force
+            if ($shimInfo.PSIsContainer -or
+                ($shimInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "TVControl PowerShell shim is unsafe: $powerShellShim"
+            }
+            Remove-Item -LiteralPath $powerShellShim -Force
+        }
+    }
+    Add-ProvisioningMachinePath -Directory $toolRoot
+    foreach ($command in @{'tv.cmd' = $tvCommand; 'tvcontrol.cmd' = $tvControlCommand}.GetEnumerator()) {
+        $resolved = Wait-ProvisioningCommandAvailable -Role "TVControl $($command.Key) command" -Name $command.Key
+        if ([IO.Path]::GetFullPath($resolved) -ine [IO.Path]::GetFullPath($command.Value)) {
+            throw "TVControl command resolved from an unexpected path: $resolved"
+        }
+    }
+    $helpText = ((Invoke-ProvisioningNative -Role 'TVControl CLI help verification' -FilePath $node `
+        -ArgumentList @($cliEntryPath, '--help')) -join [Environment]::NewLine).Trim()
+    if (-not $helpText.StartsWith('Usage: tv <command> [options]', [StringComparison]::Ordinal) -or
+        $helpText -notmatch '(?m)^  status\s+Check CDP connection to TradingView$' -or
+        $helpText -notmatch '(?m)^  launch\s+Launch TradingView with CDP enabled$') {
+        throw 'TVControl CLI help output is unexpected.'
+    }
+
+    Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
+    Write-Output "TVControl ready: $TVControlVersion"
+    Write-Output 'TradingView remains stopped with CDP disabled. Run tv launch only when local Desktop automation is intended and permitted.'
+}
+
 function Resolve-StackPythonPackage {
     param(
         [AllowEmptyString()]

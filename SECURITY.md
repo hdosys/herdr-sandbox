@@ -74,6 +74,14 @@ These are deliberate non-guarantees:
   disposable guest environment; anyone with that token and guest process access
   can bypass the extension's approval dialog until the token changes or the guest
   is discarded.
+- Explicitly running TVControl against TradingView Desktop opens a local Chrome
+  DevTools Protocol endpoint with powerful chart/UI access and exposes signed-in
+  TradingView content to guest processes. The stack installs and verifies the
+  tools but never opens that endpoint or authenticates. Review unsaved work before
+  `tv launch`: its documented Windows MSIX recovery may terminate TradingView and
+  create a user-local executable copy. TradingView terms and market-data licenses
+  may prohibit automation, scraping, non-display use, or redistribution regardless
+  of local execution; the stack does not grant rights or bypass access controls.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale identity restoration remains experimental until the documented native
   two-fresh-Sandbox and peer-connectivity gate passes.

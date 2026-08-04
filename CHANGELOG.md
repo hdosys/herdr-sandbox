@@ -25,6 +25,10 @@ release notes remain available on the
 - A separate `playwright-cli` project stack installs the approved Playwright CLI
   without browser binaries or update-check state and prepares the official
   extension for manual attachment to the guest user's existing headed Edge profile.
+- A `tradingview` project stack installs the latest stable TVControl commands and
+  official TradingView Desktop MSIX while leaving application launch, CDP access,
+  authentication, MCP configuration, and chart/account data untouched. Native
+  MSIX acceptance remains blocked on the current build-19041 verification guest.
 
 ### Changed
 

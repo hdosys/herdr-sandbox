@@ -197,6 +197,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "Python.Python.<family selected by stack>"
 	case stackRustMSVC:
 		return "Rustlang.Rustup"
+	case stackTradingView:
+		return "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest"
 	case stackZig:
 		return "zig.zig"
 	default:

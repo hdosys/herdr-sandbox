@@ -226,6 +226,7 @@ Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-NodeStack
 Install-PlaywrightCLIStack
+Install-TradingViewStack
 `,
 		filepath.Join(fixture.Project, "Cargo.toml"): `[package]
 name = "herdr-native-all-stacks"
@@ -527,6 +528,8 @@ $rustc = (Get-Command 'rustc.exe' -CommandType Application -ErrorAction Stop | S
 $sh = (Get-Command 'sh.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $zig = (Get-Command 'zig.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $playwrightAgentCLI = (Get-Command 'playwright-cli.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$tv = (Get-Command 'tv.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$tvcontrol = (Get-Command 'tvcontrol.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
 $null = Invoke-SmokeTool 'dotnet-version' $dotnet @('--version')
 $dotnetRoot = Join-Path $root 'dotnet'
@@ -585,6 +588,33 @@ if ($playwrightExtensionUpdateURL -cne 'https://clients2.google.com/service/upda
     throw "Playwright Extension registration is unexpected: $playwrightExtensionUpdateURL"
 }
 [Console]::Out.WriteLine('[all-stacks] playwright-cli: exact CLI and official extension registration OK')
+
+$tradingViewPackages = @(Get-AppxPackage -Name 'TradingView.Desktop' -ErrorAction Stop)
+if ($tradingViewPackages.Count -ne 1 -or
+    [string]$tradingViewPackages[0].Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+    [string]::IsNullOrWhiteSpace([string]$tradingViewPackages[0].InstallLocation)) {
+    throw 'TradingView Desktop AppX identity is invalid.'
+}
+$tradingViewExecutable = Join-Path ([string]$tradingViewPackages[0].InstallLocation) 'TradingView.exe'
+if (-not (Test-Path -LiteralPath $tradingViewExecutable -PathType Leaf)) {
+    throw "TradingView Desktop executable is missing: $tradingViewExecutable"
+}
+$tvControlRoot = 'C:\HerdrSandbox\tools\tvcontrol'
+$tvControlPackagePath = Join-Path $tvControlRoot 'node_modules\@ferroxlabs\tvcontrol\package.json'
+$tvControlPackage = [IO.File]::ReadAllText($tvControlPackagePath) | ConvertFrom-Json
+if ([string]$tvControlPackage.name -cne '@ferroxlabs/tvcontrol' -or
+    [string]$tvControlPackage.version -notmatch '^\d+\.\d+\.\d+$' -or
+    [string]$tvControlPackage.bin.tv -cne [string]$tvControlPackage.bin.tvcontrol) {
+    throw 'TVControl installed package identity is invalid.'
+}
+$tvHelp = Invoke-SmokeTool 'tvcontrol-help' $tv @('--help')
+Assert-SmokeOutput 'tvcontrol-help' $tvHelp 'Usage: tv <command> [options]'
+$tvControlHelp = Invoke-SmokeTool 'tvcontrol-alias-help' $tvcontrol @('--help')
+Assert-SmokeOutput 'tvcontrol-alias-help' $tvControlHelp 'TradingView with CDP enabled'
+foreach ($shim in @((Join-Path $tvControlRoot 'tv.ps1'), (Join-Path $tvControlRoot 'tvcontrol.ps1'))) {
+    if (Test-Path -LiteralPath $shim) { throw "TVControl PowerShell shim remains installed: $shim" }
+}
+[Console]::Out.WriteLine('[all-stacks] tradingview: Desktop MSIX and TVControl CLI OK; launch intentionally skipped')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'

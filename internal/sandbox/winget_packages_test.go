@@ -112,6 +112,9 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass project stack": {
 			Add: []string{"GoLang.Go"}, Versions: map[string]string{},
 		},
+		"bypass TradingView stack": {
+			Add: []string{packageTradingView}, Versions: map[string]string{},
+		},
 		"version removed": {
 			Remove: []string{packageGit}, Versions: map[string]string{packageGit: "2.55.0"},
 		},

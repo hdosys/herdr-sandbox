@@ -20,7 +20,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	profile := filepath.Join(configuration, projectProvisioningName)
-	profileData := []byte("Install-DotNetStack\nInstall-GoStack -ProjectDirectory $ProjectDirectory\n")
+	profileData := []byte("Install-DotNetStack\nInstall-GoStack -ProjectDirectory $ProjectDirectory\nInstall-TradingViewStack\n")
 	if err := os.WriteFile(profile, profileData, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +55,9 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	if len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
-		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "dotnet|go" || len(plan.Workspaces[1].Stacks) != 0 ||
-		len(plan.StackPackages) != 2 || plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" ||
+		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "dotnet|go|tradingview" || len(plan.Workspaces[1].Stacks) != 0 ||
+		len(plan.StackPackages) != 3 || plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" ||
+		plan.StackPackages[2].PackageOwner != "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest" ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
 	}

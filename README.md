@@ -149,7 +149,7 @@ For an official Herdr upstream checkout without a project profile, select its ma
 herdr-sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `rust`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -230,6 +230,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
 | Node.js LTS with Playwright Chromium | `Install-NodeStack` |
 | Playwright CLI attached to existing Edge | `Install-PlaywrightCLIStack` |
+| TradingView Desktop with TVControl | `Install-TradingViewStack` |
 | Bun | `Install-BunStack` |
 | Python (latest stable) | `Install-PythonStack` |
 | Zig | `Install-ZigStack` |
@@ -240,7 +241,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
 - `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state. `plan` expands the composition back into those concrete owners without executing the profile.
 - An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
-- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain owned by `package.json` and its lockfile. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. The TradingView stack similarly installs TVControl as a guest-local command rather than changing the mapped project's `package.json` or lockfile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain project-owned. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
 
 #### Playwright CLI with the guest's existing Edge
 
@@ -266,6 +267,21 @@ playwright-cli.cmd -s=edge-main detach
 ```
 
 Without the token, the official extension asks the user to approve and select a tab. The token bypasses that dialog. A fresh Sandbox has a fresh Edge profile, so the manual extension/token step must currently be repeated. Do not use `playwright-cli open`, `install-browser`, `--persistent`, `--profile`, or another browser/profile with this stack.
+
+#### TradingView Desktop with TVControl
+
+Select the dedicated stack to install the official TradingView Desktop MSIX and FerroxLabs [TVControl](https://github.com/FerroxLabs/tvcontrol) without changing project dependencies:
+
+```powershell
+herdr-sandbox init --stack tradingview
+```
+
+The stack requires Windows build 19042 or newer, reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. TradingView Desktop also resolves latest stable through the existing verified WinGet MSIX cache. Provisioning validates both installations but deliberately does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
+
+> [!NOTE]
+> The current native acceptance Sandbox is Windows build 19041, one build below TradingView Desktop's publisher-declared minimum. Source, npm, plan, and package gates are available here, but the MSIX installation plus live launch/auth/chart boundary remains blocked until verification runs on build 19042 or newer.
+
+`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). Review and preserve any open TradingView work first: TVControl's Windows MSIX fallback can materialize a guest-local executable copy and terminate an existing TradingView process during recovery. Use `tv status` and read TVControl's documentation before chart automation. TradingView's terms may restrict automated collection, scraping, non-display use, and data redistribution; this stack grants no right to bypass those terms or access controls.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 

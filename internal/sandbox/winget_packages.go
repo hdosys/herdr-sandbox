@@ -28,6 +28,7 @@ const (
 	packageTerminalXAML    = "Microsoft.UI.Xaml.2.8"
 	packageTerminalStable  = "Microsoft.WindowsTerminal"
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
+	packageTradingView     = "TradingView.TradingViewDesktop"
 )
 
 var basePackageIDs = []string{
@@ -55,6 +56,7 @@ var projectStackPackageIDs = []string{
 	"Rustlang.Rustup",
 	"nextest.cargo-nextest",
 	"Casey.Just",
+	packageTradingView,
 }
 
 type wingetPackageConfiguration struct {

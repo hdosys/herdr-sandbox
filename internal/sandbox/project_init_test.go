@@ -9,11 +9,11 @@ import (
 
 func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 	project := t.TempDir()
-	result, err := InitializeProject(project, []string{"zig", "dotnet", "rust", "go", "node", "playwright-cli", "python"})
+	result, err := InitializeProject(project, []string{"zig", "dotnet", "rust", "go", "node", "playwright-cli", "python", "tradingview"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLabels := "dotnet|go|node|playwright-cli|python|rust|zig"
+	wantLabels := "dotnet|go|node|playwright-cli|python|rust|tradingview|zig"
 	if strings.Join(result.Stacks, "|") != wantLabels {
 		t.Fatalf("stacks = %v, want %s", result.Stacks, wantLabels)
 	}
@@ -28,6 +28,7 @@ func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 		"Install-PlaywrightCLIStack",
 		"Install-PythonStack",
 		"Install-RustMSVCStack -ProjectDirectory $ProjectDirectory",
+		"Install-TradingViewStack",
 		"Install-ZigStack",
 	}
 	text := string(data)

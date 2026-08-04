@@ -24,6 +24,7 @@ $knownStacks = @{
     'Install-PlaywrightCLIStack' = 'playwright-cli'
     'Install-PythonStack' = 'python'
     'Install-RustMSVCStack' = 'rust-msvc'
+    'Install-TradingViewStack' = 'tradingview'
     'Install-ZigStack' = 'zig'
 }
 
