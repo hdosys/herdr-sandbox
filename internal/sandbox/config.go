@@ -167,6 +167,10 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts
 		}, " ")},
 	}
 
+	return encodeWSBConfiguration(config)
+}
+
+func encodeWSBConfiguration(config wsbConfiguration) ([]byte, error) {
 	encoded, err := xml.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode Windows Sandbox configuration: %w", err)

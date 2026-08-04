@@ -55,7 +55,13 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 		differences = append(differences, "launch contract")
 	}
 	if len(differences) == 0 {
-		differences = append(differences, "launch contract")
+		canonicalActual, encodeErr := encodeWSBConfiguration(actual)
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		if !bytes.Equal(actualData, canonicalActual) {
+			differences = append(differences, "launch contract")
+		}
 	}
 	sort.Strings(differences)
 	return differences, nil

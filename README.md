@@ -317,6 +317,8 @@ The command creates `config.json` only when absent and never replaces existing s
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs show `SST.opencode` as a replaceable example; remove or replace that entry to choose another coding agent. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
+Package additions, removals, and version changes apply through `herdr-sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
+
 #### Experimental Vulkan
 
 Vulkan remains disabled by default. To install only the LunarG runtime and require a real vGPU-backed device, retain any other desired additions and add `KhronosGroup.VulkanRT`:

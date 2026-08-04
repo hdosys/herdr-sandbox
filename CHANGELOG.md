@@ -39,6 +39,9 @@ release notes remain available on the
 
 ### Fixed
 
+- Ready guests now accept WinGet package-plan changes through retained
+  reprovisioning when the same mappings differ only by Windows-insignificant
+  letter casing or ordering, while unknown launch-contract drift still fails closed.
 - Configuration archives larger than Win32-OpenSSH's redirected-stdin pipe
   window now transfer through bounded guest staging before Windows PowerShell
   verification, instead of timing out indefinitely at `receive-archive`.

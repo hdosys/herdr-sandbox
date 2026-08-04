@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -79,6 +80,33 @@ func TestDescribeWSBLaunchDifferencesNamesFolderMountChanges(t *testing.T) {
 	}
 }
 
+func TestDescribeWSBLaunchDifferencesAllowsEquivalentMappingCaseAndOrder(t *testing.T) {
+	root := t.TempDir()
+	workspaces := []workspacePlan{
+		{Name: "one", HostDirectory: filepath.Join(root, "One"), GuestDirectory: guestWorkspaceDirectory("one")},
+		{Name: "two", HostDirectory: filepath.Join(root, "Two"), GuestDirectory: guestWorkspaceDirectory("two")},
+	}
+	actual, err := renderConfig(filepath.Join(root, "Input"), filepath.Join(root, "Status"), filepath.Join(root, "Cache"), nil,
+		workspaces, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaces[0].HostDirectory = strings.ToLower(workspaces[0].HostDirectory)
+	workspaces[1].HostDirectory = strings.ToLower(workspaces[1].HostDirectory)
+	expected, err := renderConfig(strings.ToLower(filepath.Join(root, "Input")), strings.ToLower(filepath.Join(root, "Status")), strings.ToLower(filepath.Join(root, "Cache")), nil,
+		[]workspacePlan{workspaces[1], workspaces[0]}, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(actual, expected) {
+		t.Fatal("mapping path case fixture did not change the WSB bytes")
+	}
+	differences, err := describeWSBLaunchDifferences(actual, expected)
+	if err != nil || len(differences) != 0 {
+		t.Fatalf("differences = %v, error = %v", differences, err)
+	}
+}
+
 func TestDescribeWSBLaunchDifferencesFallsBackForUnknownContractDrift(t *testing.T) {
 	root := t.TempDir()
 	config, err := renderConfig(filepath.Join(root, "input"), filepath.Join(root, "status"), filepath.Join(root, "cache"), nil,
@@ -86,7 +114,7 @@ func TestDescribeWSBLaunchDifferencesFallsBackForUnknownContractDrift(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := []byte(strings.Replace(string(config), "<Networking>Enable</Networking>", "<Networking>Disable</Networking>", 1))
+	changed := []byte(strings.Replace(string(config), "  <Networking>Enable</Networking>", "  <Networking>Enable</Networking>\n  <Unexpected>true</Unexpected>", 1))
 	differences, err := describeWSBLaunchDifferences(changed, config)
 	if err != nil || strings.Join(differences, ",") != "launch contract" {
 		t.Fatalf("differences = %v, error = %v", differences, err)

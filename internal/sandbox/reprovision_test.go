@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
+func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	root := t.TempDir()
 	dataDirectory := filepath.Join(root, "data")
 	runID := "20260725-121936-0d9549e4"
@@ -47,7 +47,7 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	terminal := testStableWindowsTerminalConfiguration()
-	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{}, Add: []string{}, Versions: map[string]string{}}, terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +79,15 @@ func TestRetainedRunPlanRequiresExactExistingLaunchPlan(t *testing.T) {
 	}
 	if plan.ID != runID || plan.DataDirectory != dataDirectory || len(plan.Workspaces) != 1 {
 		t.Fatalf("retained plan = %#v", plan)
+	}
+	withOpenCode, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioning.Packages = withOpenCode
+	plan, err = retainedRunPlan(active, provisioning, 4096)
+	if err != nil || !plan.Packages.enabled(packageOpenCode) {
+		t.Fatalf("retained package addition plan = %#v, error = %v", plan.Packages, err)
 	}
 	legacyConfig := bytes.Replace(config, []byte(`,&#39;-AudioPlayback&#39;,&#39;Disabled&#39;`), nil, 1)
 	if bytes.Equal(legacyConfig, config) {
