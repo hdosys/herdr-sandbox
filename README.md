@@ -95,11 +95,13 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
 - Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and upgrades the four packaged files as one rollback-aware set. A later seed, uninstaller, registration, or PATH failure restores the prior files, uninstaller, version/PATH ownership, and any PATH entry added by that attempt.
+- Setup and uninstall share one process-lifetime mutex. Setup needs no durable transaction marker because every run rewrites the complete four-file payload and automatically repairs a mixed partial state.
 - Creates `config.json` and `user.ps1` only when absent; setup and upgrades never replace existing user settings.
 - Adds only its own user `PATH` entry. A matching entry that existed before setup remains user-owned.
 - Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
 - Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`.
 - Uninstall never stops a running Sandbox. It removes app-owned runtime state, SSH integration, cache, application files, registration, and installer-owned `PATH`; a running Sandbox remains open but becomes unmanaged and must be closed manually.
+- An interrupted uninstall automatically resumes when only the exact post-executable residual remains. If some but not all payload files remain, uninstall preserves them and directs you to run setup once for automatic repair before retrying.
 - **Also delete config.json and user.ps1** is off by default, so settings survive reinstall unless you explicitly select deletion.
 - Project profiles and unrelated SSH/install-directory content remain untouched. Uncertain ownership aborts before application removal.
 

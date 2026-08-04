@@ -394,6 +394,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SendMessage ${HWND_BROADCAST}`,
 		`SendNotifyMessage`,
 		`Global\${APP_UNINSTALL_KEY}`,
+		`uninstall.pending`,
 		`!define PRODUCT_NAME`,
 		`Herdr Sandbox`,
 		`herdr-sandbox`,
@@ -424,9 +425,20 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		}
 	}
 	cleanupIndex := strings.Index(source, `__installer-clean-uninstall`)
+	baseDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_BASE_SCRIPT}"`)
 	executableDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_EXECUTABLE}"`)
-	if cleanupIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= executableDeleteIndex {
-		t.Fatalf("clean uninstall must finish before executable deletion")
+	if cleanupIndex < 0 || baseDeleteIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= baseDeleteIndex || baseDeleteIndex >= executableDeleteIndex {
+		t.Fatalf("clean uninstall and support-file deletion must finish before executable deletion")
+	}
+	for _, want := range []string{
+		`IfFileExists "$INSTDIR\${APP_EXECUTABLE}" uninstall_cleanup_app`,
+		`uninstall_residual_invalid:`,
+		`uninstall_remove_path:`,
+		`Run setup once to repair it, then uninstall again`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("installer source is missing resumable uninstall contract %q", want)
+		}
 	}
 	replacementIndex := strings.Index(source, `!insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"`)
 	rollbackIndex := strings.Index(source, `install_rollback:`)

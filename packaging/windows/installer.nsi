@@ -557,6 +557,22 @@ Section "Uninstall"
         ${EndIf}
     ${EndIf}
 
+    ; A missing executable is a valid retry state only after every other owned
+    ; payload file is already gone. Setup always rewrites the complete payload, so
+    ; any mixed partial state is repaired by setup rather than treated as a stale
+    ; transaction that permanently blocks future installs.
+    IfFileExists "$INSTDIR\${APP_EXECUTABLE}" uninstall_cleanup_app
+    IfFileExists "$INSTDIR\${APP_BASE_SCRIPT}" uninstall_residual_invalid
+    IfFileExists "$INSTDIR\${APP_LICENSE}" uninstall_residual_invalid
+    IfFileExists "$INSTDIR\${APP_STACK_SCRIPT}" uninstall_residual_invalid
+    DetailPrint "Resuming exact ${APP_DISPLAY_NAME} uninstall residual cleanup."
+    Goto uninstall_remove_path
+
+    uninstall_residual_invalid:
+    MessageBox MB_ICONSTOP|MB_OK "The installed ${APP_DISPLAY_NAME} payload is incomplete. Run setup once to repair it, then uninstall again; existing files were preserved." /SD IDOK
+    Abort
+
+    uninstall_cleanup_app:
     DetailPrint "Removing ${APP_DISPLAY_NAME} state, SSH integration, and cache; any running Sandbox stays open..."
     ${If} $DeleteConfigurationOnUninstall == "1"
         nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --delete-configuration'
@@ -571,12 +587,6 @@ Section "Uninstall"
     ${EndIf}
 
     ClearErrors
-    Delete "$INSTDIR\${APP_EXECUTABLE}"
-    ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Close any running ${APP_DISPLAY_NAME} command and try uninstalling again. No running process was terminated." /SD IDOK
-        Abort
-    ${EndIf}
-    ClearErrors
     Delete "$INSTDIR\${APP_BASE_SCRIPT}"
     Delete "$INSTDIR\${APP_LICENSE}"
     Delete "$INSTDIR\${APP_STACK_SCRIPT}"
@@ -584,6 +594,7 @@ Section "Uninstall"
         MessageBox MB_ICONSTOP|MB_OK "Could not remove the installed ${APP_DISPLAY_NAME} files. Check their permissions and try again." /SD IDOK
         Abort
     ${EndIf}
+    uninstall_remove_path:
     ${If} $2 == "1"
         !insertmacro UpdateUserPath "Remove"
         ${If} $0 != "0"
@@ -591,6 +602,12 @@ Section "Uninstall"
             MessageBox MB_ICONSTOP|MB_OK "Could not remove the installer-owned ${APP_DISPLAY_NAME} PATH entry: $1" /SD IDOK
             Abort
         ${EndIf}
+    ${EndIf}
+    ClearErrors
+    Delete "$INSTDIR\${APP_EXECUTABLE}"
+    ${If} ${Errors}
+        MessageBox MB_ICONSTOP|MB_OK "Close any running ${APP_DISPLAY_NAME} command and try uninstalling again. No running process was terminated." /SD IDOK
+        Abort
     ${EndIf}
     ${If} $4 == "1"
         ClearErrors
