@@ -30,9 +30,23 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 			t.Fatalf("native fixture bypasses Herdr virtual composition with %s", duplicate)
 		}
 	}
+	handyProfile, err := os.ReadFile(filepath.Join(fixture.HandyProject, ".herdr-sandbox", "provision.ps1"))
+	if err != nil || !strings.Contains(string(handyProfile), "Install-HandyStack -ProjectDirectory $ProjectDirectory") {
+		t.Fatalf("native Handy profile = %q, %v", handyProfile, err)
+	}
+	for _, duplicate := range []string{"Install-BunStack", "Install-RustMSVCStack", "Kitware.CMake", "KhronosGroup.VulkanSDK"} {
+		if strings.Contains(string(handyProfile), duplicate) {
+			t.Fatalf("native fixture bypasses Handy virtual composition with %s", duplicate)
+		}
+	}
 	for _, source := range []string{"Cargo.toml", "rust-toolchain.toml", "go.mod", "main.go", "main_test.go", "smoke.csproj", "Program.cs", "smoke.js", "smoke.py", "smoke.rs", "smoke.zig", "justfile"} {
 		if info, err := os.Stat(filepath.Join(fixture.Project, source)); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			t.Fatalf("native fixture source %s is invalid: %v, %v", source, info, err)
+		}
+	}
+	for _, source := range []string{"package.json", "bun.lock", filepath.Join("src-tauri", "Cargo.toml"), filepath.Join("src-tauri", "resources", "models", "silero_vad_v4.onnx")} {
+		if info, err := os.Stat(filepath.Join(fixture.HandyProject, source)); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			t.Fatalf("native Handy fixture source %s is invalid: %v, %v", source, info, err)
 		}
 	}
 	configurationData, err := os.ReadFile(filepath.Join(fixture.AppData, "herdr-sandbox", "config.json"))
@@ -48,7 +62,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR"} {
+	for _, required := range []string{"playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR", "handy-cmake-version", "handy-glslc-version", `C:\VulkanSDK\1.4.309.0`, "SPIRV-HeadersConfig.cmake", "Microsoft Edge WebView2 Runtime", "handy-native-toolchain"} {
 		if !strings.Contains(nativeAllStacksSmokeScript, required) {
 			t.Fatalf("native smoke does not verify %s", required)
 		}
@@ -60,6 +74,12 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 		!configuration.Mounts["reference"].ReadOnly || configuration.Mounts["worktrees"].Path != fixture.WritableMount ||
 		configuration.Mounts["worktrees"].ReadOnly {
 		t.Fatalf("native folder mounts = %#v", configuration.Mounts)
+	}
+	var fullConfiguration struct {
+		Workspaces map[string]string `json:"workspaces"`
+	}
+	if err := json.Unmarshal(configurationData, &fullConfiguration); err != nil || fullConfiguration.Workspaces["handy"] != fixture.HandyProject {
+		t.Fatalf("native Handy workspace = %#v, %v", fullConfiguration.Workspaces, err)
 	}
 	for _, path := range []string{
 		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"),

@@ -6,6 +6,14 @@ release notes remain available on the
 
 ## Unreleased
 
+### Added
+
+- A `handy` virtual project stack provisions the current Handy checkout's Windows
+  development toolchain with Bun, Rust/MSVC, latest-stable CMake and WebView2,
+  Vulkan SDK 1.4.309.0, and a verified SPIRV-Headers CMake target. It does not
+  add a Python runtime. Select it with `herdr-sandbox init --stack handy`;
+  application dependencies and models remain project-owned.
+
 ## v0.0.10 - 2026-08-05
 
 ### Added

@@ -30,6 +30,9 @@ const (
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
 	packageTradingView     = "TradingView.TradingViewDesktop"
 	packageUV              = "astral-sh.uv"
+	packageCMake           = "Kitware.CMake"
+	packageVulkanSDK       = "KhronosGroup.VulkanSDK"
+	packageWebView2        = "Microsoft.EdgeWebView2Runtime"
 )
 
 var basePackageIDs = []string{
@@ -59,6 +62,9 @@ var projectStackPackageIDs = []string{
 	"Casey.Just",
 	packageTradingView,
 	packageUV,
+	packageCMake,
+	packageVulkanSDK,
+	packageWebView2,
 }
 
 type wingetPackageConfiguration struct {

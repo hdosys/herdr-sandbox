@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 47
+# herdr-sandbox-base-contract: 48
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -1439,7 +1439,7 @@ function Test-ProvisioningPackageInstalled {
         'Rustup' {
             return Test-ProvisioningRustupInstalled -Metadata $Metadata
         }
-        { $_ -in @('Inno', 'MSI', 'Burn', 'MSIX') } {
+        { $_ -in @('Exe', 'Inno', 'MSI', 'Burn', 'MSIX') } {
             return Test-ProvisioningWinGetPackageInstalled -Metadata $Metadata
         }
         default {
@@ -1527,7 +1527,7 @@ function Install-ProvisioningPackagePayload {
         [Parameter(Mandatory = $true)]
         [string]$PayloadPath,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1541,6 +1541,15 @@ function Install-ProvisioningPackagePayload {
         Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $PayloadPath
     }
     switch ($Adapter) {
+        'Exe' {
+            if ($InstallerArguments.Count -eq 0) {
+                throw "$Role EXE adapter requires explicit installer arguments."
+            }
+            Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
+                -ArgumentList $InstallerArguments `
+                -SuccessExitCodes $InstallerSuccessExitCodes `
+                -WaitForProcessTree | Out-Null
+        }
         'Inno' {
             if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
                 throw "$Role Inno adapter requires ExecutableName."
@@ -1654,7 +1663,7 @@ function Install-ProvisioningCachedPackage {
         [ValidateSet('WinGet', 'Direct')]
         [string]$DownloadSource,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1788,7 +1797,7 @@ function Install-ProvisioningWinGetPackage {
         [string]$InstallerType,
         [string]$Scope = '',
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup')]
+        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),

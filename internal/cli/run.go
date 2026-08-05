@@ -20,7 +20,7 @@ const usage = `Usage:
   herdr-sandbox config
   herdr-sandbox version
   herdr-sandbox plan
-  herdr-sandbox init [--stack dotnet|go|herdr|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
+  herdr-sandbox init [--stack dotnet|go|handy|herdr|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
   herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   herdr-sandbox attach
   herdr-sandbox status
@@ -383,7 +383,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	flags := flag.NewFlagSet("herdr-sandbox init", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var selected stackSelections
-	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: dotnet, go, herdr, node, playwright-cli, python, python-ai, rust, tradingview, zig")
+	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, zig")
 	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -421,7 +421,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 }
 
 func promptForStacks(input io.Reader, output io.Writer) ([]string, error) {
-	fmt.Fprintln(output, "Available stacks: dotnet, go, herdr, node, playwright-cli, python, python-ai, rust, tradingview, zig")
+	fmt.Fprintln(output, "Available stacks: dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, zig")
 	fmt.Fprint(output, "Select one or more stacks (comma or space separated): ")
 	reader := bufio.NewReader(io.LimitReader(input, 4097))
 	line, err := reader.ReadString('\n')

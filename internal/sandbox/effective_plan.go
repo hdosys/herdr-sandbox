@@ -189,6 +189,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return packageGit
 	case stackGo:
 		return "GoLang.Go"
+	case stackHandy:
+		return packageCMake + " + " + packageVulkanSDK + " 1.4.309.0 + " + packageWebView2
 	case stackJust:
 		return "Casey.Just"
 	case stackNode:

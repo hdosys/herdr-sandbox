@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"herdr-sandbox version", "herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
 		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox mobile", "herdr-sandbox down", "herdr-sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "playwright-cli", "python-ai", "tradingview",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "handy", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -582,6 +582,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		want  string
 	}{
 		{name: "flags", args: []string{"init", "--stack", "go", "--stack", "dotnet"}, want: "go|dotnet"},
+		{name: "handy virtual", args: []string{"init", "--stack", "handy"}, want: "handy"},
 		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "playwright cli", args: []string{"init", "--stack", "playwright-cli"}, want: "playwright-cli"},
 		{name: "python ai", args: []string{"init", "--stack", "python-ai"}, want: "python-ai"},

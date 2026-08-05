@@ -71,6 +71,30 @@ func TestInitializeProjectWritesHerdrVirtualStack(t *testing.T) {
 	}
 }
 
+func TestInitializeProjectWritesHandyVirtualStack(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"handy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "handy" {
+		t.Fatalf("stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Install-HandyStack -ProjectDirectory $ProjectDirectory") {
+		t.Fatalf("Handy virtual profile = %s", text)
+	}
+	for _, expanded := range []string{"Install-BunStack", "Install-RustMSVCStack", "Kitware.CMake", "KhronosGroup.VulkanSDK"} {
+		if strings.Contains(text, expanded) {
+			t.Fatalf("init duplicated virtual stack implementation %q: %s", expanded, text)
+		}
+	}
+}
+
 func TestInitializeProjectWritesPythonAIVirtualStack(t *testing.T) {
 	project := t.TempDir()
 	result, err := InitializeProject(project, []string{"python-ai"})
@@ -96,7 +120,7 @@ func TestInitializeProjectWritesPythonAIVirtualStack(t *testing.T) {
 }
 
 func TestInitializeProjectRejectsSelectionsBeforeFilesystemMutation(t *testing.T) {
-	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "python-ai"}, {"herdr", "zig"}, {"python-ai", "python"}} {
+	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"handy", "rust"}, {"handy", "herdr"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "python-ai"}, {"herdr", "zig"}, {"python-ai", "python"}} {
 		project := t.TempDir()
 		if _, err := InitializeProject(project, requested); err == nil {
 			t.Fatalf("selection %v unexpectedly succeeded", requested)

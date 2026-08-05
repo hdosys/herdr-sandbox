@@ -118,6 +118,15 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass uv stack": {
 			Add: []string{packageUV}, Versions: map[string]string{},
 		},
+		"bypass Handy CMake stack": {
+			Add: []string{packageCMake}, Versions: map[string]string{},
+		},
+		"bypass Handy Vulkan SDK stack": {
+			Add: []string{packageVulkanSDK}, Versions: map[string]string{},
+		},
+		"bypass Handy WebView2 stack": {
+			Add: []string{packageWebView2}, Versions: map[string]string{},
+		},
 		"version removed": {
 			Remove: []string{packageGit}, Versions: map[string]string{packageGit: "2.55.0"},
 		},

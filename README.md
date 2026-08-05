@@ -41,7 +41,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Python AI development with uv, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Multi-stack provisioning:** .NET 10, Go, Handy, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Python AI development with uv, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
@@ -51,7 +51,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python with uv, and TradingView Desktop with TVControl**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Handy with CMake/Vulkan/WebView2, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python with uv, and TradingView Desktop with TVControl**. A first run can take longer because browser, Vulkan SDK, and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -153,7 +153,7 @@ For an official Herdr upstream checkout without a project profile, select its ma
 herdr-sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `python-ai`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. The virtual `python-ai` choice includes Python 3.13 and uv; it cannot be combined with `python` or `herdr`. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine `dotnet`, `go`, `handy`, `herdr`, `node`, `playwright-cli`, `python`, `python-ai`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `handy` choice includes Bun and Rust/MSVC plus Handy's Windows-native requirements, so it cannot be combined with `rust` or `herdr`. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. The virtual `python-ai` choice includes Python 3.13 and uv; it cannot be combined with `python` or `herdr`. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -230,6 +230,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 
 | Development need | Direct profile call |
 | --- | --- |
+| Handy Windows development | `Install-HandyStack -ProjectDirectory $ProjectDirectory` |
 | Herdr/Herdr-Win development | `Install-HerdrStack -ProjectDirectory $ProjectDirectory` |
 | Modern .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
@@ -246,10 +247,28 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | Just | `Install-Just` |
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
+- `Install-HandyStack` is a virtual composition for the current Handy checkout. It validates Handy's package, Bun lock, Cargo package, and checked-in VAD model identities; reuses Bun and Rust/MSVC; installs latest-stable CMake and WebView2; and installs Vulkan SDK 1.4.309.0 to match Handy's current CI. It also supplies and builds against a corrected SPIRV-Headers CMake target because that SDK's bundled config points to an invalid unversioned include root.
 - `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state.
-- `Install-PythonAIStack` is the second virtual composition. It reuses Python 3.13 and the standalone uv owner. `plan` expands both virtual compositions back into their concrete owners without executing the profile.
+- `Install-PythonAIStack` is another virtual composition. It reuses Python 3.13 and the standalone uv owner. `plan` expands virtual compositions back into their concrete owners without executing the profile.
 - An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. uv follows the same latest-stable package path. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
 - Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. The TradingView stack similarly installs TVControl as a guest-local command rather than changing the mapped project's `package.json` or lockfile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain project-owned. Python AI likewise leaves PyTorch, Transformers, Jupyter, provider SDKs, and other dependencies in the project's `pyproject.toml` and `uv.lock`. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+
+#### Handy Windows development
+
+From a current [Handy](https://github.com/cjpais/Handy) checkout, create the dedicated profile:
+
+```powershell
+herdr-sandbox init --stack handy
+```
+
+The stack provisions the Windows-native prerequisites and verifies the CMake, Vulkan, SPIRV-Headers, and WebView2 boundary without adding Python or changing Handy's dependency files. After the guest is ready, use Handy's own commands:
+
+```powershell
+bun install
+bun tauri dev
+```
+
+Use `bun run tauri build` for Handy's production build. Signing and release packaging remain Handy-owned. To test microphone capture, set `"audioInput": true` in the global Herdr Sandbox configuration before launching a fresh guest. The default `false` deliberately blocks host microphone sharing.
 
 #### Python AI/API development with uv
 
@@ -404,6 +423,8 @@ Vulkan remains disabled by default. To install only the LunarG runtime and requi
 ```
 
 Provisioning runs `vulkaninfo --summary` and fails when no physical device is exposed. This experimental path does not install the Vulkan SDK, Microsoft's D3D mapping package, a host GPU driver, or enable vendor extensions.
+
+The `handy` project stack is separate from this global runtime opt-in. Handy installs its required Vulkan SDK and compiler tools, but real GPU acceleration still depends on the vGPU exposed by Windows Sandbox and the host graphics stack.
 
 #### Audio policy
 
@@ -635,6 +656,7 @@ go run ./cmd/task package v0.0.0
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
 - `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js plus Playwright Chromium, and the Herdr virtual stack (Python, Rust/MSVC, Zig, Bun, Nextest, Just, and `sh`); it launches Chromium headlessly over managed SSH, runs representative version/build/test commands, verifies the libghostty guest-local output contract plus Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- The same native gate maps a separate Handy-shaped project and verifies CMake, Vulkan SDK 1.4.309.0, the corrected SPIRV-Headers target, and signed WebView2 after its virtual stack provisions successfully.
 - `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 

@@ -18,6 +18,7 @@ $knownStacks = @{
     'Install-CargoNextest' = 'cargo-nextest'
     'Install-DotNetStack' = 'dotnet'
     'Install-GoStack' = 'go'
+    'Install-HandyStack' = @('bun', 'handy', 'rust-msvc')
     'Install-HerdrStack' = @('bun', 'cargo-nextest', 'git-sh', 'just', 'python', 'rust-msvc', 'zig')
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'

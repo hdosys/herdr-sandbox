@@ -81,7 +81,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, node with Playwright Chromium, Playwright CLI registration, the Herdr virtual stack, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -130,6 +130,7 @@ func waitForNativeAllStacksCleanup(ctx context.Context, directory string, enviro
 type nativeAllStacksFixture struct {
 	Root          string
 	Project       string
+	HandyProject  string
 	AppData       string
 	LocalAppData  string
 	UserProfile   string
@@ -141,6 +142,7 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
 	fixture := nativeAllStacksFixture{
 		Root:          root,
 		Project:       filepath.Join(root, "project"),
+		HandyProject:  filepath.Join(root, "handy"),
 		AppData:       filepath.Join(root, "appdata"),
 		LocalAppData:  filepath.Join(root, "localappdata"),
 		UserProfile:   filepath.Join(root, "userprofile"),
@@ -200,9 +202,11 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
     "root": "",
     "exclude": []
   },
-  "workspaces": {}
+  "workspaces": {
+    "handy": %q
+  }
 }
-`, fixture.ReadOnlyMount, fixture.WritableMount),
+`, fixture.ReadOnlyMount, fixture.WritableMount, fixture.HandyProject),
 		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"): "read-only-mount-ok\n",
 		filepath.Join(fixture.WritableMount, "host-worktrees.txt"): "read-write-mount-ok\n",
 		filepath.Join(fixture.AppData, "herdr-sandbox", "user.ps1"): `# herdr-sandbox-user-contract: 1
@@ -297,6 +301,29 @@ test "answer" {
     try std.testing.expect(21 * 2 == 42);
 }
 `,
+		filepath.Join(fixture.HandyProject, ".herdr-sandbox", "provision.ps1"): `param(
+    [Parameter(Mandatory = $true)]
+    [string]$ProjectDirectory
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+
+Install-HandyStack -ProjectDirectory $ProjectDirectory
+`,
+		filepath.Join(fixture.HandyProject, "package.json"): `{
+  "name": "handy-app",
+  "private": true,
+  "version": "0.0.0"
+}
+`,
+		filepath.Join(fixture.HandyProject, "bun.lock"): "# native Handy stack fixture\n",
+		filepath.Join(fixture.HandyProject, "src-tauri", "Cargo.toml"): `[package]
+name = "handy"
+version = "0.0.0"
+edition = "2021"
+`,
+		filepath.Join(fixture.HandyProject, "src-tauri", "resources", "models", "silero_vad_v4.onnx"): "native Handy model fixture\n",
 		filepath.Join(fixture.LocalAppData, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState", "settings.json"): `{
     "theme": "light",
     "profiles": {
@@ -533,6 +560,8 @@ $playwrightAgentCLI = (Get-Command 'playwright-cli.cmd' -CommandType Application
 $tradingView = (Get-Command 'TradingView.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $tv = (Get-Command 'tv.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $tvcontrol = (Get-Command 'tvcontrol.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$cmake = (Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$glslc = (Get-Command 'glslc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
 $null = Invoke-SmokeTool 'dotnet-version' $dotnet @('--version')
 $dotnetRoot = Join-Path $root 'dotnet'
@@ -683,6 +712,30 @@ $null = Invoke-SmokeTool 'rust-compile' $rustc @($rustSource,'-o',$rustBinary)
 $rustOutput = Invoke-SmokeTool 'rust-run' $rustBinary @()
 Assert-SmokeOutput 'rust-run' $rustOutput 'rust-smoke-ok'
 
+$cmakeVersion = Invoke-SmokeTool 'handy-cmake-version' $cmake @('--version')
+Assert-SmokeOutput 'handy-cmake-version' $cmakeVersion 'cmake version '
+$null = Invoke-SmokeTool 'handy-glslc-version' $glslc @('--version')
+$expectedVulkanRoot = 'C:\VulkanSDK\1.4.309.0'
+$expectedHandyPrefix = 'C:\HerdrSandbox\tools\handy-cmake-prefix'
+$handyConfig = Join-Path $expectedHandyPrefix 'share\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake'
+if ($env:VULKAN_SDK -cne $expectedVulkanRoot -or
+    @($env:CMAKE_PREFIX_PATH -split ';')[0] -cne $expectedHandyPrefix -or
+    -not (Test-Path -LiteralPath $handyConfig -PathType Leaf) -or
+    -not ([IO.File]::ReadAllText($handyConfig).Contains(($expectedVulkanRoot + '/Include').Replace('\','/')))) {
+    throw 'Handy Vulkan SDK or corrected SPIRV-Headers package is unavailable.'
+}
+$webViewKey = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$webView = Get-ItemProperty -LiteralPath $webViewKey -ErrorAction Stop
+$webViewExecutable = Join-Path (Join-Path ([string]$webView.location) ([string]$webView.pv)) 'msedgewebview2.exe'
+$webViewSignature = Get-AuthenticodeSignature -LiteralPath $webViewExecutable
+if ([string]$webView.name -cne 'Microsoft Edge WebView2 Runtime' -or
+    -not (Test-Path -LiteralPath $webViewExecutable -PathType Leaf) -or
+    $webViewSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+    $webViewSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+    throw 'Handy WebView2 Runtime is unavailable or untrusted.'
+}
+[Console]::Out.WriteLine('[all-stacks] handy-native-toolchain: CMake, Vulkan 1.4.309.0, SPIRV-Headers, and WebView2 OK')
+
 $null = Invoke-SmokeTool 'zig-version' $zig @('version')
 $zigSource = Join-Path $root 'zig\smoke.zig'
 Write-SmokeFile $zigSource @('const std = @import("std");','test "addition" {','    try std.testing.expect(2 + 2 == 4);','}')
@@ -715,6 +768,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: dotnet, go, node, Herdr virtual stack')
+[Console]::Out.WriteLine('[all-stacks] PASS: dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 10
+# herdr-sandbox-stacks-contract: 11
 
 function Get-StackWebResponseText {
     param(
@@ -1892,7 +1892,6 @@ $rustEntryDirectory = Join-Path $rustCacheRoot $rustEntryName
 $rustGuestStage = Join-Path 'C:\HerdrSandbox\staging\rust-mirror' ([Guid]::NewGuid().ToString('N'))
 $rustGuestMirror = Join-Path $rustGuestStage 'mirror'
 $rustLock = $null
-$rustServer = $null
 $rustSetupSucceeded = $false
 $rustPrimaryFailure = $null
 $rustCleanupFailure = $null
@@ -1945,54 +1944,16 @@ try {
         $rustMirrorRoot = $rustGuestMirror
     }
 
-    $rustPort = 49601
-    $rustDistServer = "http://127.0.0.1:$rustPort"
+    $rustDistServer = ([Uri][IO.Path]::GetFullPath($rustMirrorRoot)).AbsoluteUri.TrimEnd('/')
+    $rustDistURI = [Uri]$rustDistServer
+    if ($rustDistURI.Scheme -cne 'file' -or
+        [IO.Path]::GetFullPath($rustDistURI.LocalPath).TrimEnd('\') -cne
+        [IO.Path]::GetFullPath($rustMirrorRoot).TrimEnd('\')) {
+        throw "Rust distribution mirror file URI is invalid: $rustDistServer"
+    }
     $env:RUSTUP_DIST_SERVER = $rustDistServer
     $env:RUSTUP_UPDATE_ROOT = "$rustDistServer/__self_update_disabled__"
     $env:RUSTUP_AUTO_INSTALL = '0'
-    $env:NO_PROXY = '127.0.0.1,localhost'
-    $env:no_proxy = $env:NO_PROXY
-    Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
-        -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' | Out-Null
-    $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^Python 3\.\d+\.\d+$'
-    $pythonCommand = Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $rustServerSpec = New-ProvisioningNativeSpec -Role 'Rust distribution mirror server' `
-        -FilePath $pythonCommand.Source -ArgumentList @(
-            '-I', '-u', '-m', 'http.server', '--bind', '127.0.0.1', '--directory', $rustMirrorRoot, [string]$rustPort
-        ) -TimeoutSeconds 1900 -WorkingDirectory $rustGuestStage
-    $rustServer = [HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)
-    $probeURI = "$rustDistServer/$($rustDistribution.SidecarRelativePath.Replace('\', '/'))"
-    $probeUTF8 = New-Object Text.UTF8Encoding($false, $true)
-    $expectedProbeBody = $probeUTF8.GetString([byte[]]$rustDistribution.SidecarBytes)
-    $probeDeadline = [DateTime]::UtcNow.AddSeconds(10)
-    $serverReady = $false
-    $lastProbeError = ''
-    do {
-        if ($rustServer.IsCompleted) {
-            $serverResult = $rustServer.Complete()
-            $serverFailure = Get-ProvisioningBoundedDiagnosticText -Text ([string]$serverResult.Output) `
-                -MaximumBytes 3000
-            throw "Rust mirror server exited early with exit code $($serverResult.ExitCode). $serverFailure"
-        }
-        try {
-            $response = Invoke-WebRequest -Uri $probeURI -UseBasicParsing -TimeoutSec 1
-            $body = Get-StackWebResponseText -Response $response
-            if ($response.StatusCode -eq 200 -and $body -ceq $expectedProbeBody) {
-                $serverReady = $true
-            } else {
-                $lastProbeError = "unexpected HTTP response status=$($response.StatusCode) characters=$($body.Length)"
-            }
-        } catch {
-            $lastProbeError = $_.Exception.Message
-        }
-        if (-not $serverReady) {
-            Start-Sleep -Milliseconds 100
-        }
-    } while (-not $serverReady -and [DateTime]::UtcNow -lt $probeDeadline)
-    if (-not $serverReady) {
-        throw "Rust mirror readiness timed out: $lastProbeError"
-    }
 
     $rustupCommand = Get-Command 'rustup.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $rustToolchainTask = [ordered]@{
@@ -2028,21 +1989,6 @@ try {
 } catch {
     $rustPrimaryFailure = $_
 } finally {
-    if ($null -ne $rustServer) {
-        try {
-            $null = $rustServer.Stop()
-        } catch {
-            $rustCleanupFailure = $_
-        } finally {
-            try {
-                $rustServer.Dispose()
-            } catch {
-                if ($null -eq $rustCleanupFailure) {
-                    $rustCleanupFailure = $_
-                }
-            }
-        }
-    }
     if ($null -ne $rustLock) {
         try {
             $rustLock.Dispose()
@@ -2144,6 +2090,299 @@ function Install-BunStack {
     $bunVersion = Assert-ProvisioningCommand -Role 'Bun' -Name 'bun.exe' `
         -VersionArguments @('--version') -ExpectedPattern $bunPattern
     Write-Output "Bun ready: $bunVersion"
+}
+
+function Get-HandyWebView2Runtime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Version]$MinimumVersion
+    )
+
+    $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    if (-not (Test-Path -LiteralPath $key)) {
+        return $null
+    }
+    $registration = Get-ItemProperty -LiteralPath $key
+    if ([string]$registration.name -cne 'Microsoft Edge WebView2 Runtime') {
+        return $null
+    }
+    try {
+        $version = [Version][string]$registration.pv
+    } catch {
+        return $null
+    }
+    if ($version -lt $MinimumVersion) {
+        return $null
+    }
+    $expectedLocation = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeWebView\Application'
+    try {
+        $location = [IO.Path]::GetFullPath([string]$registration.location).TrimEnd('\')
+    } catch {
+        return $null
+    }
+    if ($location -cne [IO.Path]::GetFullPath($expectedLocation).TrimEnd('\')) {
+        return $null
+    }
+    $executable = Join-Path (Join-Path $location $version.ToString()) 'msedgewebview2.exe'
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        return $null
+    }
+    $file = Get-Item -LiteralPath $executable -Force
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        [string]$file.VersionInfo.FileVersion -cne $version.ToString() -or
+        [string]$file.VersionInfo.ProductVersion -cne $version.ToString()) {
+        return $null
+    }
+    $signature = Get-AuthenticodeSignature -LiteralPath $executable
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+        return $null
+    }
+    return [pscustomobject]@{ Version = $version.ToString(); Executable = $executable }
+}
+
+function Write-HandySPIRVHeadersPackage {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VulkanRoot
+    )
+
+    $vulkanBase = 'C:\VulkanSDK'
+    $vulkanRootFull = [IO.Path]::GetFullPath($VulkanRoot).TrimEnd('\')
+    if (-not $vulkanRootFull.StartsWith($vulkanBase + '\', [StringComparison]::Ordinal)) {
+        throw "Handy Vulkan SDK root is outside the expected owner: $vulkanRootFull"
+    }
+    $include = Join-Path $vulkanRootFull 'Include'
+    $spirvInclude = Join-Path $include 'spirv-headers'
+    foreach ($directory in @($vulkanBase, $vulkanRootFull, $include, $spirvInclude)) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            throw "Handy Vulkan SDK directory is missing: $directory"
+        }
+        $item = Get-Item -LiteralPath $directory -Force
+        if (-not $item.PSIsContainer -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Handy Vulkan SDK directory is unsafe: $directory"
+        }
+    }
+    $header = Join-Path $spirvInclude 'spirv.hpp'
+    if (-not (Test-Path -LiteralPath $header -PathType Leaf) -or
+        ((Get-Item -LiteralPath $header -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Handy Vulkan SDK SPIRV headers are missing or unsafe: $header"
+    }
+    $toolsOwner = 'C:\HerdrSandbox'
+    $toolsRoot = Join-Path $toolsOwner 'tools'
+    $prefix = 'C:\HerdrSandbox\tools\handy-cmake-prefix'
+    $configDirectory = Join-Path $prefix 'share\cmake\SPIRV-Headers'
+    foreach ($directory in @($toolsOwner, $toolsRoot, $prefix, (Join-Path $prefix 'share'), (Join-Path $prefix 'share\cmake'), $configDirectory)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+        }
+        $item = Get-Item -LiteralPath $directory -Force
+        if (-not $item.PSIsContainer -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Handy CMake package directory is unsafe: $directory"
+        }
+    }
+    $cmakeInclude = $include.Replace('\', '/')
+    $contents = @"
+if(NOT TARGET SPIRV-Headers::SPIRV-Headers)
+  if(NOT EXISTS "$cmakeInclude/spirv-headers/spirv.hpp")
+    message(FATAL_ERROR "Handy requires the Vulkan SDK SPIRV headers")
+  endif()
+  add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
+  set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "$cmakeInclude"
+  )
+endif()
+"@
+    $config = Join-Path $configDirectory 'SPIRV-HeadersConfig.cmake'
+    if (Test-Path -LiteralPath $config) {
+        $existingConfig = Get-Item -LiteralPath $config -Force
+        if ($existingConfig.PSIsContainer -or
+            ($existingConfig.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Handy SPIRV-Headers CMake package destination is unsafe: $config"
+        }
+    }
+    [IO.File]::WriteAllText($config, $contents, (New-Object Text.UTF8Encoding($false)))
+    $configItem = Get-Item -LiteralPath $config -Force
+    if (($configItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        [IO.File]::ReadAllText($config) -cne $contents) {
+        throw "Handy SPIRV-Headers CMake package verification failed: $config"
+    }
+
+    $existing = [string][Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', 'Machine')
+    $entries = @($existing -split ';' | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and
+            [IO.Path]::GetFullPath($_).TrimEnd('\') -ine $prefix
+        })
+    $combined = (@($prefix) + $entries) -join ';'
+    $env:CMAKE_PREFIX_PATH = $combined
+    [Environment]::SetEnvironmentVariable('CMAKE_PREFIX_PATH', $combined, 'Machine')
+    if ([Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', 'Machine') -cne $combined) {
+        throw 'Handy CMAKE_PREFIX_PATH verification failed.'
+    }
+    return $prefix
+}
+
+function Assert-HandyNativeToolchain {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CMakePrefix
+    )
+
+    $cmake = Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $stage = Join-Path 'C:\HerdrSandbox\staging' ('handy-cmake-probe-' + [Guid]::NewGuid().ToString('N'))
+    $source = Join-Path $stage 'source'
+    $build = Join-Path $stage 'build'
+    New-Item -ItemType Directory -Path $source -Force | Out-Null
+    try {
+        $cmakeLists = @'
+cmake_minimum_required(VERSION 3.14)
+project(handy_stack_probe LANGUAGES CXX)
+find_package(Vulkan COMPONENTS glslc REQUIRED)
+find_package(SPIRV-Headers CONFIG REQUIRED)
+add_executable(handy_stack_probe main.cpp)
+target_link_libraries(handy_stack_probe PRIVATE Vulkan::Headers SPIRV-Headers::SPIRV-Headers)
+'@
+        $main = @'
+#include <vulkan/vulkan.h>
+#include <spirv-headers/spirv.hpp>
+int main() { return VK_API_VERSION_1_0 == 0; }
+'@
+        [IO.File]::WriteAllText((Join-Path $source 'CMakeLists.txt'), $cmakeLists,
+            (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText((Join-Path $source 'main.cpp'), $main,
+            (New-Object Text.UTF8Encoding($false)))
+        Invoke-ProvisioningNative -Role 'Handy native CMake configuration' -FilePath $cmake.Source `
+            -ArgumentList @('-S', $source, '-B', $build, '-G', 'Visual Studio 17 2022', '-A', 'x64',
+                "-DCMAKE_PREFIX_PATH=$CMakePrefix") -TimeoutSeconds 300 | Out-Null
+        Invoke-ProvisioningNative -Role 'Handy native CMake build' -FilePath $cmake.Source `
+            -ArgumentList @('--build', $build, '--config', 'Release') -TimeoutSeconds 300 | Out-Null
+        $probe = Join-Path $build 'Release\handy_stack_probe.exe'
+        if (-not (Test-Path -LiteralPath $probe -PathType Leaf) -or
+            ((Get-Item -LiteralPath $probe -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Handy native CMake probe did not produce one regular executable: $probe"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+    }
+}
+
+function Install-HandyStack {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ProjectDirectory
+    )
+
+    if (-not [IO.Path]::IsPathRooted($ProjectDirectory)) {
+        throw "Handy project directory must be absolute: $ProjectDirectory"
+    }
+    $projectRoot = [IO.Path]::GetFullPath($ProjectDirectory).TrimEnd('\')
+    $packagePath = Join-Path $projectRoot 'package.json'
+    $bunLockPath = Join-Path $projectRoot 'bun.lock'
+    $rustRoot = Join-Path $projectRoot 'src-tauri'
+    $cargoPath = Join-Path $rustRoot 'Cargo.toml'
+    $modelPath = Join-Path $rustRoot 'resources\models\silero_vad_v4.onnx'
+    foreach ($path in @($packagePath, $bunLockPath, $cargoPath, $modelPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Handy project input is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -le 0) {
+            throw "Handy project input is empty or unsafe: $path"
+        }
+    }
+    try {
+        $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+    } catch {
+        throw "Handy package.json is invalid: $($_.Exception.Message)"
+    }
+    if ([string]$package.name -cne 'handy-app' -or
+        $package.private -isnot [bool] -or -not [bool]$package.private) {
+        throw "Handy package identity is unexpected: $packagePath"
+    }
+    $cargoText = [IO.File]::ReadAllText($cargoPath)
+    if ([regex]::Matches($cargoText, '(?m)^\s*name\s*=\s*"handy"\s*$').Count -ne 1) {
+        throw "Handy Cargo package identity is unexpected: $cargoPath"
+    }
+
+    $cmakeMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy CMake' -Id 'Kitware.CMake' `
+        -InstallerType 'wix' -Scope 'machine'
+    if ([string]$cmakeMetadata.Id -cne 'Kitware.CMake' -or
+        [string]$cmakeMetadata.Version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "Handy CMake metadata is unexpected: $($cmakeMetadata.Id) $($cmakeMetadata.Version)"
+    }
+    Install-ProvisioningCachedPackage -Role 'Handy CMake' -Metadata $cmakeMetadata `
+        -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'cmake.exe' `
+        -InstallerArguments @('ADD_CMAKE_TO_PATH=System') -RequireAuthenticodeSignature
+    $cmakeDirectory = Join-Path $env:ProgramFiles 'CMake\bin'
+    Add-ProvisioningMachinePath -Directory $cmakeDirectory
+    $cmakeVersion = Assert-ProvisioningCommand -Role 'Handy CMake' -Name 'cmake.exe' `
+        -VersionArguments @('--version') `
+        -ExpectedPattern ('^cmake version ' + [regex]::Escape([string]$cmakeMetadata.Version) + '(?:\r?\n|$)')
+
+    $vulkanVersion = '1.4.309.0'
+    $vulkanMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy Vulkan SDK' `
+        -Id 'KhronosGroup.VulkanSDK' -Version $vulkanVersion -InstallerType 'exe' -Scope 'machine'
+    if ([string]$vulkanMetadata.Id -cne 'KhronosGroup.VulkanSDK' -or
+        [string]$vulkanMetadata.Version -cne $vulkanVersion) {
+        throw "Handy Vulkan SDK metadata is unexpected: $($vulkanMetadata.Id) $($vulkanMetadata.Version)"
+    }
+    Install-ProvisioningCachedPackage -Role 'Handy Vulkan SDK' -Metadata $vulkanMetadata `
+        -DownloadSource 'WinGet' -Adapter 'Exe' `
+        -InstallerArguments @('--accept-licenses', '--default-answer', '--confirm-command', 'install') `
+        -RequireAuthenticodeSignature
+    $vulkanRoot = [string][Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+    $expectedVulkanRoot = "C:\VulkanSDK\$vulkanVersion"
+    if ([string]::IsNullOrWhiteSpace($vulkanRoot) -or
+        [IO.Path]::GetFullPath($vulkanRoot).TrimEnd('\') -cne $expectedVulkanRoot) {
+        throw "Handy Vulkan SDK environment is unexpected: $vulkanRoot"
+    }
+    $env:VULKAN_SDK = $vulkanRoot
+    $vulkanBin = Join-Path $vulkanRoot 'Bin'
+    Add-ProvisioningMachinePath -Directory $vulkanBin
+    foreach ($name in @('glslc.exe', 'glslangValidator.exe')) {
+        $command = Join-Path $vulkanBin $name
+        if (-not (Test-Path -LiteralPath $command -PathType Leaf) -or
+            ((Get-Item -LiteralPath $command -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Handy Vulkan SDK command is missing or unsafe: $command"
+        }
+        Invoke-ProvisioningNative -Role "Handy Vulkan SDK $name verification" `
+            -FilePath $command -ArgumentList @('--version') | Out-Null
+    }
+
+    $webViewMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy WebView2 Runtime' `
+        -Id 'Microsoft.EdgeWebView2Runtime' -InstallerType 'exe' -Scope 'machine'
+    try {
+        $minimumWebViewVersion = [Version][string]$webViewMetadata.Version
+    } catch {
+        throw "Handy WebView2 metadata version is invalid: $($webViewMetadata.Version)"
+    }
+    $webView = Get-HandyWebView2Runtime -MinimumVersion $minimumWebViewVersion
+    if ($null -eq $webView) {
+        Install-ProvisioningCachedPackage -Role 'Handy WebView2 Runtime' -Metadata $webViewMetadata `
+            -DownloadSource 'WinGet' -Adapter 'Exe' -InstallerArguments @('/silent', '/install') `
+            -RequireAuthenticodeSignature
+        $webView = Get-HandyWebView2Runtime -MinimumVersion $minimumWebViewVersion
+    }
+    if ($null -eq $webView) {
+        throw "Handy WebView2 Runtime $minimumWebViewVersion or newer is unavailable after installation."
+    }
+
+    Install-BunStack
+    Install-RustMSVCStack -ProjectDirectory $rustRoot
+    $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
+    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix
+
+    Write-Output "Handy CMake ready: $cmakeVersion"
+    Write-Output "Handy Vulkan SDK ready: $vulkanVersion"
+    Write-Output "Handy WebView2 ready: $($webView.Version)"
+    Write-Output 'Handy development toolchain ready.'
 }
 
 function Install-HerdrStack {

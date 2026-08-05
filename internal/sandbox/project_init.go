@@ -10,6 +10,7 @@ import (
 )
 
 const (
+	stackHandyPreset    projectStack = "handy"
 	stackHerdrPreset    projectStack = "herdr"
 	stackPythonAIPreset projectStack = "python-ai"
 )
@@ -113,11 +114,12 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: dotnet, go, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
+		return nil, nil, errors.New("select at least one stack: dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
 	}
 	aliases := map[string]projectStack{
 		"dotnet":         stackDotNet,
 		"go":             stackGo,
+		"handy":          stackHandyPreset,
 		"herdr":          stackHerdrPreset,
 		"node":           stackNode,
 		"playwright-cli": stackPlaywrightCLI,
@@ -134,7 +136,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -152,6 +154,12 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 				return nil, nil, fmt.Errorf("stack %q already includes stack %q", stackHerdrPreset, label)
 			}
 		}
+	}
+	if seen[stackHandyPreset] && seen[stackRustMSVC] {
+		return nil, nil, fmt.Errorf("stack %q already includes stack %q", stackHandyPreset, "rust")
+	}
+	if seen[stackHandyPreset] && seen[stackHerdrPreset] {
+		return nil, nil, fmt.Errorf("stacks %q and %q both include stacks %q and %q", stackHandyPreset, stackHerdrPreset, "bun", "rust")
 	}
 	if seen[stackPythonAIPreset] && seen[stackPython] {
 		return nil, nil, fmt.Errorf("stack %q already includes stack %q", stackPythonAIPreset, stackPython)
@@ -192,6 +200,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-DotNetStack"
 		case stackGo:
 			call = "Install-GoStack -ProjectDirectory $ProjectDirectory"
+		case stackHandyPreset:
+			call = "Install-HandyStack -ProjectDirectory $ProjectDirectory"
 		case stackHerdrPreset:
 			call = "Install-HerdrStack -ProjectDirectory $ProjectDirectory"
 		case stackNode:

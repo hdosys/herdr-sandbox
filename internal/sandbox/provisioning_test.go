@@ -1053,6 +1053,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-CargoNextest",
 		"function Install-Just",
 		"function Install-BunStack",
+		"function Install-HandyStack",
 		"function Install-HerdrStack",
 		"function Install-StackVisualStudioBuildTools",
 		"Assert-ProvisioningCacheTree -Path $slot",
@@ -1129,8 +1130,9 @@ func TestRustAndVisualStudioUseOneFixedParallelGroup(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"$rustServer = [HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)",
-		"$null = $rustServer.Stop()",
+		"$rustDistServer = ([Uri][IO.Path]::GetFullPath($rustMirrorRoot)).AbsoluteUri.TrimEnd('/')",
+		"$rustDistURI.Scheme -cne 'file'",
+		"$env:RUSTUP_DIST_SERVER = $rustDistServer",
 		"Role = 'Rust toolchain installation'",
 		"WorkingDirectory = $ProjectDirectory",
 		"Install-StackVisualStudioBuildTools -RustToolchainTask $rustToolchainTask",
@@ -1143,16 +1145,19 @@ func TestRustAndVisualStudioUseOneFixedParallelGroup(t *testing.T) {
 	}
 	if strings.Contains(text, "function Invoke-StackVisualStudioInstaller") ||
 		strings.Contains(rust, "Invoke-ProvisioningNative -Role 'Rust toolchain installation'") ||
+		strings.Contains(rust, "python.exe") ||
+		strings.Contains(rust, "http.server") ||
+		strings.Contains(rust, "Rust distribution mirror server") ||
 		strings.Contains(rust, "Start-Process -FilePath $pythonCommand.Source") ||
 		strings.Contains(visualStudio, "Start-Process -FilePath $guestLayoutBootstrapper") {
 		t.Fatal("Rust/Visual Studio retains a replaced direct process path")
 	}
-	serverReady := strings.Index(rust, "if (-not $serverReady)")
+	fileMirror := strings.Index(rust, "$env:RUSTUP_DIST_SERVER = $rustDistServer")
 	groupCall := strings.Index(rust, "Install-StackVisualStudioBuildTools -RustToolchainTask")
 	defaultSelection := strings.Index(rust, "Invoke-ProvisioningNative -Role 'Rust default toolchain selection'")
 	verification := strings.Index(rust, "Assert-ProvisioningCommand -Role 'Rust'")
-	if serverReady < 0 || groupCall <= serverReady || defaultSelection <= groupCall || verification <= defaultSelection {
-		t.Fatalf("Rust preparation/group/read-back ordering is invalid: server=%d group=%d default=%d verify=%d", serverReady, groupCall, defaultSelection, verification)
+	if fileMirror < 0 || groupCall <= fileMirror || defaultSelection <= groupCall || verification <= defaultSelection {
+		t.Fatalf("Rust preparation/group/read-back ordering is invalid: mirror=%d group=%d default=%d verify=%d", fileMirror, groupCall, defaultSelection, verification)
 	}
 }
 
@@ -1162,7 +1167,6 @@ func TestDevelopmentNativeProcessesUseOwnedBoundary(t *testing.T) {
 	for _, required := range []string{
 		"function Invoke-ProvisioningNativeResult",
 		"[HerdrSandbox.ProvisioningProcess]::Run($spec)",
-		"[HerdrSandbox.ProvisioningProcess]::Start($rustServerSpec)",
 	} {
 		if !strings.Contains(base+stacks, required) {
 			t.Errorf("development process owner is missing %q", required)

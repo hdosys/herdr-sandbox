@@ -20,7 +20,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	profile := filepath.Join(configuration, projectProvisioningName)
-	profileData := []byte("Install-DotNetStack\nInstall-GoStack -ProjectDirectory $ProjectDirectory\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
+	profileData := []byte("Install-DotNetStack\nInstall-GoStack -ProjectDirectory $ProjectDirectory\nInstall-HandyStack -ProjectDirectory $ProjectDirectory\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
 	if err := os.WriteFile(profile, profileData, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -55,10 +55,11 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	if len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
-		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "dotnet|go|python|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
-		len(plan.StackPackages) != 5 || plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" ||
-		plan.StackPackages[3].PackageOwner != "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest" ||
-		plan.StackPackages[4].PackageOwner != packageUV ||
+		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "bun|dotnet|go|handy|python|rust-msvc|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
+		len(plan.StackPackages) != 8 || plan.StackPackages[0].PackageOwner != "Oven-sh.Bun" ||
+		plan.StackPackages[3].PackageOwner != "Kitware.CMake + KhronosGroup.VulkanSDK 1.4.309.0 + Microsoft.EdgeWebView2Runtime" ||
+		plan.StackPackages[6].PackageOwner != "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest" ||
+		plan.StackPackages[7].PackageOwner != packageUV || !plan.RequiresVisualStudio ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
 	}

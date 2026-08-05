@@ -32,6 +32,7 @@ const (
 	stackDotNet        projectStack = "dotnet"
 	stackGitSH         projectStack = "git-sh"
 	stackGo            projectStack = "go"
+	stackHandy         projectStack = "handy"
 	stackJust          projectStack = "just"
 	stackNode          projectStack = "node"
 	stackPlaywrightCLI projectStack = "playwright-cli"
@@ -55,7 +56,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
+	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackHandy, stackJust, stackNode, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false
