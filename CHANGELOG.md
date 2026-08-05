@@ -26,7 +26,7 @@ release notes remain available on the
   resume the intended terminal cleanup after interruption.
 - Setup now repairs registered v0.0.9 installations while preserving unrelated or
   missing legacy files, and uninstall no longer fails when an active agent or tool
-  temporarily locks the disposable package cache.
+  temporarily locks disposable package-cache or machine-local state.
 
 ## v0.0.9 - 2026-08-05
 

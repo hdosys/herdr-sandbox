@@ -255,10 +255,10 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 	for _, root := range removalRoots {
 		plan, err := planInstallerDirectoryRemoval(root.path, root.role)
 		if err != nil {
-			if strings.EqualFold(filepath.Clean(root.path), filepath.Clean(paths.CacheDirectory)) {
-				continue
-			}
-			return err
+			// These roots contain app-owned runtime/configuration residuals, not
+			// the installed program. Preserve anything that cannot be safely
+			// planned instead of making application removal depend on it.
+			continue
 		}
 		plans = append(plans, plan)
 	}
@@ -270,10 +270,9 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 			return err
 		}
 		if err := applyInstallerDirectoryRemoval(plan); err != nil {
-			if strings.EqualFold(filepath.Clean(plan.Path), filepath.Clean(paths.CacheDirectory)) {
-				continue
-			}
-			return err
+			// Windows can retain file locks after an agent or tool action ends.
+			// Leave that exact residual for later cleanup and continue uninstall.
+			continue
 		}
 	}
 	for _, plan := range plans {
