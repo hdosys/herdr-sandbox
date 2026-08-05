@@ -6,6 +6,8 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.10 - 2026-08-05
+
 ### Added
 
 - A `python-ai` project stack provisions Python 3.13 and latest-stable uv with a
