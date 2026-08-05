@@ -7,26 +7,25 @@ dependency.
 
 ## Prepared release
 
-- Version: `0.0.7`
-- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.7>
+- Version: `0.0.9`
+- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.9>
 - Installer:
-  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.7/herdr-sandbox_v0.0.7_windows_amd64_setup.exe>
+  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.9/herdr-sandbox_v0.0.9_windows_amd64_setup.exe>
 - Published installer SHA-256:
-  `d405b8204b20e5174df66b81520b140ccf49eb5167ca1fdb34e1a5d33f98389c`
+  `ae92c0f1b6d8ea26f0fa7555ca59b1effea386241898876cda99265f343a9dc6`
 - Manifest schema: `1.12.0`
 
-The public installer passed a real isolated silent install, `0.0.6` to `0.0.7`
-upgrade, default uninstall, and explicit configuration-removal gate. The default
-uninstall removed operational state/cache/integration and preserved user settings;
-the explicit option removed settings too. The installer is currently not
-Authenticode-signed.
+The v0.0.9 installer path passed a real isolated silent install, upgrade, default
+uninstall, and explicit configuration-removal gate. The published asset was then
+downloaded and verified against its sidecar, four-file payload, version, and source
+revision. The installer is currently not Authenticode-signed.
 
 ## Validate locally
 
 From the repository root:
 
 ```powershell
-$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.7'
+$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.9'
 winget validate --manifest $manifest --disable-interactivity
 winget install --manifest $manifest --silent --accept-package-agreements `
   --accept-source-agreements --disable-interactivity
@@ -35,18 +34,17 @@ winget install --manifest $manifest --silent --accept-package-agreements `
 Run install/upgrade/uninstall gates only in a disposable Windows environment.
 Never use `--ignore-security-hash` for acceptance.
 
-`winget validate` needs no host setting change. Local `download --manifest` and
-`install --manifest` require an administrator to enable WinGet's
-`LocalManifestFiles` developer setting; do not enable it on a normal host solely
-for this preparation. The official community submission pipeline provides the
-authoritative manifest-install gate when that local boundary is unavailable.
+Local `validate --manifest`, `download --manifest`, and `install --manifest`
+require an administrator to enable WinGet's `LocalManifestFiles` developer
+setting. Use that setting only in a disposable Windows environment; the official
+community submission pipeline remains the authoritative manifest-install gate.
 
 ## Community submission
 
 The target path in `microsoft/winget-pkgs` is:
 
 ```text
-manifests/h/hdosys/herdr-sandbox/0.0.7/
+manifests/h/hdosys/herdr-sandbox/0.0.9/
 ```
 
 At submission time, re-download the public installer, recompute its SHA-256, run
