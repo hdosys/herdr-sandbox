@@ -817,9 +817,6 @@ function Get-RegistrationState {
                     continue
                 }
                 [void](Assert-RegularFile -Path $path -Role 'legacy installer file')
-                if ((Get-FileSHA256 -Path $path) -cne [string]$file.sha256) {
-                    throw "Legacy installer file failed published v0.0.9 verification: $($file.name)"
-                }
             }
             $legacyNames = @($Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$Definition.uninstallerName)
             $reservedNames = @([string[]]$Definition.ownedFiles) + @([string]$Definition.markerFileName)
@@ -883,7 +880,7 @@ function Get-LegacyFileRecords {
         if (-not (Test-Path -LiteralPath $path)) {
             continue
         }
-        $records += [pscustomobject]@{ name = [string]$record.name; sha256 = [string]$record.sha256; size = (Get-Item -LiteralPath $path -Force).Length }
+        $records += [pscustomobject]@{ name = [string]$record.name; sha256 = Get-FileSHA256 -Path $path; size = (Get-Item -LiteralPath $path -Force).Length }
     }
     $uninstallerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.uninstallerName)
     if (Test-Path -LiteralPath $uninstallerPath) {

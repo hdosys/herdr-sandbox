@@ -586,6 +586,7 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 		`[IO.FileOptions]::WriteThrough`,
 		`discarded interrupted pre-journal installer preparation`,
 		`Legacy installer directory contains an unowned file at reserved installer path`,
+		`sha256 = Get-FileSHA256 -Path $path`,
 		`FileShare]::None`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
 		`[string]::Join(';', [string[]]$kept)`,
@@ -602,6 +603,17 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 	}
 	if strings.Contains(source, "Legacy installer directory contains unknown or missing entries") {
 		t.Fatal("verified legacy repair still rejects unrelated or missing directory entries")
+	}
+	legacyStart := strings.Index(source, "function Get-LegacyFileRecords")
+	if legacyStart < 0 {
+		t.Fatal("legacy backup record owner is missing")
+	}
+	legacyEnd := strings.Index(source[legacyStart:], "function Remove-SafeTransactionDirectory")
+	if legacyEnd < 0 {
+		t.Fatal("legacy backup record owner has no bounded end")
+	}
+	if strings.Contains(source[legacyStart:legacyStart+legacyEnd], "sha256 = [string]$record.sha256; size") {
+		t.Fatal("legacy backup records still require the published payload hash instead of the actual repair input")
 	}
 }
 

@@ -95,7 +95,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
 - Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A product GUID and random installation ID bind Windows registration to a local marker and hash/size manifest; unknown or changed ownership fails before destructive work.
-- Repairs the published v0.0.9 layout when its existing managed files still match their release hashes. Missing managed files are recreated and unrelated install-directory files are preserved instead of blocking setup.
+- Repairs the registered v0.0.9 layout by replacing its regular managed files. Missing managed files are recreated and unrelated install-directory files are preserved instead of blocking setup; reparse points and type collisions remain untouched.
 - A same-volume durable transaction snapshots every managed registry value and the typed raw user `PATH`, retains the complete prior owned payload, replaces support files before the executable, and recovers automatically on the next run after interruption.
 - Setup and uninstall share one cross-session gate with ordinary application commands, so no command can start against files being replaced or removed.
 - Creates `config.json` and `user.ps1` transactionally only when absent; setup and upgrades never replace existing user settings.

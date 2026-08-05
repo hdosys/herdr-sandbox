@@ -20,7 +20,7 @@ release notes remain available on the
   rollback/recovery, exact silent options, cross-session command exclusion, and
   truthful quiet-uninstall results preserve the previous complete installation or
   resume the intended terminal cleanup after interruption.
-- Setup now repairs verified v0.0.9 installations while preserving unrelated or
+- Setup now repairs registered v0.0.9 installations while preserving unrelated or
   missing legacy files, and uninstall no longer fails when an active agent or tool
   temporarily locks the disposable package cache.
 
