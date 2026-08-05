@@ -111,8 +111,7 @@ Unicode true
 !define APP_EXIT_LIFECYCLE_BUSY 41
 !define APP_EXIT_UNSUPPORTED_PLATFORM 50
 !define APP_EXIT_PAYLOAD_FAILURE 60
-!define APP_EXIT_INSTALL_RECOVERED 70
-!define APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE 71
+!define APP_EXIT_INSTALL_FAILED 70
 !define APP_EXIT_UNINSTALL_PREFLIGHT 80
 !define APP_EXIT_UNINSTALL_FINALIZE 81
 !define APP_EXIT_INTERNAL_STATE 90
@@ -242,13 +241,13 @@ FunctionEnd
     ${If} $1 == 0
         MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
         SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
-        Abort
+        Quit
     ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
         System::Call 'KERNEL32::CloseHandle(p $1)'
         StrCpy $InstallerLifecycleMutexHandle 0
         MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup or uninstall is already running. Wait for it to finish, then try again." /SD IDOK
         SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
-        Abort
+        Quit
     ${EndIf}
 !macroend
 
@@ -256,12 +255,12 @@ Function .onInit
     ${IfNot} ${AtLeastWin10}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
-        Abort
+        Quit
     ${EndIf}
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
-        Abort
+        Quit
     ${EndIf}
     !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
@@ -274,12 +273,12 @@ Function un.onInit
     ${IfNot} ${AtLeastWin10}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
-        Abort
+        Quit
     ${EndIf}
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
-        Abort
+        Quit
     ${EndIf}
     !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
@@ -293,7 +292,7 @@ Function un.onInit
     StrCmp $0 "/DELETE_CONFIG /S" delete_config
     MessageBox MB_ICONSTOP|MB_OK "Unsupported uninstall arguments. Use only /S and the exact /DELETE_CONFIG option." /SD IDOK
     SetErrorLevel ${APP_EXIT_INVALID_ARGUMENTS}
-    Abort
+    Quit
     delete_config:
         StrCpy $DeleteConfigurationOnUninstall "1"
     done:
@@ -359,7 +358,7 @@ Section "Install"
     ${If} ${Errors}
         MessageBox MB_ICONSTOP|MB_OK "Could not extract the ${APP_DISPLAY_NAME} application package." /SD IDOK
         SetErrorLevel ${APP_EXIT_PAYLOAD_FAILURE}
-        Abort
+        Quit
     ${EndIf}
     ClearErrors
     WriteUninstaller "$PLUGINSDIR\package\uninstall.exe"
@@ -367,7 +366,7 @@ Section "Install"
         StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} uninstaller."
         MessageBox MB_ICONSTOP|MB_OK "$R4 No installed state was changed." /SD IDOK
         SetErrorLevel ${APP_EXIT_PAYLOAD_FAILURE}
-        Abort
+        Quit
     ${EndIf}
 
     !insertmacro ExtractInstallerControlFiles
@@ -375,14 +374,9 @@ Section "Install"
     StrCpy $R9 $0
     ${If} $0 != "0"
     ${AndIf} $0 != "10"
-        ${If} $0 == "20"
-            MessageBox MB_ICONSTOP|MB_OK "Could not activate ${APP_DISPLAY_NAME}: status $0. $1 Rollback was incomplete; run setup again before using the installed command." /SD IDOK
-            SetErrorLevel ${APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE}
-        ${Else}
-            MessageBox MB_ICONSTOP|MB_OK "Could not activate ${APP_DISPLAY_NAME}: status $0. $1 No new installation was committed; prior or pending installer-owned state was preserved or restored." /SD IDOK
-            SetErrorLevel ${APP_EXIT_INSTALL_RECOVERED}
-        ${EndIf}
-        Abort
+        MessageBox MB_ICONSTOP|MB_OK "Could not install ${APP_DISPLAY_NAME}: status $0. $1 Automatic transaction recovery and direct repair both failed. Close the process using any exact path named above, then run setup again." /SD IDOK
+        SetErrorLevel ${APP_EXIT_INSTALL_FAILED}
+        Quit
     ${EndIf}
 
     DetailPrint "Creating the default user configuration when missing..."
@@ -391,24 +385,7 @@ Section "Install"
     Pop $0
     Pop $1
     ${If} $0 != "0"
-        StrCpy $R4 $0
-        StrCpy $R5 $1
-        !insertmacro RunInstallerState "RollbackInstall" ""
-        ${If} $0 == "0"
-            MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} user configuration: status $R4. $R5 The complete prior installer-owned state was restored." /SD IDOK
-            SetErrorLevel ${APP_EXIT_INSTALL_RECOVERED}
-        ${Else}
-            MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} user configuration: status $R4. $R5 Rollback was incomplete: status $0. $1" /SD IDOK
-            SetErrorLevel ${APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE}
-        ${EndIf}
-        Abort
-    ${EndIf}
-
-    !insertmacro RunInstallerState "CommitInstall" ""
-    ${If} $0 != "0"
-        MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} was activated, but its transaction could not reach a durable terminal state: status $0. $1 Run setup again before using or uninstalling it." /SD IDOK
-        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
-        Abort
+        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is installed, but default configuration could not be created yet: status $0. $1 The first command that needs configuration will try again." /SD IDOK
     ${EndIf}
 
     ${If} $R9 == "10"
@@ -436,7 +413,7 @@ Section "Uninstall"
     ${AndIf} $0 != "10"
         MessageBox MB_ICONSTOP|MB_OK "Could not safely begin ${APP_DISPLAY_NAME} uninstall: status $0. $1 No application state or files were changed." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNINSTALL_PREFLIGHT}
-        Abort
+        Quit
     ${EndIf}
 
     ${If} $R9 == "0"
@@ -450,26 +427,21 @@ Section "Uninstall"
         Pop $0
         Pop $1
         ${If} $0 != "0"
-            MessageBox MB_ICONSTOP|MB_OK "Could not safely remove ${APP_DISPLAY_NAME} state: status $0. $1 No application files or installer registration were removed." /SD IDOK
-            SetErrorLevel ${APP_EXIT_UNINSTALL_PREFLIGHT}
-            Abort
-        ${EndIf}
-        !insertmacro RunInstallerState "MarkCleanupComplete" ""
-        ${If} $0 != "0"
-            MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} state cleanup completed, but its durable uninstall phase could not be recorded: status $0. $1 Run uninstall again to continue safely." /SD IDOK
-            SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
-            Abort
+            MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} application files will still be removed, but some machine-local state could not be cleaned: status $0. $1 Locked or unsafe residual state was preserved." /SD IDOK
+        ${Else}
+            !insertmacro RunInstallerState "MarkCleanupComplete" ""
+            ${If} $0 != "0"
+                DetailPrint "Durable uninstall recording failed; terminal removal will converge directly: status $0. $1"
+            ${EndIf}
         ${EndIf}
     ${Else}
         DetailPrint "Resuming ${APP_DISPLAY_NAME} after completed application-state cleanup."
     ${EndIf}
 
     !insertmacro RunInstallerState "FinishUninstall" ""
-    ${If} $0 == "10"
-        MessageBox MB_ICONEXCLAMATION|MB_OK "$1" /SD IDOK
-    ${ElseIf} $0 != "0"
-        MessageBox MB_ICONSTOP|MB_OK "Could not finish ${APP_DISPLAY_NAME} uninstall: status $0. $1 Run uninstall again; the recorded phase will resume without guessing from missing files." /SD IDOK
+    ${If} $0 != "0"
+        MessageBox MB_ICONSTOP|MB_OK "Could not finish ${APP_DISPLAY_NAME} uninstall: status $0. $1 Automatic transaction recovery and direct removal both failed. Close the process using any exact path named above, then run uninstall again." /SD IDOK
         SetErrorLevel ${APP_EXIT_UNINSTALL_FINALIZE}
-        Abort
+        Quit
     ${EndIf}
 SectionEnd

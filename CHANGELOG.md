@@ -19,11 +19,12 @@ release notes remain available on the
 
 ### Fixed
 
-- Installer upgrades and removal now bind registry, directory, file-manifest, and
-  PATH ownership to stable product and per-installation identities. Durable
-  rollback/recovery, exact silent options, cross-session command exclusion, and
-  truthful quiet-uninstall results preserve the previous complete installation or
-  resume the intended terminal cleanup after interruption.
+- Setup and uninstall now prioritize the requested terminal result: durable
+  transactions recover normally, while stale journals, registration drift, and
+  leftover files in the dedicated install directory automatically converge to a
+  complete current installation or complete removal instead of stranding the
+  installer on an aborted progress page. Interactive blockers remain actionable;
+  silent runs terminate without a dialog and return a stable failure status.
 - Uninstall no longer fails when an active agent or tool temporarily locks
   disposable package-cache or machine-local state.
 

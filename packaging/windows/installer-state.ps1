@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Install', 'RollbackInstall', 'CommitInstall', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]
+    [ValidateSet('Install', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
@@ -214,6 +214,97 @@ function Assert-NoReparsePath {
             throw 'Installer path boundary could not be reached.'
         }
         $candidate = $parent
+    }
+}
+
+function Assert-SafeInstallDirectoryTree {
+    param([switch]$RequireExclusiveFiles)
+
+    if (-not (Test-Path -LiteralPath $script:InstallDirectory -PathType Container)) {
+        return
+    }
+    Assert-NoReparsePath -Path $script:InstallDirectory -Boundary $script:LocalAppData
+    $pending = New-Object 'Collections.Generic.Stack[string]'
+    $pending.Push($script:InstallDirectory)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Pop()
+        foreach ($path in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
+            $item = Get-Item -LiteralPath $path -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Dedicated install directory contains a reparse point and was preserved: $path"
+            }
+            if ($item -is [IO.DirectoryInfo]) {
+                $pending.Push($item.FullName)
+                continue
+            }
+            if ($item -isnot [IO.FileInfo]) {
+                throw "Dedicated install directory contains an unsupported entry and was preserved: $path"
+            }
+            if ($RequireExclusiveFiles) {
+                try {
+                    # Read access is sufficient to prove an exclusive handle and
+                    # does not misclassify a removable read-only file as locked.
+                    $stream = [IO.File]::Open($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                    $stream.Dispose()
+                }
+                catch {
+                    throw "Dedicated install directory file is in use and was preserved: $($item.FullName). $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+}
+
+function Assert-DedicatedInstallDirectoryRemovable {
+    if (-not (Test-Path -LiteralPath $script:InstallDirectory)) {
+        return
+    }
+    $item = Get-Item -LiteralPath $script:InstallDirectory -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Dedicated install path is a reparse point and was preserved: $script:InstallDirectory"
+    }
+    if ($item -is [IO.FileInfo]) {
+        try {
+            $stream = [IO.File]::Open($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+            $stream.Dispose()
+            return
+        }
+        catch {
+            throw "Dedicated install path file is in use and was preserved: $script:InstallDirectory. $($_.Exception.Message)"
+        }
+    }
+    if ($item -isnot [IO.DirectoryInfo]) {
+        throw "Dedicated install path has an unsupported type and was preserved: $script:InstallDirectory"
+    }
+    Assert-SafeInstallDirectoryTree -RequireExclusiveFiles
+}
+
+function Remove-DedicatedInstallDirectory {
+    Assert-DedicatedInstallDirectoryRemovable
+    if (-not (Test-Path -LiteralPath $script:InstallDirectory)) {
+        return
+    }
+    try {
+        $root = Get-Item -LiteralPath $script:InstallDirectory -Force
+        if ($root -is [IO.FileInfo]) {
+            if (($root.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+                [IO.File]::SetAttributes($root.FullName, [IO.FileAttributes]([int]$root.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
+            }
+            [IO.File]::Delete($root.FullName)
+            return
+        }
+        foreach ($entry in @(Get-ChildItem -LiteralPath $script:InstallDirectory -Force -Recurse)) {
+            if (($entry.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+                [IO.File]::SetAttributes($entry.FullName, [IO.FileAttributes]([int]$entry.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
+            }
+        }
+        if (($root.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+            [IO.File]::SetAttributes($root.FullName, [IO.FileAttributes]([int]$root.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
+        }
+        [IO.Directory]::Delete($script:InstallDirectory, $true)
+    }
+    catch {
+        throw "Could not remove the dedicated install directory $script:InstallDirectory. Close every process using it and try again: $($_.Exception.Message)"
     }
 }
 
@@ -705,57 +796,46 @@ function Get-RegistrationState {
             $installationId = [string](Get-RequiredRegistryValue -Key $current -Name 'InstallationId' -Kind String)
             $schema = [uint32](Get-RequiredRegistryValue -Key $current -Name 'InstallerSchemaVersion' -Kind DWord)
             $location = [string](Get-RequiredRegistryValue -Key $current -Name 'InstallLocation' -Kind String)
-            $displayName = [string](Get-RequiredRegistryValue -Key $current -Name 'DisplayName' -Kind String)
-            $publisher = [string](Get-RequiredRegistryValue -Key $current -Name 'Publisher' -Kind String)
-            $displayVersion = [string](Get-RequiredRegistryValue -Key $current -Name 'DisplayVersion' -Kind String)
-            $displayIcon = [string](Get-RequiredRegistryValue -Key $current -Name 'DisplayIcon' -Kind String)
-            $productUrl = [string](Get-RequiredRegistryValue -Key $current -Name 'URLInfoAbout' -Kind String)
-            $uninstallString = [string](Get-RequiredRegistryValue -Key $current -Name 'UninstallString' -Kind String)
-            $quietString = [string](Get-RequiredRegistryValue -Key $current -Name 'QuietUninstallString' -Kind String)
-            $pathAdded = [uint32](Get-RequiredRegistryValue -Key $current -Name 'PathAdded' -Kind DWord)
-            $phase = [string](Get-RequiredRegistryValue -Key $current -Name 'UninstallPhase' -Kind String)
-            $uninstaller = Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)
-            $quietHelper = Join-Path $script:InstallDirectory ([string]$Definition.quietUninstallHelperName)
-            $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            $expectedQuiet = '"{0}" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{1}" -Uninstaller "{2}" -InstallDirectory "{3}"' -f $powershell, $quietHelper, $uninstaller, $script:InstallDirectory
             if ($productGuid -cne [string]$Definition.productGuid -or $schema -ne [int]$Definition.installerSchemaVersion -or
-                -not (Test-PathsEqual -Left $location -Right $script:InstallDirectory) -or
-                $displayName -cne [string]$Definition.displayName -or $publisher -cne [string]$Definition.publisher -or
-                $displayIcon -cne ('"' + (Join-Path $script:InstallDirectory ([string]$Definition.executableName)) + '",0') -or
-                $productUrl -cne [string]$Definition.productUrl -or $uninstallString -cne ('"' + $uninstaller + '"') -or
-                $quietString -cne $expectedQuiet -or
-                [uint32](Get-RequiredRegistryValue -Key $current -Name 'NoModify' -Kind DWord) -ne 1 -or
-                [uint32](Get-RequiredRegistryValue -Key $current -Name 'NoRepair' -Kind DWord) -ne 1 -or
-                $pathAdded -notin @(0, 1) -or $phase -notin @('Ready', 'CleanupComplete')) {
+                -not (Test-PathsEqual -Left $location -Right $script:InstallDirectory)) {
                 throw 'Installer registration identity is invalid or corrupt.'
             }
-            if ($pathAdded -eq 1) {
-                $pathEntry = [string](Get-RequiredRegistryValue -Key $current -Name 'PathEntry' -Kind String)
-                if (-not (Test-PathsEqual -Left $pathEntry -Right $script:InstallDirectory)) {
-                    throw 'Installer PATH ownership registration is invalid.'
+            $pathAdded = 0
+            try {
+                if (@($current.GetValueNames()) -icontains 'PathAdded' -and
+                    $current.GetValueKind('PathAdded') -eq [Microsoft.Win32.RegistryValueKind]::DWord -and
+                    [uint32]$current.GetValue('PathAdded') -eq 1 -and
+                    @($current.GetValueNames()) -icontains 'PathEntry' -and
+                    $current.GetValueKind('PathEntry') -eq [Microsoft.Win32.RegistryValueKind]::String -and
+                    (Test-PathsEqual -Left ([string]$current.GetValue('PathEntry')) -Right $script:InstallDirectory)) {
+                    $pathAdded = 1
                 }
             }
-            elseif (@($current.GetValueNames()) -icontains 'PathEntry') {
-                throw 'Installer registration contains an unowned PATH entry value.'
+            catch {
+                $pathAdded = 0
             }
             $markerPath = Join-Path $script:InstallDirectory ([string]$Definition.markerFileName)
             $marker = Get-Marker -Path $markerPath -Definition $Definition
-            if ([string]$marker.installationId -cne $installationId -or [string]$marker.installedVersion -cne $displayVersion) {
+            if ([string]$marker.installationId -cne $installationId) {
                 throw 'Installer registry and directory identities disagree.'
             }
+            $unknownValues = @($current.GetValueNames() | Where-Object { $script:ManagedRegistryValues -inotcontains [string]$_ })
+            if ($unknownValues.Count -ne 0 -or $current.GetSubKeyNames().Count -ne 0) {
+                throw 'The private installer registration contains drift that requires direct convergence.'
+            }
+            $allowedFiles = @([string[]]$Definition.ownedFiles) + @([string]$Definition.markerFileName)
+            foreach ($item in @(Get-ChildItem -LiteralPath $script:InstallDirectory -Force)) {
+                if ($item -isnot [IO.FileInfo] -or $allowedFiles -inotcontains $item.Name) {
+                    throw 'The private install directory contains drift that requires direct convergence.'
+                }
+            }
             return [pscustomobject]@{
-                kind = 'Owned'; installationId = $installationId; version = $displayVersion
-                pathAdded = [int]$pathAdded; uninstallPhase = $phase; marker = $marker
+                kind = 'Owned'; installationId = $installationId; version = [string]$marker.installedVersion
+                pathAdded = [int]$pathAdded; uninstallPhase = 'Ready'; marker = $marker
             }
         }
         if (Test-Path -LiteralPath $script:InstallDirectory) {
-            $item = Get-Item -LiteralPath $script:InstallDirectory -Force
-            if ($item -isnot [IO.DirectoryInfo] -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
-                throw 'Preexisting install path is not an owned regular directory.'
-            }
-            if (@(Get-ChildItem -LiteralPath $script:InstallDirectory -Force).Count -ne 0) {
-                throw 'Preexisting unmarked install directory is not owned and was preserved.'
-            }
+            Remove-DedicatedInstallDirectory
         }
         return [pscustomobject]@{
             kind = 'Fresh'; installationId = [Guid]::NewGuid().ToString('D'); version = ''
@@ -797,10 +877,33 @@ function Remove-SafeTransactionDirectory {
         return
     }
     Assert-NoReparsePath -Path $script:TransactionDirectory -Boundary $script:LocalAppData
-    foreach ($item in @(Get-ChildItem -LiteralPath $script:TransactionDirectory -Force -Recurse)) {
-        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw 'Installer transaction contains a reparse point and was preserved.'
+    $root = Get-Item -LiteralPath $script:TransactionDirectory -Force
+    if (($root.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Installer transaction root is a reparse point and was preserved: $($root.FullName)"
+    }
+    if ($root -is [IO.FileInfo]) {
+        if (($root.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+            [IO.File]::SetAttributes($root.FullName, [IO.FileAttributes]([int]$root.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
         }
+        [IO.File]::Delete($root.FullName)
+        return
+    }
+    if ($root -isnot [IO.DirectoryInfo]) {
+        throw 'Installer transaction root has an unsupported type and was preserved.'
+    }
+    $items = @(Get-ChildItem -LiteralPath $script:TransactionDirectory -Force -Recurse)
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Installer transaction contains a reparse point and was preserved: $($item.FullName)"
+        }
+    }
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+            [IO.File]::SetAttributes($item.FullName, [IO.FileAttributes]([int]$item.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
+        }
+    }
+    if (($root.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+        [IO.File]::SetAttributes($root.FullName, [IO.FileAttributes]([int]$root.Attributes -band (-bnot [int][IO.FileAttributes]::ReadOnly)))
     }
     [IO.Directory]::Delete($script:TransactionDirectory, $true)
 }
@@ -1027,7 +1130,7 @@ function Assert-TransactionState {
         Assert-TransactionFileRecords -Records $State.newFiles -ExpectedNames @() -Kind New -Role 'uninstall candidate files'
         return
     }
-    throw 'Installer transaction kind is unknown and was preserved.'
+    throw 'Installer transaction kind is unknown.'
 }
 
 function Read-Transaction {
@@ -1048,10 +1151,26 @@ function Read-ExistingTransaction {
     }
     Assert-NoReparsePath -Path $script:TransactionDirectory -Boundary $script:LocalAppData
     if (Test-Path -LiteralPath $script:TransactionStatePath -PathType Leaf) {
-        return Read-Transaction
+        try {
+            return Read-Transaction
+        }
+        catch {
+            $problem = $_.Exception.Message
+            # The sibling transaction namespace is private installer scratch
+            # state. If its journal is unusable but the namespace is still a
+            # regular non-reparse tree, discard only that evidence and let the
+            # requested setup/uninstall reconstruct from the fixed current
+            # installation owner instead of trapping the user behind it.
+            Remove-SafeTransactionDirectory
+            $script:CurrentTransactionId = $null
+            Write-InstallerLog -Message "discarded unusable installer transaction and continued requested operation: $problem"
+            return $null
+        }
     }
     if (Test-Path -LiteralPath $script:TransactionStatePath) {
-        throw 'Installer transaction state path is not a regular file and was preserved.'
+        Remove-SafeTransactionDirectory
+        Write-InstallerLog -Message 'discarded unusable installer transaction state path and continued requested operation'
+        return $null
     }
 
     # No installed state is mutated before the atomic initial journal publish.
@@ -1060,6 +1179,31 @@ function Read-ExistingTransaction {
     Remove-SafeTransactionDirectory
     Write-InstallerLog -Message 'discarded interrupted pre-journal installer preparation'
     return $null
+}
+
+function Recover-InstallTransactionForRequestedAction {
+    param([Parameter(Mandatory = $true)]$State)
+
+    if ([string]$State.kind -ne 'Install') {
+        throw 'Cannot recover another transaction kind as an install transaction.'
+    }
+    if ([string]$State.phase -eq 'Committed') {
+        Remove-SafeTransactionDirectory
+        return
+    }
+    try {
+        Invoke-InstallRollback -State $State
+    }
+    catch {
+        $problem = $_.Exception.Message
+        # A failed prior-version rollback must not make its private journal a
+        # permanent setup/uninstall gate. The requested operation will next
+        # validate and reconstruct the fixed current-format installation. Unsafe
+        # transaction trees still fail in Remove-SafeTransactionDirectory.
+        Remove-SafeTransactionDirectory
+        $script:CurrentTransactionId = $null
+        Write-InstallerLog -Message "discarded unusable install rollback and continued requested operation: $problem"
+    }
 }
 
 function Move-FileAtomic {
@@ -1219,55 +1363,13 @@ function Set-Registration {
     }
 }
 
-function Remove-ManagedRegistration {
-    param([Parameter(Mandatory = $true)][string]$KeyName)
-
-    $path = Get-RegistryPath -KeyName $KeyName
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($path, $true)
-    if ($null -eq $key) {
-        return $false
-    }
-    try {
-        foreach ($name in $script:ManagedRegistryValues) {
-            $key.DeleteValue($name, $false)
-        }
-    }
-    finally {
-        $key.Dispose()
-    }
-    return (Remove-RegistryKeyIfEmpty -KeyName $KeyName)
+function Remove-InstallerRegistration {
+    $path = Get-RegistryPath -KeyName ([string]$script:Definition.registryKeyName)
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($path, $false)
 }
 
-function New-InstallTransaction {
+function Get-ValidatedPackageNames {
     param([Parameter(Mandatory = $true)][string]$PackageRoot)
-
-    $stale = Read-ExistingTransaction
-    if ($null -ne $stale) {
-        if ([string]$stale.kind -eq 'Install') {
-            if ([string]$stale.phase -eq 'Committed') {
-                Remove-SafeTransactionDirectory
-            }
-            else {
-                Invoke-InstallRollback -State $stale
-            }
-        }
-        elseif ([string]$stale.kind -eq 'Uninstall') {
-            [void](Complete-UninstallTransaction -State $stale)
-        }
-        else {
-            throw 'Unknown installer transaction kind was preserved.'
-        }
-    }
-    $registrationState = Get-RegistrationState -Definition $script:Definition
-    $candidate = $null
-    $previous = $null
-    [void][Version]::TryParse([string]$script:Definition.version, [ref]$candidate)
-    if (-not [string]::IsNullOrEmpty([string]$registrationState.version)) {
-        [void][Version]::TryParse([string]$registrationState.version, [ref]$previous)
-        if ($null -eq $previous -or $previous -gt $candidate) {
-            throw "Downgrade from $($registrationState.version) to $($script:Definition.version) is not allowed."
-        }
-    }
 
     [void](Assert-RegularFile -Path $script:DefinitionPath -Role 'installer definition')
     if (-not (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
@@ -1281,6 +1383,36 @@ function New-InstallTransaction {
     foreach ($name in $expectedNames) {
         [void](Assert-RegularFile -Path (Join-Path $PackageRoot $name) -Role 'installer package file')
     }
+    return $expectedNames
+}
+
+function New-InstallTransaction {
+    param([Parameter(Mandatory = $true)][string]$PackageRoot)
+
+    $stale = Read-ExistingTransaction
+    if ($null -ne $stale) {
+        if ([string]$stale.kind -eq 'Install') {
+            Recover-InstallTransactionForRequestedAction -State $stale
+        }
+        elseif ([string]$stale.kind -eq 'Uninstall') {
+            [void](Complete-UninstallTransaction -State $stale)
+        }
+        else {
+            throw 'Unknown installer transaction kind.'
+        }
+    }
+    $registrationState = Get-RegistrationState -Definition $script:Definition
+    $candidate = $null
+    $previous = $null
+    [void][Version]::TryParse([string]$script:Definition.version, [ref]$candidate)
+    if (-not [string]::IsNullOrEmpty([string]$registrationState.version)) {
+        [void][Version]::TryParse([string]$registrationState.version, [ref]$previous)
+        if ($null -eq $previous -or $previous -gt $candidate) {
+            throw "Downgrade from $($registrationState.version) to $($script:Definition.version) is not allowed."
+        }
+    }
+
+    $expectedNames = @(Get-ValidatedPackageNames -PackageRoot $PackageRoot)
 
     [void][IO.Directory]::CreateDirectory($script:TransactionDirectory)
     Assert-NoReparsePath -Path $script:TransactionDirectory -Boundary $script:LocalAppData
@@ -1348,6 +1480,74 @@ function New-InstallTransaction {
     return $state
 }
 
+function Invoke-DirectInstallConvergence {
+    param([Parameter(Mandatory = $true)][string]$PackageRoot)
+
+    $packageNames = @(Get-ValidatedPackageNames -PackageRoot $PackageRoot)
+    $installationId = [Guid]::NewGuid().ToString('D')
+    $pathChanged = $false
+    for ($attempt = 1; $attempt -le 2; $attempt += 1) {
+        try {
+            # This is intentionally independent of journal contents. The fixed
+            # directory and GUID key are private current-format ownership roots.
+            # Reparse points and live file locks remain hard safety boundaries.
+            Assert-DedicatedInstallDirectoryRemovable
+            Remove-SafeTransactionDirectory
+            Remove-DedicatedInstallDirectory
+            Remove-InstallerRegistration
+            [void][IO.Directory]::CreateDirectory($script:InstallDirectory)
+            Assert-NoReparsePath -Path $script:InstallDirectory -Boundary $script:LocalAppData
+
+            $records = @()
+            foreach ($name in $packageNames) {
+                $destination = Join-Path $script:InstallDirectory $name
+                Copy-FileDurable -Source (Join-Path $PackageRoot $name) -Destination $destination
+                $item = Get-Item -LiteralPath $destination -Force
+                $records += [pscustomobject]@{
+                    name = $name
+                    sha256 = Get-FileSHA256 -Path $destination
+                    size = [int64]$item.Length
+                }
+            }
+            $marker = [ordered]@{
+                schemaVersion = [int]$script:Definition.installerSchemaVersion
+                productGuid = [string]$script:Definition.productGuid
+                installationId = $installationId
+                installLocation = $script:InstallDirectory
+                installedVersion = [string]$script:Definition.version
+                ownedFiles = @($records | ForEach-Object {
+                        [ordered]@{ name = [string]$_.name; sha256 = [string]$_.sha256; size = [int64]$_.size }
+                    })
+            }
+            Write-JsonAtomic -Path (Join-Path $script:InstallDirectory ([string]$script:Definition.markerFileName)) -Value $marker
+
+            $pathSnapshot = Get-PathSnapshot
+            $pathValue = if ([bool]$pathSnapshot.exists) { [string]$pathSnapshot.data } else { '' }
+            $expand = [bool]$pathSnapshot.exists -and [string]$pathSnapshot.kind -eq 'ExpandString'
+            $entries = @([regex]::Split($pathValue, ';'))
+            $pathOwned = @($entries | Where-Object { [string]$_ -ceq $script:InstallDirectory }).Count -gt 0
+            $effectivePresent = @($entries | Where-Object {
+                    Test-PathEntry -Entry $_ -Expected $script:InstallDirectory -ExpandVariables $expand
+                }).Count -gt 0
+            if (-not $effectivePresent) {
+                $update = Set-CurrentUserPath -Action Add -Expected $script:InstallDirectory
+                $pathChanged = $pathChanged -or [bool]$update.Changed
+                $pathOwned = $true
+            }
+            $registrationState = [pscustomobject]@{ installationId = $installationId }
+            Set-Registration -State $registrationState -PathOwned $pathOwned
+            Write-InstallerLog -Message 'direct install convergence completed after transaction failure'
+            return $pathChanged
+        }
+        catch {
+            if ($attempt -eq 2) {
+                throw
+            }
+            Write-InstallerLog -Message "direct install convergence retrying after failure: $($_.Exception.Message)"
+        }
+    }
+}
+
 function Invoke-Install {
     if ([string]::IsNullOrWhiteSpace($PackageDirectory)) {
         throw 'PackageDirectory is required for installer activation.'
@@ -1406,6 +1606,10 @@ function Invoke-Install {
         $state.phase = 'Applied'
         Save-Transaction -State $state
         Write-InstallerLog -Message 'install payload, registration, and PATH applied'
+        $state.phase = 'Committed'
+        Save-Transaction -State $state
+        Remove-SafeTransactionDirectory
+        Write-InstallerLog -Message 'install transaction committed'
         return $pathChanged
     }
     catch {
@@ -1414,47 +1618,33 @@ function Invoke-Install {
             Invoke-InstallRollback -State (Read-Transaction)
         }
         catch {
-            throw "INSTALL_ROLLBACK_INCOMPLETE: $original Rollback was incomplete: $($_.Exception.Message)"
+            throw "$original Transaction rollback was incomplete: $($_.Exception.Message)"
         }
         throw "$original The complete prior installer-owned state was restored."
     }
 }
 
-function Invoke-RollbackInstall {
-    if (-not (Test-Path -LiteralPath $script:TransactionStatePath -PathType Leaf)) {
-        return
+function Invoke-InstallIntent {
+    try {
+        return (Invoke-Install)
     }
-    Invoke-InstallRollback -State (Read-Transaction)
-}
-
-function Invoke-CommitInstall {
-    $state = Read-Transaction
-    if ([string]$state.kind -ne 'Install' -or [string]$state.phase -ne 'Applied') {
-        throw 'Installer transaction cannot be committed from its current phase.'
+    catch {
+        $transactionFailure = $_.Exception.Message
+        Write-InstallerLog -Message "transactional install failed; starting direct convergence: $transactionFailure"
+        try {
+            return (Invoke-DirectInstallConvergence -PackageRoot (Get-NormalizedPath -Path $PackageDirectory))
+        }
+        catch {
+            throw "Transactional installation could not converge: $transactionFailure Direct repair also failed: $($_.Exception.Message)"
+        }
     }
-    $state.phase = 'Committed'
-    Save-Transaction -State $state
-    Remove-SafeTransactionDirectory
-    Write-InstallerLog -Message 'install transaction committed'
-}
-
-function Test-OwnedFileCanBeRemoved {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    $stream.Dispose()
 }
 
 function Invoke-InspectUninstall {
     $state = Read-ExistingTransaction
     if ($null -ne $state) {
         if ([string]$state.kind -eq 'Install') {
-            if ([string]$state.phase -eq 'Committed') {
-                Remove-SafeTransactionDirectory
-            }
-            else {
-                Invoke-InstallRollback -State $state
-            }
+            Recover-InstallTransactionForRequestedAction -State $state
         }
         elseif ([string]$state.kind -eq 'Uninstall') {
             return [bool]$state.cleanupComplete
@@ -1467,14 +1657,7 @@ function Invoke-InspectUninstall {
     if ([string]$registration.uninstallPhase -eq 'CleanupComplete') {
         return $true
     }
-    foreach ($record in @($registration.marker.ownedFiles)) {
-        $path = Join-Path $script:InstallDirectory ([string]$record.name)
-        if (Test-Path -LiteralPath $path) {
-            Test-OwnedFileCanBeRemoved -Path $path
-        }
-    }
-    $markerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.markerFileName)
-    Test-OwnedFileCanBeRemoved -Path $markerPath
+    Assert-SafeInstallDirectoryTree -RequireExclusiveFiles
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey((Get-RegistryPath -KeyName ([string]$script:Definition.registryKeyName)), $true)
     if ($null -eq $key) {
         throw 'Installer registration is not writable.'
@@ -1483,6 +1666,35 @@ function Invoke-InspectUninstall {
     [void](Get-PathSnapshot)
     Write-InstallerLog -Message 'uninstall ownership and deletion preflight passed'
     return $false
+}
+
+function Invoke-InspectUninstallConvergence {
+    Assert-DedicatedInstallDirectoryRemovable
+    Remove-SafeTransactionDirectory
+    $executable = Join-Path $script:InstallDirectory ([string]$script:Definition.executableName)
+    if (-not (Test-Path -LiteralPath $executable)) {
+        Write-InstallerLog -Message 'direct uninstall convergence can skip unavailable application cleanup'
+        return $true
+    }
+    [void](Assert-RegularFile -Path $executable -Role 'installed cleanup executable')
+    Write-InstallerLog -Message 'direct uninstall convergence will run application cleanup'
+    return $false
+}
+
+function Invoke-InspectUninstallIntent {
+    try {
+        return (Invoke-InspectUninstall)
+    }
+    catch {
+        $transactionFailure = $_.Exception.Message
+        Write-InstallerLog -Message "transactional uninstall inspection failed; starting direct convergence: $transactionFailure"
+        try {
+            return (Invoke-InspectUninstallConvergence)
+        }
+        catch {
+            throw "Transactional uninstall inspection failed: $transactionFailure Direct repair also failed: $($_.Exception.Message)"
+        }
+    }
 }
 
 function Invoke-MarkCleanupComplete {
@@ -1535,20 +1747,6 @@ function Invoke-MarkCleanupComplete {
     Write-InstallerLog -Message 'application cleanup completion recorded'
 }
 
-function Remove-OwnedFileIfPresent {
-    param([Parameter(Mandatory = $true)]$Record)
-
-    $path = Join-Path $script:InstallDirectory ([string]$Record.name)
-    if (-not (Test-Path -LiteralPath $path)) {
-        return
-    }
-    [void](Assert-RegularFile -Path $path -Role 'uninstall owned file')
-    if ((Get-FileSHA256 -Path $path) -cne [string]$Record.sha256) {
-        throw "Uninstall preserved changed file content: $($Record.name)"
-    }
-    [IO.File]::Delete($path)
-}
-
 function Complete-UninstallTransaction {
     param([Parameter(Mandatory = $true)]$State)
 
@@ -1556,48 +1754,46 @@ function Complete-UninstallTransaction {
         throw 'Uninstall cleanup has not reached its durable terminal phase.'
     }
     Write-InstallerLog -Message 'uninstall terminal cleanup started'
-    $byName = @{}
-    foreach ($record in @($State.oldFiles)) {
-        $byName[([string]$record.name).ToLowerInvariant()] = $record
-    }
-    $exeKey = ([string]$script:Definition.executableName).ToLowerInvariant()
-    $uninstallerKey = ([string]$script:Definition.uninstallerName).ToLowerInvariant()
-    $markerKey = ([string]$script:Definition.markerFileName).ToLowerInvariant()
-    $quietKey = ([string]$script:Definition.quietUninstallHelperName).ToLowerInvariant()
-    foreach ($key in @($byName.Keys | Where-Object { $_ -notin @($exeKey, $uninstallerKey, $markerKey, $quietKey) } | Sort-Object)) {
-        Remove-OwnedFileIfPresent -Record $byName[$key]
-    }
-
+    # Setup can also reach this owner while recovering an interrupted uninstall.
+    # Prove the complete dedicated tree removable before changing PATH or registry
+    # state so a real Windows lock leaves the valid transaction retryable.
+    Assert-SafeInstallDirectoryTree -RequireExclusiveFiles
     $pathAddedRecord = @($State.currentRegistry.values | Where-Object { [string]$_.name -eq 'PathAdded' })[0]
     if ($null -ne $pathAddedRecord -and [bool]$pathAddedRecord.exists -and [string]$pathAddedRecord.data -eq '1') {
         [void](Set-CurrentUserPath -Action Remove -Expected $script:InstallDirectory)
     }
-    if ($byName.ContainsKey($exeKey)) { Remove-OwnedFileIfPresent -Record $byName[$exeKey] }
-    if ($byName.ContainsKey($quietKey)) { Remove-OwnedFileIfPresent -Record $byName[$quietKey] }
-
-    $registrationRetained = Remove-ManagedRegistration -KeyName ([string]$script:Definition.registryKeyName)
-    if ($byName.ContainsKey($uninstallerKey)) { Remove-OwnedFileIfPresent -Record $byName[$uninstallerKey] }
-    if ($byName.ContainsKey($markerKey)) { Remove-OwnedFileIfPresent -Record $byName[$markerKey] }
-
-    $directoryRetained = $false
-    if (Test-Path -LiteralPath $script:InstallDirectory -PathType Container) {
-        if (@(Get-ChildItem -LiteralPath $script:InstallDirectory -Force).Count -eq 0) {
-            [IO.Directory]::Delete($script:InstallDirectory, $false)
-        }
-        else {
-            $directoryRetained = $true
-        }
-    }
+    Remove-InstallerRegistration
+    Remove-DedicatedInstallDirectory
     Remove-SafeTransactionDirectory
-    Write-InstallerLog -Message $(if ($registrationRetained -or $directoryRetained) { 'uninstall completed with preserved unowned state' } else { 'uninstall completed' })
-    return ($registrationRetained -or $directoryRetained)
+    Write-InstallerLog -Message 'uninstall completed'
+}
+
+function Invoke-DirectUninstallConvergence {
+    Assert-DedicatedInstallDirectoryRemovable
+    Remove-SafeTransactionDirectory
+    [void](Set-CurrentUserPath -Action Remove -Expected $script:InstallDirectory)
+    Remove-InstallerRegistration
+    Remove-DedicatedInstallDirectory
+    Write-InstallerLog -Message 'direct uninstall convergence completed after transaction failure'
 }
 
 function Invoke-FinishUninstall {
-    if (-not (Test-Path -LiteralPath $script:TransactionStatePath -PathType Leaf)) {
-        throw 'Uninstall transaction state is missing.'
+    try {
+        if (-not (Test-Path -LiteralPath $script:TransactionStatePath -PathType Leaf)) {
+            throw 'Uninstall transaction state is unavailable.'
+        }
+        Complete-UninstallTransaction -State (Read-Transaction)
     }
-    return (Complete-UninstallTransaction -State (Read-Transaction))
+    catch {
+        $transactionFailure = $_.Exception.Message
+        Write-InstallerLog -Message "transactional uninstall completion failed; starting direct convergence: $transactionFailure"
+        try {
+            Invoke-DirectUninstallConvergence
+        }
+        catch {
+            throw "Transactional uninstall completion failed: $transactionFailure Direct repair also failed: $($_.Exception.Message)"
+        }
+    }
 }
 
 $script:Definition = $null
@@ -1617,20 +1813,12 @@ $script:TransactionStatePath = Join-Path $script:TransactionDirectory 'state.jso
 try {
     switch ($Action) {
         'Install' {
-            $changed = Invoke-Install
+            $changed = Invoke-InstallIntent
             if ($changed) { exit 10 }
             exit 0
         }
-        'RollbackInstall' {
-            Invoke-RollbackInstall
-            exit 0
-        }
-        'CommitInstall' {
-            Invoke-CommitInstall
-            exit 0
-        }
         'InspectUninstall' {
-            $cleanupComplete = Invoke-InspectUninstall
+            $cleanupComplete = Invoke-InspectUninstallIntent
             if ($cleanupComplete) { exit 10 }
             exit 0
         }
@@ -1639,11 +1827,7 @@ try {
             exit 0
         }
         'FinishUninstall' {
-            $retained = Invoke-FinishUninstall
-            if ($retained) {
-                'Uninstall completed; unowned registry values or installation-directory files were preserved.'
-                exit 10
-            }
+            Invoke-FinishUninstall
             exit 0
         }
     }
@@ -1652,8 +1836,5 @@ catch {
     $message = $_.Exception.Message
     Write-InstallerLog -Message ("failure: " + $message)
     [Console]::Error.WriteLine($message)
-    if ($message.StartsWith('INSTALL_ROLLBACK_INCOMPLETE:', [StringComparison]::Ordinal)) {
-        exit 20
-    }
     exit 1
 }

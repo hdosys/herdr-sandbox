@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -387,11 +388,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "/oname=installer-state.ps1" "${INSTALLER_STATE_HELPER}"`,
 		`File "/oname=definition.json" "${INSTALLER_DEFINITION}"`,
 		`RunInstallerState "Install"`,
-		`RunInstallerState "RollbackInstall"`,
-		`RunInstallerState "CommitInstall"`,
 		`RunInstallerState "InspectUninstall"`,
 		`RunInstallerState "MarkCleanupComplete"`,
 		`RunInstallerState "FinishUninstall"`,
+		`Automatic transaction recovery and direct repair both failed`,
+		`The first command that needs configuration will try again`,
+		`terminal removal will converge directly`,
+		`MessageBox MB_ICONSTOP|MB_OK`,
+		`/SD IDOK`,
 		`VIProductVersion "${FIXED_VERSION}"`,
 		`VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"`,
 		`StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
@@ -414,8 +418,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`!define APP_EXIT_INVALID_ARGUMENTS 30`,
 		`!define APP_EXIT_LIFECYCLE_BUSY 41`,
 		`!define APP_EXIT_UNSUPPORTED_PLATFORM 50`,
-		`!define APP_EXIT_INSTALL_RECOVERED 70`,
-		`!define APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE 71`,
+		`!define APP_EXIT_INSTALL_FAILED 70`,
 		`!define APP_EXIT_UNINSTALL_PREFLIGHT 80`,
 		`!define APP_EXIT_UNINSTALL_FINALIZE 81`,
 		`!define APP_EXIT_INTERNAL_STATE 90`,
@@ -482,7 +485,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`InspectUninstall`,
 		`MarkCleanupComplete`,
 		`FinishUninstall`,
-		`recorded phase will resume without guessing from missing files`,
+		`Automatic transaction recovery and direct removal both failed`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("installer source is missing resumable uninstall contract %q", want)
@@ -490,10 +493,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	activationIndex := strings.Index(source, `RunInstallerState "Install"`)
 	seedIndex := strings.Index(source, `__installer-seed-configuration`)
-	rollbackIndex := strings.Index(source, `RunInstallerState "RollbackInstall"`)
-	commitIndex := strings.Index(source, `RunInstallerState "CommitInstall"`)
-	if activationIndex < 0 || seedIndex <= activationIndex || rollbackIndex <= seedIndex || commitIndex <= rollbackIndex {
-		t.Fatal("installer activation, transactional seed rollback, and commit are not ordered")
+	if activationIndex < 0 || seedIndex <= activationIndex {
+		t.Fatal("installer activation must complete before best-effort configuration seeding")
+	}
+	if strings.Count(source, "Abort") != 1 || !strings.Contains(source, "Quit") {
+		t.Fatal("fatal installer failures must quit instead of stranding the files page")
+	}
+	if strings.Count(source, `/SD IDOK`) < 10 || strings.Count(source, `SetErrorLevel`) < 8 {
+		t.Fatal("interactive failures need messages while silent failures retain stable nonblocking exits")
 	}
 	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
 		t.Fatal("setup and uninstall must share one process-lifetime lifecycle mutex")
@@ -550,14 +557,14 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 	}
 }
 
-func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing.T) {
+func TestInstallerStateHelperOwnsTransactionsAndIntentConvergence(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(data)
 	for _, want := range []string{
-		`[ValidateSet('Install', 'RollbackInstall', 'CommitInstall', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]`,
+		`[ValidateSet('Install', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]`,
 		`RegistryValueOptions]::DoNotExpandEnvironmentNames`,
 		`RegistryValueKind]::ExpandString`,
 		`Test-PathEntry`,
@@ -570,10 +577,18 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 		`Get-Marker`,
 		`Get-FileSHA256`,
 		`Invoke-InstallRollback`,
+		`Invoke-DirectInstallConvergence`,
+		`Invoke-DirectUninstallConvergence`,
+		`Invoke-InstallIntent`,
+		`Invoke-InspectUninstallIntent`,
 		`Complete-UninstallTransaction`,
 		`Assert-TransactionState`,
-		`Installer transaction kind is unknown and was preserved.`,
-		`INSTALL_ROLLBACK_INCOMPLETE:`,
+		`discarded unusable installer transaction and continued requested operation`,
+		`Installer transaction contains a reparse point and was preserved: $($item.FullName)`,
+		`direct install convergence completed after transaction failure`,
+		`direct uninstall convergence completed after transaction failure`,
+		`DeleteSubKeyTree`,
+		`[IO.Directory]::Delete($script:InstallDirectory, $true)`,
 		`Copy-FileDurable`,
 		`[IO.FileOptions]::WriteThrough`,
 		`discarded interrupted pre-journal installer preparation`,
@@ -600,7 +615,7 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 	}
 }
 
-func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testing.T) {
+func TestInstallerStateHelperDiscardsMalformedTransactionAndContinuesIntent(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 transaction validation regression")
 	}
@@ -608,9 +623,6 @@ func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testin
 	localAppData := filepath.Join(root, "LocalAppData")
 	installDirectory := filepath.Join(localAppData, "Programs", productidentity.InstallDirectoryName)
 	transactionDirectory := filepath.Join(filepath.Dir(installDirectory), "."+productidentity.ApplicationName+"-installer-transaction")
-	if err := os.MkdirAll(transactionDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	version := releaseVersion{Tag: "v0.0.10", Display: "0.0.10", Fixed: "0.0.10.0"}
 	definitionPath := filepath.Join(root, "definition.json")
 	outputPath := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
@@ -633,14 +645,16 @@ func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testin
 		}
 	}
 	for _, test := range []struct {
-		name     string
-		mutate   func(map[string]any)
-		wantText string
+		name   string
+		mutate func(map[string]any)
 	}{
-		{name: "unknown kind", mutate: func(map[string]any) {}, wantText: "kind is unknown and was preserved"},
-		{name: "string boolean", mutate: func(state map[string]any) { state["pathChanged"] = "false" }, wantText: "must be a JSON boolean"},
+		{name: "unknown kind", mutate: func(map[string]any) {}},
+		{name: "string boolean", mutate: func(state map[string]any) { state["pathChanged"] = "false" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if err := os.MkdirAll(transactionDirectory, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			state := newState()
 			test.mutate(state)
 			encoded, err := json.Marshal(state)
@@ -658,11 +672,12 @@ func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testin
 				"-File", helper, "-Action", "InspectUninstall", "-DefinitionPath", definitionPath, "-InstallDirectory", installDirectory)
 			command.Env = append(os.Environ(), "LOCALAPPDATA="+localAppData, "TEMP="+root, "TMP="+root)
 			output, runErr := command.CombinedOutput()
-			if runErr == nil || !strings.Contains(string(output), test.wantText) {
-				t.Fatalf("malformed transaction result = %v: %s", runErr, output)
+			var exitErr *exec.ExitError
+			if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 10 {
+				t.Fatalf("malformed transaction did not continue uninstall intent, result = %v: %s", runErr, output)
 			}
-			if _, err := os.Stat(statePath); err != nil {
-				t.Fatalf("malformed transaction was not preserved: %v", err)
+			if _, err := os.Stat(transactionDirectory); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("malformed private transaction was not discarded: %v", err)
 			}
 		})
 	}
