@@ -24,9 +24,9 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	for _, required := range []string{
 		"herdr-sandbox version", "herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
-		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox down", "herdr-sandbox clean",
+		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox mobile", "herdr-sandbox down", "herdr-sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "playwright-cli", "tradingview",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "playwright-cli", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -127,12 +127,43 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 }
 
 func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
-	for _, command := range []string{"plan", "attach", "status", "down", "clean"} {
+	for _, command := range []string{"plan", "attach", "status", "mobile", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
 		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
 			t.Fatalf("command = %s, exit code = %d, stderr = %q", command, code, stderr.String())
 		}
+	}
+}
+
+func TestRunMobilePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
+	access := sandbox.MobileAccess{
+		URI:                "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222",
+		DNSName:            "herdr-sandbox.example.ts.net",
+		IPv4:               "100.64.0.10",
+		SSHUser:            "WDAGUtilityAccount",
+		Port:               2222,
+		HostKeyFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		AuthorizedKeyCount: 1,
+	}
+	dependencies := defaultCommandDependencies()
+	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{State: sandbox.SessionReady, MobileAccess: &access}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"mobile"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), access.URI) ||
+		!strings.Contains(stdout.String(), "never a key or password") || !strings.Contains(stdout.String(), "████") {
+		t.Fatalf("mobile code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{State: sandbox.SessionReady}, nil
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runWithCommandDependencies(context.Background(), []string{"mobile"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 1 || !strings.Contains(stderr.String(), "mobile access is not ready") {
+		t.Fatalf("unconfigured mobile code=%d stderr=%q", code, stderr.String())
 	}
 }
 
@@ -523,6 +554,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
+		"Mobile SSH authorized keys: 0",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",

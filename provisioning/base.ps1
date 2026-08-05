@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 46
+# herdr-sandbox-base-contract: 47
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -3083,6 +3083,13 @@ $powerShell7 = Get-ProvisioningPowerShell7Installation
 $powerShellVersion = "PowerShell $($powerShell7.DisplayVersion)"
 Write-Output "PowerShell 7 ready: $powerShellVersion"
 
+$powerShellProfilePath = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'))
+$expectedProfileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\') + '\'
+if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    -not $powerShellProfilePath.EndsWith('\PowerShell\profile.ps1', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "PowerShell 7 all-host profile path is outside the expected guest user profile: $powerShellProfilePath"
+}
+$starshipInitialization = ''
 if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
     Write-Output 'Installing Starship...'
     Install-ProvisioningWinGetPackage -Role 'Starship' -Id 'Starship.Starship' `
@@ -3090,23 +3097,25 @@ if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'starship.exe'
     $starshipVersion = Assert-ProvisioningCommand -Role 'Starship' -Name 'starship.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^starship \d+\.\d+\.\d+'
-    $powerShellProfilePath = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'))
-    $expectedProfileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\') + '\'
-    if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparison]::OrdinalIgnoreCase) -or
-        -not $powerShellProfilePath.EndsWith('\PowerShell\profile.ps1', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "PowerShell 7 all-host profile path is outside the expected guest user profile: $powerShellProfilePath"
-    }
-    $powerShellProfileDirectory = Split-Path -Parent $powerShellProfilePath
-    New-Item -ItemType Directory -Path $powerShellProfileDirectory -Force | Out-Null
     $starshipInitialization = 'Invoke-Expression (&starship init powershell)' + [Environment]::NewLine
-    if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
-        [IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization) {
-        [IO.File]::WriteAllText($powerShellProfilePath, $starshipInitialization, (New-Object Text.UTF8Encoding($false)))
-    }
-    if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization) {
-        throw 'PowerShell 7 Starship profile verification failed.'
-    }
     Write-Output "Starship ready: $starshipVersion"
+}
+$mobileSSHInitialization = @'
+$herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
+    & 'C:\HerdrSandbox\bin\herdr.exe'
+    exit $LASTEXITCODE
+}
+'@ + [Environment]::NewLine
+$expectedPowerShellProfile = $mobileSSHInitialization + $starshipInitialization
+$powerShellProfileDirectory = Split-Path -Parent $powerShellProfilePath
+New-Item -ItemType Directory -Path $powerShellProfileDirectory -Force | Out-Null
+if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
+    [IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
+    [IO.File]::WriteAllText($powerShellProfilePath, $expectedPowerShellProfile, (New-Object Text.UTF8Encoding($false)))
+}
+if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
+    throw 'PowerShell 7 mobile SSH and Starship profile verification failed.'
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {

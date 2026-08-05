@@ -87,36 +87,75 @@ function Read-ConfigurationHandoff {
     )
 
     $item = Get-Item -LiteralPath $Path -ErrorAction Stop
-    if ($item.Length -le 0 -or $item.Length -gt 8192) {
+    if ($item.Length -le 0 -or $item.Length -gt 16384) {
         throw "Configuration handoff size is invalid: $($item.Length)"
     }
     $text = [IO.File]::ReadAllText($item.FullName)
     $verified = '{"schemaVersion":1,"outcome":"verified"}'
     if ($text -ceq $verified) {
-        return [pscustomobject]@{ outcome = 'verified'; phase = ''; message = '' }
+        return [pscustomobject]@{ outcome = 'verified'; phase = ''; message = ''; mobileAccess = $null }
     }
     $failurePattern = '^\{"schemaVersion":1,"outcome":"failed","phase":"(?:[^"\\]|\\.)*","message":"(?:[^"\\]|\\.)*"\}$'
-    if ($text -notmatch $failurePattern) {
-        throw 'Configuration handoff is not canonical.'
-    }
     try {
         $handoff = $text | ConvertFrom-Json
     } catch {
         throw "Configuration handoff is not valid JSON: $($_.Exception.Message)"
     }
-    if ($handoff.schemaVersion -isnot [int] -or [int]$handoff.schemaVersion -ne 1 -or
-        $handoff.outcome -isnot [string] -or [string]$handoff.outcome -cne 'failed' -or
-        $handoff.phase -isnot [string] -or
-        [string]::IsNullOrWhiteSpace([string]$handoff.phase) -or
-        $handoff.message -isnot [string] -or
-        [string]::IsNullOrWhiteSpace([string]$handoff.message) -or
-        ([string]$handoff.message).Length -gt 4096) {
-        throw 'Failed configuration handoff values are invalid.'
+    if ($text -match $failurePattern) {
+        if ($handoff.schemaVersion -isnot [int] -or [int]$handoff.schemaVersion -ne 1 -or
+            $handoff.outcome -isnot [string] -or [string]$handoff.outcome -cne 'failed' -or
+            $handoff.phase -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$handoff.phase) -or
+            $handoff.message -isnot [string] -or
+            [string]::IsNullOrWhiteSpace([string]$handoff.message) -or
+            ([string]$handoff.message).Length -gt 4096) {
+            throw 'Failed configuration handoff values are invalid.'
+        }
+        return [pscustomobject]@{
+            outcome = [string]$handoff.outcome
+            phase = [string]$handoff.phase
+            message = [string]$handoff.message
+            mobileAccess = $null
+        }
+    }
+    $properties = @($handoff.PSObject.Properties.Name)
+    if (($properties -join '|') -cne 'schemaVersion|outcome|mobileAccess' -or
+        $handoff.schemaVersion -isnot [int] -or [int]$handoff.schemaVersion -ne 1 -or
+        $handoff.outcome -isnot [string] -or [string]$handoff.outcome -cne 'verified' -or
+        $null -eq $handoff.mobileAccess) {
+        throw 'Configuration handoff is not canonical.'
+    }
+    $mobile = $handoff.mobileAccess
+    $mobileProperties = @($mobile.PSObject.Properties.Name)
+    if (($mobileProperties -join '|') -cne 'uri|dnsName|ipv4|sshUser|port|hostKeyFingerprint|qr' -or
+        $mobile.uri -isnot [string] -or $mobile.dnsName -isnot [string] -or $mobile.ipv4 -isnot [string] -or
+        $mobile.sshUser -isnot [string] -or [string]$mobile.sshUser -cne 'WDAGUtilityAccount' -or
+        $mobile.port -isnot [int] -or [int]$mobile.port -ne 2222 -or
+        $mobile.hostKeyFingerprint -isnot [string] -or
+        [string]$mobile.hostKeyFingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$' -or
+        [string]$mobile.dnsName -notmatch '^herdr-sandbox\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.ts\.net$' -or
+        [string]$mobile.uri -cne ('ssh://WDAGUtilityAccount@' + [string]$mobile.dnsName + ':2222')) {
+        throw 'Mobile access handoff values are invalid.'
+    }
+    $parsedIPv4 = $null
+    if (-not [Net.IPAddress]::TryParse([string]$mobile.ipv4, [ref]$parsedIPv4) -or
+        $parsedIPv4.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+        $parsedIPv4.ToString() -cne [string]$mobile.ipv4) {
+        throw 'Mobile access handoff IPv4 address is invalid.'
+    }
+    $qr = @($mobile.qr)
+    if ($qr.Count -lt 29 -or $qr.Count -gt 65) { throw 'Mobile access QR height is invalid.' }
+    foreach ($line in $qr) {
+        if ($line -isnot [string] -or ([string]$line).Length -ne (2 * $qr.Count) -or
+            [string]$line -notmatch '^(?:##|  )+$') {
+            throw 'Mobile access QR matrix is invalid.'
+        }
     }
     return [pscustomobject]@{
-        outcome = [string]$handoff.outcome
-        phase = [string]$handoff.phase
-        message = [string]$handoff.message
+        outcome = 'verified'
+        phase = ''
+        message = ''
+        mobileAccess = $mobile
     }
 }
 
@@ -953,6 +992,38 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         }
         $createdWorkspaceIds[$workspaceId] = $true
         $createdRootPaneIds[$rootPaneId] = $true
+    }
+
+    if ($null -ne $configurationHandoff.mobileAccess) {
+        Write-ProgressStatus -Phase 'mobile-access' -Message 'Starting the private Tailscale mobile Herdr endpoint'
+        $mobileScript = 'C:\HerdrSandbox\mobile-ssh\mobile-ssh.ps1'
+        $mobileScriptItem = Get-Item -LiteralPath $mobileScript -Force -ErrorAction Stop
+        if ($mobileScriptItem.PSIsContainer -or ($mobileScriptItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $mobileScriptItem.Length -le 0 -or $mobileScriptItem.Length -gt 65536) {
+            throw 'Mobile SSH control script is unsafe or invalid.'
+        }
+        $activationOutput = @(& $mobileScript -Mode Activate)
+        $activationText = ($activationOutput -join [Environment]::NewLine).Trim()
+        try { $activation = $activationText | ConvertFrom-Json } catch { throw 'Mobile SSH activation returned invalid JSON.' }
+        $activationProperties = @($activation.PSObject.Properties.Name)
+        if (($activationProperties -join '|') -cne 'schemaVersion|state|pid' -or
+            $activation.schemaVersion -isnot [int] -or [int]$activation.schemaVersion -ne 1 -or
+            $activation.state -isnot [string] -or [string]$activation.state -cne 'running' -or
+            $activation.pid -isnot [int] -or [int]$activation.pid -lt 1) {
+            throw 'Mobile SSH activation result is invalid.'
+        }
+        Write-Host ''
+        Write-Host 'Mobile Herdr access is ready over Tailscale.' -ForegroundColor Green
+        Write-Host 'Scan this secret-free QR code with a mobile SSH app or camera:'
+        foreach ($line in @($configurationHandoff.mobileAccess.qr)) {
+            $rendered = ([string]$line).Replace('#', [string][char]0x2588)
+            Write-Host $rendered -ForegroundColor Black -BackgroundColor White
+        }
+        Write-Host ("Connect: " + [string]$configurationHandoff.mobileAccess.uri)
+        Write-Host ("Fallback: " + [string]$configurationHandoff.mobileAccess.sshUser + '@' + [string]$configurationHandoff.mobileAccess.ipv4 + ':2222')
+        Write-Host ("Verify host key: " + [string]$configurationHandoff.mobileAccess.hostKeyFingerprint)
+        Write-Host 'The device private key never leaves that device.'
+        Write-Host ''
     }
 
     Write-AtomicJson -Path (Join-Path $StatusDirectory 'ready.json') -Value ([ordered]@{

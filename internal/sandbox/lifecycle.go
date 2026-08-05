@@ -44,6 +44,7 @@ type SessionStatus struct {
 	WinGetVersion      string
 	HerdrVersion       string
 	HerdrProtocol      int
+	MobileAccess       *MobileAccess
 	Workspaces         []SessionWorkspace
 	Operation          *SessionOperation
 	DiagnosticsPath    string

@@ -979,7 +979,7 @@ func TestDefaultBaseSkipsMatchingPackageAndConfigurationState(t *testing.T) {
 		"online package already matches requested version:",
 		"installed package does not match resolved version",
 		"installation command succeeded, but WinGet could not confirm package",
-		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $starshipInitialization",
+		"[IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile",
 		"if (($existingSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|'))",
 	} {
 		if !strings.Contains(text, required) {
@@ -2734,10 +2734,11 @@ func TestResolveProvisioningUsesConfiguredCacheDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	config, err := json.Marshal(globalConfiguration{
-		CacheDirectory: cache,
-		WingetPackages: defaultWingetPackageConfiguration(),
-		Mounts:         map[string]mountConfiguration{},
-		Workspaces:     map[string]string{},
+		CacheDirectory:          cache,
+		MobileSSHAuthorizedKeys: []string{},
+		WingetPackages:          defaultWingetPackageConfiguration(),
+		Mounts:                  map[string]mountConfiguration{},
+		Workspaces:              map[string]string{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2832,6 +2833,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		t.Fatalf("load seeded config: %v", err)
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
+		config.MobileSSHAuthorizedKeys == nil || len(config.MobileSSHAuthorizedKeys) != 0 ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
 		len(config.WingetPackages.Add) != 1 || config.WingetPackages.Add[0] != packageOpenCode ||
 		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Mounts == nil || config.Workspaces == nil {
@@ -2847,6 +2849,9 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"audioInput": false`)) {
 		t.Fatalf("seeded config does not expose the default-disabled microphone setting: %s", seededContents)
 	}
+	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
+		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
+	}
 	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
 		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)
 	}
@@ -2854,7 +2859,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		t.Fatalf("seeded config does not expose replaceable OpenCode addition: %s", seededContents)
 	}
 	remaining := seededContents
-	for _, field := range []string{`"cacheDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"cacheDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)

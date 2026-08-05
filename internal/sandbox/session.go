@@ -22,7 +22,7 @@ import (
 const (
 	defaultMemoryMB             = 32768
 	configurationSyncTimeout    = 5 * time.Minute
-	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + 2*time.Minute
+	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + mobileSSHPreparationTimeout + 2*time.Minute
 	sshTargetName               = "sandbox"
 	guestHerdrPath              = guestRootDirectory + `\bin\herdr.exe`
 )
@@ -46,6 +46,7 @@ type Connection struct {
 	WinGetVersion   string
 	HerdrVersion    string
 	HerdrProtocol   int
+	MobileAccess    *MobileAccess
 
 	privateKeyPath  string
 	herdrExecutable string
@@ -59,6 +60,7 @@ type runPlan struct {
 	StatusDirectory            string
 	CacheDirectory             string
 	Tailscale                  bool
+	MobileSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
 	CodingAgentSync            codingAgentSyncConfiguration
 	WindowsTerminal            windowsTerminalConfiguration
@@ -297,12 +299,27 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
 	}
+	var mobileHandoff *mobileAccessHandoff
+	if len(plan.MobileSSHAuthorizedKeys) > 0 {
+		fmt.Fprintln(options.Output, "Preparing the private mobile Herdr endpoint over Tailscale...")
+		access, err := prepareMobileSSH(runContext, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
+		if err != nil {
+			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "mobile-ssh-preparation", err)
+		}
+		mobileHandoff, err = newMobileAccessHandoff(access)
+		if err != nil {
+			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "mobile-ssh-handoff", err)
+		}
+		connection.MobileAccess = &access
+		fmt.Fprintf(options.Output, "Mobile Herdr endpoint prepared: %s\n", access.URI)
+	}
 	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-alias", err)
 	}
 	if err := writeConfigurationHandoff(plan.StatusDirectory, configurationHandoffStatus{
 		SchemaVersion: statusSchemaVersion,
 		Outcome:       configurationHandoffVerified,
+		MobileAccess:  mobileHandoff,
 	}); err != nil {
 		return Connection{}, err
 	}
@@ -475,18 +492,19 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	}
 
 	plan := runPlan{
-		ID:                id,
-		DataDirectory:     dataDirectory,
-		RunDirectory:      filepath.Join(dataDirectory, "runs", id),
-		PrivateKeyPath:    privateKey,
-		PublicKeyPath:     publicKey,
-		Tailscale:         provisioning.Tailscale,
-		Packages:          provisioning.Packages,
-		CodingAgentSync:   provisioning.CodingAgentSync,
-		Mounts:            provisioning.Mounts,
-		Workspaces:        provisioning.Workspaces,
-		WindowsTerminal:   provisioning.WindowsTerminal,
-		SandboxExecutable: sandboxExecutable,
+		ID:                      id,
+		DataDirectory:           dataDirectory,
+		RunDirectory:            filepath.Join(dataDirectory, "runs", id),
+		PrivateKeyPath:          privateKey,
+		PublicKeyPath:           publicKey,
+		Tailscale:               provisioning.Tailscale,
+		MobileSSHAuthorizedKeys: append([]string(nil), provisioning.MobileSSHAuthorizedKeys...),
+		Packages:                provisioning.Packages,
+		CodingAgentSync:         provisioning.CodingAgentSync,
+		Mounts:                  provisioning.Mounts,
+		Workspaces:              provisioning.Workspaces,
+		WindowsTerminal:         provisioning.WindowsTerminal,
+		SandboxExecutable:       sandboxExecutable,
 	}
 	plan.CacheDirectory = cacheDirectory
 	plan.InputDirectory = filepath.Join(plan.RunDirectory, "input")
@@ -544,6 +562,9 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
 			return runPlan{}, fmt.Errorf("write run input %s: %w", filepath.Base(file.path), err)
 		}
+	}
+	if err := writeMobileSSHAuthorizedKeysInput(plan.InputDirectory, plan.MobileSSHAuthorizedKeys); err != nil {
+		return runPlan{}, err
 	}
 	if err := writeHostHerdrRunInput(ctx, hostHerdr, plan.InputDirectory); err != nil {
 		return runPlan{}, fmt.Errorf("snapshot compatible host Herdr runtime: %w", err)

@@ -35,6 +35,12 @@ The product protects these boundaries:
 
 - The app-owned SSH private key remains on the host; only its public key enters
   the guest.
+- Mobile SSH private keys remain on their originating phones, tablets, or
+  computers. Configuration and immutable run input contain only canonical
+  Ed25519 public keys; the displayed QR contains only a connection URI.
+- The separate mobile SSH server key is current-user DPAPI encrypted on the host.
+  Its stable public fingerprint is displayed before connection and survives a
+  fresh Sandbox without making the private key portable to another host user.
 - Approved portable agent and GitHub credentials are streamed only over the
   verified SSH channel and are not placed in host run mappings or logs.
 - Whole home/AppData roots, app-owned private state, reparse-bearing paths, and
@@ -45,6 +51,11 @@ The product protects these boundaries:
   replaced before display.
 - Destructive lifecycle and uninstall paths require exact app ownership and fail
   closed when identity changes.
+- Mobile SSH listens only on the verified Tailscale IPv4 at TCP 2222, accepts
+  public-key authentication only, and disables forwarding. Windows Firewall
+  allows that port only from the Tailscale IPv4 range and blocks tailnet access
+  to the management endpoint on TCP 22; tailnet policy must independently grant
+  only the intended principals access to TCP 2222.
 
 These are deliberate non-guarantees:
 
@@ -86,6 +97,12 @@ These are deliberate non-guarantees:
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale identity restoration remains experimental until the documented native
   two-fresh-Sandbox and peer-connectivity gate passes.
+- Tailscale supplies private routing, not login authorization. Anyone who gains an
+  authorized mobile private key and tailnet reachability can open Herdr as the
+  guest administrator user and access every resource available to that guest.
+  Remove a compromised public key from `mobileSSHAuthorizedKeys`, stop the
+  app-owned Sandbox, and launch a fresh one; changing a live listener in place is
+  intentionally unsupported.
 
 If the threat model forbids credential exfiltration, set every `codingAgentSync`
 choice to `false`, remove `GitHub.cli` from the Base package plan (or use a host

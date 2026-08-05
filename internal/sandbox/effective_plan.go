@@ -39,25 +39,26 @@ type EffectiveStackPackage struct {
 // EffectivePlan is the read-only user-facing view of the configuration that a
 // later up command would consume.
 type EffectivePlan struct {
-	ConfigurationPath    string
-	ConfigurationExists  bool
-	UserScriptPath       string
-	UserScriptExists     bool
-	CacheDirectory       string
-	MemoryMB             int
-	AudioOutput          bool
-	AudioInput           bool
-	Tailscale            bool
-	WindowsTerminal      string
-	CodingAgents         []string
-	GlobalStacks         []string
-	Packages             []EffectivePackage
-	StackPackages        []EffectiveStackPackage
-	Mounts               []EffectiveMount
-	Workspaces           []EffectiveWorkspace
-	RequiresVisualStudio bool
-	ReadyChanges         []string
-	NextAction           string
+	ConfigurationPath           string
+	ConfigurationExists         bool
+	UserScriptPath              string
+	UserScriptExists            bool
+	CacheDirectory              string
+	MemoryMB                    int
+	AudioOutput                 bool
+	AudioInput                  bool
+	Tailscale                   bool
+	MobileSSHAuthorizedKeyCount int
+	WindowsTerminal             string
+	CodingAgents                []string
+	GlobalStacks                []string
+	Packages                    []EffectivePackage
+	StackPackages               []EffectiveStackPackage
+	Mounts                      []EffectiveMount
+	Workspaces                  []EffectiveWorkspace
+	RequiresVisualStudio        bool
+	ReadyChanges                []string
+	NextAction                  string
 }
 
 func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, configurationPath string, configurationExists, userScriptExists bool) (EffectivePlan, error) {
@@ -89,18 +90,19 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		return EffectivePlan{}, err
 	}
 	plan := EffectivePlan{
-		ConfigurationPath:    configurationPath,
-		ConfigurationExists:  configurationExists,
-		UserScriptPath:       provisioning.UserScript,
-		UserScriptExists:     userScriptExists,
-		CacheDirectory:       cacheDirectory,
-		MemoryMB:             provisioning.MemoryMB,
-		AudioOutput:          provisioning.AudioOutput,
-		AudioInput:           provisioning.AudioInput,
-		Tailscale:            provisioning.Tailscale,
-		WindowsTerminal:      provisioning.WindowsTerminal.Edition,
-		CodingAgents:         codingAgentSyncNames(provisioning.CodingAgentSync),
-		RequiresVisualStudio: requiresVisualStudio,
+		ConfigurationPath:           configurationPath,
+		ConfigurationExists:         configurationExists,
+		UserScriptPath:              provisioning.UserScript,
+		UserScriptExists:            userScriptExists,
+		CacheDirectory:              cacheDirectory,
+		MemoryMB:                    provisioning.MemoryMB,
+		AudioOutput:                 provisioning.AudioOutput,
+		AudioInput:                  provisioning.AudioInput,
+		Tailscale:                   provisioning.Tailscale,
+		MobileSSHAuthorizedKeyCount: len(provisioning.MobileSSHAuthorizedKeys),
+		WindowsTerminal:             provisioning.WindowsTerminal.Edition,
+		CodingAgents:                codingAgentSyncNames(provisioning.CodingAgentSync),
+		RequiresVisualStudio:        requiresVisualStudio,
 	}
 	for _, stack := range userStacks {
 		plan.GlobalStacks = append(plan.GlobalStacks, string(stack))

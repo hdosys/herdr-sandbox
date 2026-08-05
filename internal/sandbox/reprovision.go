@@ -148,6 +148,17 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err != nil {
 		return Connection{}, err
 	}
+	if len(plan.MobileSSHAuthorizedKeys) > 0 {
+		if err := updateOperation("mobile-ssh-verification", "Verifying the retained private mobile Herdr endpoint."); err != nil {
+			return Connection{}, err
+		}
+		access, err := verifyMobileSSH(ctx, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
+		if err != nil {
+			return Connection{}, err
+		}
+		connection.MobileAccess = &access
+		fmt.Fprintf(options.Output, "Mobile Herdr endpoint verified: %s\n", access.URI)
+	}
 	if err := updateOperation("ssh-alias", "Publishing the verified reusable SSH target."); err != nil {
 		return Connection{}, err
 	}
@@ -209,6 +220,13 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err != nil {
 		return runPlan{}, nil, err
 	}
+	runningMobileSSHAuthorizedKeys, err := readMobileSSHAuthorizedKeysInput(inputDirectory)
+	if err != nil {
+		return runPlan{}, nil, err
+	}
+	if !sameMobileSSHAuthorizedKeys(runningMobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
+		differences = append(differences, "mobile SSH authorized keys")
+	}
 	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, mounts, workspaces); err != nil {
 		return runPlan{}, nil, err
 	}
@@ -228,22 +246,23 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		differences = append(differences, launchDifferences...)
 	}
 	return runPlan{
-		ID:                active.RunID,
-		DataDirectory:     dataDirectory,
-		RunDirectory:      runDirectory,
-		InputDirectory:    inputDirectory,
-		StatusDirectory:   statusDirectory,
-		CacheDirectory:    cacheDirectory,
-		Tailscale:         active.Tailscale,
-		Packages:          provisioning.Packages,
-		CodingAgentSync:   provisioning.CodingAgentSync,
-		WindowsTerminal:   provisioning.WindowsTerminal,
-		Mounts:            mounts,
-		ConfigPath:        active.ConfigPath,
-		PrivateKeyPath:    filepath.Join(dataDirectory, "identity", "id_ed25519"),
-		PublicKeyPath:     filepath.Join(dataDirectory, "identity", "id_ed25519.pub"),
-		Workspaces:        workspaces,
-		SandboxExecutable: active.ExecutablePath,
+		ID:                      active.RunID,
+		DataDirectory:           dataDirectory,
+		RunDirectory:            runDirectory,
+		InputDirectory:          inputDirectory,
+		StatusDirectory:         statusDirectory,
+		CacheDirectory:          cacheDirectory,
+		Tailscale:               active.Tailscale,
+		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
+		Packages:                provisioning.Packages,
+		CodingAgentSync:         provisioning.CodingAgentSync,
+		WindowsTerminal:         provisioning.WindowsTerminal,
+		Mounts:                  mounts,
+		ConfigPath:              active.ConfigPath,
+		PrivateKeyPath:          filepath.Join(dataDirectory, "identity", "id_ed25519"),
+		PublicKeyPath:           filepath.Join(dataDirectory, "identity", "id_ed25519.pub"),
+		Workspaces:              workspaces,
+		SandboxExecutable:       active.ExecutablePath,
 	}, differences, nil
 }
 

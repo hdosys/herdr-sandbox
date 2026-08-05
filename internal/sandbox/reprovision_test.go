@@ -124,6 +124,17 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	if err != nil || !plan.Tailscale {
 		t.Fatalf("matching retained Tailscale plan = %#v, error = %v", plan, err)
 	}
+	provisioning.MobileSSHAuthorizedKeys = []string{testEd25519PublicKey(1)}
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "mobile SSH authorized keys") {
+		t.Fatalf("changed retained mobile key selection error = %v", err)
+	}
+	if err := writeMobileSSHAuthorizedKeysInput(filepath.Join(runDirectory, "input"), provisioning.MobileSSHAuthorizedKeys); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = retainedRunPlan(active, provisioning, 4096)
+	if err != nil || !sameMobileSSHAuthorizedKeys(plan.MobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
+		t.Fatalf("matching retained mobile keys plan = %#v, error = %v", plan.MobileSSHAuthorizedKeys, err)
+	}
 }
 
 func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testing.T) {

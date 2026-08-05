@@ -119,6 +119,14 @@ Assert-GuestArchiveTree`, guestRootDirectory, directoryName, role)
 }
 
 func runSSHArchivePowerShell(ctx context.Context, connection Connection, archive []byte, launcherScript, role string) ([]byte, error) {
+	return runSSHArchivePowerShellWithDiagnostics(ctx, connection, archive, launcherScript, role, true)
+}
+
+func runSecretSSHArchivePowerShell(ctx context.Context, connection Connection, archive []byte, launcherScript, role string) ([]byte, error) {
+	return runSSHArchivePowerShellWithDiagnostics(ctx, connection, archive, launcherScript, role, false)
+}
+
+func runSSHArchivePowerShellWithDiagnostics(ctx context.Context, connection Connection, archive []byte, launcherScript, role string, includeRemoteDiagnostics bool) ([]byte, error) {
 	if len(archive) == 0 {
 		return nil, fmt.Errorf("%s archive is empty", role)
 	}
@@ -127,7 +135,7 @@ func runSSHArchivePowerShell(ctx context.Context, connection Connection, archive
 	if len(transportCommand) > maximumSSHArchiveTransportCommandCharacters {
 		return nil, fmt.Errorf("%s SSH transport command exceeds %d characters", role, maximumSSHArchiveTransportCommandCharacters)
 	}
-	return runSSHRemoteCommandWithDiagnostics(ctx, connection, bytes.NewReader(archive), []string{transportCommand}, role, maximumSSHResultBytes, true)
+	return runSSHRemoteCommandWithDiagnostics(ctx, connection, bytes.NewReader(archive), []string{transportCommand}, role, maximumSSHResultBytes, includeRemoteDiagnostics)
 }
 
 func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcherScript string) string {

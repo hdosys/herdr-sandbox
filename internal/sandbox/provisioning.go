@@ -28,7 +28,7 @@ const (
 	globalConfigurationName            = productidentity.ConfigurationName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 46"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 47"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 10"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 2"
@@ -51,7 +51,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -128,33 +128,35 @@ func encodeGuestWorkspaceManifest(workspaces []workspacePlan, activeWorkspace st
 }
 
 type provisioningPlan struct {
-	BaseScript           string
-	StackScript          string
-	UserScript           string
-	CacheDirectory       string
-	MemoryMB             int
-	AudioOutput          bool
-	AudioInput           bool
-	Tailscale            bool
-	CodingAgentSync      codingAgentSyncConfiguration
-	PackageConfiguration wingetPackageConfiguration
-	Packages             wingetPackagePlan
-	WindowsTerminal      windowsTerminalConfiguration
-	Mounts               []mountPlan
-	Workspaces           []workspacePlan
+	BaseScript              string
+	StackScript             string
+	UserScript              string
+	CacheDirectory          string
+	MemoryMB                int
+	AudioOutput             bool
+	AudioInput              bool
+	Tailscale               bool
+	MobileSSHAuthorizedKeys []string
+	CodingAgentSync         codingAgentSyncConfiguration
+	PackageConfiguration    wingetPackageConfiguration
+	Packages                wingetPackagePlan
+	WindowsTerminal         windowsTerminalConfiguration
+	Mounts                  []mountPlan
+	Workspaces              []workspacePlan
 }
 
 type globalConfiguration struct {
-	CacheDirectory     string                           `json:"cacheDirectory"`
-	MemoryMB           *int                             `json:"memoryMB,omitempty"`
-	AudioOutput        bool                             `json:"audio"`
-	AudioInput         bool                             `json:"audioInput"`
-	Tailscale          bool                             `json:"tailscale"`
-	Mounts             map[string]mountConfiguration    `json:"mounts"`
-	CodingAgentSync    codingAgentSyncConfiguration     `json:"codingAgentSync"`
-	WingetPackages     wingetPackageConfiguration       `json:"wingetPackages"`
-	WorkspaceDiscovery *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
-	Workspaces         map[string]string                `json:"workspaces"`
+	CacheDirectory          string                           `json:"cacheDirectory"`
+	MemoryMB                *int                             `json:"memoryMB,omitempty"`
+	AudioOutput             bool                             `json:"audio"`
+	AudioInput              bool                             `json:"audioInput"`
+	Tailscale               bool                             `json:"tailscale"`
+	MobileSSHAuthorizedKeys []string                         `json:"mobileSSHAuthorizedKeys"`
+	Mounts                  map[string]mountConfiguration    `json:"mounts"`
+	CodingAgentSync         codingAgentSyncConfiguration     `json:"codingAgentSync"`
+	WingetPackages          wingetPackageConfiguration       `json:"wingetPackages"`
+	WorkspaceDiscovery      *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
+	Workspaces              map[string]string                `json:"workspaces"`
 }
 
 type mountConfiguration struct {
@@ -402,6 +404,13 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	if err != nil {
 		return provisioningPlan{}, err
 	}
+	mobileSSHAuthorizedKeys, err := canonicalizeMobileSSHAuthorizedKeys(configuration.MobileSSHAuthorizedKeys)
+	if err != nil {
+		return provisioningPlan{}, err
+	}
+	if len(mobileSSHAuthorizedKeys) > 0 && !configuration.Tailscale {
+		return provisioningPlan{}, errors.New("mobileSSHAuthorizedKeys requires tailscale to be true")
+	}
 	mountNames := make([]string, 0, len(configuration.Mounts))
 	for name := range configuration.Mounts {
 		mountNames = append(mountNames, name)
@@ -554,18 +563,19 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		return strings.ToLower(workspaces[left].Name) < strings.ToLower(workspaces[right].Name)
 	})
 	return provisioningPlan{
-		BaseScript:           filepath.Join(defaultRoot, baseProvisioningName),
-		StackScript:          filepath.Join(defaultRoot, stackProvisioningName),
-		UserScript:           filepath.Join(globalRoot, userProvisioningName),
-		CacheDirectory:       cacheDirectory,
-		MemoryMB:             memoryMB,
-		AudioOutput:          configuration.AudioOutput,
-		AudioInput:           configuration.AudioInput,
-		Tailscale:            configuration.Tailscale,
-		CodingAgentSync:      configuration.CodingAgentSync,
-		PackageConfiguration: configuration.WingetPackages,
-		Mounts:               mounts,
-		Workspaces:           workspaces,
+		BaseScript:              filepath.Join(defaultRoot, baseProvisioningName),
+		StackScript:             filepath.Join(defaultRoot, stackProvisioningName),
+		UserScript:              filepath.Join(globalRoot, userProvisioningName),
+		CacheDirectory:          cacheDirectory,
+		MemoryMB:                memoryMB,
+		AudioOutput:             configuration.AudioOutput,
+		AudioInput:              configuration.AudioInput,
+		Tailscale:               configuration.Tailscale,
+		MobileSSHAuthorizedKeys: mobileSSHAuthorizedKeys,
+		CodingAgentSync:         configuration.CodingAgentSync,
+		PackageConfiguration:    configuration.WingetPackages,
+		Mounts:                  mounts,
+		Workspaces:              workspaces,
 	}, nil
 }
 
@@ -659,6 +669,14 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return err
 			}
 			if err := json.Unmarshal(raw, &config.Tailscale); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+		case "mobileSSHAuthorizedKeys":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.MobileSSHAuthorizedKeys); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 		case "mounts":

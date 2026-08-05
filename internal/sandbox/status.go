@@ -51,10 +51,11 @@ type connectableStatus connectionStatus
 type readyStatus connectionStatus
 
 type configurationHandoffStatus struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Outcome       string `json:"outcome"`
-	Phase         string `json:"phase,omitempty"`
-	Message       string `json:"message,omitempty"`
+	SchemaVersion int                  `json:"schemaVersion"`
+	Outcome       string               `json:"outcome"`
+	Phase         string               `json:"phase,omitempty"`
+	Message       string               `json:"message,omitempty"`
+	MobileAccess  *mobileAccessHandoff `json:"mobileAccess,omitempty"`
 }
 
 type failureStatus struct {
@@ -167,7 +168,11 @@ func writeConfigurationHandoff(statusDirectory string, status configurationHando
 	if err != nil {
 		return fmt.Errorf("read back configuration handoff: %w", err)
 	}
-	if !ok || verified != status {
+	verifiedData, marshalErr := json.Marshal(verified)
+	if marshalErr != nil {
+		return fmt.Errorf("encode read-back configuration handoff: %w", marshalErr)
+	}
+	if !ok || !bytes.Equal(verifiedData, data) {
 		return errors.New("configuration handoff read-back mismatch")
 	}
 	return nil
@@ -236,7 +241,7 @@ func statusFields(value any) ([]string, error) {
 	case connectableStatus, readyStatus:
 		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrProtocol"}, nil
 	case configurationHandoffStatus:
-		return []string{"schemaVersion", "outcome", "phase", "message"}, nil
+		return []string{"schemaVersion", "outcome", "phase", "message", "mobileAccess"}, nil
 	case failureStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case explorerRestartStatus:
@@ -384,7 +389,15 @@ func (status configurationHandoffStatus) validate() error {
 		if status.Phase != "" || status.Message != "" {
 			return errors.New("verified configuration handoff must not contain failure details")
 		}
+		if status.MobileAccess != nil {
+			if err := status.MobileAccess.validate(); err != nil {
+				return fmt.Errorf("validate verified mobile access handoff: %w", err)
+			}
+		}
 	case configurationHandoffFailed:
+		if status.MobileAccess != nil {
+			return errors.New("failed configuration handoff must not publish mobile access")
+		}
 		if err := validateTerminalText("failed configuration handoff phase", status.Phase, 128); err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,38 @@ func TestEnrichSessionStatusKeepsGuestReadinessSeparateFromLatestOperation(t *te
 		len(status.Workspaces) != 1 || !status.Workspaces[0].Active ||
 		!strings.Contains(status.NextAction, "attach") {
 		t.Fatalf("enriched status = %#v", status)
+	}
+}
+
+func TestEnrichReadySessionReportsProtectedMobileAccess(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows DPAPI boundary")
+	}
+	dataDirectory := t.TempDir()
+	runID := "20260729-120000-abcdef12"
+	inputDirectory := filepath.Join(dataDirectory, "runs", runID, "input")
+	statusDirectory := filepath.Join(dataDirectory, "runs", runID, "status")
+	for _, directory := range []string{inputDirectory, statusDirectory} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := testEd25519PublicKey(1)
+	if err := writeMobileSSHAuthorizedKeysInput(inputDirectory, []string{key}); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeTailscaleIdentity(dataDirectory, testTailscaleIdentity(t, "100.64.0.10")); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeMobileSSHIdentity(dataDirectory, testMobileSSHIdentity()); err != nil {
+		t.Fatal(err)
+	}
+	active := activeSession{RunID: runID, StartedAtUTC: "2026-07-29T12:00:00Z", Tailscale: true}
+	status := SessionStatus{State: SessionReady, RunID: runID}
+	enrichSessionStatus(dataDirectory, active, &status)
+	if status.MobileAccess == nil || status.MobileAccess.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
+		strings.Contains(strings.Join(status.Warnings, "\n"), "Mobile SSH") {
+		t.Fatalf("enriched mobile status = %#v", status)
 	}
 }
 

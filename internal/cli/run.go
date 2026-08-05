@@ -24,6 +24,7 @@ const usage = `Usage:
   herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   herdr-sandbox attach
   herdr-sandbox status
+  herdr-sandbox mobile
   herdr-sandbox down
   herdr-sandbox clean
 
@@ -35,6 +36,7 @@ Commands:
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
   attach  verify and attach to the exact ready Sandbox without re-provisioning
   status  report the app-owned Sandbox; proven stale app state may be cleaned
+  mobile  show the ready private mobile Herdr endpoint and its secret-free QR code
   down    stop only the exact app-owned Sandbox
   clean   remove inactive app-owned run workspaces
 
@@ -44,6 +46,7 @@ Configuration:
   - named folder mounts with explicit read-only or read/write access
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
+  - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
   - codingAgentSync choices
   - wingetPackages additions, removals, and version pins
 
@@ -219,6 +222,29 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		printSessionStatus(stdout, status)
+		return 0
+	case "mobile":
+		if commandHelpRequested(args) {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "herdr-sandbox: mobile does not accept arguments\n\n%s", usage)
+			return 2
+		}
+		status, err := dependencies.inspect(ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
+		if status.State != sandbox.SessionReady || status.MobileAccess == nil {
+			fmt.Fprintln(stderr, "herdr-sandbox: mobile access is not ready; enable tailscale, add at least one device-owned mobileSSHAuthorizedKeys entry, and launch a fresh Sandbox")
+			return 1
+		}
+		if err := printMobileAccess(stdout, *status.MobileAccess); err != nil {
+			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			return 1
+		}
 		return 0
 	case "down":
 		if commandHelpRequested(args) {
@@ -491,6 +517,14 @@ func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
 	if attachable {
 		fmt.Fprintln(output, "  Attach: herdr --remote sandbox")
 	}
+	if status.MobileAccess != nil {
+		fmt.Fprintln(output, "\nMobile Herdr access")
+		fmt.Fprintf(output, "  URI: %s\n", status.MobileAccess.URI)
+		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.MobileAccess.IPv4)
+		fmt.Fprintf(output, "  Host key: %s\n", status.MobileAccess.HostKeyFingerprint)
+		fmt.Fprintf(output, "  Authorized device keys: %d\n", status.MobileAccess.AuthorizedKeyCount)
+		fmt.Fprintln(output, "  QR: run `herdr-sandbox mobile`")
+	}
 	if len(status.Workspaces) > 0 {
 		fmt.Fprintln(output, "\nWorkspaces")
 	}
@@ -564,6 +598,7 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
+	fmt.Fprintf(output, "  Mobile SSH authorized keys: %d\n", plan.MobileSSHAuthorizedKeyCount)
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
 
 	fmt.Fprintln(output, "\nCoding agents")
@@ -630,6 +665,27 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 		printBulletList(output, plan.ReadyChanges, "  ")
 	}
 	fmt.Fprintf(output, "\nNext: %s\n", plan.NextAction)
+}
+
+func printMobileAccess(output io.Writer, access sandbox.MobileAccess) error {
+	lines, err := access.QRLines()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(output, "Mobile Herdr access")
+	fmt.Fprintf(output, "  URI: %s\n", access.URI)
+	fmt.Fprintf(output, "  Host: %s\n", access.DNSName)
+	fmt.Fprintf(output, "  Tailscale IPv4: %s\n", access.IPv4)
+	fmt.Fprintf(output, "  User: %s\n", access.SSHUser)
+	fmt.Fprintf(output, "  Port: %d\n", access.Port)
+	fmt.Fprintf(output, "  Host key: %s\n", access.HostKeyFingerprint)
+	fmt.Fprintf(output, "  Authorized device keys: %d\n", access.AuthorizedKeyCount)
+	fmt.Fprintln(output, "\nQR (contains only the connection URI, never a key or password)")
+	for _, line := range lines {
+		fmt.Fprintln(output, strings.ReplaceAll(line, "##", "██"))
+	}
+	fmt.Fprintln(output, "\nIf the QR handler does not open an SSH app, enter the URI and host-key fingerprint above manually.")
+	return nil
 }
 
 func quotedArguments(arguments []string) string {
