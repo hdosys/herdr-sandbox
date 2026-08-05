@@ -179,7 +179,7 @@ func TestCleanInstallerDataPreflightsBeforeDeletion(t *testing.T) {
 	}
 }
 
-func TestCleanInstallerDataRejectsNestedReparseWithoutTouchingTarget(t *testing.T) {
+func TestCleanInstallerDataPreservesNestedReparseCacheAndRemovesRequiredState(t *testing.T) {
 	root := t.TempDir()
 	paths := installerCleanPaths{
 		DataDirectory:          filepath.Join(root, "local", applicationName),
@@ -195,13 +195,21 @@ func TestCleanInstallerDataRejectsNestedReparseWithoutTouchingTarget(t *testing.
 	outsideMarker := filepath.Join(outside, "outside.keep")
 	writeUninstallFixture(t, outsideMarker, "outside")
 	createTestDirectoryLink(t, filepath.Join(paths.CacheDirectory, "unsafe-link"), outside)
-	err := cleanInstallerDataAt(context.Background(), paths, false)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "reparse point") {
-		t.Fatalf("reparse preflight error = %v", err)
+	if err := cleanInstallerDataAt(context.Background(), paths, false); err != nil {
+		t.Fatalf("reparse-bearing disposable cache blocked required cleanup: %v", err)
 	}
 	contents, readErr := os.ReadFile(outsideMarker)
 	if readErr != nil || string(contents) != "outside" {
 		t.Fatalf("external reparse target changed: %q, %v", contents, readErr)
+	}
+	if _, err := os.Stat(filepath.Join(paths.CacheDirectory, "keep.txt")); err != nil {
+		t.Fatalf("unsafe cache was not preserved: %v", err)
+	}
+	if _, err := os.Lstat(paths.DataDirectory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("required machine-local state remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.ConfigurationDirectory, "keep.txt")); err != nil {
+		t.Fatalf("default cleanup removed configuration: %v", err)
 	}
 }
 
