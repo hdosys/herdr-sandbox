@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/png"
@@ -16,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"herdr-sandbox/internal/productidentity"
 )
@@ -51,6 +53,50 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 		filepath.Base(paths.Installer) != "herdr-sandbox_v0.0.7_windows_amd64_setup.exe" ||
 		paths.ZIPChecksum != paths.ZIP+".sha256" || paths.InstallerChecksum != paths.Installer+".sha256" {
 		t.Fatalf("release paths = %#v", paths)
+	}
+}
+
+func TestInstallerDefinitionBindsSafeIdentityManifestAndLegacyMigration(t *testing.T) {
+	version, err := parseReleaseVersion("v0.0.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	output := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
+	definitionPath := filepath.Join(root, "definition.json")
+	if err := writeInstallerDefinition(definitionPath, version, output); err != nil {
+		t.Fatalf("writeInstallerDefinition: %v", err)
+	}
+	data, err := os.ReadFile(definitionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var definition installerDefinition
+	if err := json.Unmarshal(data, &definition); err != nil {
+		t.Fatal(err)
+	}
+	if definition.SchemaVersion != installerDefinitionSchemaVersion ||
+		definition.InstallerSchemaVersion != installerSchemaVersion ||
+		definition.ProductGUID != productidentity.ProductGUID ||
+		definition.RegistryKeyName != productidentity.UninstallKeyName ||
+		definition.MarkerFileName != productidentity.InstallerMarkerName ||
+		definition.QuietUninstallHelperName != productidentity.QuietUninstallHelperName ||
+		definition.OutputFileName != filepath.Base(output) ||
+		definition.Legacy.Version != legacyInstallerVersion ||
+		definition.Legacy.RegistryKeyName != productidentity.LegacyUninstallKeyName ||
+		len(definition.Legacy.Files) != len(releasePackageFiles) ||
+		!slices.Equal(definition.OwnedFiles, installerOwnedFiles()) {
+		t.Fatalf("installer definition = %#v", definition)
+	}
+	for _, file := range definition.Legacy.Files {
+		if !installerSHA256Pattern.MatchString(file.SHA256) {
+			t.Fatalf("legacy file hash is invalid: %#v", file)
+		}
+	}
+	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "name. ", "a/b"} {
+		if err := validateInstallerLeaf("fixture", value); err == nil {
+			t.Fatalf("unsafe installer leaf unexpectedly passed: %q", value)
+		}
 	}
 }
 
@@ -291,6 +337,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	source := string(data)
 	for _, want := range []string{
 		`RequestExecutionLevel user`,
+		`CRCCheck force`,
 		`AllowSkipFiles off`,
 		`InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
 		`SetDatablockOptimize on`,
@@ -306,7 +353,8 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`!define MUI_WELCOMEFINISHPAGE_BITMAP "${INSTALLER_WELCOME_BITMAP_100}"`,
 		`!define MUI_WELCOMEFINISHPAGE_BITMAP_STRETCH NoStretchNoCropNoAlign`,
 		`!define MUI_CUSTOMFUNCTION_GUIINIT SelectInstallerWelcomeBitmap`,
-		`System::Call 'USER32::GetDpiForWindow(p $HWNDPARENT)i.r0'`,
+		`KERNEL32::GetProcAddress(p r0, m "GetDpiForWindow")`,
+		`System::Call '::$1(p $HWNDPARENT)i.r0'`,
 		`${If} $0 >= 180`,
 		`${ElseIf} $0 >= 156`,
 		`${ElseIf} $0 >= 132`,
@@ -331,7 +379,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
-		`${GetOptions} $0 "/DELETE_CONFIG" $1`,
+		`StrCmp $0 "/DELETE_CONFIG" delete_config`,
+		`StrCmp $0 "/S /DELETE_CONFIG" delete_config`,
+		`Unsupported uninstall arguments`,
 		`${NSD_CreateCheckbox}`,
 		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
 		`A running Sandbox stays open but becomes unmanaged`,
@@ -340,43 +390,43 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "${PACKAGE_DIR}\${APP_EXECUTABLE}"`,
 		`File "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
-		`BackupRuntimeFile`,
-		`BackupRuntimeFile "${APP_LICENSE}" $R1`,
-		`BackupRuntimeFile "uninstall.exe" $R2`,
-		`ReplaceRuntimeFile "${APP_LICENSE}"`,
-		`RestoreRuntimeFile`,
-		`RestoreRuntimeFile "${APP_LICENSE}" $R1`,
-		`RestoreRuntimeFile "uninstall.exe" $R2`,
-		`install_rollback:`,
-		`Goto install_rollback`,
-		`!define MUI_CUSTOMFUNCTION_ABORT PreventInstallTransactionAbort`,
-		`Function PreventInstallTransactionAbort`,
-		`$InstallTransactionActive == "1"`,
-		`Call DisableInstallCancellation`,
-		`Call EnableInstallCancellation`,
+		`File "/oname=${APP_QUIET_UNINSTALL_HELPER}" "${QUIET_UNINSTALL_HELPER}"`,
+		`WriteUninstaller "$PLUGINSDIR\package\uninstall.exe"`,
+		`File "/oname=installer-state.ps1" "${INSTALLER_STATE_HELPER}"`,
+		`File "/oname=definition.json" "${INSTALLER_DEFINITION}"`,
+		`RunInstallerState "Install"`,
+		`RunInstallerState "RollbackInstall"`,
+		`RunInstallerState "CommitInstall"`,
+		`RunInstallerState "InspectUninstall"`,
+		`RunInstallerState "MarkCleanupComplete"`,
+		`RunInstallerState "FinishUninstall"`,
 		`VIProductVersion "${FIXED_VERSION}"`,
-		`WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"`,
-		`WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString"`,
-		`ReadRegDWORD $2 HKCU "${UNINSTALL_KEY}" "PathAdded"`,
-		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $5`,
+		`VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"`,
 		`StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
 		`__installer-seed-configuration`,
 		`__installer-clean-uninstall`,
+		`--installer-schema=1`,
 		`--delete-configuration`,
-		`!insertmacro UpdateUserPath "Add"`,
-		`!insertmacro UpdateUserPath "Remove"`,
 		`!define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100`,
-		`User32::SendMessageTimeoutW`,
+		`USER32::SendMessageTimeoutW`,
 		`i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}`,
-		`!define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_UNINSTALL_KEY}.InstallerLifecycle.v1"`,
+		`$2 == 0`,
+		`sign out and back in`,
+		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"`,
 		`KERNEL32::CreateMutexW`,
 		`KERNEL32::CloseHandle`,
 		`APP_ERROR_ALREADY_EXISTS 183`,
 		`Another ${APP_DISPLAY_NAME} setup or uninstall is already running.`,
-		`Delete "$INSTDIR\${APP_EXECUTABLE}"`,
-		`Delete "$INSTDIR\${APP_BASE_SCRIPT}"`,
-		`Delete "$INSTDIR\${APP_LICENSE}"`,
-		`Delete "$INSTDIR\${APP_STACK_SCRIPT}"`,
+		`${AtLeastWin10}`,
+		`SetOutPath "$INSTDIR"`,
+		`!define APP_EXIT_INVALID_ARGUMENTS 30`,
+		`!define APP_EXIT_LIFECYCLE_BUSY 41`,
+		`!define APP_EXIT_UNSUPPORTED_PLATFORM 50`,
+		`!define APP_EXIT_INSTALL_RECOVERED 70`,
+		`!define APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE 71`,
+		`!define APP_EXIT_UNINSTALL_PREFLIGHT 80`,
+		`!define APP_EXIT_UNINSTALL_FINALIZE 81`,
+		`!define APP_EXIT_INTERNAL_STATE 90`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("installer source is missing %q", want)
@@ -384,6 +434,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`MUI_PAGE_DIRECTORY`,
+		`CRCCheck off`,
 		`MUI_FINISHPAGE_RUN`,
 		`MUI_FINISHPAGE_SHOWREADME`,
 		`MUI_UNPAGE_CONFIRM`,
@@ -393,8 +444,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`$LOCALAPPDATA\herdr-sandbox`,
 		`SendMessage ${HWND_BROADCAST}`,
 		`SendNotifyMessage`,
-		`Global\${APP_UNINSTALL_KEY}`,
-		`uninstall.pending`,
+		`Local\${APP_UNINSTALL_KEY}`,
+		`ReadRegStr`,
+		`ReadRegDWORD`,
+		`WriteRegStr`,
+		`WriteRegDWORD`,
+		`DeleteRegKey`,
+		`Delete "$INSTDIR`,
+		`RMDir "$INSTDIR`,
 		`!define PRODUCT_NAME`,
 		`Herdr Sandbox`,
 		`herdr-sandbox`,
@@ -424,30 +481,28 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)
 		}
 	}
-	cleanupIndex := strings.Index(source, `__installer-clean-uninstall`)
-	baseDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_BASE_SCRIPT}"`)
-	executableDeleteIndex := strings.Index(source, `Delete "$INSTDIR\${APP_EXECUTABLE}"`)
-	if cleanupIndex < 0 || baseDeleteIndex < 0 || executableDeleteIndex < 0 || cleanupIndex >= baseDeleteIndex || baseDeleteIndex >= executableDeleteIndex {
-		t.Fatalf("clean uninstall and support-file deletion must finish before executable deletion")
+	cleanupIndex := strings.LastIndex(source, `__installer-clean-uninstall`)
+	markIndex := strings.Index(source, `RunInstallerState "MarkCleanupComplete"`)
+	finishIndex := strings.Index(source, `RunInstallerState "FinishUninstall"`)
+	if cleanupIndex < 0 || markIndex <= cleanupIndex || finishIndex <= markIndex {
+		t.Fatalf("clean uninstall must reach its durable phase before terminal file/registration cleanup")
 	}
 	for _, want := range []string{
-		`IfFileExists "$INSTDIR\${APP_EXECUTABLE}" uninstall_cleanup_app`,
-		`uninstall_residual_invalid:`,
-		`uninstall_remove_path:`,
-		`Run setup once to repair it, then uninstall again`,
+		`InspectUninstall`,
+		`MarkCleanupComplete`,
+		`FinishUninstall`,
+		`recorded phase will resume without guessing from missing files`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("installer source is missing resumable uninstall contract %q", want)
 		}
 	}
-	replacementIndex := strings.Index(source, `!insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"`)
-	rollbackIndex := strings.Index(source, `install_rollback:`)
-	doneIndex := strings.Index(source, `install_done:`)
-	if replacementIndex < 0 || rollbackIndex <= replacementIndex || doneIndex <= rollbackIndex {
-		t.Fatal("installer transaction labels are not ordered after payload replacement")
-	}
-	if strings.Contains(source[replacementIndex:rollbackIndex], "Abort") {
-		t.Fatal("post-replacement installer failure bypasses the rollback owner")
+	activationIndex := strings.Index(source, `RunInstallerState "Install"`)
+	seedIndex := strings.Index(source, `__installer-seed-configuration`)
+	rollbackIndex := strings.Index(source, `RunInstallerState "RollbackInstall"`)
+	commitIndex := strings.Index(source, `RunInstallerState "CommitInstall"`)
+	if activationIndex < 0 || seedIndex <= activationIndex || rollbackIndex <= seedIndex || commitIndex <= rollbackIndex {
+		t.Fatal("installer activation, transactional seed rollback, and commit are not ordered")
 	}
 	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
 		t.Fatal("setup and uninstall must share one process-lifetime lifecycle mutex")
@@ -470,6 +525,7 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 	source := string(data)
 	for _, want := range []string{
 		`"herdr-sandbox/internal/productidentity"`,
+		`"/WX"`,
 		`"/DAPP_NAME=" + productidentity.ApplicationName`,
 		`"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName`,
 		`"/DAPP_EXECUTABLE=" + productidentity.ExecutableName`,
@@ -482,8 +538,16 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_INSTALL_DIRECTORY=" + productidentity.InstallDirectoryName`,
 		`"/DAPP_PUBLISHER=" + productidentity.Publisher`,
 		`"/DAPP_PRODUCT_URL=" + productidentity.ProductURL`,
+		`"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID`,
 		`"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName`,
+		`"/DAPP_LEGACY_UNINSTALL_KEY=" + productidentity.LegacyUninstallKeyName`,
+		`"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName`,
+		`"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName`,
 		`"/DAPP_COPYRIGHT=" + productidentity.Copyright`,
+		`"/DINSTALLER_STATE_HELPER=" + installerStateHelper`,
+		`"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper`,
+		`"/DINSTALLER_DEFINITION=" + definitionPath`,
+		`"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath)`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("package task is missing canonical installer identity input %q", want)
@@ -494,39 +558,123 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 	}
 }
 
-func TestInstallerPathHelperPreservesUnownedState(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "path.ps1"))
+func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(data)
 	for _, want := range []string{
-		`[ValidateSet('Add', 'Remove')]`,
+		`[ValidateSet('Install', 'RollbackInstall', 'CommitInstall', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]`,
 		`RegistryValueOptions]::DoNotExpandEnvironmentNames`,
 		`RegistryValueKind]::ExpandString`,
 		`Test-PathEntry`,
 		`Resolve-UserPathUpdate`,
-		`[string]$InstallDirectory`,
+		`Get-RegistryKeySnapshot`,
+		`Restore-RegistryKeySnapshot`,
+		`ProductGuid`,
+		`InstallationId`,
+		`InstallerSchemaVersion`,
+		`Get-Marker`,
+		`Get-FileSHA256`,
+		`Invoke-InstallRollback`,
+		`Complete-UninstallTransaction`,
+		`Assert-TransactionState`,
+		`Installer transaction kind is unknown and was preserved.`,
+		`INSTALL_ROLLBACK_INCOMPLETE:`,
+		`Copy-FileDurable`,
+		`[IO.FileOptions]::WriteThrough`,
+		`discarded interrupted pre-journal installer preparation`,
+		`FileShare]::None`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
 		`[string]::Join(';', [string[]]$kept)`,
-		`exit 10`,
+		`Write-InstallerLog`,
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("PATH helper is missing %q", want)
+			t.Fatalf("installer state helper is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Remove-Item", "APPDATA", "cache", "identity", "runs", "workspace", "HERDR_SANDBOX_INSTALL_DIRECTORY"} {
+	for _, forbidden := range []string{"Herdr Sandbox", `"herdr-sandbox"`, "HERDR_SANDBOX_INSTALL_DIRECTORY"} {
 		if strings.Contains(source, forbidden) {
-			t.Fatalf("PATH helper contains unrelated state pattern %q", forbidden)
+			t.Fatalf("installer state helper contains product-specific or unrelated state pattern %q", forbidden)
 		}
 	}
 }
 
-func TestInstallerPathHelperPreservesPathOwnershipInWindowsPowerShell51(t *testing.T) {
+func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 transaction validation regression")
+	}
+	root := t.TempDir()
+	localAppData := filepath.Join(root, "LocalAppData")
+	installDirectory := filepath.Join(localAppData, "Programs", productidentity.InstallDirectoryName)
+	transactionDirectory := filepath.Join(filepath.Dir(installDirectory), "."+productidentity.ApplicationName+"-installer-transaction")
+	if err := os.MkdirAll(transactionDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	version := releaseVersion{Tag: "v0.0.10", Display: "0.0.10", Fixed: "0.0.10.0"}
+	definitionPath := filepath.Join(root, "definition.json")
+	outputPath := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
+	if err := writeInstallerDefinition(definitionPath, version, outputPath); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	newState := func() map[string]any {
+		return map[string]any{
+			"schemaVersion": 1, "transactionId": "11111111-1111-4111-8111-111111111111",
+			"kind": "Unknown", "phase": "Prepared", "installDirectory": installDirectory,
+			"installationId": "22222222-2222-4222-8222-222222222222", "installationState": "Fresh",
+			"currentRegistry": map[string]any{"exists": false, "values": []any{}},
+			"legacyRegistry":  map[string]any{"exists": false, "values": []any{}},
+			"pathBefore":      map[string]any{"keyExists": false, "exists": false, "kind": "", "data": ""},
+			"pathAfter":       nil, "pathChanged": false, "oldFiles": []any{}, "newFiles": []any{}, "cleanupComplete": false,
+		}
+	}
+	for _, test := range []struct {
+		name     string
+		mutate   func(map[string]any)
+		wantText string
+	}{
+		{name: "unknown kind", mutate: func(map[string]any) {}, wantText: "kind is unknown and was preserved"},
+		{name: "string boolean", mutate: func(state map[string]any) { state["pathChanged"] = "false" }, wantText: "must be a JSON boolean"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := newState()
+			test.mutate(state)
+			encoded, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(transactionDirectory, "state.json")
+			if err := os.WriteFile(statePath, append(encoded, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			command := hiddenCommandContext(ctx, powerShell,
+				"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+				"-File", helper, "-Action", "InspectUninstall", "-DefinitionPath", definitionPath, "-InstallDirectory", installDirectory)
+			command.Env = append(os.Environ(), "LOCALAPPDATA="+localAppData, "TEMP="+root, "TMP="+root)
+			output, runErr := command.CombinedOutput()
+			if runErr == nil || !strings.Contains(string(output), test.wantText) {
+				t.Fatalf("malformed transaction result = %v: %s", runErr, output)
+			}
+			if _, err := os.Stat(statePath); err != nil {
+				t.Fatalf("malformed transaction was not preserved: %v", err)
+			}
+		})
+	}
+}
+
+func TestInstallerStateHelperPreservesPathOwnershipInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 PATH ownership regression")
 	}
-	pathHelper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "path.ps1"))
+	pathHelper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +684,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Test-PathEntry', 'Resolve-UserPathUpdate')) {
+foreach ($name in @('Get-NormalizedPath', 'Test-PathEntry', 'Resolve-UserPathUpdate')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
     Invoke-Expression $definition.Extent.Text

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -2921,6 +2922,23 @@ func TestInstallerSeedCreatesDefaultsWithoutOwningLegacyBase(t *testing.T) {
 	got, err := os.ReadFile(legacy)
 	if err != nil || !bytes.Equal(got, legacyData) {
 		t.Fatalf("legacy Base changed: %q, %v", got, err)
+	}
+}
+
+func TestInstallerSeedRollsBackOnlyDefaultsCreatedByFailedAttempt(t *testing.T) {
+	global := filepath.Join(t.TempDir(), "global")
+	if err := os.MkdirAll(filepath.Join(global, globalConfigurationName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := seedInstallerConfigurationRoot(global)
+	if err == nil || !strings.Contains(err.Error(), globalConfigurationName) {
+		t.Fatalf("seedInstallerConfigurationRoot error = %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(global, userProvisioningName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("user default created by failed installer seed was not rolled back: %v", statErr)
+	}
+	if info, statErr := os.Stat(filepath.Join(global, globalConfigurationName)); statErr != nil || !info.IsDir() {
+		t.Fatalf("preexisting unknown configuration entry changed: %v, %#v", statErr, info)
 	}
 }
 

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1361,7 +1362,101 @@ func SeedInstallerConfiguration() error {
 	if !filepath.IsAbs(configurationRoot) {
 		return fmt.Errorf("user configuration directory is not absolute: %q", configurationRoot)
 	}
-	return seedGlobalProvisioning(filepath.Join(configurationRoot, applicationName))
+	return seedInstallerConfigurationRoot(filepath.Join(configurationRoot, applicationName))
+}
+
+func seedInstallerConfigurationRoot(globalRoot string) (resultErr error) {
+	if !filepath.IsAbs(globalRoot) {
+		return errors.New("installer configuration directory must be absolute")
+	}
+	rootCreated := false
+	if info, err := os.Lstat(globalRoot); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(globalRoot, 0o700); err != nil {
+			return fmt.Errorf("create installer configuration directory: %w", err)
+		}
+		rootCreated = true
+	} else if err != nil {
+		return fmt.Errorf("inspect installer configuration directory: %w", err)
+	} else {
+		reparse, reparseErr := fileInfoIsReparsePoint(info)
+		if reparseErr != nil {
+			return fmt.Errorf("inspect installer configuration directory reparse state: %w", reparseErr)
+		}
+		if reparse || !info.IsDir() {
+			return fmt.Errorf("installer configuration path is not a regular non-reparse directory: %s", globalRoot)
+		}
+	}
+
+	type seededFile struct {
+		path     string
+		contents []byte
+	}
+	created := make([]seededFile, 0, 2)
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		var rollbackErr error
+		for index := len(created) - 1; index >= 0; index-- {
+			if err := removeSeededFileIfUnchanged(created[index].path, created[index].contents); err != nil {
+				rollbackErr = errors.Join(rollbackErr, err)
+			}
+		}
+		if rootCreated {
+			if err := os.Remove(globalRoot); err != nil && !errors.Is(err, os.ErrNotExist) {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove empty installer configuration directory: %w", err))
+			}
+		}
+		if rollbackErr != nil {
+			resultErr = fmt.Errorf("%w; installer configuration rollback was incomplete: %v", resultErr, rollbackErr)
+		}
+	}()
+
+	userPath := filepath.Join(globalRoot, userProvisioningName)
+	userCreated, err := seedFileOnceResult(userPath, defaultUserProvisioningScript, "user provisioning script", validateUserProvisioningContract)
+	if err != nil {
+		return err
+	}
+	if userCreated {
+		created = append(created, seededFile{path: userPath, contents: defaultUserProvisioningScript})
+	}
+	configurationPath := filepath.Join(globalRoot, globalConfigurationName)
+	configurationCreated, err := seedFileOnceResult(configurationPath, defaultGlobalConfiguration, "global workspace config", validateExistingGlobalWorkspaceConfig)
+	if err != nil {
+		return err
+	}
+	if configurationCreated {
+		created = append(created, seededFile{path: configurationPath, contents: defaultGlobalConfiguration})
+	}
+	return nil
+}
+
+func removeSeededFileIfUnchanged(path string, expected []byte) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect seeded installer file %s: %w", path, err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("inspect seeded installer file reparse state %s: %w", path, err)
+	}
+	if reparse || !info.Mode().IsRegular() {
+		return fmt.Errorf("seeded installer file changed type and was preserved: %s", path)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read seeded installer file %s: %w", path, err)
+	}
+	if !bytes.Equal(contents, expected) {
+		return fmt.Errorf("seeded installer file changed content and was preserved: %s", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove seeded installer file %s: %w", path, err)
+	}
+	return nil
 }
 
 func seedGlobalProvisioning(globalRoot string) error {
@@ -1499,12 +1594,17 @@ func validateExistingGlobalWorkspaceConfig(path string) error {
 }
 
 func seedFileOnce(path string, contents []byte, role string, validateExisting func(string) error) error {
+	_, err := seedFileOnceResult(path, contents, role, validateExisting)
+	return err
+}
+
+func seedFileOnceResult(path string, contents []byte, role string, validateExisting func(string) error) (bool, error) {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		return validateExisting(path)
+		return false, validateExisting(path)
 	}
 	if err != nil {
-		return fmt.Errorf("create %s %s: %w", role, path, err)
+		return false, fmt.Errorf("create %s %s: %w", role, path, err)
 	}
 	written := false
 	defer func() {
@@ -1514,16 +1614,16 @@ func seedFileOnce(path string, contents []byte, role string, validateExisting fu
 		}
 	}()
 	if _, err := file.Write(contents); err != nil {
-		return fmt.Errorf("write %s %s: %w", role, path, err)
+		return false, fmt.Errorf("write %s %s: %w", role, path, err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync %s %s: %w", role, path, err)
+		return false, fmt.Errorf("sync %s %s: %w", role, path, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close %s %s: %w", role, path, err)
+		return false, fmt.Errorf("close %s %s: %w", role, path, err)
 	}
 	written = true
-	return nil
+	return true, nil
 }
 
 func deriveWorkspaceName(directory string) string {

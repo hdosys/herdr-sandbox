@@ -6,6 +6,14 @@ release notes remain available on the
 
 ## Unreleased
 
+### Fixed
+
+- Installer upgrades and removal now bind registry, directory, file-manifest, and
+  PATH ownership to stable product and per-installation identities. Durable
+  rollback/recovery, exact silent options, cross-session command exclusion, and
+  truthful quiet-uninstall results preserve the previous complete installation or
+  resume the intended terminal cleanup after interruption.
+
 ## v0.0.9 - 2026-08-05
 
 ### Added

@@ -60,7 +60,7 @@ Our full compatibility test provisions every built-in stack in one Sandbox, incl
 - **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
 - **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
 - **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
-- **Release engineering:** the installer and portable ZIP share one four-file payload, checksums, deterministic ZIP output, rollback-aware upgrades, and explicit uninstall ownership.
+- **Release engineering:** the installer and portable ZIP share one four-file payload, checksums, deterministic ZIP output, durable rollback/recovery, and GUID/install-ID-bound uninstall ownership.
 - **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
 
 ## Get started
@@ -94,14 +94,16 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox` and upgrades the four packaged files as one rollback-aware set. A later seed, uninstaller, registration, or PATH failure restores the prior files, uninstaller, version/PATH ownership, and any PATH entry added by that attempt.
-- Setup and uninstall share one process-lifetime mutex. Setup needs no durable transaction marker because every run rewrites the complete four-file payload and automatically repairs a mixed partial state.
-- Creates `config.json` and `user.ps1` only when absent; setup and upgrades never replace existing user settings.
-- Adds only its own user `PATH` entry. A matching entry that existed before setup remains user-owned.
+- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A product GUID and random installation ID bind Windows registration to a local marker and hash/size manifest; unknown or changed ownership fails before destructive work.
+- A same-volume durable transaction snapshots every managed registry value and the typed raw user `PATH`, retains the complete prior owned payload, replaces support files before the executable, and recovers automatically on the next run after interruption.
+- Setup and uninstall share one cross-session gate with ordinary application commands, so no command can start against files being replaced or removed.
+- Creates `config.json` and `user.ps1` transactionally only when absent; setup and upgrades never replace existing user settings.
+- Adds at most one exact user `PATH` entry after a bounded concurrent-edit check. An effective matching entry that existed before setup remains user-owned.
 - Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
 - Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`.
-- Uninstall never stops a running Sandbox. It removes app-owned runtime state, SSH integration, cache, application files, registration, and installer-owned `PATH`; a running Sandbox remains open but becomes unmanaged and must be closed manually.
-- An interrupted uninstall automatically resumes when only the exact post-executable residual remains. If some but not all payload files remain, uninstall preserves them and directs you to run setup once for automatic repair before retrying.
+- Uninstall never stops a running Sandbox. It preflights owned-file locks and registration/PATH access, removes app-owned runtime state, SSH integration, and cache, records that phase durably, then removes manifest-owned files and metadata; a running Sandbox remains open but unmanaged.
+- Interrupted install and uninstall phases resume from their journal instead of guessing from missing filenames. Unknown files in the installation directory are preserved and reported.
+- Silent uninstall uses an installer-owned PowerShell runner that waits for the real temporary uninstaller and returns its exit status; destructive configuration deletion requires the exact `/DELETE_CONFIG` token.
 - **Also delete config.json and user.ps1** is off by default, so settings survive reinstall unless you explicitly select deletion.
 - Project profiles and unrelated SSH/install-directory content remain untouched. Uncertain ownership aborts before application removal.
 

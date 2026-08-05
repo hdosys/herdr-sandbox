@@ -91,7 +91,7 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 		}
 		return nil
 	}
-	for _, args := range [][]string{{"__installer-seed-configuration"}, {"__installer-clean-uninstall"}, {"__installer-clean-uninstall", "--delete-configuration"}} {
+	for _, args := range [][]string{{"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1"}, {"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}} {
 		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
 			t.Fatalf("%v exit code = %d", args, code)
 		}
@@ -111,10 +111,12 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 		wantText string
 	}{
 		{args: []string{"__installer-seed-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
-		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "accepts only --delete-configuration"},
+		{args: []string{"__installer-clean-uninstall"}, wantCode: 2, wantText: "requires --installer-schema=1"},
+		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "requires --installer-schema=1"},
+		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1"},
 		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
-		{args: []string{"__installer-clean-uninstall"}, wantCode: 1, wantText: "clean fixture"},
-		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 1, wantText: "clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1"}, wantCode: 1, wantText: "clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}, wantCode: 1, wantText: "clean fixture"},
 	} {
 		var stderr bytes.Buffer
 		code := runWithCommandDependencies(context.Background(), test.args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)

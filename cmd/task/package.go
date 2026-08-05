@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"debug/pe"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +24,16 @@ import (
 
 const installerEngineVersion = "3.12"
 
+const (
+	installerDefinitionSchemaVersion = 1
+	installerSchemaVersion           = 1
+	legacyInstallerVersion           = "0.0.9"
+	installerUninstallerName         = "uninstall.exe"
+)
+
 var releaseTagPattern = regexp.MustCompile(`^v0\.0\.(0|[1-9][0-9]*)$`)
+var installerProductGUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+var installerSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type releasePackageFile struct {
 	Name string
@@ -49,6 +59,37 @@ type releasePackagePaths struct {
 	ZIPChecksum       string
 	Installer         string
 	InstallerChecksum string
+}
+
+type installerLegacyFile struct {
+	Name   string `json:"name"`
+	SHA256 string `json:"sha256"`
+}
+
+type installerLegacyDefinition struct {
+	Version         string                `json:"version"`
+	RegistryKeyName string                `json:"registryKeyName"`
+	Files           []installerLegacyFile `json:"files"`
+}
+
+type installerDefinition struct {
+	SchemaVersion            int                       `json:"schemaVersion"`
+	InstallerSchemaVersion   int                       `json:"installerSchemaVersion"`
+	ProductGUID              string                    `json:"productGuid"`
+	ApplicationName          string                    `json:"applicationName"`
+	DisplayName              string                    `json:"displayName"`
+	Version                  string                    `json:"version"`
+	Publisher                string                    `json:"publisher"`
+	ProductURL               string                    `json:"productUrl"`
+	InstallDirectoryName     string                    `json:"installDirectoryName"`
+	RegistryKeyName          string                    `json:"registryKeyName"`
+	ExecutableName           string                    `json:"executableName"`
+	MarkerFileName           string                    `json:"markerFileName"`
+	QuietUninstallHelperName string                    `json:"quietUninstallHelperName"`
+	UninstallerName          string                    `json:"uninstallerName"`
+	OutputFileName           string                    `json:"outputFileName"`
+	OwnedFiles               []string                  `json:"ownedFiles"`
+	Legacy                   installerLegacyDefinition `json:"legacy"`
 }
 
 func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
@@ -358,6 +399,148 @@ func replaceGeneratedFile(source, destination string) error {
 	return os.Rename(source, destination)
 }
 
+func installerOwnedFiles() []string {
+	return []string{
+		productidentity.BaseScriptName,
+		productidentity.LicenseName,
+		productidentity.StackScriptName,
+		productidentity.QuietUninstallHelperName,
+		installerUninstallerName,
+		productidentity.ExecutableName,
+	}
+}
+
+func validateInstallerLeaf(role, value string) error {
+	if value == "" || strings.TrimSpace(value) != value || value == "." || value == ".." || len(value) > 120 {
+		return fmt.Errorf("%s must be a nonempty bounded leaf name: %q", role, value)
+	}
+	if filepath.Base(value) != value || strings.ContainsAny(value, `<>:"/\|?*`) || strings.HasSuffix(value, ".") || strings.HasSuffix(value, " ") {
+		return fmt.Errorf("%s must not contain a path, reserved character, or trailing dot/space: %q", role, value)
+	}
+	for _, character := range value {
+		if character < 0x20 {
+			return fmt.Errorf("%s contains a control character: %q", role, value)
+		}
+	}
+	base := strings.ToUpper(strings.TrimSuffix(value, filepath.Ext(value)))
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+		(len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9') {
+		return fmt.Errorf("%s uses a reserved Windows device name: %q", role, value)
+	}
+	return nil
+}
+
+func validateInstallerBuildInputs(version releaseVersion, outputPath string) error {
+	if !installerProductGUIDPattern.MatchString(productidentity.ProductGUID) {
+		return fmt.Errorf("installer product GUID is invalid: %q", productidentity.ProductGUID)
+	}
+	expectedRegistryKey := "{" + strings.ToUpper(productidentity.ProductGUID) + "}"
+	if productidentity.UninstallKeyName != expectedRegistryKey {
+		return fmt.Errorf("installer registry key = %q, want fixed product GUID key %q", productidentity.UninstallKeyName, expectedRegistryKey)
+	}
+	for role, value := range map[string]string{
+		"application name":         productidentity.ApplicationName,
+		"executable":               productidentity.ExecutableName,
+		"Base script":              productidentity.BaseScriptName,
+		"Stacks script":            productidentity.StackScriptName,
+		"license":                  productidentity.LicenseName,
+		"installer marker":         productidentity.InstallerMarkerName,
+		"quiet uninstall helper":   productidentity.QuietUninstallHelperName,
+		"uninstaller":              installerUninstallerName,
+		"legacy registry key name": productidentity.LegacyUninstallKeyName,
+	} {
+		if err := validateInstallerLeaf(role, value); err != nil {
+			return err
+		}
+	}
+	if err := validateInstallerLeaf("install directory", productidentity.InstallDirectoryName); err != nil {
+		return err
+	}
+	if len(productidentity.InstallDirectoryName) > 80 {
+		return fmt.Errorf("install directory name is too long: %q", productidentity.InstallDirectoryName)
+	}
+	for role, value := range map[string]string{
+		"display name": productidentity.DisplayName,
+		"publisher":    productidentity.Publisher,
+		"product URL":  productidentity.ProductURL,
+		"copyright":    productidentity.Copyright,
+	} {
+		if value == "" || strings.TrimSpace(value) != value || len(value) > 200 || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("installer %s is empty, malformed, or too long", role)
+		}
+	}
+	if strings.Contains(productidentity.DisplayName, "&") {
+		return errors.New("installer display name must not contain an unescaped ampersand")
+	}
+	seen := map[string]string{}
+	for _, name := range append(installerOwnedFiles(), productidentity.InstallerMarkerName) {
+		key := strings.ToLower(name)
+		if previous, exists := seen[key]; exists {
+			return fmt.Errorf("installer file names collide case-insensitively: %q and %q", previous, name)
+		}
+		seen[key] = name
+	}
+	expectedOutput := productidentity.ApplicationName + "_" + version.Tag + "_windows_amd64_setup.exe"
+	if filepath.Base(outputPath) != expectedOutput {
+		return fmt.Errorf("installer output filename = %q, want %q", filepath.Base(outputPath), expectedOutput)
+	}
+	if version.Display != strings.TrimPrefix(version.Tag, "v") || version.Fixed != version.Display+".0" {
+		return fmt.Errorf("installer version representations disagree: %#v", version)
+	}
+	return nil
+}
+
+func writeInstallerDefinition(path string, version releaseVersion, outputPath string) error {
+	if err := validateInstallerBuildInputs(version, outputPath); err != nil {
+		return err
+	}
+	definition := installerDefinition{
+		SchemaVersion:            installerDefinitionSchemaVersion,
+		InstallerSchemaVersion:   installerSchemaVersion,
+		ProductGUID:              productidentity.ProductGUID,
+		ApplicationName:          productidentity.ApplicationName,
+		DisplayName:              productidentity.DisplayName,
+		Version:                  version.Display,
+		Publisher:                productidentity.Publisher,
+		ProductURL:               productidentity.ProductURL,
+		InstallDirectoryName:     productidentity.InstallDirectoryName,
+		RegistryKeyName:          productidentity.UninstallKeyName,
+		ExecutableName:           productidentity.ExecutableName,
+		MarkerFileName:           productidentity.InstallerMarkerName,
+		QuietUninstallHelperName: productidentity.QuietUninstallHelperName,
+		UninstallerName:          installerUninstallerName,
+		OutputFileName:           filepath.Base(outputPath),
+		OwnedFiles:               installerOwnedFiles(),
+		Legacy: installerLegacyDefinition{
+			Version:         legacyInstallerVersion,
+			RegistryKeyName: productidentity.LegacyUninstallKeyName,
+			Files: []installerLegacyFile{
+				{Name: productidentity.ExecutableName, SHA256: "6d26dc966e5e2ba9a1ccefde8d5047250420919709f99b882b5cb0ac9bbd6480"},
+				{Name: productidentity.BaseScriptName, SHA256: "65dd916d64a242d33f963098a88b6a72cd697a979e89571d32cf582ce511a78f"},
+				{Name: productidentity.StackScriptName, SHA256: "996e8ec4bb31c6752b7faec240e9fd196b78ea691500efefd7afa03ca9cb062a"},
+				{Name: productidentity.LicenseName, SHA256: "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"},
+			},
+		},
+	}
+	for _, file := range definition.Legacy.Files {
+		if err := validateInstallerLeaf("legacy installer file", file.Name); err != nil {
+			return err
+		}
+		if !installerSHA256Pattern.MatchString(file.SHA256) {
+			return fmt.Errorf("legacy installer file %s has invalid SHA-256", file.Name)
+		}
+	}
+	data, err := json.MarshalIndent(definition, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode installer definition: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write installer definition: %w", err)
+	}
+	return nil
+}
+
 func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirectory, outputPath string, stdout, stderr io.Writer) error {
 	if err := validateReleasePackage(stageDirectory); err != nil {
 		return err
@@ -384,9 +567,19 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if err != nil {
 		return fmt.Errorf("resolve installer output: %w", err)
 	}
-	pathHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "path.ps1"))
+	installerStateHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "installer-state.ps1"))
 	if err != nil {
-		return fmt.Errorf("resolve installer PATH helper: %w", err)
+		return fmt.Errorf("resolve installer state helper: %w", err)
+	}
+	if _, err := requireExecutable(installerStateHelper, "installer state helper"); err != nil {
+		return err
+	}
+	quietUninstallHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "quiet-uninstall.ps1"))
+	if err != nil {
+		return fmt.Errorf("resolve quiet uninstall helper: %w", err)
+	}
+	if _, err := requireExecutable(quietUninstallHelper, "quiet uninstall helper"); err != nil {
+		return err
 	}
 	script, err := filepath.Abs(filepath.Join("packaging", "windows", "installer.nsi"))
 	if err != nil {
@@ -395,7 +588,21 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if err := os.Remove(outputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove previous installer output: %w", err)
 	}
+	definitionFile, err := os.CreateTemp(filepath.Dir(outputPath), ".installer-definition-*.json")
+	if err != nil {
+		return fmt.Errorf("create installer definition: %w", err)
+	}
+	definitionPath := definitionFile.Name()
+	if err := definitionFile.Close(); err != nil {
+		_ = os.Remove(definitionPath)
+		return fmt.Errorf("close installer definition: %w", err)
+	}
+	defer func() { _ = os.Remove(definitionPath) }()
+	if err := writeInstallerDefinition(definitionPath, version, outputPath); err != nil {
+		return err
+	}
 	args := []string{
+		"/WX",
 		"/V2",
 		"/NOCONFIG",
 		"/DRELEASE_TAG=" + version.Tag,
@@ -413,11 +620,18 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_INSTALL_DIRECTORY=" + productidentity.InstallDirectoryName,
 		"/DAPP_PUBLISHER=" + productidentity.Publisher,
 		"/DAPP_PRODUCT_URL=" + productidentity.ProductURL,
+		"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID,
 		"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName,
+		"/DAPP_LEGACY_UNINSTALL_KEY=" + productidentity.LegacyUninstallKeyName,
+		"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName,
+		"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName,
 		"/DAPP_COPYRIGHT=" + productidentity.Copyright,
 		"/DPACKAGE_DIR=" + stageDirectory,
-		"/DPATH_HELPER=" + pathHelper,
+		"/DINSTALLER_STATE_HELPER=" + installerStateHelper,
+		"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper,
+		"/DINSTALLER_DEFINITION=" + definitionPath,
 		"/DOUTPUT_FILE=" + outputPath,
+		"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath),
 		script,
 	}
 	if err := runCommand(ctx, stdout, stderr, makensis, args...); err != nil {

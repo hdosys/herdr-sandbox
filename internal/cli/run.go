@@ -55,6 +55,12 @@ Behavior:
 const installerCleanUninstallTimeout = 15 * time.Minute
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	release, err := acquireInstallerLifecycleGate(args)
+	if err != nil {
+		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		return 1
+	}
+	defer release()
 	return runWithCommandDependencies(ctx, args, stdin, stdout, stderr, defaultCommandDependencies())
 }
 
@@ -143,10 +149,10 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	case "__installer-clean-uninstall":
 		deleteConfiguration := false
-		if len(args) == 2 && args[1] == "--delete-configuration" {
+		if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--delete-configuration" {
 			deleteConfiguration = true
-		} else if len(args) != 1 {
-			fmt.Fprintln(stderr, "herdr-sandbox: installer clean uninstall accepts only --delete-configuration")
+		} else if len(args) != 2 || args[1] != "--installer-schema=1" {
+			fmt.Fprintln(stderr, "herdr-sandbox: installer clean uninstall requires --installer-schema=1 and accepts only --delete-configuration after it")
 			return 2
 		}
 		cleanupContext, cancel := context.WithTimeout(ctx, installerCleanUninstallTimeout)

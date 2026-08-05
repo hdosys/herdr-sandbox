@@ -12,11 +12,20 @@ Unicode true
 !ifndef PACKAGE_DIR
     !error "PACKAGE_DIR is required"
 !endif
-!ifndef PATH_HELPER
-    !error "PATH_HELPER is required"
+!ifndef INSTALLER_STATE_HELPER
+    !error "INSTALLER_STATE_HELPER is required"
+!endif
+!ifndef QUIET_UNINSTALL_HELPER
+    !error "QUIET_UNINSTALL_HELPER is required"
+!endif
+!ifndef INSTALLER_DEFINITION
+    !error "INSTALLER_DEFINITION is required"
 !endif
 !ifndef OUTPUT_FILE
     !error "OUTPUT_FILE is required"
+!endif
+!ifndef OUTPUT_FILE_NAME
+    !error "OUTPUT_FILE_NAME is required"
 !endif
 !ifndef APP_NAME
     !error "APP_NAME is required"
@@ -54,11 +63,39 @@ Unicode true
 !ifndef APP_PRODUCT_URL
     !error "APP_PRODUCT_URL is required"
 !endif
+!ifndef APP_PRODUCT_GUID
+    !error "APP_PRODUCT_GUID is required"
+!endif
 !ifndef APP_UNINSTALL_KEY
     !error "APP_UNINSTALL_KEY is required"
 !endif
+!ifndef APP_LEGACY_UNINSTALL_KEY
+    !error "APP_LEGACY_UNINSTALL_KEY is required"
+!endif
+!ifndef APP_INSTALLER_MARKER
+    !error "APP_INSTALLER_MARKER is required"
+!endif
+!ifndef APP_QUIET_UNINSTALL_HELPER
+    !error "APP_QUIET_UNINSTALL_HELPER is required"
+!endif
 !ifndef APP_COPYRIGHT
     !error "APP_COPYRIGHT is required"
+!endif
+
+!if "${RELEASE_TAG}" == ""
+    !error "RELEASE_TAG must not be empty"
+!endif
+!if "${VERSION}" == ""
+    !error "VERSION must not be empty"
+!endif
+!if "${FIXED_VERSION}" == ""
+    !error "FIXED_VERSION must not be empty"
+!endif
+!if "${APP_PRODUCT_GUID}" == ""
+    !error "APP_PRODUCT_GUID must not be empty"
+!endif
+!if "${APP_UNINSTALL_KEY}" == ""
+    !error "APP_UNINSTALL_KEY must not be empty"
 !endif
 
 !include "MUI2.nsh"
@@ -66,22 +103,33 @@ Unicode true
 !include "FileFunc.nsh"
 !include "nsDialogs.nsh"
 !include "WinMessages.nsh"
+!include "WinVer.nsh"
 !include "x64.nsh"
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
-!define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_UNINSTALL_KEY}.InstallerLifecycle.v1"
+!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"
 !define APP_ERROR_ALREADY_EXISTS 183
+!define APP_EXIT_INVALID_ARGUMENTS 30
+!define APP_EXIT_LIFECYCLE_BUSY 41
+!define APP_EXIT_UNSUPPORTED_PLATFORM 50
+!define APP_EXIT_PAYLOAD_FAILURE 60
+!define APP_EXIT_INSTALL_RECOVERED 70
+!define APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE 71
+!define APP_EXIT_UNINSTALL_PREFLIGHT 80
+!define APP_EXIT_UNINSTALL_FINALIZE 81
+!define APP_EXIT_INTERNAL_STATE 90
 
 Var DeleteConfigurationOnUninstall
 Var DeleteConfigurationCheckbox
-Var InstallTransactionActive
 Var InstallerLifecycleMutexHandle
+Var EnvironmentNotificationFailed
 
 Name "${APP_DISPLAY_NAME}"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
 RequestExecutionLevel user
+CRCCheck force
 SetCompressor lzma
 SetDatablockOptimize on
 SetCompressorDictSize 8
@@ -99,10 +147,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "${APP_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "${APP_COPYRIGHT}"
-VIAddVersionKey "OriginalFilename" "${APP_NAME}_${RELEASE_TAG}_windows_amd64_setup.exe"
+VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
 
 !define MUI_ABORTWARNING
-!define MUI_CUSTOMFUNCTION_ABORT PreventInstallTransactionAbort
 !define INSTALLER_WELCOME_BITMAP_100 "${__FILEDIR__}\assets\installer-welcome-finish-164x314.bmp"
 !define INSTALLER_WELCOME_BITMAP_125 "${__FILEDIR__}\assets\installer-welcome-finish-205x393.bmp"
 !define INSTALLER_WELCOME_BITMAP_150 "${__FILEDIR__}\assets\installer-welcome-finish-246x471.bmp"
@@ -133,7 +180,18 @@ UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
 !insertmacro MUI_LANGUAGE "English"
 
 Function SelectInstallerWelcomeBitmap
-    System::Call 'USER32::GetDpiForWindow(p $HWNDPARENT)i.r0'
+    ; Resolve dynamically so unsupported hosts fail to the 96-DPI asset rather
+    ; than failing GUI initialization before the Windows-version message.
+    System::Call 'KERNEL32::GetModuleHandleW(w "USER32.DLL") p.r0'
+    System::Call 'KERNEL32::GetProcAddress(p r0, m "GetDpiForWindow") p.r1'
+    ${If} $1 == 0
+        StrCpy $0 96
+    ${Else}
+        System::Call '::$1(p $HWNDPARENT)i.r0'
+        ${If} $0 == 0
+            StrCpy $0 96
+        ${EndIf}
+    ${EndIf}
     ${If} $0 >= 180
         File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_200}"
     ${ElseIf} $0 >= 156
@@ -186,65 +244,61 @@ FunctionEnd
     StrCpy $InstallerLifecycleMutexHandle $1
     ${If} $1 == 0
         MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
-        SetErrorLevel 1
+        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
         Abort
     ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
         System::Call 'KERNEL32::CloseHandle(p $1)'
         StrCpy $InstallerLifecycleMutexHandle 0
         MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup or uninstall is already running. Wait for it to finish, then try again." /SD IDOK
-        SetErrorLevel 1
+        SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
         Abort
     ${EndIf}
 !macroend
 
 Function .onInit
+    ${IfNot} ${AtLeastWin10}
+        MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
+        Abort
+    ${EndIf}
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
         Abort
     ${EndIf}
     !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
     SetShellVarContext current
     StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
-    StrCpy $InstallTransactionActive "0"
-FunctionEnd
-
-Function PreventInstallTransactionAbort
-    ${If} $InstallTransactionActive == "1"
-        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is completing or rolling back an installation transaction. Wait for setup to finish." /SD IDOK
-        Abort
-    ${EndIf}
-FunctionEnd
-
-Function DisableInstallCancellation
-    IfSilent done
-    GetDlgItem $R8 $HWNDPARENT 2
-    EnableWindow $R8 0
-    done:
-FunctionEnd
-
-Function EnableInstallCancellation
-    IfSilent done
-    GetDlgItem $R8 $HWNDPARENT 2
-    EnableWindow $R8 1
-    done:
+    StrCpy $EnvironmentNotificationFailed "0"
 FunctionEnd
 
 Function un.onInit
+    ${IfNot} ${AtLeastWin10}
+        MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
+        Abort
+    ${EndIf}
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires 64-bit Windows." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNSUPPORTED_PLATFORM}
         Abort
     ${EndIf}
     !insertmacro AcquireInstallerLifecycleMutex
     SetRegView 64
     SetShellVarContext current
-    StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"
     StrCpy $DeleteConfigurationOnUninstall "0"
     ${GetParameters} $0
-    ClearErrors
-    ${GetOptions} $0 "/DELETE_CONFIG" $1
-    IfErrors done
-    StrCpy $DeleteConfigurationOnUninstall "1"
+    StrCmp $0 "" done
+    StrCmp $0 "/S" done
+    StrCmp $0 "/DELETE_CONFIG" delete_config
+    StrCmp $0 "/S /DELETE_CONFIG" delete_config
+    StrCmp $0 "/DELETE_CONFIG /S" delete_config
+    MessageBox MB_ICONSTOP|MB_OK "Unsupported uninstall arguments. Use only /S and the exact /DELETE_CONFIG option." /SD IDOK
+    SetErrorLevel ${APP_EXIT_INVALID_ARGUMENTS}
+    Abort
+    delete_config:
+        StrCpy $DeleteConfigurationOnUninstall "1"
     done:
 FunctionEnd
 
@@ -281,348 +335,144 @@ Function un.DeleteConfigurationPageLeave
     done:
 FunctionEnd
 
-!macro UpdateUserPath ACTION
-    DetailPrint "Updating the current-user PATH..."
+!macro ExtractInstallerControlFiles
     InitPluginsDir
-    SetOutPath "$PLUGINSDIR"
-    File "/oname=path.ps1" "${PATH_HELPER}"
-    ClearErrors
-    nsExec::ExecToStack /TIMEOUT=15000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\path.ps1" -Action ${ACTION} -InstallDirectory "$INSTDIR"'
+    SetOutPath "$PLUGINSDIR\control"
+    File "/oname=installer-state.ps1" "${INSTALLER_STATE_HELPER}"
+    File "/oname=definition.json" "${INSTALLER_DEFINITION}"
+!macroend
+
+!macro RunInstallerState ACTION EXTRA
+    SetOutPath "$PLUGINSDIR\control"
+    nsExec::ExecToStack /TIMEOUT=120000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\control\installer-state.ps1" -Action ${ACTION} -DefinitionPath "$PLUGINSDIR\control\definition.json" -InstallDirectory "$INSTDIR" ${EXTRA}'
     Pop $0
     Pop $1
-    ${If} $0 == "0"
-    ${ElseIf} $0 == "10"
-    ${Else}
-        DetailPrint "Could not update the current-user PATH: $1"
-        SetErrors
-    ${EndIf}
-    ${If} $0 == "10"
-        DetailPrint "Notifying Windows about the PATH change..."
-        ; WM_SETTINGCHANGE requires this synchronous API because Environment is a
-        ; pointer. Keep its per-window timeout short so a hung window cannot hold setup.
-        System::Call 'User32::SendMessageTimeoutW(p ${HWND_BROADCAST}, i ${WM_SETTINGCHANGE}, p 0, w "Environment", i 0x2, i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}, *p .r3)'
-    ${EndIf}
-!macroend
-
-!macro BackupRuntimeFile NAME FLAG
-    StrCpy ${FLAG} "0"
-    ${If} ${FileExists} "$INSTDIR\${NAME}"
-        ClearErrors
-        CopyFiles /SILENT "$INSTDIR\${NAME}" "$PLUGINSDIR\backup"
-        ${If} ${Errors}
-            MessageBox MB_ICONSTOP|MB_OK "Could not back up the installed ${NAME}. Close running commands and try again." /SD IDOK
-            Abort
-        ${EndIf}
-        StrCpy ${FLAG} "1"
-    ${EndIf}
-!macroend
-
-!macro ReplaceRuntimeFile NAME
-    ${If} $9 == "0"
-        ClearErrors
-        CopyFiles /SILENT "$PLUGINSDIR\package\${NAME}" "$INSTDIR"
-        ${If} ${Errors}
-            StrCpy $9 "1"
-        ${EndIf}
-    ${EndIf}
-!macroend
-
-!macro RestoreRuntimeFile NAME FLAG
-    ${If} ${FLAG} == "1"
-        ClearErrors
-        CopyFiles /SILENT "$PLUGINSDIR\backup\${NAME}" "$INSTDIR"
-    ${Else}
-        ClearErrors
-        Delete "$INSTDIR\${NAME}"
-    ${EndIf}
-    ${If} ${Errors}
-        StrCpy $R0 "1"
-    ${EndIf}
 !macroend
 
 Section "Install"
-    StrCpy $R5 "0"
-    StrCpy $R6 "0"
-    StrCpy $R7 "0"
-    StrCpy $R9 "0"
-    StrCpy $R3 ""
-    StrCpy $4 "0"
-    ClearErrors
-    ReadRegStr $3 HKCU "${UNINSTALL_KEY}" "DisplayName"
-    ${If} ${Errors}
-        ClearErrors
-        StrCpy $2 "0"
-    ${ElseIf} $3 != "${APP_DISPLAY_NAME}"
-        MessageBox MB_ICONSTOP|MB_OK "The existing installer registration is not owned by ${APP_DISPLAY_NAME}. No files were changed." /SD IDOK
-        Abort
-    ${Else}
-        StrCpy $R5 "1"
-        ClearErrors
-        ReadRegStr $R3 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
-        ${IfNot} ${Errors}
-            StrCpy $R6 "1"
-        ${EndIf}
-        ClearErrors
-        ReadRegDWORD $2 HKCU "${UNINSTALL_KEY}" "PathAdded"
-        ${If} ${Errors}
-            StrCpy $2 "0"
-        ${Else}
-            StrCpy $R7 "1"
-        ${EndIf}
-    ${EndIf}
-
+    DetailPrint "Validating and activating ${APP_DISPLAY_NAME} ${VERSION}..."
     InitPluginsDir
     SetOutPath "$PLUGINSDIR\package"
     ClearErrors
     File "${PACKAGE_DIR}\${APP_BASE_SCRIPT}"
-    File "${PACKAGE_DIR}\${APP_EXECUTABLE}"
     File "${PACKAGE_DIR}\${APP_LICENSE}"
     File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"
+    File "/oname=${APP_QUIET_UNINSTALL_HELPER}" "${QUIET_UNINSTALL_HELPER}"
+    File "${PACKAGE_DIR}\${APP_EXECUTABLE}"
     ${If} ${Errors}
         MessageBox MB_ICONSTOP|MB_OK "Could not extract the ${APP_DISPLAY_NAME} application package." /SD IDOK
+        SetErrorLevel ${APP_EXIT_PAYLOAD_FAILURE}
         Abort
     ${EndIf}
-    CreateDirectory "$PLUGINSDIR\backup"
-    CreateDirectory "$INSTDIR"
-    !insertmacro BackupRuntimeFile "${APP_BASE_SCRIPT}" $6
-    !insertmacro BackupRuntimeFile "${APP_EXECUTABLE}" $7
-    !insertmacro BackupRuntimeFile "${APP_LICENSE}" $R1
-    !insertmacro BackupRuntimeFile "${APP_STACK_SCRIPT}" $8
-    !insertmacro BackupRuntimeFile "uninstall.exe" $R2
+    ClearErrors
+    WriteUninstaller "$PLUGINSDIR\package\uninstall.exe"
+    ${If} ${Errors}
+        StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} uninstaller."
+        MessageBox MB_ICONSTOP|MB_OK "$R4 No installed state was changed." /SD IDOK
+        SetErrorLevel ${APP_EXIT_PAYLOAD_FAILURE}
+        Abort
+    ${EndIf}
 
-    StrCpy $InstallTransactionActive "1"
-    Call DisableInstallCancellation
-    StrCpy $9 "0"
-    !insertmacro ReplaceRuntimeFile "${APP_EXECUTABLE}"
-    !insertmacro ReplaceRuntimeFile "${APP_BASE_SCRIPT}"
-    !insertmacro ReplaceRuntimeFile "${APP_LICENSE}"
-    !insertmacro ReplaceRuntimeFile "${APP_STACK_SCRIPT}"
-    ${If} $9 != "0"
-        StrCpy $R4 "Could not replace the complete ${APP_DISPLAY_NAME} application payload."
-        Goto install_rollback
+    !insertmacro ExtractInstallerControlFiles
+    !insertmacro RunInstallerState "Install" '-PackageDirectory "$PLUGINSDIR\package"'
+    StrCpy $R9 $0
+    ${If} $0 != "0"
+    ${AndIf} $0 != "10"
+        ${If} $0 == "20"
+            MessageBox MB_ICONSTOP|MB_OK "Could not activate ${APP_DISPLAY_NAME}: status $0. $1 Rollback was incomplete; run setup again before using the installed command." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE}
+        ${Else}
+            MessageBox MB_ICONSTOP|MB_OK "Could not activate ${APP_DISPLAY_NAME}: status $0. $1 No new installation was committed; prior or pending installer-owned state was preserved or restored." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INSTALL_RECOVERED}
+        ${EndIf}
+        Abort
     ${EndIf}
 
     DetailPrint "Creating the default user configuration when missing..."
+    SetOutPath "$INSTDIR"
     nsExec::ExecToStack /TIMEOUT=15000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-seed-configuration'
     Pop $0
     Pop $1
     ${If} $0 != "0"
-        StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} user configuration: $1"
-        Goto install_rollback
-    ${EndIf}
-
-    SetOutPath "$INSTDIR"
-    StrCpy $R9 "1"
-    ClearErrors
-    WriteUninstaller "$INSTDIR\uninstall.exe"
-    ${If} ${Errors}
-        StrCpy $R4 "Could not create the ${APP_DISPLAY_NAME} uninstaller."
-        Goto install_rollback
-    ${EndIf}
-
-    ClearErrors
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_DISPLAY_NAME}"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${APP_PUBLISHER}"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" '"$INSTDIR\${APP_EXECUTABLE}",0'
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "${APP_PRODUCT_URL}"
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
-    WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
-    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
-    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
-    ${If} ${Errors}
-        StrCpy $R4 "Could not register ${APP_DISPLAY_NAME} in Windows Installed Apps."
-        Goto install_rollback
-    ${EndIf}
-
-    !insertmacro UpdateUserPath "Add"
-    StrCpy $4 $0
-    ${If} $4 != "0"
-    ${AndIf} $4 != "10"
-        StrCpy $R4 "Could not update the current-user PATH: $1"
-        Goto install_rollback
-    ${EndIf}
-    ${If} $2 == "1"
-        StrCpy $5 "1"
-    ${ElseIf} $4 == "10"
-        StrCpy $5 "1"
-    ${Else}
-        StrCpy $5 "0"
-    ${EndIf}
-    ClearErrors
-    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $5
-    ${If} ${Errors}
-        StrCpy $R4 "Could not record ${APP_DISPLAY_NAME} PATH ownership."
-        Goto install_rollback
-    ${EndIf}
-    StrCpy $InstallTransactionActive "0"
-    Call EnableInstallCancellation
-    Goto install_done
-
-    install_rollback:
-    SetOutPath "$PLUGINSDIR"
-    StrCpy $R0 "0"
-    ${If} $4 == "10"
-        !insertmacro UpdateUserPath "Remove"
-        ${If} $0 != "0"
-        ${AndIf} $0 != "10"
-            StrCpy $R0 "1"
-        ${EndIf}
-    ${EndIf}
-    ${If} $R9 == "1"
-        ${If} $R5 == "1"
-            ${If} $R6 == "1"
-                ClearErrors
-                WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" $R3
-                ${If} ${Errors}
-                    StrCpy $R0 "1"
-                ${EndIf}
-            ${Else}
-                ClearErrors
-                ReadRegStr $R8 HKCU "${UNINSTALL_KEY}" "DisplayVersion"
-                ${IfNot} ${Errors}
-                    ClearErrors
-                    DeleteRegValue HKCU "${UNINSTALL_KEY}" "DisplayVersion"
-                    ${If} ${Errors}
-                        StrCpy $R0 "1"
-                    ${EndIf}
-                ${EndIf}
-            ${EndIf}
-            ${If} $R7 == "1"
-                ClearErrors
-                WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $2
-                ${If} ${Errors}
-                    StrCpy $R0 "1"
-                ${EndIf}
-            ${Else}
-                ClearErrors
-                ReadRegDWORD $R8 HKCU "${UNINSTALL_KEY}" "PathAdded"
-                ${IfNot} ${Errors}
-                    ClearErrors
-                    DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAdded"
-                    ${If} ${Errors}
-                        StrCpy $R0 "1"
-                    ${EndIf}
-                ${EndIf}
-            ${EndIf}
+        StrCpy $R4 $0
+        StrCpy $R5 $1
+        !insertmacro RunInstallerState "RollbackInstall" ""
+        ${If} $0 == "0"
+            MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} user configuration: status $R4. $R5 The complete prior installer-owned state was restored." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INSTALL_RECOVERED}
         ${Else}
-            ClearErrors
-            EnumRegValue $R8 HKCU "${UNINSTALL_KEY}" 0
-            ${IfNot} ${Errors}
-                ClearErrors
-                DeleteRegKey HKCU "${UNINSTALL_KEY}"
-                ${If} ${Errors}
-                    StrCpy $R0 "1"
-                ${EndIf}
-            ${EndIf}
+            MessageBox MB_ICONSTOP|MB_OK "Could not create the ${APP_DISPLAY_NAME} user configuration: status $R4. $R5 Rollback was incomplete: status $0. $1" /SD IDOK
+            SetErrorLevel ${APP_EXIT_INSTALL_ROLLBACK_INCOMPLETE}
+        ${EndIf}
+        Abort
+    ${EndIf}
+
+    !insertmacro RunInstallerState "CommitInstall" ""
+    ${If} $0 != "0"
+        MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} was activated, but its transaction could not reach a durable terminal state: status $0. $1 Run setup again before using or uninstalling it." /SD IDOK
+        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+        Abort
+    ${EndIf}
+
+    ${If} $R9 == "10"
+        DetailPrint "Notifying Windows about the PATH change..."
+        System::Call 'KERNEL32::SetLastError(i 0)'
+        System::Call 'USER32::SendMessageTimeoutW(p ${HWND_BROADCAST}, i ${WM_SETTINGCHANGE}, p 0, w "Environment", i 0x2, i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}, *p .r3) p.r2 ?e'
+        Pop $4
+        ${If} $2 == 0
+            StrCpy $EnvironmentNotificationFailed "1"
+            DetailPrint "Windows did not confirm the PATH-change notification (error $4)."
         ${EndIf}
     ${EndIf}
-    !insertmacro RestoreRuntimeFile "${APP_EXECUTABLE}" $7
-    !insertmacro RestoreRuntimeFile "${APP_BASE_SCRIPT}" $6
-    !insertmacro RestoreRuntimeFile "${APP_LICENSE}" $R1
-    !insertmacro RestoreRuntimeFile "${APP_STACK_SCRIPT}" $8
-    !insertmacro RestoreRuntimeFile "uninstall.exe" $R2
-    RMDir "$INSTDIR"
-    StrCpy $InstallTransactionActive "0"
-    Call EnableInstallCancellation
-    ${If} $R0 == "0"
-        MessageBox MB_ICONSTOP|MB_OK "$R4 The prior installer-owned state was restored. Close running commands and try again." /SD IDOK
-    ${Else}
-        MessageBox MB_ICONSTOP|MB_OK "$R4 Rollback was incomplete. Close running commands and run setup again." /SD IDOK
+    ${If} $EnvironmentNotificationFailed == "1"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is installed, but Windows did not confirm the PATH refresh. Open a new terminal. If it still cannot find ${APP_NAME}, sign out and back in." /SD IDOK
     ${EndIf}
-    Abort
-
-    install_done:
 SectionEnd
 
 Section "Uninstall"
     SetAutoClose true
-    SetOutPath "$TEMP"
-    ClearErrors
-    ReadRegStr $3 HKCU "${UNINSTALL_KEY}" "DisplayName"
-    ${If} ${Errors}
-        ClearErrors
-        StrCpy $2 "0"
-        StrCpy $4 "0"
-    ${ElseIf} $3 != "${APP_DISPLAY_NAME}"
-        MessageBox MB_ICONSTOP|MB_OK "The installer registration is not owned by ${APP_DISPLAY_NAME}. No files were changed." /SD IDOK
-        Abort
-    ${Else}
-        StrCpy $4 "1"
-        ClearErrors
-        ReadRegDWORD $2 HKCU "${UNINSTALL_KEY}" "PathAdded"
-        ${If} ${Errors}
-            StrCpy $2 "0"
-        ${EndIf}
-    ${EndIf}
-
-    ; A missing executable is a valid retry state only after every other owned
-    ; payload file is already gone. Setup always rewrites the complete payload, so
-    ; any mixed partial state is repaired by setup rather than treated as a stale
-    ; transaction that permanently blocks future installs.
-    IfFileExists "$INSTDIR\${APP_EXECUTABLE}" uninstall_cleanup_app
-    IfFileExists "$INSTDIR\${APP_BASE_SCRIPT}" uninstall_residual_invalid
-    IfFileExists "$INSTDIR\${APP_LICENSE}" uninstall_residual_invalid
-    IfFileExists "$INSTDIR\${APP_STACK_SCRIPT}" uninstall_residual_invalid
-    DetailPrint "Resuming exact ${APP_DISPLAY_NAME} uninstall residual cleanup."
-    Goto uninstall_remove_path
-
-    uninstall_residual_invalid:
-    MessageBox MB_ICONSTOP|MB_OK "The installed ${APP_DISPLAY_NAME} payload is incomplete. Run setup once to repair it, then uninstall again; existing files were preserved." /SD IDOK
-    Abort
-
-    uninstall_cleanup_app:
-    DetailPrint "Removing ${APP_DISPLAY_NAME} state, SSH integration, and cache; any running Sandbox stays open..."
-    ${If} $DeleteConfigurationOnUninstall == "1"
-        nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --delete-configuration'
-    ${Else}
-        nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall'
-    ${EndIf}
-    Pop $0
-    Pop $1
+    !insertmacro ExtractInstallerControlFiles
+    DetailPrint "Validating ${APP_DISPLAY_NAME} ownership and deletion readiness..."
+    !insertmacro RunInstallerState "InspectUninstall" ""
+    StrCpy $R9 $0
     ${If} $0 != "0"
-        MessageBox MB_ICONSTOP|MB_OK "Could not safely remove ${APP_DISPLAY_NAME} state. No application files or installer registration were removed: $1" /SD IDOK
+    ${AndIf} $0 != "10"
+        MessageBox MB_ICONSTOP|MB_OK "Could not safely begin ${APP_DISPLAY_NAME} uninstall: status $0. $1 No application state or files were changed." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNINSTALL_PREFLIGHT}
         Abort
     ${EndIf}
 
-    ClearErrors
-    Delete "$INSTDIR\${APP_BASE_SCRIPT}"
-    Delete "$INSTDIR\${APP_LICENSE}"
-    Delete "$INSTDIR\${APP_STACK_SCRIPT}"
-    ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Could not remove the installed ${APP_DISPLAY_NAME} files. Check their permissions and try again." /SD IDOK
-        Abort
-    ${EndIf}
-    uninstall_remove_path:
-    ${If} $2 == "1"
-        !insertmacro UpdateUserPath "Remove"
+    ${If} $R9 == "0"
+        DetailPrint "Removing ${APP_DISPLAY_NAME} state, SSH integration, and cache; any running Sandbox stays open..."
+        SetOutPath "$INSTDIR"
+        ${If} $DeleteConfigurationOnUninstall == "1"
+            nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --installer-schema=1 --delete-configuration'
+        ${Else}
+            nsExec::ExecToStack /TIMEOUT=960000 '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --installer-schema=1'
+        ${EndIf}
+        Pop $0
+        Pop $1
         ${If} $0 != "0"
-        ${AndIf} $0 != "10"
-            MessageBox MB_ICONSTOP|MB_OK "Could not remove the installer-owned ${APP_DISPLAY_NAME} PATH entry: $1" /SD IDOK
+            MessageBox MB_ICONSTOP|MB_OK "Could not safely remove ${APP_DISPLAY_NAME} state: status $0. $1 No application files or installer registration were removed." /SD IDOK
+            SetErrorLevel ${APP_EXIT_UNINSTALL_PREFLIGHT}
             Abort
         ${EndIf}
-    ${EndIf}
-    ClearErrors
-    Delete "$INSTDIR\${APP_EXECUTABLE}"
-    ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Close any running ${APP_DISPLAY_NAME} command and try uninstalling again. No running process was terminated." /SD IDOK
-        Abort
-    ${EndIf}
-    ${If} $4 == "1"
-        ClearErrors
-        DeleteRegKey HKCU "${UNINSTALL_KEY}"
-        ${If} ${Errors}
-            MessageBox MB_ICONSTOP|MB_OK "Could not remove ${APP_DISPLAY_NAME} from Windows Installed Apps." /SD IDOK
+        !insertmacro RunInstallerState "MarkCleanupComplete" ""
+        ${If} $0 != "0"
+            MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} state cleanup completed, but its durable uninstall phase could not be recorded: status $0. $1 Run uninstall again to continue safely." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
             Abort
         ${EndIf}
+    ${Else}
+        DetailPrint "Resuming ${APP_DISPLAY_NAME} after completed application-state cleanup."
     ${EndIf}
-    ClearErrors
-    Delete "$INSTDIR\uninstall.exe"
-    ${If} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "Could not remove the ${APP_DISPLAY_NAME} uninstaller." /SD IDOK
+
+    !insertmacro RunInstallerState "FinishUninstall" ""
+    ${If} $0 == "10"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "$1" /SD IDOK
+    ${ElseIf} $0 != "0"
+        MessageBox MB_ICONSTOP|MB_OK "Could not finish ${APP_DISPLAY_NAME} uninstall: status $0. $1 Run uninstall again; the recorded phase will resume without guessing from missing files." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNINSTALL_FINALIZE}
         Abort
     ${EndIf}
-    ClearErrors
-    RMDir "$INSTDIR"
 SectionEnd
