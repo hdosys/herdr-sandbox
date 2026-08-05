@@ -41,7 +41,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, a separate Playwright CLI path for existing Edge, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
@@ -51,7 +51,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-Our full compatibility test installs all supported stacks in one Sandbox: **.NET, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python, Rust/MSVC, and Zig**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python, and TradingView Desktop with TVControl**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 

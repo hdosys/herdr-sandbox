@@ -6,6 +6,17 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.9 - 2026-08-05
+
+### Added
+
+- A `tradingview` project stack provisions the latest stable TVControl commands
+  and verified official TradingView Desktop payload for Windows Sandbox. Select
+  it with `herdr-sandbox init --stack tradingview`; native acceptance passed
+  visible launch, CDP, health, API/datafeed, and compatibility.
+
+## v0.0.8 - 2026-08-04
+
 ### Added
 
 - `herdr-sandbox version`, reporting the release version and abbreviated source
@@ -25,12 +36,6 @@ release notes remain available on the
 - A separate `playwright-cli` project stack installs the approved Playwright CLI
   without browser binaries or update-check state and prepares the official
   extension for manual attachment to the guest user's existing headed Edge profile.
-- A `tradingview` project stack installs the latest stable TVControl commands and
-  extracts the verified official TradingView Desktop MSIX payload while leaving
-  application launch, CDP access, authentication, MCP configuration, and
-  chart/account data untouched during provisioning. Portable Desktop launch and
-  TVControl health/compatibility passed on the build-19041 verification guest.
-
 ### Changed
 
 - Host Herdr selection now accepts any Windows `herdr.exe` that proves the

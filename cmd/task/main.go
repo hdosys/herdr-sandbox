@@ -30,7 +30,8 @@ Tasks:
   fmt              format Go source
   test [args...]   run go test ./... with optional extra arguments
   build            build build/bin/%s
-  native-all-stacks build and test all six stacks plus Playwright Chromium in one real Windows Sandbox
+  native-all-stacks build and test all built-in stacks in one real Windows Sandbox
+  release-notes VERSION  print curated notes from the matching CHANGELOG section
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
 `, productidentity.ExecutableName)
@@ -85,6 +86,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("package requires one v0.0.RELEASE_ID version")
 		}
 		return packageWindowsRelease(ctx, args[1], stdout, stderr)
+	case "release-notes":
+		if len(args) != 2 {
+			return errors.New("release-notes requires one v0.0.RELEASE_ID version")
+		}
+		return writeReleaseNotes(args[1], stdout)
 	case "check":
 		if len(args) != 1 {
 			return errors.New("check accepts no arguments")

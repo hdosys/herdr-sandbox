@@ -590,17 +590,19 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 		`$curl = Join-Path $env:SystemRoot 'System32\curl.exe'`,
 		`& $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL`,
 		`go run ./cmd/task package $env:RELEASE_TAG`,
+		`go run ./cmd/task release-notes $env:RELEASE_TAG`,
 		`Get-ChildItem -LiteralPath 'build\dist' -File`,
 		`$assets.Count -ne 4`,
 		`$installers.Count -ne 1`,
 		`VersionInfo.ProductName`,
+		`'--notes', $releaseNotes`,
 		`'--title', "$productName $env:RELEASE_TAG"`,
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release workflow is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Compress-Archive", "Invoke-WebRequest", "choco install", "cargo", "herdr.exe'"} {
+	for _, forbidden := range []string{"--generate-notes", "Compress-Archive", "Invoke-WebRequest", "choco install", "cargo", "herdr.exe'"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow contains duplicate or out-of-scope packaging %q", forbidden)
 		}
