@@ -297,7 +297,7 @@ function Read-Definition {
         'schemaVersion', 'installerSchemaVersion', 'productGuid', 'applicationName',
         'displayName', 'version', 'publisher', 'productUrl', 'installDirectoryName',
         'registryKeyName', 'executableName', 'markerFileName',
-        'quietUninstallHelperName', 'uninstallerName', 'outputFileName', 'ownedFiles', 'legacy'
+        'quietUninstallHelperName', 'uninstallerName', 'outputFileName', 'ownedFiles'
     )
     if ([int]$definition.schemaVersion -ne 1 -or [int]$definition.installerSchemaVersion -ne 1) {
         throw 'Installer definition schema is unsupported.'
@@ -340,19 +340,6 @@ function Read-Definition {
     foreach ($required in @([string]$definition.executableName, [string]$definition.quietUninstallHelperName, [string]$definition.uninstallerName)) {
         if (-not ($owned -ccontains $required)) {
             throw "Installer owned-file set is missing $required."
-        }
-    }
-    Assert-ExactProperties -Object $definition.legacy -Role 'legacy installer definition' -Expected @('version', 'registryKeyName', 'files')
-    Assert-LeafName -Value ([string]$definition.legacy.registryKeyName) -Role 'legacy registry key'
-    $legacyVersion = $null
-    if (-not [Version]::TryParse([string]$definition.legacy.version, [ref]$legacyVersion)) {
-        throw 'Legacy installer version is invalid.'
-    }
-    foreach ($file in @($definition.legacy.files)) {
-        Assert-ExactProperties -Object $file -Role 'legacy installer file' -Expected @('name', 'sha256')
-        Assert-LeafName -Value ([string]$file.name) -Role 'legacy installer file'
-        if ([string]$file.sha256 -cnotmatch '^[0-9a-f]{64}$') {
-            throw 'Legacy installer SHA-256 is invalid.'
         }
     }
     return $definition
@@ -663,8 +650,7 @@ function Set-CurrentUserPath {
 function Get-Marker {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)]$Definition,
-        [switch]$AllowMissingOwnedFiles
+        [Parameter(Mandatory = $true)]$Definition
     )
 
     $marker = Read-JsonFile -Path $Path -Role 'installer ownership marker'
@@ -701,18 +687,8 @@ function Get-Marker {
             throw 'Installer ownership file hash is invalid.'
         }
         $installedPath = Join-Path $script:InstallDirectory ([string]$record.name)
-        if (-not (Test-Path -LiteralPath $installedPath)) {
-            if ($AllowMissingOwnedFiles) {
-                continue
-            }
-            throw "Installer-owned file is missing: $($record.name)"
-        }
-        $installed = Assert-RegularFile -Path $installedPath -Role 'installer-owned file'
-        if ([int64]$installed.Length -ne [int64]$record.size) {
-            throw "Installer-owned file has an unexpected size: $($record.name)"
-        }
-        if ((Get-FileSHA256 -Path $installedPath) -cne [string]$record.sha256) {
-            throw "Installer-owned file has unknown content: $($record.name)"
+        if (Test-Path -LiteralPath $installedPath) {
+            [void](Assert-RegularFile -Path $installedPath -Role 'installer-owned file')
         }
     }
     return $marker
@@ -722,13 +698,8 @@ function Get-RegistrationState {
     param([Parameter(Mandatory = $true)]$Definition)
 
     $currentPath = Get-RegistryPath -KeyName ([string]$Definition.registryKeyName)
-    $legacyPath = Get-RegistryPath -KeyName ([string]$Definition.legacy.registryKeyName)
     $current = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($currentPath, $false)
-    $legacy = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($legacyPath, $false)
     try {
-        if ($null -ne $current -and $null -ne $legacy) {
-            throw 'Current and legacy installer registrations both exist.'
-        }
         if ($null -ne $current) {
             $productGuid = [string](Get-RequiredRegistryValue -Key $current -Name 'ProductGuid' -Kind String)
             $installationId = [string](Get-RequiredRegistryValue -Key $current -Name 'InstallationId' -Kind String)
@@ -768,73 +739,13 @@ function Get-RegistrationState {
                 throw 'Installer registration contains an unowned PATH entry value.'
             }
             $markerPath = Join-Path $script:InstallDirectory ([string]$Definition.markerFileName)
-            $marker = Get-Marker -Path $markerPath -Definition $Definition -AllowMissingOwnedFiles:($phase -eq 'CleanupComplete')
+            $marker = Get-Marker -Path $markerPath -Definition $Definition
             if ([string]$marker.installationId -cne $installationId -or [string]$marker.installedVersion -cne $displayVersion) {
                 throw 'Installer registry and directory identities disagree.'
             }
             return [pscustomobject]@{
                 kind = 'Owned'; installationId = $installationId; version = $displayVersion
                 pathAdded = [int]$pathAdded; uninstallPhase = $phase; marker = $marker
-            }
-        }
-        if ($null -ne $legacy) {
-            $legacyNames = @(
-                'DisplayName', 'DisplayVersion', 'Publisher', 'DisplayIcon', 'InstallLocation',
-                'URLInfoAbout', 'UninstallString', 'QuietUninstallString', 'NoModify', 'NoRepair', 'PathAdded'
-            )
-            $actualNames = @($legacy.GetValueNames() | Sort-Object)
-            $expectedNames = @($legacyNames | Sort-Object)
-            if ([string]::Join("`n", $actualNames) -cne [string]::Join("`n", $expectedNames) -or $legacy.GetSubKeyNames().Count -ne 0) {
-                throw 'Legacy installer registration contains unknown state and was preserved.'
-            }
-            $displayName = [string](Get-RequiredRegistryValue -Key $legacy -Name 'DisplayName' -Kind String)
-            $displayVersion = [string](Get-RequiredRegistryValue -Key $legacy -Name 'DisplayVersion' -Kind String)
-            $publisher = [string](Get-RequiredRegistryValue -Key $legacy -Name 'Publisher' -Kind String)
-            $location = [string](Get-RequiredRegistryValue -Key $legacy -Name 'InstallLocation' -Kind String)
-            $displayIcon = [string](Get-RequiredRegistryValue -Key $legacy -Name 'DisplayIcon' -Kind String)
-            $productUrl = [string](Get-RequiredRegistryValue -Key $legacy -Name 'URLInfoAbout' -Kind String)
-            $uninstallString = [string](Get-RequiredRegistryValue -Key $legacy -Name 'UninstallString' -Kind String)
-            $quietString = [string](Get-RequiredRegistryValue -Key $legacy -Name 'QuietUninstallString' -Kind String)
-            $pathAdded = [uint32](Get-RequiredRegistryValue -Key $legacy -Name 'PathAdded' -Kind DWord)
-            if ($displayName -cne [string]$Definition.displayName -or $displayVersion -cne [string]$Definition.legacy.version -or
-                $publisher -cne [string]$Definition.publisher -or -not (Test-PathsEqual -Left $location -Right $script:InstallDirectory) -or
-                $displayIcon -cne ('"' + (Join-Path $script:InstallDirectory ([string]$Definition.executableName)) + '",0') -or
-                $productUrl -cne [string]$Definition.productUrl -or
-                $uninstallString -cne ('"' + (Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)) + '"') -or
-                $quietString -cne ('"' + (Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)) + '" /S') -or
-                $pathAdded -notin @(0, 1) -or
-                [uint32](Get-RequiredRegistryValue -Key $legacy -Name 'NoModify' -Kind DWord) -ne 1 -or
-                [uint32](Get-RequiredRegistryValue -Key $legacy -Name 'NoRepair' -Kind DWord) -ne 1) {
-                throw 'Legacy installer registration is not the exact supported v0.0.9 state.'
-            }
-            if (-not (Test-Path -LiteralPath $script:InstallDirectory -PathType Container)) {
-                throw 'Legacy installer directory is missing.'
-            }
-            Assert-NoReparsePath -Path $script:InstallDirectory -Boundary $script:LocalAppData
-            foreach ($file in @($Definition.legacy.files)) {
-                $path = Join-Path $script:InstallDirectory ([string]$file.name)
-                if (-not (Test-Path -LiteralPath $path)) {
-                    continue
-                }
-                [void](Assert-RegularFile -Path $path -Role 'legacy installer file')
-            }
-            $legacyNames = @($Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$Definition.uninstallerName)
-            $reservedNames = @([string[]]$Definition.ownedFiles) + @([string]$Definition.markerFileName)
-            foreach ($name in $reservedNames) {
-                if ($legacyNames -ccontains $name) {
-                    continue
-                }
-                if (Test-Path -LiteralPath (Join-Path $script:InstallDirectory $name)) {
-                    throw "Legacy installer directory contains an unowned file at reserved installer path $name and was preserved."
-                }
-            }
-            $uninstallerPath = Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)
-            if (Test-Path -LiteralPath $uninstallerPath) {
-                [void](Assert-RegularFile -Path $uninstallerPath -Role 'legacy uninstaller')
-            }
-            return [pscustomobject]@{
-                kind = 'Legacy'; installationId = [Guid]::NewGuid().ToString('D'); version = $displayVersion
-                pathAdded = [int]$pathAdded; uninstallPhase = 'Ready'; marker = $null
             }
         }
         if (Test-Path -LiteralPath $script:InstallDirectory) {
@@ -853,7 +764,6 @@ function Get-RegistrationState {
     }
     finally {
         if ($null -ne $current) { $current.Dispose() }
-        if ($null -ne $legacy) { $legacy.Dispose() }
     }
 }
 
@@ -862,33 +772,22 @@ function Get-FileRecordsFromMarker {
 
     $records = @()
     foreach ($record in @($Marker.ownedFiles)) {
-        $records += [pscustomobject]@{ name = [string]$record.name; sha256 = [string]$record.sha256; size = [int64]$record.size }
+        $path = Join-Path $script:InstallDirectory ([string]$record.name)
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $item = Assert-RegularFile -Path $path -Role 'installer-owned file'
+        $records += [pscustomobject]@{
+            name = [string]$record.name
+            sha256 = Get-FileSHA256 -Path $path
+            size = [int64]$item.Length
+        }
     }
     $markerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.markerFileName)
     $records += [pscustomobject]@{
         name = [string]$script:Definition.markerFileName
         sha256 = Get-FileSHA256 -Path $markerPath
         size = (Get-Item -LiteralPath $markerPath -Force).Length
-    }
-    return $records
-}
-
-function Get-LegacyFileRecords {
-    $records = @()
-    foreach ($record in @($script:Definition.legacy.files)) {
-        $path = Join-Path $script:InstallDirectory ([string]$record.name)
-        if (-not (Test-Path -LiteralPath $path)) {
-            continue
-        }
-        $records += [pscustomobject]@{ name = [string]$record.name; sha256 = Get-FileSHA256 -Path $path; size = (Get-Item -LiteralPath $path -Force).Length }
-    }
-    $uninstallerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.uninstallerName)
-    if (Test-Path -LiteralPath $uninstallerPath) {
-        $records += [pscustomobject]@{
-            name = [string]$script:Definition.uninstallerName
-            sha256 = Get-FileSHA256 -Path $uninstallerPath
-            size = (Get-Item -LiteralPath $uninstallerPath -Force).Length
-        }
     }
     return $records
 }
@@ -1016,13 +915,13 @@ function Assert-TransactionFileRecords {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ExpectedNames,
         [Parameter(Mandatory = $true)][ValidateSet('Backup', 'New', 'Uninstall')][string]$Kind,
         [Parameter(Mandatory = $true)][string]$Role,
-        [switch]$AllowMissing
+        [switch]$AllowSubset
     )
 
     $items = @($Records)
     $actualNames = @($items | ForEach-Object { [string]$_.name } | Sort-Object)
     $wantedNames = @($ExpectedNames | Sort-Object)
-    $namesValid = if ($AllowMissing) {
+    $namesValid = if ($AllowSubset) {
         $actualNames.Count -eq @($actualNames | Select-Object -Unique).Count -and
             @($actualNames | Where-Object { $wantedNames -cnotcontains $_ }).Count -eq 0
     }
@@ -1085,34 +984,26 @@ function Assert-TransactionState {
         }
     }
     Assert-RegistrySnapshot -Snapshot $State.currentRegistry -Role 'current registry snapshot'
-    Assert-RegistrySnapshot -Snapshot $State.legacyRegistry -Role 'legacy registry snapshot'
     Assert-PathSnapshot -Snapshot $State.pathBefore -Role 'PATH before snapshot'
     if ($null -ne $State.pathAfter) { Assert-PathSnapshot -Snapshot $State.pathAfter -Role 'PATH after snapshot' }
     Assert-BooleanValue -Value $State.pathChanged -Role 'installer transaction pathChanged'
     Assert-BooleanValue -Value $State.cleanupComplete -Role 'installer transaction cleanupComplete'
 
     $currentExists = [bool]$State.currentRegistry.exists
-    $legacyExists = [bool]$State.legacyRegistry.exists
     if ([string]$State.kind -eq 'Install') {
         if ([string]$State.phase -notin @('Prepared', 'FilesApplied', 'PathApplied', 'Applied', 'Committed') -or
-            [string]$State.installationState -notin @('Fresh', 'Owned', 'Legacy') -or [bool]$State.cleanupComplete) {
+            [string]$State.installationState -notin @('Fresh', 'Owned') -or [bool]$State.cleanupComplete) {
             throw 'Install transaction phase or installation state is invalid.'
         }
-        $oldNames = @(switch ([string]$State.installationState) {
-            'Fresh' {
-                if ($currentExists -or $legacyExists) { throw 'Fresh transaction unexpectedly snapshots a registration.' }
-                @()
-            }
-            'Owned' {
-                if (-not $currentExists -or $legacyExists) { throw 'Owned transaction registration snapshots disagree.' }
-                @([string[]]$script:Definition.ownedFiles) + @([string]$script:Definition.markerFileName)
-            }
-            'Legacy' {
-                if ($currentExists -or -not $legacyExists) { throw 'Legacy transaction registration snapshots disagree.' }
-                @($script:Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$script:Definition.uninstallerName)
-            }
-        })
-        Assert-TransactionFileRecords -Records $State.oldFiles -ExpectedNames $oldNames -Kind Backup -Role 'install prior files' -AllowMissing:([string]$State.installationState -eq 'Legacy')
+        $oldNames = @()
+        if ([string]$State.installationState -eq 'Fresh') {
+            if ($currentExists) { throw 'Fresh transaction unexpectedly snapshots a registration.' }
+        }
+        else {
+            if (-not $currentExists) { throw 'Owned transaction registration snapshot is missing.' }
+            $oldNames = @([string[]]$script:Definition.ownedFiles) + @([string]$script:Definition.markerFileName)
+        }
+        Assert-TransactionFileRecords -Records $State.oldFiles -ExpectedNames $oldNames -Kind Backup -Role 'install prior files' -AllowSubset:([string]$State.installationState -eq 'Owned')
         $newNames = @([string[]]$script:Definition.ownedFiles) + @([string]$script:Definition.markerFileName)
         Assert-TransactionFileRecords -Records $State.newFiles -ExpectedNames $newNames -Kind New -Role 'install candidate files'
         if ([string]$State.phase -in @('Prepared', 'FilesApplied')) {
@@ -1128,7 +1019,7 @@ function Assert-TransactionState {
     if ([string]$State.kind -eq 'Uninstall') {
         if ([string]$State.phase -cne 'CleanupComplete' -or [string]$State.installationState -cne 'Owned' -or
             -not [bool]$State.cleanupComplete -or $null -ne $State.pathAfter -or [bool]$State.pathChanged -or
-            -not $currentExists -or $legacyExists) {
+            -not $currentExists) {
             throw 'Uninstall transaction phase or installation state is invalid.'
         }
         $oldNames = @([string[]]$script:Definition.ownedFiles) + @([string]$script:Definition.markerFileName)
@@ -1143,7 +1034,7 @@ function Read-Transaction {
     $state = Read-JsonFile -Path $script:TransactionStatePath -Role 'installer transaction'
     Assert-ExactProperties -Object $state -Role 'installer transaction' -Expected @(
         'schemaVersion', 'transactionId', 'kind', 'phase', 'installDirectory', 'installationId', 'installationState',
-        'currentRegistry', 'legacyRegistry', 'pathBefore', 'pathAfter', 'pathChanged',
+        'currentRegistry', 'pathBefore', 'pathAfter', 'pathChanged',
         'oldFiles', 'newFiles', 'cleanupComplete'
     )
     Assert-TransactionState -State $state
@@ -1222,7 +1113,6 @@ function Invoke-InstallRollback {
     $errors = New-Object 'Collections.Generic.List[string]'
     try { Restore-PathFromTransaction -State $State } catch { [void]$errors.Add($_.Exception.Message) }
     try { Restore-RegistryKeySnapshot -KeyName ([string]$script:Definition.registryKeyName) -Snapshot $State.currentRegistry } catch { [void]$errors.Add($_.Exception.Message) }
-    try { Restore-RegistryKeySnapshot -KeyName ([string]$script:Definition.legacy.registryKeyName) -Snapshot $State.legacyRegistry } catch { [void]$errors.Add($_.Exception.Message) }
 
     $oldByName = @{}
     foreach ($record in @($State.oldFiles)) {
@@ -1235,7 +1125,7 @@ function Invoke-InstallRollback {
     $names = @($oldByName.Keys + $newByName.Keys | Sort-Object -Unique)
     $executableKey = ([string]$script:Definition.executableName).ToLowerInvariant()
     # Keep the gated candidate executable in place while support files roll back,
-    # then restore any prior (including ungated legacy) executable last.
+    # then restore the prior executable last.
     $names = @($names | Sort-Object { if ($_ -eq $executableKey) { 1 } else { 0 } }, { $_ })
     foreach ($key in $names) {
         try {
@@ -1402,9 +1292,6 @@ function New-InstallTransaction {
     $oldRecords = if ([string]$registrationState.kind -eq 'Owned') {
         @(Get-FileRecordsFromMarker -Marker $registrationState.marker)
     }
-    elseif ([string]$registrationState.kind -eq 'Legacy') {
-        @(Get-LegacyFileRecords)
-    }
     else {
         @()
     }
@@ -1450,7 +1337,6 @@ function New-InstallTransaction {
         installationId = [string]$registrationState.installationId
         installationState = [string]$registrationState.kind
         currentRegistry = Get-RegistryKeySnapshot -KeyName ([string]$script:Definition.registryKeyName)
-        legacyRegistry = Get-RegistryKeySnapshot -KeyName ([string]$script:Definition.legacy.registryKeyName)
         pathBefore = Get-PathSnapshot
         pathAfter = $null
         pathChanged = $false
@@ -1475,15 +1361,7 @@ function Invoke-Install {
         Assert-NoReparsePath -Path $script:InstallDirectory -Boundary $script:LocalAppData
         $newDirectory = Join-Path $script:TransactionDirectory 'new'
         $supportFiles = @([string[]]$script:Definition.ownedFiles | Where-Object { $_ -cne [string]$script:Definition.executableName })
-        $ordered = if ([string]$state.installationState -eq 'Legacy') {
-            # v0.0.9 cannot observe the lifecycle gate. Replacing its executable
-            # first either fails cleanly while it is running or makes every new
-            # launch use the gated executable before support files change.
-            @([string]$script:Definition.executableName) + $supportFiles + @([string]$script:Definition.markerFileName)
-        }
-        else {
-            $supportFiles + @([string]$script:Definition.executableName, [string]$script:Definition.markerFileName)
-        }
+        $ordered = $supportFiles + @([string]$script:Definition.executableName, [string]$script:Definition.markerFileName)
         foreach ($name in $ordered) {
             Move-FileAtomic -Source (Join-Path $newDirectory $name) -Destination (Join-Path $script:InstallDirectory $name)
         }
@@ -1508,8 +1386,8 @@ function Invoke-Install {
         $effectivePresent = @([regex]::Split($currentPath, ';') | Where-Object {
                 Test-PathEntry -Entry $_ -Expected $script:InstallDirectory -ExpandVariables $expand
             }).Count -gt 0
-        $previouslyOwned = [string]$state.installationState -in @('Owned', 'Legacy') -and
-            @($state.currentRegistry.values + $state.legacyRegistry.values | Where-Object {
+        $previouslyOwned = [string]$state.installationState -eq 'Owned' -and
+            @($state.currentRegistry.values | Where-Object {
                     [string]$_.name -eq 'PathAdded' -and [bool]$_.exists -and [string]$_.data -eq '1'
                 }).Count -gt 0
         $pathOwned = $previouslyOwned
@@ -1525,11 +1403,6 @@ function Invoke-Install {
         Save-Transaction -State $state
 
         Set-Registration -State $state -PathOwned $pathOwned
-        if ([string]$state.installationState -eq 'Legacy') {
-            if (Remove-ManagedRegistration -KeyName ([string]$script:Definition.legacy.registryKeyName)) {
-                throw 'Legacy registration retained unknown state during migration.'
-            }
-        }
         $state.phase = 'Applied'
         Save-Transaction -State $state
         Write-InstallerLog -Message 'install payload, registration, and PATH applied'
@@ -1595,7 +1468,10 @@ function Invoke-InspectUninstall {
         return $true
     }
     foreach ($record in @($registration.marker.ownedFiles)) {
-        Test-OwnedFileCanBeRemoved -Path (Join-Path $script:InstallDirectory ([string]$record.name))
+        $path = Join-Path $script:InstallDirectory ([string]$record.name)
+        if (Test-Path -LiteralPath $path) {
+            Test-OwnedFileCanBeRemoved -Path $path
+        }
     }
     $markerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.markerFileName)
     Test-OwnedFileCanBeRemoved -Path $markerPath
@@ -1638,7 +1514,6 @@ function Invoke-MarkCleanupComplete {
         installationId = [string]$registration.installationId
         installationState = 'Owned'
         currentRegistry = Get-RegistryKeySnapshot -KeyName ([string]$script:Definition.registryKeyName)
-        legacyRegistry = Get-RegistryKeySnapshot -KeyName ([string]$script:Definition.legacy.registryKeyName)
         pathBefore = Get-PathSnapshot
         pathAfter = $null
         pathChanged = $false

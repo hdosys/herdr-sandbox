@@ -56,7 +56,7 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 	}
 }
 
-func TestInstallerDefinitionBindsSafeIdentityManifestAndLegacyMigration(t *testing.T) {
+func TestInstallerDefinitionBindsSafeCurrentIdentityManifest(t *testing.T) {
 	version, err := parseReleaseVersion("v0.0.10")
 	if err != nil {
 		t.Fatal(err)
@@ -82,16 +82,8 @@ func TestInstallerDefinitionBindsSafeIdentityManifestAndLegacyMigration(t *testi
 		definition.MarkerFileName != productidentity.InstallerMarkerName ||
 		definition.QuietUninstallHelperName != productidentity.QuietUninstallHelperName ||
 		definition.OutputFileName != filepath.Base(output) ||
-		definition.Legacy.Version != legacyInstallerVersion ||
-		definition.Legacy.RegistryKeyName != productidentity.LegacyUninstallKeyName ||
-		len(definition.Legacy.Files) != len(releasePackageFiles) ||
 		!slices.Equal(definition.OwnedFiles, installerOwnedFiles()) {
 		t.Fatalf("installer definition = %#v", definition)
-	}
-	for _, file := range definition.Legacy.Files {
-		if !installerSHA256Pattern.MatchString(file.SHA256) {
-			t.Fatalf("legacy file hash is invalid: %#v", file)
-		}
 	}
 	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "name. ", "a/b"} {
 		if err := validateInstallerLeaf("fixture", value); err == nil {
@@ -472,7 +464,6 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`updater`,
 		`runtime bundle`,
 		`File /r`,
-		`APP_LEGACY_LICENSE`,
 		`Stopping the app-owned Sandbox`,
 		`MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage`,
 		`Function PolishInstallerFinishPage`,
@@ -540,7 +531,6 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_PRODUCT_URL=" + productidentity.ProductURL`,
 		`"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID`,
 		`"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName`,
-		`"/DAPP_LEGACY_UNINSTALL_KEY=" + productidentity.LegacyUninstallKeyName`,
 		`"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName`,
 		`"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName`,
 		`"/DAPP_COPYRIGHT=" + productidentity.Copyright`,
@@ -553,8 +543,10 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 			t.Fatalf("package task is missing canonical installer identity input %q", want)
 		}
 	}
-	if strings.Contains(source, "LEGACY_LICENSE") {
-		t.Fatal("package task must not carry a legacy license compatibility path")
+	for _, forbidden := range []string{"LegacyUninstallKeyName", "legacyInstaller", "APP_LEGACY_UNINSTALL_KEY"} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("package task still carries installer backward compatibility %q", forbidden)
+		}
 	}
 }
 
@@ -585,7 +577,7 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 		`Copy-FileDurable`,
 		`[IO.FileOptions]::WriteThrough`,
 		`discarded interrupted pre-journal installer preparation`,
-		`Legacy installer directory contains an unowned file at reserved installer path`,
+		`$oldNames = @()`,
 		`sha256 = Get-FileSHA256 -Path $path`,
 		`FileShare]::None`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
@@ -601,19 +593,10 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 			t.Fatalf("installer state helper contains product-specific or unrelated state pattern %q", forbidden)
 		}
 	}
-	if strings.Contains(source, "Legacy installer directory contains unknown or missing entries") {
-		t.Fatal("verified legacy repair still rejects unrelated or missing directory entries")
-	}
-	legacyStart := strings.Index(source, "function Get-LegacyFileRecords")
-	if legacyStart < 0 {
-		t.Fatal("legacy backup record owner is missing")
-	}
-	legacyEnd := strings.Index(source[legacyStart:], "function Remove-SafeTransactionDirectory")
-	if legacyEnd < 0 {
-		t.Fatal("legacy backup record owner has no bounded end")
-	}
-	if strings.Contains(source[legacyStart:legacyStart+legacyEnd], "sha256 = [string]$record.sha256; size") {
-		t.Fatal("legacy backup records still require the published payload hash instead of the actual repair input")
+	for _, forbidden := range []string{"legacy", "Legacy", "v0.0.9", "HerdrSandbox"} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("installer state helper still carries backward compatibility %q", forbidden)
+		}
 	}
 }
 
@@ -645,7 +628,6 @@ func TestInstallerStateHelperRejectsMalformedTransactionBeforeMutation(t *testin
 			"kind": "Unknown", "phase": "Prepared", "installDirectory": installDirectory,
 			"installationId": "22222222-2222-4222-8222-222222222222", "installationState": "Fresh",
 			"currentRegistry": map[string]any{"exists": false, "values": []any{}},
-			"legacyRegistry":  map[string]any{"exists": false, "values": []any{}},
 			"pathBefore":      map[string]any{"keyExists": false, "exists": false, "kind": "", "data": ""},
 			"pathAfter":       nil, "pathChanged": false, "oldFiles": []any{}, "newFiles": []any{}, "cleanupComplete": false,
 		}

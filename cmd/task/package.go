@@ -27,13 +27,11 @@ const installerEngineVersion = "3.12"
 const (
 	installerDefinitionSchemaVersion = 1
 	installerSchemaVersion           = 1
-	legacyInstallerVersion           = "0.0.9"
 	installerUninstallerName         = "uninstall.exe"
 )
 
 var releaseTagPattern = regexp.MustCompile(`^v0\.0\.(0|[1-9][0-9]*)$`)
 var installerProductGUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-var installerSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type releasePackageFile struct {
 	Name string
@@ -61,35 +59,23 @@ type releasePackagePaths struct {
 	InstallerChecksum string
 }
 
-type installerLegacyFile struct {
-	Name   string `json:"name"`
-	SHA256 string `json:"sha256"`
-}
-
-type installerLegacyDefinition struct {
-	Version         string                `json:"version"`
-	RegistryKeyName string                `json:"registryKeyName"`
-	Files           []installerLegacyFile `json:"files"`
-}
-
 type installerDefinition struct {
-	SchemaVersion            int                       `json:"schemaVersion"`
-	InstallerSchemaVersion   int                       `json:"installerSchemaVersion"`
-	ProductGUID              string                    `json:"productGuid"`
-	ApplicationName          string                    `json:"applicationName"`
-	DisplayName              string                    `json:"displayName"`
-	Version                  string                    `json:"version"`
-	Publisher                string                    `json:"publisher"`
-	ProductURL               string                    `json:"productUrl"`
-	InstallDirectoryName     string                    `json:"installDirectoryName"`
-	RegistryKeyName          string                    `json:"registryKeyName"`
-	ExecutableName           string                    `json:"executableName"`
-	MarkerFileName           string                    `json:"markerFileName"`
-	QuietUninstallHelperName string                    `json:"quietUninstallHelperName"`
-	UninstallerName          string                    `json:"uninstallerName"`
-	OutputFileName           string                    `json:"outputFileName"`
-	OwnedFiles               []string                  `json:"ownedFiles"`
-	Legacy                   installerLegacyDefinition `json:"legacy"`
+	SchemaVersion            int      `json:"schemaVersion"`
+	InstallerSchemaVersion   int      `json:"installerSchemaVersion"`
+	ProductGUID              string   `json:"productGuid"`
+	ApplicationName          string   `json:"applicationName"`
+	DisplayName              string   `json:"displayName"`
+	Version                  string   `json:"version"`
+	Publisher                string   `json:"publisher"`
+	ProductURL               string   `json:"productUrl"`
+	InstallDirectoryName     string   `json:"installDirectoryName"`
+	RegistryKeyName          string   `json:"registryKeyName"`
+	ExecutableName           string   `json:"executableName"`
+	MarkerFileName           string   `json:"markerFileName"`
+	QuietUninstallHelperName string   `json:"quietUninstallHelperName"`
+	UninstallerName          string   `json:"uninstallerName"`
+	OutputFileName           string   `json:"outputFileName"`
+	OwnedFiles               []string `json:"ownedFiles"`
 }
 
 func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
@@ -439,15 +425,14 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 		return fmt.Errorf("installer registry key = %q, want fixed product GUID key %q", productidentity.UninstallKeyName, expectedRegistryKey)
 	}
 	for role, value := range map[string]string{
-		"application name":         productidentity.ApplicationName,
-		"executable":               productidentity.ExecutableName,
-		"Base script":              productidentity.BaseScriptName,
-		"Stacks script":            productidentity.StackScriptName,
-		"license":                  productidentity.LicenseName,
-		"installer marker":         productidentity.InstallerMarkerName,
-		"quiet uninstall helper":   productidentity.QuietUninstallHelperName,
-		"uninstaller":              installerUninstallerName,
-		"legacy registry key name": productidentity.LegacyUninstallKeyName,
+		"application name":       productidentity.ApplicationName,
+		"executable":             productidentity.ExecutableName,
+		"Base script":            productidentity.BaseScriptName,
+		"Stacks script":          productidentity.StackScriptName,
+		"license":                productidentity.LicenseName,
+		"installer marker":       productidentity.InstallerMarkerName,
+		"quiet uninstall helper": productidentity.QuietUninstallHelperName,
+		"uninstaller":            installerUninstallerName,
 	} {
 		if err := validateInstallerLeaf(role, value); err != nil {
 			return err
@@ -511,24 +496,6 @@ func writeInstallerDefinition(path string, version releaseVersion, outputPath st
 		UninstallerName:          installerUninstallerName,
 		OutputFileName:           filepath.Base(outputPath),
 		OwnedFiles:               installerOwnedFiles(),
-		Legacy: installerLegacyDefinition{
-			Version:         legacyInstallerVersion,
-			RegistryKeyName: productidentity.LegacyUninstallKeyName,
-			Files: []installerLegacyFile{
-				{Name: productidentity.ExecutableName, SHA256: "6d26dc966e5e2ba9a1ccefde8d5047250420919709f99b882b5cb0ac9bbd6480"},
-				{Name: productidentity.BaseScriptName, SHA256: "65dd916d64a242d33f963098a88b6a72cd697a979e89571d32cf582ce511a78f"},
-				{Name: productidentity.StackScriptName, SHA256: "996e8ec4bb31c6752b7faec240e9fd196b78ea691500efefd7afa03ca9cb062a"},
-				{Name: productidentity.LicenseName, SHA256: "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"},
-			},
-		},
-	}
-	for _, file := range definition.Legacy.Files {
-		if err := validateInstallerLeaf("legacy installer file", file.Name); err != nil {
-			return err
-		}
-		if !installerSHA256Pattern.MatchString(file.SHA256) {
-			return fmt.Errorf("legacy installer file %s has invalid SHA-256", file.Name)
-		}
 	}
 	data, err := json.MarshalIndent(definition, "", "  ")
 	if err != nil {
@@ -622,7 +589,6 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_PRODUCT_URL=" + productidentity.ProductURL,
 		"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID,
 		"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName,
-		"/DAPP_LEGACY_UNINSTALL_KEY=" + productidentity.LegacyUninstallKeyName,
 		"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName,
 		"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName,
 		"/DAPP_COPYRIGHT=" + productidentity.Copyright,

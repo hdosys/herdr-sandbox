@@ -24,9 +24,8 @@ release notes remain available on the
   rollback/recovery, exact silent options, cross-session command exclusion, and
   truthful quiet-uninstall results preserve the previous complete installation or
   resume the intended terminal cleanup after interruption.
-- Setup now repairs registered v0.0.9 installations while preserving unrelated or
-  missing legacy files, and uninstall no longer fails when an active agent or tool
-  temporarily locks disposable package-cache or machine-local state.
+- Uninstall no longer fails when an active agent or tool temporarily locks
+  disposable package-cache or machine-local state.
 
 ## v0.0.9 - 2026-08-05
 

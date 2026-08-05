@@ -69,9 +69,6 @@ Unicode true
 !ifndef APP_UNINSTALL_KEY
     !error "APP_UNINSTALL_KEY is required"
 !endif
-!ifndef APP_LEGACY_UNINSTALL_KEY
-    !error "APP_LEGACY_UNINSTALL_KEY is required"
-!endif
 !ifndef APP_INSTALLER_MARKER
     !error "APP_INSTALLER_MARKER is required"
 !endif
