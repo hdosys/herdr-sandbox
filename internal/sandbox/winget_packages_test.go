@@ -115,6 +115,9 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass TradingView stack": {
 			Add: []string{packageTradingView}, Versions: map[string]string{},
 		},
+		"bypass uv stack": {
+			Add: []string{packageUV}, Versions: map[string]string{},
+		},
 		"version removed": {
 			Remove: []string{packageGit}, Versions: map[string]string{packageGit: "2.55.0"},
 		},

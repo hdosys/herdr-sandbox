@@ -71,8 +71,32 @@ func TestInitializeProjectWritesHerdrVirtualStack(t *testing.T) {
 	}
 }
 
+func TestInitializeProjectWritesPythonAIVirtualStack(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"python-ai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "python-ai" {
+		t.Fatalf("stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Install-PythonAIStack") {
+		t.Fatalf("Python AI virtual profile = %s", text)
+	}
+	for _, expanded := range []string{"Install-PythonStack", "Install-Uv", "torch", "jupyter", "cuda"} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(expanded)) {
+			t.Fatalf("init duplicated or bundled Python AI responsibility %q: %s", expanded, text)
+		}
+	}
+}
+
 func TestInitializeProjectRejectsSelectionsBeforeFilesystemMutation(t *testing.T) {
-	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "zig"}} {
+	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "python-ai"}, {"herdr", "zig"}, {"python-ai", "python"}} {
 		project := t.TempDir()
 		if _, err := InitializeProject(project, requested); err == nil {
 			t.Fatalf("selection %v unexpectedly succeeded", requested)

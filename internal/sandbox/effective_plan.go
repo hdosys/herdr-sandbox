@@ -201,6 +201,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "Rustlang.Rustup"
 	case stackTradingView:
 		return "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest"
+	case stackUV:
+		return packageUV
 	case stackZig:
 		return "zig.zig"
 	default:

@@ -29,6 +29,7 @@ const (
 	packageTerminalStable  = "Microsoft.WindowsTerminal"
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
 	packageTradingView     = "TradingView.TradingViewDesktop"
+	packageUV              = "astral-sh.uv"
 )
 
 var basePackageIDs = []string{
@@ -57,6 +58,7 @@ var projectStackPackageIDs = []string{
 	"nextest.cargo-nextest",
 	"Casey.Just",
 	packageTradingView,
+	packageUV,
 }
 
 type wingetPackageConfiguration struct {

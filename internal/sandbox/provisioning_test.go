@@ -1046,6 +1046,8 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-NodeStack",
 		"function Install-PlaywrightCLIStack",
 		"function Install-PythonStack",
+		"function Install-Uv",
+		"function Install-PythonAIStack",
 		"function Install-ZigStack",
 		"function Install-RustMSVCStack",
 		"function Install-CargoNextest",

@@ -18,6 +18,7 @@ func TestInspectProjectProvisioningPlanUsesDirectCallsWithoutExecutingScripts(t 
 $dynamic = 'Install-ZigStack'
 & $dynamic
 Install-RustMSVCStack -ProjectDirectory 'C:\Workspaces\global'
+Install-Uv
 `)
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, `$dynamic = 'Install-RustMSVCStack'
 & $dynamic
@@ -30,6 +31,7 @@ Install-GoStack
 Install-GoStack -Version '1.26.5'
 Install-DotNetStack
 Install-PlaywrightCLIStack
+Install-PythonAIStack
 Install-TradingViewStack
 throw 'the AST adapter must not execute project code'
 `)
@@ -43,13 +45,13 @@ throw 'the AST adapter must not execute project code'
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
 	}
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go|playwright-cli|tradingview" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "dotnet|go|playwright-cli|python|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
-	if strings.Join(projectStackStrings(userStacks), "|") != "rust-msvc" {
+	if strings.Join(projectStackStrings(userStacks), "|") != "rust-msvc|uv" {
 		t.Fatalf("user stacks = %v", userStacks)
 	}
 }

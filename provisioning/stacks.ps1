@@ -1735,6 +1735,64 @@ function Install-PythonStack {
     Write-Output "Python 3 command ready: $python3Version"
 }
 
+function Install-Uv {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
+        [string]$Version = ''
+    )
+
+    Write-Output 'Installing uv...'
+    Install-ProvisioningWinGetPackage -Role 'uv' -Id 'astral-sh.uv' -Version $Version `
+        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'uv.exe'
+    $uvPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
+        '^uv \d+\.\d+\.\d+(?: \([^)]+\))?$'
+    } else {
+        '^uv ' + [regex]::Escape($Version) + '(?: \([^)]+\))?$'
+    }
+    $uvVersion = Assert-ProvisioningCommand -Role 'uv' -Name 'uv.exe' `
+        -VersionArguments @('--version') -ExpectedPattern $uvPattern
+
+    $uvCacheRoot = 'C:\HerdrSandbox\cache\uv'
+    Assert-ProvisioningCachePath -Path $uvCacheRoot
+    if (-not (Test-Path -LiteralPath $uvCacheRoot)) {
+        New-Item -ItemType Directory -Path $uvCacheRoot -Force | Out-Null
+    }
+    $uvCacheInfo = Get-Item -LiteralPath $uvCacheRoot -Force
+    if (-not $uvCacheInfo.PSIsContainer -or
+        ($uvCacheInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "uv cache directory is unsafe: $uvCacheRoot"
+    }
+    Assert-ProvisioningCacheTree -Path $uvCacheRoot
+
+    $env:UV_CACHE_DIR = $uvCacheRoot
+    $env:UV_NO_MANAGED_PYTHON = '1'
+    [Environment]::SetEnvironmentVariable('UV_CACHE_DIR', $uvCacheRoot, 'Machine')
+    [Environment]::SetEnvironmentVariable('UV_NO_MANAGED_PYTHON', '1', 'Machine')
+    if ([Environment]::GetEnvironmentVariable('UV_CACHE_DIR', 'Machine') -cne $uvCacheRoot -or
+        [Environment]::GetEnvironmentVariable('UV_NO_MANAGED_PYTHON', 'Machine') -cne '1') {
+        throw 'uv environment verification failed.'
+    }
+
+    $uvCommand = (Get-Command 'uv.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $reportedCache = ((Invoke-ProvisioningNative -Role 'uv cache directory verification' `
+                -FilePath $uvCommand -ArgumentList @('cache', 'dir')) -join [Environment]::NewLine).Trim()
+    if ([string]::IsNullOrWhiteSpace($reportedCache) -or
+        [IO.Path]::GetFullPath($reportedCache).TrimEnd('\') -ine $uvCacheRoot) {
+        throw "uv cache directory is unexpected: $reportedCache"
+    }
+    Write-Output "uv ready: $uvVersion"
+}
+
+function Install-PythonAIStack {
+    [CmdletBinding()]
+    param()
+
+    Install-PythonStack -Series '3.13'
+    Install-Uv
+    Write-Output 'Python AI development toolchain ready.'
+}
+
 function Install-ZigStack {
     [CmdletBinding()]
     param(

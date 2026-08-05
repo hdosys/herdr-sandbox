@@ -38,6 +38,7 @@ const (
 	stackPython        projectStack = "python"
 	stackRustMSVC      projectStack = "rust-msvc"
 	stackTradingView   projectStack = "tradingview"
+	stackUV            projectStack = "uv"
 	stackZig           projectStack = "zig"
 )
 
@@ -54,7 +55,7 @@ type projectProvisioningPlanEntry struct {
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackZig:
+	case stackBun, stackCargoNextest, stackDotNet, stackGitSH, stackGo, stackJust, stackNode, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false

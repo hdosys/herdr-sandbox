@@ -8,6 +8,10 @@ release notes remain available on the
 
 ### Added
 
+- A `python-ai` project stack provisions Python 3.13 and latest-stable uv with a
+  persistent dependency cache for CPU and API-based AI projects. Select it with
+  `herdr-sandbox init --stack python-ai`; each project keeps its frameworks and
+  reproducible environment in `pyproject.toml` and `uv.lock`.
 - QR-assisted mobile Herdr access can use device-owned Ed25519 keys over the
   stable private Tailscale identity. A dedicated key-only endpoint keeps its
   host fingerprint across fresh Sandboxes, while `herdr-sandbox mobile` prints

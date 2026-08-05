@@ -41,7 +41,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Multi-stack provisioning:** .NET 10, Go, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Python AI development with uv, Rust/MSVC, and Zig share one idempotent project-profile model.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
@@ -51,7 +51,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
 
-Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python, and TradingView Desktop with TVControl**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python with uv, and TradingView Desktop with TVControl**. A first run can take longer because browser and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -152,7 +152,7 @@ For an official Herdr upstream checkout without a project profile, select its ma
 herdr-sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine `dotnet`, `go`, `herdr`, `node`, `playwright-cli`, `python`, `python-ai`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. The virtual `python-ai` choice includes Python 3.13 and uv; it cannot be combined with `python` or `herdr`. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -237,15 +237,35 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 | TradingView Desktop with TVControl | `Install-TradingViewStack` |
 | Bun | `Install-BunStack` |
 | Python (latest stable) | `Install-PythonStack` |
+| Python 3.13 AI/API development with uv | `Install-PythonAIStack` |
+| uv | `Install-Uv` |
 | Zig | `Install-ZigStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
 | Cargo Nextest | `Install-CargoNextest` |
 | Just | `Install-Just` |
 
 - Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
-- `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state. `plan` expands the composition back into those concrete owners without executing the profile.
-- An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
-- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. The TradingView stack similarly installs TVControl as a guest-local command rather than changing the mapped project's `package.json` or lockfile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain project-owned. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+- `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state.
+- `Install-PythonAIStack` is the second virtual composition. It reuses Python 3.13 and the standalone uv owner. `plan` expands both virtual compositions back into their concrete owners without executing the profile.
+- An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. uv follows the same latest-stable package path. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
+- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. The TradingView stack similarly installs TVControl as a guest-local command rather than changing the mapped project's `package.json` or lockfile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain project-owned. Python AI likewise leaves PyTorch, Transformers, Jupyter, provider SDKs, and other dependencies in the project's `pyproject.toml` and `uv.lock`. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+
+#### Python AI/API development with uv
+
+Select the dedicated virtual stack for CPU inference, notebooks, or API-based AI projects:
+
+```powershell
+herdr-sandbox init --stack python-ai
+```
+
+It installs the current Python 3.13 patch and latest stable uv, verifies both commands, disables uv-managed Python downloads so the built-in Python stack remains the runtime owner, and preserves uv's concurrency-safe dependency cache at `C:\HerdrSandbox\cache\uv`. Project environments and dependencies remain project-owned:
+
+```powershell
+uv sync
+uv run python app.py
+```
+
+Commit the project's `pyproject.toml` and `uv.lock`; subsequent setup can use `uv sync --locked`. Add the framework, notebook, or provider SDK required by that project rather than installing one global bundle. The initial stack does not configure CUDA; GPU support requires a separately verified native hardware path.
 
 #### Playwright CLI with the guest's existing Edge
 

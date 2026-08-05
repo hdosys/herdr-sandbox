@@ -224,6 +224,7 @@ Set-StrictMode -Version 2.0
 Install-DotNetStack
 Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
+Install-Uv
 Install-NodeStack
 Install-PlaywrightCLIStack
 Install-TradingViewStack
@@ -520,6 +521,7 @@ $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python = (Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python3 = (Get-Command 'python3.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$uv = (Get-Command 'uv.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $bun = (Get-Command 'bun.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $cargo = (Get-Command 'cargo.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $nextest = (Get-Command 'cargo-nextest.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -628,6 +630,28 @@ Write-SmokeFile $pythonFile @('print("python-smoke-ok")')
 $pythonOutput = Invoke-SmokeTool 'python-run' $python @($pythonFile)
 Assert-SmokeOutput 'python-run' $pythonOutput 'python-smoke-ok'
 $null = Invoke-SmokeTool 'python3-version' $python3 @('--version')
+$null = Invoke-SmokeTool 'uv-version' $uv @('--version')
+$expectedUvCache = 'C:\HerdrSandbox\cache\uv'
+if ($env:UV_CACHE_DIR -cne $expectedUvCache -or $env:UV_NO_MANAGED_PYTHON -cne '1') {
+    throw "uv environment is unexpected: cache=$env:UV_CACHE_DIR managed=$env:UV_NO_MANAGED_PYTHON"
+}
+$uvCache = Invoke-SmokeTool 'uv-cache-dir' $uv @('cache','dir')
+if ([IO.Path]::GetFullPath($uvCache).TrimEnd('\') -ine $expectedUvCache) {
+    throw "uv cache path is unexpected: $uvCache"
+}
+$uvRoot = Join-Path $root 'python-ai'
+Write-SmokeFile (Join-Path $uvRoot 'pyproject.toml') @('[project]','name = "herdr-python-ai-smoke"','version = "0.0.0"','requires-python = ">=3.13,<3.14"','dependencies = []','','[tool.uv]','package = false')
+Write-SmokeFile (Join-Path $uvRoot 'smoke.py') @('print("python-ai-smoke-ok")')
+Push-Location $uvRoot
+try {
+    $null = Invoke-SmokeTool 'uv-sync' $uv @('sync','--offline')
+    $uvOutput = Invoke-SmokeTool 'uv-run' $uv @('run','--offline','--frozen','python','smoke.py')
+} finally { Pop-Location }
+Assert-SmokeOutput 'uv-run' $uvOutput 'python-ai-smoke-ok'
+if (-not (Test-Path -LiteralPath (Join-Path $uvRoot 'uv.lock') -PathType Leaf) -or
+    -not (Test-Path -LiteralPath (Join-Path $uvRoot '.venv\Scripts\python.exe') -PathType Leaf)) {
+    throw 'uv did not create the locked Python 3.13 project environment.'
+}
 
 $null = Invoke-SmokeTool 'cargo-version' $cargo @('--version')
 $null = Invoke-SmokeTool 'bun-version' $bun @('--version')
