@@ -811,19 +811,30 @@ function Get-RegistrationState {
                 throw 'Legacy installer directory is missing.'
             }
             Assert-NoReparsePath -Path $script:InstallDirectory -Boundary $script:LocalAppData
-            $expectedFiles = @($Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$Definition.uninstallerName)
-            $actualFiles = @((Get-ChildItem -LiteralPath $script:InstallDirectory -Force) | ForEach-Object { $_.Name } | Sort-Object)
-            if ([string]::Join("`n", $actualFiles) -cne [string]::Join("`n", @($expectedFiles | Sort-Object))) {
-                throw 'Legacy installer directory contains unknown or missing entries and was preserved.'
-            }
             foreach ($file in @($Definition.legacy.files)) {
                 $path = Join-Path $script:InstallDirectory ([string]$file.name)
+                if (-not (Test-Path -LiteralPath $path)) {
+                    continue
+                }
                 [void](Assert-RegularFile -Path $path -Role 'legacy installer file')
                 if ((Get-FileSHA256 -Path $path) -cne [string]$file.sha256) {
                     throw "Legacy installer file failed published v0.0.9 verification: $($file.name)"
                 }
             }
-            [void](Assert-RegularFile -Path (Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)) -Role 'legacy uninstaller')
+            $legacyNames = @($Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$Definition.uninstallerName)
+            $reservedNames = @([string[]]$Definition.ownedFiles) + @([string]$Definition.markerFileName)
+            foreach ($name in $reservedNames) {
+                if ($legacyNames -ccontains $name) {
+                    continue
+                }
+                if (Test-Path -LiteralPath (Join-Path $script:InstallDirectory $name)) {
+                    throw "Legacy installer directory contains an unowned file at reserved installer path $name and was preserved."
+                }
+            }
+            $uninstallerPath = Join-Path $script:InstallDirectory ([string]$Definition.uninstallerName)
+            if (Test-Path -LiteralPath $uninstallerPath) {
+                [void](Assert-RegularFile -Path $uninstallerPath -Role 'legacy uninstaller')
+            }
             return [pscustomobject]@{
                 kind = 'Legacy'; installationId = [Guid]::NewGuid().ToString('D'); version = $displayVersion
                 pathAdded = [int]$pathAdded; uninstallPhase = 'Ready'; marker = $null
@@ -869,13 +880,18 @@ function Get-LegacyFileRecords {
     $records = @()
     foreach ($record in @($script:Definition.legacy.files)) {
         $path = Join-Path $script:InstallDirectory ([string]$record.name)
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
         $records += [pscustomobject]@{ name = [string]$record.name; sha256 = [string]$record.sha256; size = (Get-Item -LiteralPath $path -Force).Length }
     }
     $uninstallerPath = Join-Path $script:InstallDirectory ([string]$script:Definition.uninstallerName)
-    $records += [pscustomobject]@{
-        name = [string]$script:Definition.uninstallerName
-        sha256 = Get-FileSHA256 -Path $uninstallerPath
-        size = (Get-Item -LiteralPath $uninstallerPath -Force).Length
+    if (Test-Path -LiteralPath $uninstallerPath) {
+        $records += [pscustomobject]@{
+            name = [string]$script:Definition.uninstallerName
+            sha256 = Get-FileSHA256 -Path $uninstallerPath
+            size = (Get-Item -LiteralPath $uninstallerPath -Force).Length
+        }
     }
     return $records
 }
@@ -1002,14 +1018,22 @@ function Assert-TransactionFileRecords {
         $Records,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ExpectedNames,
         [Parameter(Mandatory = $true)][ValidateSet('Backup', 'New', 'Uninstall')][string]$Kind,
-        [Parameter(Mandatory = $true)][string]$Role
+        [Parameter(Mandatory = $true)][string]$Role,
+        [switch]$AllowMissing
     )
 
     $items = @($Records)
     $actualNames = @($items | ForEach-Object { [string]$_.name } | Sort-Object)
     $wantedNames = @($ExpectedNames | Sort-Object)
-    if ($items.Count -ne $ExpectedNames.Count -or
-        [string]::Join("`n", $actualNames) -cne [string]::Join("`n", $wantedNames)) {
+    $namesValid = if ($AllowMissing) {
+        $actualNames.Count -eq @($actualNames | Select-Object -Unique).Count -and
+            @($actualNames | Where-Object { $wantedNames -cnotcontains $_ }).Count -eq 0
+    }
+    else {
+        $items.Count -eq $ExpectedNames.Count -and
+            [string]::Join("`n", $actualNames) -ceq [string]::Join("`n", $wantedNames)
+    }
+    if (-not $namesValid) {
         throw "$Role file names do not match the exact expected set."
     }
     $backupNames = @{}
@@ -1091,7 +1115,7 @@ function Assert-TransactionState {
                 @($script:Definition.legacy.files | ForEach-Object { [string]$_.name }) + @([string]$script:Definition.uninstallerName)
             }
         })
-        Assert-TransactionFileRecords -Records $State.oldFiles -ExpectedNames $oldNames -Kind Backup -Role 'install prior files'
+        Assert-TransactionFileRecords -Records $State.oldFiles -ExpectedNames $oldNames -Kind Backup -Role 'install prior files' -AllowMissing:([string]$State.installationState -eq 'Legacy')
         $newNames = @([string[]]$script:Definition.ownedFiles) + @([string]$script:Definition.markerFileName)
         Assert-TransactionFileRecords -Records $State.newFiles -ExpectedNames $newNames -Kind New -Role 'install candidate files'
         if ([string]$State.phase -in @('Prepared', 'FilesApplied')) {

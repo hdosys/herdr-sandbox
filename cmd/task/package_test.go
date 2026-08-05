@@ -585,6 +585,7 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 		`Copy-FileDurable`,
 		`[IO.FileOptions]::WriteThrough`,
 		`discarded interrupted pre-journal installer preparation`,
+		`Legacy installer directory contains an unowned file at reserved installer path`,
 		`FileShare]::None`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
 		`[string]::Join(';', [string[]]$kept)`,
@@ -598,6 +599,9 @@ func TestInstallerStateHelperOwnsTransactionsAndPreservesUnownedState(t *testing
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("installer state helper contains product-specific or unrelated state pattern %q", forbidden)
 		}
+	}
+	if strings.Contains(source, "Legacy installer directory contains unknown or missing entries") {
+		t.Fatal("verified legacy repair still rejects unrelated or missing directory entries")
 	}
 }
 

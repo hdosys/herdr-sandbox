@@ -255,6 +255,9 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 	for _, root := range removalRoots {
 		plan, err := planInstallerDirectoryRemoval(root.path, root.role)
 		if err != nil {
+			if strings.EqualFold(filepath.Clean(root.path), filepath.Clean(paths.CacheDirectory)) {
+				continue
+			}
 			return err
 		}
 		plans = append(plans, plan)
@@ -267,6 +270,9 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 			return err
 		}
 		if err := applyInstallerDirectoryRemoval(plan); err != nil {
+			if strings.EqualFold(filepath.Clean(plan.Path), filepath.Clean(paths.CacheDirectory)) {
+				continue
+			}
 			return err
 		}
 	}
@@ -275,9 +281,10 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 	}
 	plans = nil
 	if paths.DefaultCacheParent != "" {
-		if err := removeEmptyInstallerCacheParent(paths.DefaultCacheParent); err != nil {
-			return err
-		}
+		// The cache is disposable acceleration state. A running tool may retain a
+		// Windows file handle after setup or another agent action exits; preserve
+		// that residual instead of making application removal depend on it.
+		_ = removeEmptyInstallerCacheParent(paths.DefaultCacheParent)
 	}
 	return nil
 }

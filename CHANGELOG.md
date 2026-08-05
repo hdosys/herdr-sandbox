@@ -6,6 +6,13 @@ release notes remain available on the
 
 ## Unreleased
 
+### Added
+
+- QR-assisted mobile Herdr access can use device-owned Ed25519 keys over the
+  stable private Tailscale identity. A dedicated key-only endpoint keeps its
+  host fingerprint across fresh Sandboxes, while `herdr-sandbox mobile` prints
+  the secret-free connection profile and manual fallback.
+
 ### Fixed
 
 - Installer upgrades and removal now bind registry, directory, file-manifest, and
@@ -13,6 +20,9 @@ release notes remain available on the
   rollback/recovery, exact silent options, cross-session command exclusion, and
   truthful quiet-uninstall results preserve the previous complete installation or
   resume the intended terminal cleanup after interruption.
+- Setup now repairs verified v0.0.9 installations while preserving unrelated or
+  missing legacy files, and uninstall no longer fails when an active agent or tool
+  temporarily locks the disposable package cache.
 
 ## v0.0.9 - 2026-08-05
 

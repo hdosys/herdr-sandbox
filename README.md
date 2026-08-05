@@ -45,7 +45,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
-- **Stable private reachability with Tailscale (experimental):** opt in to preserve one tagged guest identity, Tailscale IP, and MagicDNS name across fresh Sandboxes without exposing services publicly.
+- **QR-assisted mobile Herdr over Tailscale (experimental):** preserve one tagged guest identity and connect from an authorized phone, tablet, or computer through a key-only private endpoint without publishing a service to the internet.
 
 ## Deployment time
 
@@ -95,13 +95,14 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
 - Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A product GUID and random installation ID bind Windows registration to a local marker and hash/size manifest; unknown or changed ownership fails before destructive work.
+- Repairs the published v0.0.9 layout when its existing managed files still match their release hashes. Missing managed files are recreated and unrelated install-directory files are preserved instead of blocking setup.
 - A same-volume durable transaction snapshots every managed registry value and the typed raw user `PATH`, retains the complete prior owned payload, replaces support files before the executable, and recovers automatically on the next run after interruption.
 - Setup and uninstall share one cross-session gate with ordinary application commands, so no command can start against files being replaced or removed.
 - Creates `config.json` and `user.ps1` transactionally only when absent; setup and upgrades never replace existing user settings.
 - Adds at most one exact user `PATH` entry after a bounded concurrent-edit check. An effective matching entry that existed before setup remains user-owned.
 - Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
 - Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`.
-- Uninstall never stops a running Sandbox. It preflights owned-file locks and registration/PATH access, removes app-owned runtime state, SSH integration, and cache, records that phase durably, then removes manifest-owned files and metadata; a running Sandbox remains open but unmanaged.
+- Uninstall never stops a running Sandbox. It preflights owned-file locks and registration/PATH access, removes app-owned runtime state and SSH integration, and attempts to remove the disposable package cache before removing manifest-owned files and metadata. A cache file still used by an agent or tool is preserved and no longer blocks application removal; a running Sandbox remains open but unmanaged.
 - Interrupted install and uninstall phases resume from their journal instead of guessing from missing filenames. Unknown files in the installation directory are preserved and reported.
 - Silent uninstall uses an installer-owned PowerShell runner that waits for the real temporary uninstaller and returns its exit status; destructive configuration deletion requires the exact `/DELETE_CONFIG` token.
 - **Also delete config.json and user.ps1** is off by default, so settings survive reinstall unless you explicitly select deletion.
@@ -205,6 +206,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 | `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
 | `herdr-sandbox attach` | Verifies and attaches to the ready guest without reprovisioning. |
 | `herdr-sandbox status` | Reports guest health, operation progress, workspaces, versions, timings, diagnostics, warnings, and the next action. |
+| `herdr-sandbox mobile` | Prints the ready mobile SSH URI, pinned host-key fingerprint, and secret-free QR code. |
 | `herdr-sandbox down` | Stops only the revalidated app-owned Sandbox. If opted-in Tailscale state cannot be preserved, the guest remains running. |
 | `herdr-sandbox clean` | Removes only validated inactive run workspaces while preserving active or uncertain state, configuration, projects, and cache. |
 
@@ -215,7 +217,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 - Cleanup clears stale run and SSH state only when process evidence proves no Sandbox launcher or client remains. Changed, unmanaged, reparse-bearing, or uncertain state is preserved and reported.
 - A freely acquired lifecycle lock records an abandoned retained operation as interrupted before another mutation can begin.
 - `up` reuses only an exact ready app-owned instance. Inspect refused state with `status`, then use `down` only when the CLI identifies the app-owned guest.
-- Changing Tailscale, audio, memory, cache, folder mounts, or workspace mappings requires `down` before the next `up`.
+- Changing Tailscale, mobile SSH authorized keys, audio, memory, cache, folder mounts, or workspace mappings requires `down` before the next `up`.
 
 </details>
 
@@ -313,6 +315,7 @@ The command creates `config.json` only when absent and never replaces existing s
   "audio": false,
   "audioInput": false,
   "tailscale": false,
+  "mobileSSHAuthorizedKeys": [],
   "codingAgentSync": {
     "opencode": true,
     "claudeCode": true,
@@ -353,6 +356,7 @@ The command creates `config.json` only when absent and never replaces existing s
 | `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
 | `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
+| `mobileSSHAuthorizedKeys` | Up to eight unique device-owned `ssh-ed25519` public keys. A nonempty array requires `tailscale: true`; changing it requires a fresh Sandbox. Never put private keys here. |
 | `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
 | `workspaces` | User-named project roots mapped to `C:\Workspaces\<name>`. Names are arbitrary but unique; values are absolute existing host folders. |
 | `mounts` | Optional user-named non-workspace folders mapped to `C:\Mounts\<name>`. Every entry requires an absolute existing `path` and explicit `readOnly`; at most 16 are allowed. |
@@ -453,7 +457,7 @@ Persistent host state is split intentionally:
 | Path | Contents |
 | --- | --- |
 | `%APPDATA%\herdr-sandbox` | User-owned global config and `user.ps1` extension. |
-| `%LOCALAPPDATA%\herdr-sandbox\identity` | Host SSH identity and optional DPAPI-protected Tailscale identity. |
+| `%LOCALAPPDATA%\herdr-sandbox\identity` | Host management SSH identity plus optional DPAPI-protected Tailscale and mobile SSH server identities. |
 | `%LOCALAPPDATA%\herdr-sandbox\runs` | Per-run status, diagnostics, host-owned retained-operation state, SSH material, and `.wsb` files. Do not edit an active run. |
 | `%LOCALAPPDATA%\herdr-sandbox\ssh\config` | App-owned `Host sandbox` target for the current guest; removed automatically only when no Sandbox is proven to remain. |
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
@@ -466,9 +470,11 @@ use.
 
 - Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
 - The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
+- Mobile device private keys never leave those devices. Only their Ed25519 public keys enter config/run input, and the QR contains only the SSH URI.
 - Approved GitHub CLI and coding-agent credentials travel only over verified SSH and never enter persistent run input or logs. Machine-bound credentials require a guest login.
 - GitHub CLI tokens use disposable guest-only file storage, and HTTPS Git is wired to `gh auth git-credential` so Git Credential Manager cannot open an account prompt.
 - Tailscale auth-key and state bytes never enter mappings, status, diagnostics, command lines, or package cache.
+- The mobile endpoint binds only the guest's Tailscale IPv4 on TCP 2222 with key-only authentication and forwarding disabled. Guest firewall policy separately blocks tailnet access to management TCP 22.
 - Every OpenCode configuration sync reapplies a guest-managed policy that replaces host top-level and per-agent permissions with `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.
 - The reviewed disposable-guest privacy profile intentionally restricts Defender cloud/security features, SmartScreen, automatic updates, telemetry, and related services. It is not a hardened production workstation profile.
 - Downloads and cache hits are validated against strict versions, metadata, hashes, signatures, or package identity as applicable.
@@ -480,9 +486,9 @@ use.
 > [!CAUTION]
 > The required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open. Use this opt-in only with a tailnet prepared for a dedicated tagged device.
 
-`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage policy. The stable address lets an approved phone, tablet, or computer reach services in the running Sandbox without publishing them to the internet. Leave `"tailscale": false` for a manually managed disposable login whose identity is not preserved.
+`herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage policy. The stable address lets an approved phone, tablet, or computer reach Herdr in the running Sandbox without publishing it to the internet. Leave `"tailscale": false` when stable private reachability is not needed.
 
-Tailscale supplies only the private network path. Another device still needs a compatible client and an explicitly authorized credential; the default OpenSSH endpoint accepts only the app-owned host identity. Never copy that private key to another device.
+Tailscale supplies only the private network path. Tailscale SSH server mode is unavailable on Windows, so Herdr Sandbox starts a separate key-only Win32-OpenSSH listener on TCP 2222 when mobile public keys are configured. It binds only the verified Tailscale IPv4, disables forwarding, and sends interactive logins directly into Herdr. The app-owned management endpoint on TCP 22 remains separate and is blocked from tailnet clients; never copy its private key to another device.
 
 <details>
 <summary><strong>First-time tailnet and enrollment setup</strong></summary>
@@ -504,15 +510,19 @@ In the [Tailscale admin console](https://login.tailscale.com/admin):
     {
       "action": "accept",
       "src": ["autogroup:admin"],
-      "dst": ["tag:herdr-sandbox:22"]
+      "dst": ["tag:herdr-sandbox:2222"]
     }
   ]
 }
 ```
 
-Replace the source and ports with the users, groups, and services actually required. See Tailscale's [tag](https://tailscale.com/docs/features/tags) and [access-control](https://tailscale.com/docs/features/access-control) documentation.
+Replace the source with the exact users or groups that may control Herdr, merge the rule into existing policy, and do not grant mobile peers TCP 22. See Tailscale's [tag](https://tailscale.com/docs/features/tags) and [access-control](https://tailscale.com/docs/features/access-control) documentation.
 
-### 2. Create the one-time key
+### 2. Create a mobile device key
+
+In each mobile SSH app, generate a new Ed25519 key on that device and copy only its OpenSSH-format public key. The private key must remain device-owned. Up to eight unique public keys are accepted; optional comments must be one token.
+
+### 3. Create the one-time Tailscale key
 
 Create one auth key on the admin console's Keys page:
 
@@ -523,9 +533,20 @@ Create one auth key on the admin console's Keys page:
 
 If Tailnet Lock is enabled, sign the key from an existing trusted node first. Never put it in `config.json`, provisioning, shell history, or an argument to `herdr-sandbox up` or `tailscale up`.
 
-### 3. Enable and enroll
+### 4. Enable and enroll
 
-Set `"tailscale": true` in `%APPDATA%\herdr-sandbox\config.json`. A minimal `{ "tailscale": true }` file is valid; before the first-ever `up`, create that file with an editor. Keep `Tailscale.Tailscale` in the Base package plan.
+Set `"tailscale": true` and add the copied public keys in `%APPDATA%\herdr-sandbox\config.json`. Keep `Tailscale.Tailscale` in the Base package plan:
+
+```json
+{
+  "tailscale": true,
+  "mobileSSHAuthorizedKeys": [
+    "ssh-ed25519 <device-public-key-base64> phone"
+  ]
+}
+```
+
+Replace the placeholder with the complete public key generated by the device. Before the first-ever `up`, create or update this file with an editor.
 
 From the intended project directory, pass the key once without putting it in command history:
 
@@ -542,13 +563,19 @@ try {
 }
 ```
 
-The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify the route from an intended peer with `tailscale ping herdr-sandbox`; service login still requires its own authorized credential.
+The CLI removes its inherited environment copy before launching children, enrolls fixed hostname `herdr-sandbox`, verifies the tagged identity, and stores node state only as current-user DPAPI ciphertext. Confirm exactly one tagged device in the admin console and verify the route from an intended peer with `tailscale ping herdr-sandbox`.
 
-### 4. Later Sandboxes
+When provisioning reaches ready, the visible Sandbox console shows a secret-free QR containing only `ssh://WDAGUtilityAccount@<MagicDNS-name>:2222`, the manual IPv4 fallback, and the server host-key fingerprint. Scan it with the SSH app, confirm that fingerprint, and select the device key if the app asks. Later, print the same connection profile from the host without restarting anything:
+
+```powershell
+herdr-sandbox mobile
+```
+
+### 5. Later Sandboxes
 
 Do not supply the auth key again. `down` captures and verifies current state before closing; the next fresh `up` restores it over verified SSH. Device ID, node key, IPv4, MagicDNS, hostname, tags, and Windows Sandbox user SID must remain exact or the workflow fails closed.
 
-Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDATA%\herdr-sandbox\identity\tailscale-identity.json` while expecting restoration. The protected identity is bound to the current Windows host user and is not a portable backup.
+Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDATA%\herdr-sandbox\identity\tailscale-identity.json` while expecting restoration. The protected Tailscale and mobile server identities are bound to the current Windows host user and are not portable backups. To add or revoke a mobile key, edit `mobileSSHAuthorizedKeys`, run `herdr-sandbox down`, and start a fresh guest with `herdr-sandbox up`.
 
 </details>
 
@@ -564,6 +591,9 @@ Start with `herdr-sandbox status`; it preserves a running guest, removes only pr
 | The guest has no playback audio | Audio output is off by default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. This does not enable microphone input. |
 | The guest cannot use the microphone | Microphone input is off by default. Set `"audioInput": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Host microphone permissions or policy can still block sharing. |
 | `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
+| `herdr-sandbox mobile` says access is not ready | Require `"tailscale": true`, at least one valid `mobileSSHAuthorizedKeys` entry, and a fresh successful `up`. A retained guest cannot adopt a changed key set. |
+| The phone cannot reach mobile Herdr | Confirm Tailscale is connected on the phone, policy grants that principal `tag:herdr-sandbox:2222`, and the URI/fingerprint match `herdr-sandbox mobile`. Do not substitute management port 22. |
+| The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Herdr is copied from the host and does not use the download cache. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
@@ -589,7 +619,7 @@ go run ./cmd/task package v0.0.0
 
 ## License
 
-`herdr-sandbox` is licensed under the [Apache License, Version 2.0](LICENSE) and is provided on an **"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND**. See the license for the governing terms, including its warranty disclaimer and limitation of liability.
+`herdr-sandbox` is licensed under the [Apache License, Version 2.0](LICENSE) and is provided on an **"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND**. The same file retains the BSD notice for the bundled `rsc.io/qr` component. See the license for the governing terms, including warranty disclaimers and limitations of liability.
 
 ## Documentation
 
