@@ -26,9 +26,10 @@ release notes remain available on the
   without browser binaries or update-check state and prepares the official
   extension for manual attachment to the guest user's existing headed Edge profile.
 - A `tradingview` project stack installs the latest stable TVControl commands and
-  official TradingView Desktop MSIX while leaving application launch, CDP access,
-  authentication, MCP configuration, and chart/account data untouched. Native
-  MSIX acceptance remains blocked on the current build-19041 verification guest.
+  extracts the verified official TradingView Desktop MSIX payload while leaving
+  application launch, CDP access, authentication, MCP configuration, and
+  chart/account data untouched during provisioning. Portable Desktop launch and
+  TVControl health/compatibility passed on the build-19041 verification guest.
 
 ### Changed
 

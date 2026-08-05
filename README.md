@@ -270,18 +270,18 @@ Without the token, the official extension asks the user to approve and select a 
 
 #### TradingView Desktop with TVControl
 
-Select the dedicated stack to install the official TradingView Desktop MSIX and FerroxLabs [TVControl](https://github.com/FerroxLabs/tvcontrol) without changing project dependencies:
+Select the dedicated stack to install the official TradingView Desktop MSIX payload and FerroxLabs [TVControl](https://github.com/FerroxLabs/tvcontrol) without changing project dependencies:
 
 ```powershell
 herdr-sandbox init --stack tradingview
 ```
 
-The stack requires Windows build 19042 or newer, reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. TradingView Desktop also resolves latest stable through the existing verified WinGet MSIX cache. Provisioning validates both installations but deliberately does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
+The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. For Desktop, it resolves the current official WinGet manifest, verifies the vendor MSIX hash and signature, and extracts the unchanged payload below `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`. This deliberately avoids AppX registration—the package manifest requires build 19042 for registration—while keeping the same official binaries and one latest-stable package owner. Provisioning validates both payloads but does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
 
 > [!NOTE]
-> The current native acceptance Sandbox is Windows build 19041, one build below TradingView Desktop's publisher-declared minimum. Source, npm, plan, and package gates are available here, but the MSIX installation plus live launch/auth/chart boundary remains blocked until verification runs on build 19042 or newer.
+> Native acceptance passed on Windows build 19041: the extracted official Desktop payload opened a visible window and CDP, `tv launch` selected that exact executable, and `tv status` reported healthy API, datafeed, and compatibility state. No package manifest, signature, hash, or older-version fallback is modified.
 
-`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). Review and preserve any open TradingView work first: TVControl's Windows MSIX fallback can materialize a guest-local executable copy and terminate an existing TradingView process during recovery. Use `tv status` and read TVControl's documentation before chart automation. TradingView's terms may restrict automated collection, scraping, non-display use, and data redistribution; this stack grants no right to bypass those terms or access controls.
+`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). It is non-destructive by default; review and preserve open work before explicitly adding `--kill-existing`. Use `tv status` and read TVControl's documentation before chart automation. TradingView's terms may restrict automated collection, scraping, non-display use, and data redistribution; this stack grants no right to bypass those terms or access controls.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 

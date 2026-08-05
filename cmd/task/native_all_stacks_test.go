@@ -48,10 +48,13 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\tvcontrol`, "launch intentionally skipped", "bun-run", "python3-version", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR"} {
+	for _, required := range []string{"playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR"} {
 		if !strings.Contains(nativeAllStacksSmokeScript, required) {
 			t.Fatalf("native smoke does not verify %s", required)
 		}
+	}
+	if strings.Contains(nativeAllStacksSmokeScript, "Get-AppxPackage -Name 'TradingView.Desktop'") {
+		t.Fatal("native TradingView smoke retains the rejected AppX registration path")
 	}
 	if len(configuration.Mounts) != 2 || configuration.Mounts["reference"].Path != fixture.ReadOnlyMount ||
 		!configuration.Mounts["reference"].ReadOnly || configuration.Mounts["worktrees"].Path != fixture.WritableMount ||

@@ -528,6 +528,7 @@ $rustc = (Get-Command 'rustc.exe' -CommandType Application -ErrorAction Stop | S
 $sh = (Get-Command 'sh.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $zig = (Get-Command 'zig.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $playwrightAgentCLI = (Get-Command 'playwright-cli.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$tradingView = (Get-Command 'TradingView.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $tv = (Get-Command 'tv.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $tvcontrol = (Get-Command 'tvcontrol.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
@@ -589,15 +590,20 @@ if ($playwrightExtensionUpdateURL -cne 'https://clients2.google.com/service/upda
 }
 [Console]::Out.WriteLine('[all-stacks] playwright-cli: exact CLI and official extension registration OK')
 
-$tradingViewPackages = @(Get-AppxPackage -Name 'TradingView.Desktop' -ErrorAction Stop)
-if ($tradingViewPackages.Count -ne 1 -or
-    [string]$tradingViewPackages[0].Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-    [string]::IsNullOrWhiteSpace([string]$tradingViewPackages[0].InstallLocation)) {
-    throw 'TradingView Desktop AppX identity is invalid.'
+$tradingViewRoot = 'C:\HerdrSandbox\tools\TradingView.TradingViewDesktop'
+$tradingViewExecutables = @(Get-ChildItem -LiteralPath $tradingViewRoot -File -Recurse -Filter 'TradingView.exe')
+$tradingViewManifestPath = Join-Path $tradingViewRoot 'AppxManifest.xml'
+if ($tradingViewExecutables.Count -ne 1 -or
+    [IO.Path]::GetFullPath($tradingView) -ine [IO.Path]::GetFullPath($tradingViewExecutables[0].FullName) -or
+    [string]$tradingViewExecutables[0].VersionInfo.FileVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+    -not (Test-Path -LiteralPath $tradingViewManifestPath -PathType Leaf)) {
+    throw 'TradingView Desktop portable payload is invalid.'
 }
-$tradingViewExecutable = Join-Path ([string]$tradingViewPackages[0].InstallLocation) 'TradingView.exe'
-if (-not (Test-Path -LiteralPath $tradingViewExecutable -PathType Leaf)) {
-    throw "TradingView Desktop executable is missing: $tradingViewExecutable"
+[xml]$tradingViewManifest = [IO.File]::ReadAllText($tradingViewManifestPath)
+if ([string]$tradingViewManifest.Package.Identity.Name -cne 'TradingView.Desktop' -or
+    [string]$tradingViewManifest.Package.Identity.Version -cne [string]$tradingViewExecutables[0].VersionInfo.FileVersion -or
+    [string]$tradingViewManifest.Package.Identity.Publisher -cne 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US') {
+    throw 'TradingView Desktop package identity is invalid.'
 }
 $tvControlRoot = 'C:\HerdrSandbox\tools\tvcontrol'
 $tvControlPackagePath = Join-Path $tvControlRoot 'node_modules\@ferroxlabs\tvcontrol\package.json'
@@ -614,7 +620,7 @@ Assert-SmokeOutput 'tvcontrol-alias-help' $tvControlHelp 'TradingView with CDP e
 foreach ($shim in @((Join-Path $tvControlRoot 'tv.ps1'), (Join-Path $tvControlRoot 'tvcontrol.ps1'))) {
     if (Test-Path -LiteralPath $shim) { throw "TVControl PowerShell shim remains installed: $shim" }
 }
-[Console]::Out.WriteLine('[all-stacks] tradingview: Desktop MSIX and TVControl CLI OK; launch intentionally skipped')
+[Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload and TVControl CLI OK; launch intentionally skipped')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'

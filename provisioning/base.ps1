@@ -1185,7 +1185,9 @@ function Test-ProvisioningPortablePackageInstalled {
         [object]$Metadata,
         [Parameter(Mandatory = $true)]
         [string]$ExecutableName,
-        [string[]]$VersionArguments = @('--version')
+        [string[]]$VersionArguments = @('--version'),
+        [ValidateSet('Command', 'File')]
+        [string]$VersionSource = 'Command'
     )
 
     if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
@@ -1210,13 +1212,19 @@ function Test-ProvisioningPortablePackageInstalled {
         if ($commands.Count -ne 1) {
             return $false
         }
-        $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) portable version inspection" `
-            -FilePath $commands[0].FullName -ArgumentList $VersionArguments
-        $versionOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
-        $exitCode = $result.ExitCode
-        $versionPattern = '(?<![0-9A-Za-z])' + [Regex]::Escape([string]$Metadata.Version) + '(?![0-9A-Za-z])'
-        if ($exitCode -ne 0 -or ($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
-            return $false
+        if ($VersionSource -eq 'File') {
+            if ([string]$commands[0].VersionInfo.FileVersion -cne [string]$Metadata.Version) {
+                return $false
+            }
+        } else {
+            $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) portable version inspection" `
+                -FilePath $commands[0].FullName -ArgumentList $VersionArguments
+            $versionOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
+            $exitCode = $result.ExitCode
+            $versionPattern = '(?<![0-9A-Za-z])' + [Regex]::Escape([string]$Metadata.Version) + '(?![0-9A-Za-z])'
+            if ($exitCode -ne 0 -or ($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
+                return $false
+            }
         }
         Add-ProvisioningMachinePath -Directory $commands[0].Directory.FullName
         $resolvedCommands = @(Get-Command $ExecutableName -CommandType Application -ErrorAction SilentlyContinue)
@@ -1415,13 +1423,15 @@ function Test-ProvisioningPackageInstalled {
         [Parameter(Mandatory = $true)]
         [string]$Adapter,
         [string]$ExecutableName = '',
-        [string[]]$PortableVersionArguments = @('--version')
+        [string[]]$PortableVersionArguments = @('--version'),
+        [ValidateSet('Command', 'File')]
+        [string]$PortableVersionSource = 'Command'
     )
 
     switch ($Adapter) {
         'Portable' {
             return Test-ProvisioningPortablePackageInstalled -Metadata $Metadata -ExecutableName $ExecutableName `
-                -VersionArguments $PortableVersionArguments
+                -VersionArguments $PortableVersionArguments -VersionSource $PortableVersionSource
         }
         'GeistMonoFont' {
             return Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata
@@ -1651,6 +1661,8 @@ function Install-ProvisioningCachedPackage {
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
         [string[]]$PortableVersionArguments = @('--version'),
+        [ValidateSet('Command', 'File')]
+        [string]$PortableVersionSource = 'Command',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature
     )
@@ -1659,7 +1671,7 @@ function Install-ProvisioningCachedPackage {
     $metadata = $Metadata
     Update-ProvisioningPath
     if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
-            -PortableVersionArguments $PortableVersionArguments) {
+            -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource) {
         Write-Host "$Role already matches requested version: $($metadata.Version)"
         $packageStopwatch.Stop()
         Write-ProvisioningTiming -Role "$Role package total" -Seconds $packageStopwatch.Elapsed.TotalSeconds
@@ -1714,7 +1726,8 @@ function Install-ProvisioningCachedPackage {
             -DeferCommandReadiness:$DeferCommandReadiness `
             -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
         $installed = Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
-            -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments
+            -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments `
+            -PortableVersionSource $PortableVersionSource
         if ($DownloadSource -eq 'WinGet') {
             Confirm-ProvisioningWinGetReadback -Role $Role -Metadata $metadata -Verified $installed
         } elseif (-not $installed) {

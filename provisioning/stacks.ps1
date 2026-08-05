@@ -1357,6 +1357,82 @@ function Install-PlaywrightCLIStack {
     Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
 }
 
+function Get-TradingViewDesktopPortableMetadata {
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+\.\d+$')]
+        [string]$Version = ''
+    )
+
+    $packageID = 'TradingView.TradingViewDesktop'
+    $resolvedVersion = $Version
+    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
+        $packageMatches = @(Search-ProvisioningWinGetPackages -Role 'TradingView Desktop' `
+            -IdQuery $packageID -Exact)
+        if ($packageMatches.Count -ne 1 -or [string]$packageMatches[0].Id -cne $packageID -or
+            [string]$packageMatches[0].Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+            throw "TradingView Desktop latest WinGet version did not resolve one exact package $packageID."
+        }
+        $resolvedVersion = [string]$packageMatches[0].Version
+    }
+
+    $manifestName = 'TradingView.TradingViewDesktop.installer.yaml'
+    $manifestURL = 'https://raw.githubusercontent.com/microsoft/winget-pkgs/master/' +
+        "manifests/t/TradingView/TradingViewDesktop/$resolvedVersion/$manifestName"
+    $manifestResponse = Invoke-WebRequest -Uri $manifestURL -UseBasicParsing
+    $manifestContent = [string]$manifestResponse.Content
+    if ([int]$manifestResponse.StatusCode -ne 200 -or $manifestContent.Length -le 0 -or
+        $manifestContent.Length -gt 65536) {
+        throw "TradingView Desktop WinGet manifest response is invalid: $manifestURL"
+    }
+    $lines = @($manifestContent -split '\r?\n')
+    $manifestID = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageIdentifier' `
+        -Pattern '^PackageIdentifier:\s*([A-Za-z0-9._-]+)\s*$'
+    $manifestVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
+        -Pattern '^PackageVersion:\s*(\d+\.\d+\.\d+\.\d+)\s*$'
+    $packageFamilyName = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageFamilyName' `
+        -Pattern '^PackageFamilyName:\s*([A-Za-z0-9._-]+)\s*$'
+    $minimumOSVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'MinimumOSVersion' `
+        -Pattern '^MinimumOSVersion:\s*(\d+\.\d+\.\d+\.\d+)\s*$'
+    $installerType = Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerType' `
+        -Pattern '^InstallerType:\s*([A-Za-z0-9]+)\s*$'
+    $architecture = Get-ProvisioningMetadataValue -Lines $lines -Name 'Architecture' `
+        -Pattern '^\s*-\s*Architecture:\s*([A-Za-z0-9]+)\s*$'
+    $installerURL = Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerUrl' `
+        -Pattern '^\s*InstallerUrl:\s*(https://\S+)\s*$'
+    $installerSHA256 = (Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerSha256' `
+        -Pattern '^\s*InstallerSha256:\s*([A-Fa-f0-9]{64})\s*$').ToUpperInvariant()
+    $null = Get-ProvisioningMetadataValue -Lines $lines -Name 'SignatureSha256' `
+        -Pattern '^\s*SignatureSha256:\s*([A-Fa-f0-9]{64})\s*$'
+    $manifestType = Get-ProvisioningMetadataValue -Lines $lines -Name 'ManifestType' `
+        -Pattern '^ManifestType:\s*(\S+)\s*$'
+    $schemaVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'ManifestVersion' `
+        -Pattern '^ManifestVersion:\s*(\d+\.\d+\.\d+)\s*$'
+    $installerURI = [Uri]$installerURL
+    if ($manifestID -cne $packageID -or $manifestVersion -cne $resolvedVersion -or
+        $packageFamilyName -cne 'TradingView.Desktop_n534cwy3pjxzj' -or
+        $minimumOSVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+        $installerType -cne 'msix' -or $architecture -cne 'x64' -or
+        $manifestType -cne 'installer' -or $schemaVersion -cne '1.12.0' -or
+        $installerURI.Scheme -cne 'https' -or
+        $installerURI.Host -cne 'tvd-packages.tradingview.com' -or
+        -not $installerURI.AbsolutePath.StartsWith('/stable/', [StringComparison]::Ordinal) -or
+        [IO.Path]::GetExtension($installerURI.AbsolutePath) -cne '.msix') {
+        throw "TradingView Desktop WinGet manifest identity is unsupported: $manifestURL"
+    }
+    return [pscustomobject]@{
+        Id = $manifestID
+        Version = $manifestVersion
+        Architecture = $architecture
+        InstallerType = $installerType
+        Scope = ''
+        Url = $installerURL
+        Sha256 = $installerSHA256
+        PayloadName = 'payload.msix'
+        PackageFamilyName = $packageFamilyName
+        DeclaredMinimumOSVersion = $minimumOSVersion
+    }
+}
+
 function Install-TradingViewStack {
     [CmdletBinding()]
     param(
@@ -1368,33 +1444,38 @@ function Install-TradingViewStack {
         [string]$DesktopVersion = ''
     )
 
-    $minimumWindowsBuild = 19042
-    $windowsBuild = [Environment]::OSVersion.Version.Build
-    if ($windowsBuild -lt $minimumWindowsBuild) {
-        throw "TradingView Desktop requires Windows build $minimumWindowsBuild or newer; current build is $windowsBuild."
-    }
-
     $desktopPackageID = 'TradingView.TradingViewDesktop'
-    $desktopMetadata = Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' `
-        -Id $desktopPackageID -Version $DesktopVersion -InstallerType 'msix'
+    $desktopMetadata = Get-TradingViewDesktopPortableMetadata -Version $DesktopVersion
     if ([string]$desktopMetadata.Id -cne $desktopPackageID -or
         [string]$desktopMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
         throw "TradingView Desktop metadata is unexpected: $($desktopMetadata.Id) $($desktopMetadata.Version)"
     }
     Install-ProvisioningCachedPackage -Role 'TradingView Desktop' -Metadata $desktopMetadata `
-        -DownloadSource 'WinGet' -Adapter 'MSIX' -RequireAuthenticodeSignature
+        -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'TradingView.exe' `
+        -PortableVersionSource 'File' -RequireAuthenticodeSignature
 
-    $desktopPackages = @(Get-AppxPackage -Name 'TradingView.Desktop' -ErrorAction Stop)
-    if ($desktopPackages.Count -ne 1 -or
-        [string]$desktopPackages[0].Version -cne [string]$desktopMetadata.Version -or
-        [string]::IsNullOrWhiteSpace([string]$desktopPackages[0].InstallLocation)) {
-        throw "TradingView Desktop AppX identity does not match $($desktopMetadata.Version)."
+    $desktopRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
+    $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')
+    $desktopManifestPath = Join-Path $desktopRoot 'AppxManifest.xml'
+    if ($desktopExecutables.Count -ne 1 -or
+        [string]$desktopExecutables[0].VersionInfo.FileVersion -cne [string]$desktopMetadata.Version -or
+        -not (Test-Path -LiteralPath $desktopManifestPath -PathType Leaf)) {
+        throw "TradingView Desktop portable payload does not match $($desktopMetadata.Version)."
     }
-    $desktopExecutable = Join-Path ([string]$desktopPackages[0].InstallLocation) 'TradingView.exe'
-    $desktopExecutableInfo = Get-Item -LiteralPath $desktopExecutable -Force -ErrorAction Stop
-    if ($desktopExecutableInfo.PSIsContainer -or
-        ($desktopExecutableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "TradingView Desktop executable is unsafe: $desktopExecutable"
+    try {
+        [xml]$desktopManifest = [IO.File]::ReadAllText($desktopManifestPath)
+    } catch {
+        throw "TradingView Desktop package identity is unreadable: $($_.Exception.Message)"
+    }
+    if ([string]$desktopManifest.Package.Identity.Name -cne 'TradingView.Desktop' -or
+        [string]$desktopManifest.Package.Identity.Version -cne [string]$desktopMetadata.Version -or
+        [string]$desktopManifest.Package.Identity.Publisher -cne 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US') {
+        throw "TradingView Desktop package identity does not match $($desktopMetadata.Version)."
+    }
+    $desktopExecutable = $desktopExecutables[0].FullName
+    $resolvedDesktop = Wait-ProvisioningCommandAvailable -Role 'TradingView Desktop command' -Name 'TradingView.exe'
+    if ([IO.Path]::GetFullPath($resolvedDesktop) -ine [IO.Path]::GetFullPath($desktopExecutable)) {
+        throw "TradingView Desktop command resolved from an unexpected path: $resolvedDesktop"
     }
 
     Install-NodeRuntime -Version $NodeVersion
