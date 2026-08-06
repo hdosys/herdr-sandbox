@@ -402,6 +402,15 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`,
 		`Function un.RestoreRetryOwnership`,
 		`Call un.RestoreRetryOwnership`,
+		`Function un.CheckInstallDirectoryResidual`,
+		`!define APP_ERROR_FILE_NOT_FOUND 2`,
+		`!define APP_ERROR_PATH_NOT_FOUND 3`,
+		`GetFileAttributesW(w "$INSTDIR") i.r0 ?e`,
+		`CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"`,
+		`!insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"`,
+		`!insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"`,
+		`!insertmacro DeleteOwnedFileAfterRegistration "${APP_INSTALLER_MARKER}"`,
+		`its ownership marker and directory were preserved`,
 		`Function un.PreventUninstallMutationAbort`,
 		`Call un.DisableUninstallCancellation`,
 		`KERNEL32::CreateFileW`,
@@ -514,17 +523,41 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	pathRemoveIndex := strings.LastIndex(source, `!insertmacro RunPathHelper "Remove"`)
 	baseDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_BASE_SCRIPT}"`)
 	executableDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_EXECUTABLE}"`)
-	markerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_INSTALLER_MARKER}"`)
 	registryDeleteIndex := strings.LastIndex(source, `DeleteRegKey HKCU "${UNINSTALL_KEY}"`)
-	uninstallerDeleteIndex := strings.LastIndex(source, `Delete "$INSTDIR\uninstall.exe"`)
+	quietDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"`)
+	uninstallerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"`)
+	residualCheckIndex := strings.LastIndex(source, `Call un.CheckInstallDirectoryResidual`)
+	markerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "${APP_INSTALLER_MARKER}"`)
+	directoryDeleteIndex := strings.LastIndex(source, `RMDir "$INSTDIR"`)
 	if preflightIndex < 0 || uninstallMutationIndex <= preflightIndex || cleanupIndex <= uninstallMutationIndex || cleanupMarkerIndex <= cleanupIndex ||
 		pathRemoveIndex <= cleanupMarkerIndex || baseDeleteIndex <= pathRemoveIndex ||
-		executableDeleteIndex <= baseDeleteIndex || markerDeleteIndex <= executableDeleteIndex ||
-		registryDeleteIndex <= markerDeleteIndex || uninstallerDeleteIndex <= registryDeleteIndex {
-		t.Fatal("uninstall must preflight, clean, record, remove PATH, remove known files, and delete the uninstaller last")
+		executableDeleteIndex <= baseDeleteIndex || registryDeleteIndex <= executableDeleteIndex ||
+		quietDeleteIndex <= registryDeleteIndex || uninstallerDeleteIndex <= quietDeleteIndex ||
+		residualCheckIndex <= uninstallerDeleteIndex || markerDeleteIndex <= residualCheckIndex ||
+		directoryDeleteIndex <= markerDeleteIndex {
+		t.Fatal("uninstall must keep the quiet helper and ownership marker until registration and earlier owned files are removed")
 	}
-	if strings.Count(source, `Call un.RestoreRetryOwnership`) != 2 {
-		t.Fatal("late registration or uninstaller deletion failure must restore retry ownership")
+	if strings.Count(source, `Call un.RestoreRetryOwnership`) < 4 ||
+		strings.Count(source, `!insertmacro DeleteOwnedFileAfterRegistration`) != 3 {
+		t.Fatal("every failure after registration removal must restore retry ownership")
+	}
+	restoreStart := strings.Index(source, `Function un.RestoreRetryOwnership`)
+	if restoreStart < 0 {
+		t.Fatal("missing retry-ownership function")
+	}
+	restoreEnd := strings.Index(source[restoreStart:], `FunctionEnd`)
+	if restoreEnd < 0 {
+		t.Fatal("missing retry-ownership function")
+	}
+	restoreSource := source[restoreStart : restoreStart+restoreEnd]
+	for _, want := range []string{
+		`CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"`,
+		`${FileExists} "$INSTDIR\${APP_QUIET_UNINSTALL_HELPER}"`,
+		`"QuietUninstallString"`,
+	} {
+		if !strings.Contains(restoreSource, want) {
+			t.Fatalf("retry ownership is missing %q", want)
+		}
 	}
 	if strings.Count(source, `StrCpy $ExistingRegistrationOwned "1"`) != 2 {
 		t.Fatal("complete and marker-backed incomplete registration must share repair ownership")

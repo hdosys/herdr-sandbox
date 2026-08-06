@@ -18,9 +18,10 @@ release notes remain available on the
 
 - The Windows installer now keeps file replacement, rollback, product-GUID
   ownership, Installed Apps registration, and uninstall directly in NSIS. It uses
-  only focused PATH and quiet-uninstall helpers, preserves unknown sibling files,
-  and reports cleanup failure distinctly instead of relying on a PowerShell
-  transaction engine.
+  only focused PATH and quiet-uninstall helpers, preserves unknown sibling files
+  with the final ownership marker, restores silent-uninstall registration after
+  late failures, and reports cleanup failure distinctly instead of relying on a
+  PowerShell transaction engine.
 
 ## v0.0.10 - 2026-08-05
 

@@ -103,6 +103,8 @@ Unicode true
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
 !define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"
+!define APP_ERROR_FILE_NOT_FOUND 2
+!define APP_ERROR_PATH_NOT_FOUND 3
 !define APP_ERROR_ALREADY_EXISTS 183
 !define APP_FILE_ATTRIBUTE_DIRECTORY 0x10
 !define APP_FILE_ATTRIBUTE_REPARSE_POINT 0x400
@@ -147,6 +149,7 @@ Var InstallFailureMessage
 Var CleanupComplete
 Var UninstallPreflightFailed
 Var PartialCleanup
+Var InstallDirectoryHasUnknownEntries
 
 Name "${APP_DISPLAY_NAME}"
 OutFile "${OUTPUT_FILE}"
@@ -403,8 +406,15 @@ FunctionEnd
 !macro DefineCheckInstallDirectoryFunction PREFIX
 Function ${PREFIX}CheckInstallDirectory
     StrCpy $InstallDirectorySafe "1"
-    System::Call 'KERNEL32::GetFileAttributesW(w "$INSTDIR") i.r0'
-    ${If} $0 != -1
+    System::Call 'KERNEL32::SetLastError(i 0)'
+    System::Call 'KERNEL32::GetFileAttributesW(w "$INSTDIR") i.r0 ?e'
+    Pop $2
+    ${If} $0 == -1
+        ${If} $2 != ${APP_ERROR_FILE_NOT_FOUND}
+        ${AndIf} $2 != ${APP_ERROR_PATH_NOT_FOUND}
+            StrCpy $InstallDirectorySafe "0"
+        ${EndIf}
+    ${Else}
         IntOp $1 $0 & ${APP_FILE_ATTRIBUTE_DIRECTORY}
         ${If} $1 == 0
             StrCpy $InstallDirectorySafe "0"
@@ -462,6 +472,34 @@ FunctionEnd
 !insertmacro DefineCheckOwnershipMarkerFunction ""
 !insertmacro DefineCheckOwnershipMarkerFunction "un."
 
+Function un.CheckInstallDirectoryResidual
+    ; Preserve the marker unless enumeration proves that it is the sole entry.
+    StrCpy $InstallDirectoryHasUnknownEntries "error"
+    ClearErrors
+    FindFirst $0 $1 "$INSTDIR\*"
+    ${If} ${Errors}
+        Return
+    ${EndIf}
+    StrCpy $InstallDirectoryHasUnknownEntries "0"
+    residual_next:
+        StrCmp $1 "" residual_done
+        StrCmp $1 "." residual_advance
+        StrCmp $1 ".." residual_advance
+        StrCmp $1 "${APP_INSTALLER_MARKER}" residual_advance
+        StrCpy $InstallDirectoryHasUnknownEntries "1"
+        FindClose $0
+        Return
+    residual_advance:
+        ClearErrors
+        FindNext $0 $1
+        ${If} ${Errors}
+            Goto residual_done
+        ${EndIf}
+        Goto residual_next
+    residual_done:
+        FindClose $0
+FunctionEnd
+
 !macro ReadExistingPathOwnership
     ClearErrors
     ReadRegDWORD $PathOwnedPreviously HKCU "${UNINSTALL_KEY}" "PathAdded"
@@ -476,6 +514,14 @@ Function un.RestoreRetryOwnership
     StrCpy $RollbackFailed "0"
     ClearErrors
     CreateDirectory "$INSTDIR"
+    ${IfNot} ${FileExists} "$INSTDIR\uninstall.exe"
+        ClearErrors
+        CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"
+        ${If} ${Errors}
+            StrCpy $RollbackFailed "1"
+        ${EndIf}
+    ${EndIf}
+    ClearErrors
     FileOpen $0 "$INSTDIR\${APP_INSTALLER_MARKER}" w
     ${IfNot} ${Errors}
         FileWrite $0 '{"productGuid":"${APP_PRODUCT_GUID}","installerSchema":1}$\r$\n'
@@ -491,6 +537,9 @@ Function un.RestoreRetryOwnership
     WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "${APP_PRODUCT_URL}"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    ${If} ${FileExists} "$INSTDIR\${APP_QUIET_UNINSTALL_HELPER}"
+        WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$INSTDIR\${APP_QUIET_UNINSTALL_HELPER}" -Uninstaller "$INSTDIR\uninstall.exe" -InstallDirectory "$INSTDIR"'
+    ${EndIf}
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" 0
@@ -613,6 +662,18 @@ FunctionEnd
         Delete "$INSTDIR\${NAME}"
         ${If} ${Errors}
             StrCpy $InstallFailureMessage "Could not remove ${NAME}."
+            Goto uninstall_finalize_failure
+        ${EndIf}
+    ${EndIf}
+!macroend
+
+!macro DeleteOwnedFileAfterRegistration NAME
+    ${If} ${FileExists} "$INSTDIR\${NAME}"
+        ClearErrors
+        Delete "$INSTDIR\${NAME}"
+        ${If} ${Errors}
+            StrCpy $InstallFailureMessage "Could not remove ${NAME}."
+            Call un.RestoreRetryOwnership
             Goto uninstall_finalize_failure
         ${EndIf}
     ${EndIf}
@@ -1039,9 +1100,7 @@ Section "Uninstall"
     !insertmacro DeleteOwnedFile "${APP_BASE_SCRIPT}"
     !insertmacro DeleteOwnedFile "${APP_LICENSE}"
     !insertmacro DeleteOwnedFile "${APP_STACK_SCRIPT}"
-    !insertmacro DeleteOwnedFile "${APP_QUIET_UNINSTALL_HELPER}"
     !insertmacro DeleteOwnedFile "${APP_EXECUTABLE}"
-    !insertmacro DeleteOwnedFile "${APP_INSTALLER_MARKER}"
 
     ClearErrors
     DeleteRegKey HKCU "${UNINSTALL_KEY}"
@@ -1050,21 +1109,26 @@ Section "Uninstall"
         Call un.RestoreRetryOwnership
         Goto uninstall_finalize_failure
     ${EndIf}
-    ${If} ${FileExists} "$INSTDIR\uninstall.exe"
+
+    !insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"
+    !insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"
+
+    Call un.CheckInstallDirectoryResidual
+    ${If} $InstallDirectoryHasUnknownEntries == "error"
+        StrCpy $InstallFailureMessage "Could not inspect the remaining install directory."
+        Call un.RestoreRetryOwnership
+        Goto uninstall_finalize_failure
+    ${ElseIf} $InstallDirectoryHasUnknownEntries == "1"
+        DetailPrint "The install directory contains non-installer files; its ownership marker and directory were preserved."
+    ${Else}
+        !insertmacro DeleteOwnedFileAfterRegistration "${APP_INSTALLER_MARKER}"
         ClearErrors
-        Delete "$INSTDIR\uninstall.exe"
+        RMDir "$INSTDIR"
         ${If} ${Errors}
-            StrCpy $InstallFailureMessage "Could not remove uninstall.exe."
+            StrCpy $InstallFailureMessage "Could not remove the install directory."
             Call un.RestoreRetryOwnership
             Goto uninstall_finalize_failure
         ${EndIf}
-    ${EndIf}
-
-    ClearErrors
-    RMDir "$INSTDIR"
-    ${If} ${Errors}
-        DetailPrint "The install directory contains non-installer files and was preserved."
-        ClearErrors
     ${EndIf}
     ${If} $EnvironmentNotificationFailed == "1"
         MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} was removed, but Windows did not confirm the PATH refresh. Open a new terminal. If it still sees the old PATH, sign out and back in." /SD IDOK
