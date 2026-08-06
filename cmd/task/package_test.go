@@ -550,6 +550,10 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	if cleanupResetIndex < 0 || installCommitIndex <= cleanupResetIndex {
 		t.Fatal("a successful install must reset prior cleanup failure before its final commit")
 	}
+	postCommitSource := installSource[installCommitIndex:]
+	if !strings.Contains(postCommitSource, `${If} $3 == "1"`) || !strings.Contains(postCommitSource, `!insertmacro NotifyPathChanged`) {
+		t.Fatal("committed PATH ownership must trigger refresh after both current and recovered Add")
+	}
 	rollbackStart := strings.Index(installSource, `install_payload_rollback:`)
 	if rollbackStart < 0 || !strings.Contains(installSource[rollbackStart:], `$InstallCompleteWasComplete == "1"`) ||
 		!strings.Contains(installSource[rollbackStart:], `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`) {
@@ -576,10 +580,10 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	if preflightIndex < 0 || uninstallMutationIndex <= preflightIndex || cleanupIndex <= uninstallMutationIndex || cleanupMarkerIndex <= cleanupIndex ||
 		pathRemoveIndex <= cleanupMarkerIndex || baseDeleteIndex <= pathRemoveIndex ||
 		executableDeleteIndex <= baseDeleteIndex || registryDeleteIndex <= executableDeleteIndex ||
-		quietDeleteIndex <= registryDeleteIndex || uninstallerDeleteIndex <= quietDeleteIndex ||
-		residualCheckIndex <= uninstallerDeleteIndex || markerDeleteIndex <= residualCheckIndex ||
+		uninstallerDeleteIndex <= registryDeleteIndex || quietDeleteIndex <= uninstallerDeleteIndex ||
+		residualCheckIndex <= quietDeleteIndex || markerDeleteIndex <= residualCheckIndex ||
 		directoryDeleteIndex <= markerDeleteIndex {
-		t.Fatal("uninstall must keep the quiet helper and ownership marker until registration and earlier owned files are removed")
+		t.Fatal("uninstall must delete registration, uninstaller, quiet helper, then the final ownership marker")
 	}
 	if strings.Count(source, `Call un.RestoreRetryOwnership`) < 4 ||
 		strings.Count(source, `!insertmacro DeleteOwnedFileAfterRegistration`) != 3 {
@@ -607,9 +611,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	uninstallSource := source[uninstallStart:]
 	cleanupOutcomeReadIndex := strings.Index(uninstallSource, `ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"`)
 	cleanupOutcomeWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1`)
+	cleanupFailureGotoIndex := strings.Index(uninstallSource, `Goto uninstall_record_cleanup`)
+	cleanupSuccessResetIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0`)
+	cleanupRecordLabelIndex := strings.Index(uninstallSource, `uninstall_record_cleanup:`)
 	cleanupCompleteWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`)
-	if cleanupOutcomeReadIndex < 0 || cleanupOutcomeWriteIndex <= cleanupOutcomeReadIndex || cleanupCompleteWriteIndex <= cleanupOutcomeWriteIndex {
-		t.Fatal("uninstall retry must retain an accepted incomplete cleanup outcome before recording cleanup complete")
+	if cleanupOutcomeReadIndex < 0 || cleanupOutcomeWriteIndex <= cleanupOutcomeReadIndex ||
+		cleanupFailureGotoIndex <= cleanupOutcomeWriteIndex || cleanupSuccessResetIndex <= cleanupFailureGotoIndex ||
+		cleanupRecordLabelIndex <= cleanupSuccessResetIndex || cleanupCompleteWriteIndex <= cleanupRecordLabelIndex {
+		t.Fatal("uninstall retry must preserve failed cleanup but reset it after a later successful cleanup")
 	}
 	if strings.Count(source, `StrCpy $ExistingRegistrationOwned "1"`) != 2 {
 		t.Fatal("complete and marker-backed incomplete registration must share repair ownership")

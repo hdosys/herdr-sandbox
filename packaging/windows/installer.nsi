@@ -956,7 +956,7 @@ Section "Install"
 
     StrCpy $InstallMutationActive "0"
     Call EnableInstallCancellation
-    ${If} $PathAddedThisRun == "1"
+    ${If} $3 == "1"
         !insertmacro NotifyPathChanged
     ${EndIf}
 
@@ -1161,6 +1161,14 @@ Section "Uninstall"
                 SetErrorLevel ${APP_EXIT_UNINSTALL_CLEANUP}
                 Quit
         ${EndIf}
+        StrCpy $PartialCleanup "0"
+        ClearErrors
+        WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0
+        ${If} ${Errors}
+            MessageBox MB_ICONSTOP|MB_OK "The successful application-cleanup outcome could not be recorded. No application files or installer registration were removed. Run uninstall again." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+            Quit
+        ${EndIf}
         uninstall_record_cleanup:
         ClearErrors
         WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1
@@ -1200,8 +1208,8 @@ Section "Uninstall"
         Goto uninstall_finalize_failure
     ${EndIf}
 
-    !insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"
     !insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"
+    !insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"
 
     Call un.CheckInstallDirectoryResidual
     ${If} $InstallDirectoryHasUnknownEntries == "error"
