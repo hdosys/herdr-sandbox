@@ -4,7 +4,7 @@
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-`herdr-sandbox` is a Windows-native counterpart to a [dev container](https://containers.dev/). It launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, starts Herdr in the guest, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
+Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Its `sandbox` command launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, starts Herdr in the guest, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
 
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart LR
-    Host["Host terminal<br/>herdr-sandbox (Go)"]
+    Host["Host terminal<br/>sandbox (Go)"]
     Projects[("Selected projects")]
     Config["Approved agent config"]
 
@@ -80,9 +80,9 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 [`herdr-win`](https://github.com/hdosys/herdr-win) currently provides a Windows build with remote attach, but `herdr-sandbox` does not require that fork, package, installer, or managed layout. It capability-checks the `herdr.exe` already on `PATH`, copies the status-reported physical executable and optional complete ConPTY bundle into each fresh guest, and never installs, updates, or replaces host Herdr.
 
-### Install herdr-sandbox
+### Install Herdr Sandbox
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer, a portable ZIP, and matching `.sha256` sidecars. Both formats contain exactly `herdr-sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer, a portable ZIP, and matching `.sha256` sidecars. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
 
 #### Installer (recommended)
 
@@ -123,7 +123,7 @@ Herdr-Win remains a separate package and is never bundled or declared as a depen
 
 #### Portable ZIP
 
-Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep the three support files beside `herdr-sandbox.exe`, then run `.\herdr-sandbox.exe` or add that directory to user `PATH`.
+Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep the three support files beside `sandbox.exe`, then run `.\sandbox.exe` or add that directory to user `PATH`.
 
 #### Build from source
 
@@ -137,20 +137,20 @@ The checked build writes the same four files to `build\bin`. Use that executable
 
 ### Launch your first project
 
-Commands below assume `herdr-sandbox.exe` is on `PATH`; otherwise use its full path.
+Commands below assume `sandbox.exe` is on `PATH`; otherwise use its full path.
 
 #### 1. Initialize a project profile
 
 From the project root, select one or more stacks explicitly:
 
 ```powershell
-herdr-sandbox init --stack go
+sandbox init --stack go
 ```
 
 For an official Herdr upstream checkout without a project profile, select its maintained virtual stack directly:
 
 ```powershell
-herdr-sandbox init --stack herdr
+sandbox init --stack herdr
 ```
 
 Repeat `--stack` to combine `dotnet`, `go`, `handy`, `herdr`, `node`, `playwright-cli`, `python`, `python-ai`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `handy` choice includes Bun and Rust/MSVC plus Handy's Windows-native requirements, so it cannot be combined with `rust` or `herdr`. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. The virtual `python-ai` choice includes Python 3.13 and uv; it cannot be combined with `python` or `herdr`. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
@@ -158,7 +158,7 @@ Repeat `--stack` to combine `dotnet`, `go`, `handy`, `herdr`, `node`, `playwrigh
 #### Optional: Inspect the effective plan
 
 ```powershell
-herdr-sandbox plan
+sandbox plan
 ```
 
 `plan` prints the validated configuration, workspaces, stacks, packages, agent-sync choices, fixed Sandbox settings, and differences from a ready guest. It does not create state, download packages, update tools, consume a Tailscale key, or execute project scripts.
@@ -166,7 +166,7 @@ herdr-sandbox plan
 #### 2. Start from the project
 
 ```powershell
-herdr-sandbox up
+sandbox up
 ```
 
 The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. A successful run creates a usable guest workspace and attaches the host Herdr client—not merely SSH or an installed toolchain.
@@ -175,7 +175,7 @@ The visible PowerShell bootstrap console inside Windows Sandbox is intentional a
 > Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
 
 ```powershell
-herdr-sandbox up --no-attach
+sandbox up --no-attach
 ```
 
 #### 3. Reattach
@@ -183,7 +183,7 @@ herdr-sandbox up --no-attach
 After a normal detach, the guest Herdr server remains running:
 
 ```powershell
-herdr-sandbox attach
+sandbox attach
 ```
 
 The verified `herdr --remote sandbox` alias remains available for direct Herdr use.
@@ -200,16 +200,16 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 
 | Command | Behavior |
 | --- | --- |
-| `herdr-sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
-| `herdr-sandbox version` | Prints the embedded application version and abbreviated source revision, or explicitly reports an unknown development revision. |
-| `herdr-sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
-| `herdr-sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
-| `herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
-| `herdr-sandbox attach` | Verifies and attaches to the ready guest without reprovisioning. |
-| `herdr-sandbox status` | Reports guest health, operation progress, workspaces, versions, timings, diagnostics, warnings, and the next action. |
-| `herdr-sandbox mobile` | Prints the ready mobile SSH URI, pinned host-key fingerprint, and secret-free QR code. |
-| `herdr-sandbox down` | Stops only the revalidated app-owned Sandbox. If opted-in Tailscale state cannot be preserved, the guest remains running. |
-| `herdr-sandbox clean` | Removes only validated inactive run workspaces while preserving active or uncertain state, configuration, projects, and cache. |
+| `sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
+| `sandbox version` | Prints the embedded application version and abbreviated source revision, or explicitly reports an unknown development revision. |
+| `sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
+| `sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
+| `sandbox attach` | Verifies and attaches to the ready guest without reprovisioning. |
+| `sandbox status` | Reports guest health, operation progress, workspaces, versions, timings, diagnostics, warnings, and the next action. |
+| `sandbox mobile` | Prints the ready mobile SSH URI, pinned host-key fingerprint, and secret-free QR code. |
+| `sandbox down` | Stops only the revalidated app-owned Sandbox. If opted-in Tailscale state cannot be preserved, the guest remains running. |
+| `sandbox clean` | Removes only validated inactive run workspaces while preserving active or uncertain state, configuration, projects, and cache. |
 
 <details>
 <summary><strong>Lifecycle and automatic cleanup</strong></summary>
@@ -258,7 +258,7 @@ Profiles call built-in stacks directly so the host can inspect requirements with
 From a current [Handy](https://github.com/cjpais/Handy) checkout, create the dedicated profile:
 
 ```powershell
-herdr-sandbox init --stack handy
+sandbox init --stack handy
 ```
 
 The stack provisions the Windows-native prerequisites and verifies the CMake, Vulkan, SPIRV-Headers, and WebView2 boundary without adding Python or changing Handy's dependency files. After the guest is ready, use Handy's own commands:
@@ -275,7 +275,7 @@ Use `bun run tauri build` for Handy's production build. Signing and release pack
 Select the dedicated virtual stack for CPU inference, notebooks, or API-based AI projects:
 
 ```powershell
-herdr-sandbox init --stack python-ai
+sandbox init --stack python-ai
 ```
 
 It installs the current Python 3.13 patch and latest stable uv, verifies both commands, disables uv-managed Python downloads so the built-in Python stack remains the runtime owner, and preserves uv's concurrency-safe dependency cache at `C:\HerdrSandbox\cache\uv`. Project environments and dependencies remain project-owned:
@@ -292,7 +292,7 @@ Commit the project's `pyproject.toml` and `uv.lock`; subsequent setup can use `u
 Select the dedicated stack when an agent should drive the already-running, headed main-user Edge profile instead of Playwright-managed Chromium:
 
 ```powershell
-herdr-sandbox init --stack playwright-cli
+sandbox init --stack playwright-cli
 ```
 
 The stack installs Node.js LTS and the exact approved Playwright CLI, exposes only `playwright-cli.cmd`, and registers Microsoft's official [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. Edge may require one manual enable/install action after its next launch. Click the extension icon, copy its `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value, and place that value only in the disposable guest environment:
@@ -317,7 +317,7 @@ Without the token, the official extension asks the user to approve and select a 
 Select the dedicated stack to install the official TradingView Desktop MSIX payload and FerroxLabs [TVControl](https://github.com/FerroxLabs/tvcontrol) without changing project dependencies:
 
 ```powershell
-herdr-sandbox init --stack tradingview
+sandbox init --stack tradingview
 ```
 
 The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. For Desktop, it resolves the current official WinGet manifest, verifies the vendor MSIX hash and signature, and extracts the unchanged payload below `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`. This deliberately avoids AppX registration—the package manifest requires build 19042 for registration—while keeping the same official binaries and one latest-stable package owner. Provisioning validates both payloads but does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
@@ -336,7 +336,7 @@ For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profil
 Open the global configuration with the Windows application registered for `.json` files:
 
 ```powershell
-herdr-sandbox config
+sandbox config
 ```
 
 The command creates `config.json` only when absent and never replaces existing settings. Setup or the first mutating `up` also creates the user extension when absent:
@@ -405,7 +405,7 @@ The command creates `config.json` only when absent and never replaces existing s
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs show `SST.opencode` as a replaceable example; remove or replace that entry to choose another coding agent. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
-Package additions, removals, and version changes apply through `herdr-sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
+Package additions, removals, and version changes apply through `sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
 
 #### Experimental Vulkan
 
@@ -460,7 +460,7 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 
 Use optional `mounts` for host folders that should be available without becoming project workspaces. The key is arbitrary: a mount named `worktrees` appears at `C:\Mounts\worktrees`, while `shared` appears at `C:\Mounts\shared`. No `reference` key is required. Generic mounts do not become active, run `.herdr-sandbox\provision.ps1`, or create Herdr workspaces. Set `readOnly` to `true` for reference/shared material and to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
 
-Mapped folders expose host data across the isolation boundary. Ordinary explicitly selected descendants of the user profile remain valid, but Herdr Sandbox rejects volume roots, reparse-bearing paths, whole protected roots, and known credential locations such as `.ssh`, `.gnupg`, cloud/container config, coding-agent authentication roots, GitHub CLI state, and Windows credential stores. A parent containing one of those locations and a descendant inside one are both rejected. Mounts also may not overlap another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. Every guest destination remains fixed below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `herdr-sandbox down` before the next `up`.
+Mapped folders expose host data across the isolation boundary. Ordinary explicitly selected descendants of the user profile remain valid, but Herdr Sandbox rejects volume roots, reparse-bearing paths, whole protected roots, and known credential locations such as `.ssh`, `.gnupg`, cloud/container config, coding-agent authentication roots, GitHub CLI state, and Windows credential stores. A parent containing one of those locations and a descendant inside one are both rejected. Mounts also may not overlap another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. Every guest destination remains fixed below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `sandbox down` before the next `up`.
 
 #### Agent packages
 
@@ -573,7 +573,7 @@ Create one auth key on the admin console's Keys page:
 - **Pre-approved/pre-authorized:** on when device approval is enabled
 - **Tags:** `tag:herdr-sandbox`
 
-If Tailnet Lock is enabled, sign the key from an existing trusted node first. Never put it in `config.json`, provisioning, shell history, or an argument to `herdr-sandbox up` or `tailscale up`.
+If Tailnet Lock is enabled, sign the key from an existing trusted node first. Never put it in `config.json`, provisioning, shell history, or an argument to `sandbox up` or `tailscale up`.
 
 ### 4. Enable and enroll
 
@@ -598,7 +598,7 @@ $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
 )
 try {
     $env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-    herdr-sandbox up
+    sandbox up
 } finally {
     Remove-Item Env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY -ErrorAction SilentlyContinue
     [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
@@ -610,31 +610,31 @@ The CLI removes its inherited environment copy before launching children, enroll
 When provisioning reaches ready, the visible Sandbox console shows a secret-free QR containing only `ssh://WDAGUtilityAccount@<MagicDNS-name>:2222`, the manual IPv4 fallback, and the server host-key fingerprint. Scan it with the SSH app, confirm that fingerprint, and select the device key if the app asks. Later, print the same connection profile from the host without restarting anything:
 
 ```powershell
-herdr-sandbox mobile
+sandbox mobile
 ```
 
 ### 5. Later Sandboxes
 
 Do not supply the auth key again. `down` captures and verifies current state before closing; the next fresh `up` restores it over verified SSH. Device ID, node key, IPv4, MagicDNS, hostname, tags, and Windows Sandbox user SID must remain exact or the workflow fails closed.
 
-Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDATA%\herdr-sandbox\identity\tailscale-identity.json` while expecting restoration. The protected Tailscale and mobile server identities are bound to the current Windows host user and are not portable backups. To add or revoke a mobile key, edit `mobileSSHAuthorizedKeys`, run `herdr-sandbox down`, and start a fresh guest with `herdr-sandbox up`.
+Keep node-key expiry disabled. Do not delete the tailnet device or `%LOCALAPPDATA%\herdr-sandbox\identity\tailscale-identity.json` while expecting restoration. The protected Tailscale and mobile server identities are bound to the current Windows host user and are not portable backups. To add or revoke a mobile key, edit `mobileSSHAuthorizedKeys`, run `sandbox down`, and start a fresh guest with `sandbox up`.
 
 </details>
 
 ## Troubleshooting
 
-Start with `herdr-sandbox status`; it preserves a running guest, removes only proven stale state, and reports the next action.
+Start with `sandbox status`; it preserves a running guest, removes only proven stale state, and reports the next action.
 
 | Symptom | Action |
 | --- | --- |
 | Windows Sandbox is unavailable | Enable `Containers-DisposableClientVM` from elevated Windows PowerShell, restart Windows, and confirm hardware virtualization is enabled. |
-| `up` refuses an existing Sandbox | A ready exact guest is reused automatically. A normally closed window is cleaned on the next valid command. For failed, changed-plan, unmanaged, or ownership-uncertain state, inspect the reported evidence and use `herdr-sandbox down` only when it identifies the app-owned instance. |
-| Automatic attach is unavailable in a headless process | Provision intentionally with `herdr-sandbox up --no-attach`, then open a real terminal and run `herdr-sandbox attach`; a verified ready guest remains reusable. |
-| The guest has no playback audio | Audio output is off by default. Set `"audio": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. This does not enable microphone input. |
-| The guest cannot use the microphone | Microphone input is off by default. Set `"audioInput": true` in `config.json`, run `herdr-sandbox down`, then start a fresh guest with `up`. Host microphone permissions or policy can still block sharing. |
-| `ssh sandbox` no longer connects | Run `herdr-sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
-| `herdr-sandbox mobile` says access is not ready | Require `"tailscale": true`, at least one valid `mobileSSHAuthorizedKeys` entry, and a fresh successful `up`. A retained guest cannot adopt a changed key set. |
-| The phone cannot reach mobile Herdr | Confirm Tailscale is connected on the phone, policy grants that principal `tag:herdr-sandbox:2222`, and the URI/fingerprint match `herdr-sandbox mobile`. Do not substitute management port 22. |
+| `up` refuses an existing Sandbox | A ready exact guest is reused automatically. A normally closed window is cleaned on the next valid command. For failed, changed-plan, unmanaged, or ownership-uncertain state, inspect the reported evidence and use `sandbox down` only when it identifies the app-owned instance. |
+| Automatic attach is unavailable in a headless process | Provision intentionally with `sandbox up --no-attach`, then open a real terminal and run `sandbox attach`; a verified ready guest remains reusable. |
+| The guest has no playback audio | Audio output is off by default. Set `"audio": true` in `config.json`, run `sandbox down`, then start a fresh guest with `up`. This does not enable microphone input. |
+| The guest cannot use the microphone | Microphone input is off by default. Set `"audioInput": true` in `config.json`, run `sandbox down`, then start a fresh guest with `up`. Host microphone permissions or policy can still block sharing. |
+| `ssh sandbox` no longer connects | Run `sandbox status`. If no Sandbox remains, startup cleanup removes the stale target and reports `stopped`; run `up` to create the next verified target. Ownership uncertainty is preserved and reported instead of guessed. |
+| `sandbox mobile` says access is not ready | Require `"tailscale": true`, at least one valid `mobileSSHAuthorizedKeys` entry, and a fresh successful `up`. A retained guest cannot adopt a changed key set. |
+| The phone cannot reach mobile Herdr | Confirm Tailscale is connected on the phone, policy grants that principal `tag:herdr-sandbox:2222`, and the URI/fingerprint match `sandbox mobile`. Do not substitute management port 22. |
 | The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Herdr is copied from the host and does not use the download cache. Confirm that the cache is writable and does not overlap a workspace or run state. |

@@ -181,9 +181,9 @@ func retainedRunPlan(active activeSession, provisioning provisioningPlan, memory
 	}
 	if len(differences) > 0 {
 		if len(differences) == 1 && differences[0] == "Tailscale identity selection" {
-			return runPlan{}, errors.New("current Tailscale identity selection differs from the ready Sandbox; run `herdr-sandbox down` before `up` to launch the changed plan")
+			return runPlan{}, errors.New("current Tailscale identity selection differs from the ready Sandbox; run `sandbox down` before `up` to launch the changed plan")
 		}
-		return runPlan{}, fmt.Errorf("current %s differ from the ready Sandbox; run `herdr-sandbox down` before `up` to launch the changed plan", strings.Join(differences, ", "))
+		return runPlan{}, fmt.Errorf("current %s differ from the ready Sandbox; run `sandbox down` before `up` to launch the changed plan", strings.Join(differences, ", "))
 	}
 	return plan, nil
 }

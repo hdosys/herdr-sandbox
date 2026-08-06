@@ -170,9 +170,9 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		})
 	}
 	if len(plan.Workspaces) == 0 {
-		plan.NextAction = "Run `herdr-sandbox init --stack <name>` from a project, or add a configured workspace."
+		plan.NextAction = "Run `sandbox init --stack <name>` from a project, or add a configured workspace."
 	} else {
-		plan.NextAction = "Run `herdr-sandbox up` to apply this plan."
+		plan.NextAction = "Run `sandbox up` to apply this plan."
 	}
 	return plan, nil
 }

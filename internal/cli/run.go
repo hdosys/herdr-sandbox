@@ -17,16 +17,16 @@ import (
 )
 
 const usage = `Usage:
-  herdr-sandbox config
-  herdr-sandbox version
-  herdr-sandbox plan
-  herdr-sandbox init [--stack dotnet|go|handy|herdr|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
-  herdr-sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
-  herdr-sandbox attach
-  herdr-sandbox status
-  herdr-sandbox mobile
-  herdr-sandbox down
-  herdr-sandbox clean
+  sandbox config
+  sandbox version
+  sandbox plan
+  sandbox init [--stack dotnet|go|handy|herdr|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
+  sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
+  sandbox attach
+  sandbox status
+  sandbox mobile
+  sandbox down
+  sandbox clean
 
 Commands:
   config  create the global config when absent and open it with the registered .json application
@@ -60,7 +60,7 @@ const installerCleanUninstallTimeout = 15 * time.Minute
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	release, err := acquireInstallerLifecycleGate(args)
 	if err != nil {
-		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	defer release()
@@ -119,10 +119,10 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	switch args[0] {
 	case "version":
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: version does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: version does not accept arguments\n\n%s", usage)
 			return 2
 		}
-		fmt.Fprintf(stdout, "%s %s\n", productidentity.ApplicationName, productidentity.VersionSummary())
+		fmt.Fprintf(stdout, "%s %s\n", productidentity.CommandName, productidentity.VersionSummary())
 		return 0
 	case "config":
 		if commandHelpRequested(args) {
@@ -130,23 +130,23 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: config does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: config does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		path, err := dependencies.openConfig()
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		fmt.Fprintf(stdout, "Opened configuration: %s\n", path)
 		return 0
 	case "__installer-seed-configuration":
 		if len(args) != 1 {
-			fmt.Fprintln(stderr, "herdr-sandbox: installer configuration seed does not accept arguments")
+			fmt.Fprintln(stderr, "sandbox: installer configuration seed does not accept arguments")
 			return 2
 		}
 		if err := dependencies.seedInstaller(); err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		return 0
@@ -155,13 +155,13 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--delete-configuration" {
 			deleteConfiguration = true
 		} else if len(args) != 2 || args[1] != "--installer-schema=1" {
-			fmt.Fprintln(stderr, "herdr-sandbox: installer clean uninstall requires --installer-schema=1 and accepts only --delete-configuration after it")
+			fmt.Fprintln(stderr, "sandbox: installer clean uninstall requires --installer-schema=1 and accepts only --delete-configuration after it")
 			return 2
 		}
 		cleanupContext, cancel := context.WithTimeout(ctx, installerCleanUninstallTimeout)
 		defer cancel()
 		if err := dependencies.cleanInstaller(cleanupContext, deleteConfiguration); err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		return 0
@@ -171,12 +171,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: plan does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: plan does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		plan, err := dependencies.resolvePlan(ctx, "")
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		printEffectivePlan(stdout, plan)
@@ -189,21 +189,21 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: attach does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: attach does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		if err := dependencies.validateAttach(stdin, stdout, stderr); err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		hostHerdr, err := dependencies.resolveHerdr(ctx)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		connection, err := dependencies.openReady(ctx, stdout, hostHerdr)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
@@ -213,12 +213,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: status does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: status does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		status, err := dependencies.inspect(ctx)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		printSessionStatus(stdout, status)
@@ -229,20 +229,20 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: mobile does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: mobile does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		status, err := dependencies.inspect(ctx)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		if status.State != sandbox.SessionReady || status.MobileAccess == nil {
-			fmt.Fprintln(stderr, "herdr-sandbox: mobile access is not ready; enable tailscale, add at least one device-owned mobileSSHAuthorizedKeys entry, and launch a fresh Sandbox")
+			fmt.Fprintln(stderr, "sandbox: mobile access is not ready; enable tailscale, add at least one device-owned mobileSSHAuthorizedKeys entry, and launch a fresh Sandbox")
 			return 1
 		}
 		if err := printMobileAccess(stdout, *status.MobileAccess); err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		return 0
@@ -252,7 +252,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: down does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: down does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
@@ -260,7 +260,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		result, err := dependencies.down(ctx)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		printDownResult(stdout, result)
@@ -271,7 +271,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "herdr-sandbox: clean does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: clean does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		result, err := dependencies.cleanup(ctx)
@@ -283,13 +283,13 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	case "up":
 	default:
-		fmt.Fprintf(stderr, "herdr-sandbox: unknown command %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, "sandbox: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 
 	options := sandbox.DefaultOptions()
 	noAttach := false
-	flags := flag.NewFlagSet("herdr-sandbox up", flag.ContinueOnError)
+	flags := flag.NewFlagSet("sandbox up", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "optional launch-to-terminal-ready timeout (no default)")
@@ -300,11 +300,11 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprint(stderr, usage)
 			return 0
 		}
-		fmt.Fprintf(stderr, "herdr-sandbox: %v\n\n%s", err, usage)
+		fmt.Fprintf(stderr, "sandbox: %v\n\n%s", err, usage)
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "herdr-sandbox: unexpected arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
+		fmt.Fprintf(stderr, "sandbox: unexpected arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
 		return 2
 	}
 	memoryOverrideSet := false
@@ -318,24 +318,24 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 	})
 	if memoryOverrideSet && options.MemoryMB < 2048 {
-		fmt.Fprintln(stderr, "herdr-sandbox: --memory-mb must be at least 2048")
+		fmt.Fprintln(stderr, "sandbox: --memory-mb must be at least 2048")
 		return 2
 	}
 	if timeoutSet && options.Timeout <= 0 {
-		fmt.Fprintln(stderr, "herdr-sandbox: --timeout must be positive")
+		fmt.Fprintln(stderr, "sandbox: --timeout must be positive")
 		return 2
 	}
 	options.Output = stdout
 	if !noAttach {
 		if err := dependencies.validateAttach(stdin, stdout, stderr); err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
-			fmt.Fprintln(stderr, "Use `herdr-sandbox up --no-attach` for intentional headless provisioning.")
+			fmt.Fprintln(stderr, "sandbox:", err)
+			fmt.Fprintln(stderr, "Use `sandbox up --no-attach` for intentional headless provisioning.")
 			return 1
 		}
 	}
 	hostHerdr, err := dependencies.resolveHerdr(ctx)
 	if err != nil {
-		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
@@ -344,11 +344,11 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 
 	connection, err := dependencies.up(ctx, options, hostHerdr)
 	if err != nil {
-		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	if noAttach {
-		fmt.Fprintln(stdout, "Next: run `herdr-sandbox attach` or `herdr --remote sandbox`.")
+		fmt.Fprintln(stdout, "Next: run `sandbox attach` or `herdr --remote sandbox`.")
 		return 0
 	}
 	return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
@@ -363,7 +363,7 @@ func runAttach(ctx context.Context, connection sandbox.Connection, stdin io.Read
 ) int {
 	fmt.Fprintln(stdout, "Starting the Herdr remote session. Use Herdr's normal detach key to leave the guest running.")
 	if err := attach(ctx, connection, stdin, stdout, stderr); err != nil {
-		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	return 0
@@ -380,7 +380,7 @@ func (values *stackSelections) Set(value string) error {
 func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	initialize func(string, []string) (sandbox.ProjectInitResult, error),
 ) int {
-	flags := flag.NewFlagSet("herdr-sandbox init", flag.ContinueOnError)
+	flags := flag.NewFlagSet("sandbox init", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var selected stackSelections
 	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, zig")
@@ -390,24 +390,24 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			fmt.Fprint(stderr, usage)
 			return 0
 		}
-		fmt.Fprintf(stderr, "herdr-sandbox: %v\n\n%s", err, usage)
+		fmt.Fprintf(stderr, "sandbox: %v\n\n%s", err, usage)
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "herdr-sandbox: unexpected init arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
+		fmt.Fprintf(stderr, "sandbox: unexpected init arguments: %s\n\n%s", quotedArguments(flags.Args()), usage)
 		return 2
 	}
 	if len(selected) == 0 {
 		prompted, err := promptForStacks(stdin, stdout)
 		if err != nil {
-			fmt.Fprintln(stderr, "herdr-sandbox:", err)
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
 		selected = prompted
 	}
 	result, err := initialize("", selected)
 	if err != nil {
-		fmt.Fprintln(stderr, "herdr-sandbox:", err)
+		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, "Project profile created")
@@ -415,8 +415,8 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	fmt.Fprintln(stdout, "  Stacks:")
 	printBulletList(stdout, result.Stacks, "    ")
 	fmt.Fprintln(stdout, "\nNext")
-	fmt.Fprintln(stdout, "  1. Run `herdr-sandbox plan`.")
-	fmt.Fprintln(stdout, "  2. Run `herdr-sandbox up`.")
+	fmt.Fprintln(stdout, "  1. Run `sandbox plan`.")
+	fmt.Fprintln(stdout, "  2. Run `sandbox up`.")
 	return 0
 }
 
@@ -452,7 +452,7 @@ func reportIncompleteCleanup(stderr io.Writer, result sandbox.CleanResult, err e
 	if result.RemovedRuns > 0 {
 		printCleanResult(stderr, result)
 	}
-	fmt.Fprintln(stderr, "herdr-sandbox: stale-state cleanup incomplete:", err)
+	fmt.Fprintln(stderr, "sandbox: stale-state cleanup incomplete:", err)
 }
 
 func printDownResult(output io.Writer, result sandbox.DownResult) {
@@ -523,7 +523,7 @@ func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
 		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.MobileAccess.IPv4)
 		fmt.Fprintf(output, "  Host key: %s\n", status.MobileAccess.HostKeyFingerprint)
 		fmt.Fprintf(output, "  Authorized device keys: %d\n", status.MobileAccess.AuthorizedKeyCount)
-		fmt.Fprintln(output, "  QR: run `herdr-sandbox mobile`")
+		fmt.Fprintln(output, "  QR: run `sandbox mobile`")
 	}
 	if len(status.Workspaces) > 0 {
 		fmt.Fprintln(output, "\nWorkspaces")

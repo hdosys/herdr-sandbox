@@ -287,7 +287,7 @@ func goBuildArgs(output string, identity buildIdentity) []string {
 		"-buildvcs=false",
 		"-ldflags", linkerFlags,
 		"-o", output,
-		"./cmd/herdr-sandbox",
+		"./cmd/sandbox",
 	}
 }
 

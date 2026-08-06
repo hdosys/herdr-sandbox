@@ -33,6 +33,9 @@ Unicode true
 !ifndef APP_EXECUTABLE
     !error "APP_EXECUTABLE is required"
 !endif
+!ifndef APP_REPLACED_EXECUTABLE
+    !error "APP_REPLACED_EXECUTABLE is required"
+!endif
 !ifndef APP_BASE_SCRIPT
     !error "APP_BASE_SCRIPT is required"
 !endif
@@ -143,6 +146,7 @@ Var BackupStackScript
 Var BackupQuietUninstall
 Var BackupUninstaller
 Var BackupExecutable
+Var BackupReplacedExecutable
 Var BackupMarker
 Var BackupFailed
 Var PayloadCopyFailed
@@ -817,6 +821,11 @@ Section "Install"
     !insertmacro BackupOwnedFile "${APP_QUIET_UNINSTALL_HELPER}" $BackupQuietUninstall
     !insertmacro BackupOwnedFile "uninstall.exe" $BackupUninstaller
     !insertmacro BackupOwnedFile "${APP_EXECUTABLE}" $BackupExecutable
+    ${If} $ExistingRegistrationOwned == "1"
+        !insertmacro BackupOwnedFile "${APP_REPLACED_EXECUTABLE}" $BackupReplacedExecutable
+    ${Else}
+        StrCpy $BackupReplacedExecutable "0"
+    ${EndIf}
     !insertmacro BackupOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker
     ${If} $BackupFailed != "0"
         MessageBox MB_ICONSTOP|MB_OK "Could not back up every existing installer-owned file. Close running commands and try again. No installed files were changed." /SD IDOK
@@ -847,6 +856,14 @@ Section "Install"
     !insertmacro ReplaceOwnedFile "${APP_QUIET_UNINSTALL_HELPER}"
     !insertmacro ReplaceOwnedFile "uninstall.exe"
     !insertmacro ReplaceOwnedFile "${APP_EXECUTABLE}"
+    ${If} $BackupReplacedExecutable == "1"
+        ClearErrors
+        Delete "$INSTDIR\${APP_REPLACED_EXECUTABLE}"
+        ${If} ${Errors}
+            StrCpy $PayloadCopyFailed "1"
+            StrCpy $InstallFailureMessage "Could not remove replaced executable ${APP_REPLACED_EXECUTABLE}."
+        ${EndIf}
+    ${EndIf}
     ${If} $PayloadCopyFailed != "0"
         Goto install_payload_rollback
     ${EndIf}
@@ -1016,6 +1033,9 @@ Section "Install"
     install_payload_rollback:
         StrCpy $RollbackFailed "0"
         !insertmacro RestoreOwnedFile "${APP_EXECUTABLE}" $BackupExecutable
+        ${If} $ExistingRegistrationOwned == "1"
+            !insertmacro RestoreOwnedFile "${APP_REPLACED_EXECUTABLE}" $BackupReplacedExecutable
+        ${EndIf}
         !insertmacro RestoreOwnedFile "uninstall.exe" $BackupUninstaller
         !insertmacro RestoreOwnedFile "${APP_QUIET_UNINSTALL_HELPER}" $BackupQuietUninstall
         !insertmacro RestoreOwnedFile "${APP_STACK_SCRIPT}" $BackupStackScript

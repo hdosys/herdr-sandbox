@@ -21,7 +21,7 @@ const (
 	maximumHostHerdrRuntimeFileSize = 256 * 1024 * 1024
 	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
 	hostHerdrManifestSchemaVersion  = 3
-	hostHerdrChangedAction          = "run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime"
+	hostHerdrChangedAction          = "run `sandbox down` and then `sandbox up` to provision the current host runtime"
 )
 
 var hostHerdrRuntimeLayout = []string{

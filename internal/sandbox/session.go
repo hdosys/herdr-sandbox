@@ -197,10 +197,10 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 			return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
 		}
 		if retainedReady.HerdrVersion != hostHerdr.version || retainedReady.HerdrProtocol != hostHerdr.protocol {
-			return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime", retainedReady.HerdrVersion, retainedReady.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
+			return Connection{}, fmt.Errorf("retained guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox down` and then `sandbox up` to provision the current host runtime", retainedReady.HerdrVersion, retainedReady.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 		}
 	} else if sessionStatus.State != SessionStopped {
-		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `herdr-sandbox status` and use `herdr-sandbox down` before a fresh launch", sessionStatus.State)
+		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `sandbox status` and use `sandbox down` before a fresh launch", sessionStatus.State)
 	} else {
 		if err := ensureNoRunningSandbox(runContext); err != nil {
 			return Connection{}, err
@@ -373,7 +373,7 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 		return fmt.Errorf("verify host Herdr before attach: %w", err)
 	}
 	if currentHost.version != connection.HerdrVersion || currentHost.protocol != connection.HerdrProtocol {
-		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime", currentHost.version, currentHost.protocol, connection.HerdrVersion, connection.HerdrProtocol)
+		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `sandbox down` and then `sandbox up` to provision the current host runtime", currentHost.version, currentHost.protocol, connection.HerdrVersion, connection.HerdrProtocol)
 	}
 	command := exec.CommandContext(ctx, currentHost.commandPath, "--remote", connection.SSHTarget)
 	command.Stdin = stdin

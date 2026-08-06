@@ -6,6 +6,12 @@ release notes remain available on the
 
 ## Unreleased
 
+### Changed
+
+- The installed and portable command is now `sandbox.exe`, invoked as `sandbox`.
+  Setup removes the former executable only for a proven owned upgrade and does not
+  retain a compatibility alias.
+
 ## v0.0.11 - 2026-08-06
 
 ### Added

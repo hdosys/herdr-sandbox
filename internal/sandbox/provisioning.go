@@ -224,7 +224,7 @@ func resolveProvisioning(startDirectory string) (provisioningPlan, error) {
 		return provisioningPlan{}, err
 	}
 	if len(plan.Workspaces) == 0 {
-		return provisioningPlan{}, errors.New("no workspace is selected; run `herdr-sandbox init --stack <name>` from a project containing the source to map, or add a workspace to %APPDATA%\\herdr-sandbox\\config.json")
+		return provisioningPlan{}, errors.New("no workspace is selected; run `sandbox init --stack <name>` from a project containing the source to map, or add a workspace to %APPDATA%\\herdr-sandbox\\config.json")
 	}
 	return plan, nil
 }
@@ -279,7 +279,7 @@ func ResolveEffectivePlan(ctx context.Context, startDirectory string) (Effective
 		return EffectivePlan{}, err
 	}
 	if len(effective.ReadyChanges) > 0 {
-		effective.NextAction = "Run `herdr-sandbox down`, then `herdr-sandbox up` to apply the changed ready-Sandbox plan."
+		effective.NextAction = "Run `sandbox down`, then `sandbox up` to apply the changed ready-Sandbox plan."
 	}
 	return effective, nil
 }

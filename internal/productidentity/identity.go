@@ -2,8 +2,10 @@ package productidentity
 
 const (
 	ApplicationName          = "herdr-sandbox"
+	CommandName              = "sandbox"
 	DisplayName              = "Herdr Sandbox"
-	ExecutableName           = "herdr-sandbox.exe"
+	ExecutableName           = CommandName + ".exe"
+	ReplacedExecutableName   = "herdr-sandbox.exe"
 	BaseScriptName           = "base.ps1"
 	StackScriptName          = "stacks.ps1"
 	LicenseName              = "LICENSE.txt"

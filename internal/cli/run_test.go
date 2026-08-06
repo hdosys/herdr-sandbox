@@ -23,8 +23,8 @@ func TestRunPrintsHelp(t *testing.T) {
 		t.Fatalf("exit code = %d", code)
 	}
 	for _, required := range []string{
-		"herdr-sandbox version", "herdr-sandbox plan", "herdr-sandbox init", "herdr-sandbox up", "--no-attach",
-		"herdr-sandbox attach", "herdr-sandbox status", "herdr-sandbox mobile", "herdr-sandbox down", "herdr-sandbox clean",
+		"sandbox version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
+		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
 		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "handy", "playwright-cli", "python-ai", "tradingview",
 	} {
@@ -43,7 +43,7 @@ func TestRunPrintsHelp(t *testing.T) {
 func TestRunPrintsVersionWithoutCrossingSandboxBoundary(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), []string{"version"}, &bytes.Buffer{}, &stdout, &stderr)
-	if code != 0 || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "herdr-sandbox ") {
+	if code != 0 || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "sandbox ") {
 		t.Fatalf("version code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }
@@ -67,7 +67,7 @@ func TestFlagParseErrorsUseProductPrefix(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
 			code := Run(context.Background(), []string{command, "--unknown"}, &bytes.Buffer{}, &stdout, &stderr)
-			if code != 2 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "herdr-sandbox: flag provided but not defined: -unknown\n\nUsage:") {
+			if code != 2 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "sandbox: flag provided but not defined: -unknown\n\nUsage:") {
 				t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -450,7 +450,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Next: run `herdr-sandbox attach`") {
+	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
 		t.Fatalf("code = %d, validated = %t, attached = %t, order = %v, stdout = %q", code, validated, attached, order, stdout.String())
 	}
 }
@@ -548,7 +548,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 			{Name: "shared", HostDirectory: `D:\shared`, GuestDirectory: `C:\Workspaces\shared`},
 		},
 		ReadyChanges: []string{"memory: 16384 -> 32768", "workspaces changed"},
-		NextAction:   "Run `herdr-sandbox up` to apply this plan.",
+		NextAction:   "Run `sandbox up` to apply this plan.",
 	}
 	var output bytes.Buffer
 	printEffectivePlan(&output, plan)
@@ -561,7 +561,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		"  - worktrees\n    Host: E:\\worktrees\n    Guest: C:\\Mounts\\worktrees\n    Access: read/write",
 		"Workspaces\n  * project (active)\n    Host: D:\\project\n    Guest: C:\\Workspaces\\project\n    Stacks:\n      - go\n      - rust",
 		"  - shared\n    Host: D:\\shared", "Ready Sandbox changes\n  - memory: 16384 -> 32768\n  - workspaces changed",
-		"Next: Run `herdr-sandbox up` to apply this plan.",
+		"Next: Run `sandbox up` to apply this plan.",
 	} {
 		if !strings.Contains(output.String(), required) {
 			t.Fatalf("plan is missing %q:\n%s", required, output.String())
@@ -624,7 +624,7 @@ func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *t
 		},
 		Timings:    []sandbox.SessionTiming{{Role: "Go package total", ElapsedMilliseconds: 1250}},
 		Warnings:   []string{"diagnostic warning"},
-		NextAction: "Run `herdr-sandbox attach`.",
+		NextAction: "Run `sandbox attach`.",
 	}
 	var output bytes.Buffer
 	printSessionStatus(&output, status)
@@ -632,7 +632,7 @@ func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *t
 		"Started: 2026-07-29T12:00:00Z", "WinGet: v1.29.0", "Herdr protocol: 18",
 		"* project (active)", "Operation\n  Kind: reprovision\n  State: failed", "Phase: configuration-sync",
 		"Diagnostics\n  Path: C:\\state\\status", "- Go package total: 1.25s",
-		"Warnings\n  - diagnostic warning", "Next: Run `herdr-sandbox attach`.",
+		"Warnings\n  - diagnostic warning", "Next: Run `sandbox attach`.",
 	} {
 		if !strings.Contains(output.String(), required) {
 			t.Fatalf("status is missing %q: %q", required, output.String())

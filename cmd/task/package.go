@@ -403,6 +403,7 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 	for role, value := range map[string]string{
 		"application name":       productidentity.ApplicationName,
 		"executable":             productidentity.ExecutableName,
+		"replaced executable":    productidentity.ReplacedExecutableName,
 		"Base script":            productidentity.BaseScriptName,
 		"Stacks script":          productidentity.StackScriptName,
 		"license":                productidentity.LicenseName,
@@ -434,7 +435,7 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 		return errors.New("installer display name must not contain an unescaped ampersand")
 	}
 	seen := map[string]string{}
-	for _, name := range append(installerOwnedFiles(), productidentity.InstallerMarkerName) {
+	for _, name := range append(installerOwnedFiles(), productidentity.InstallerMarkerName, productidentity.ReplacedExecutableName) {
 		key := strings.ToLower(name)
 		if previous, exists := seen[key]; exists {
 			return fmt.Errorf("installer file names collide case-insensitively: %q and %q", previous, name)
@@ -508,9 +509,10 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DRELEASE_TAG=" + version.Tag,
 		"/DVERSION=" + version.Display,
 		"/DFIXED_VERSION=" + version.Fixed,
-		"/DAPP_NAME=" + productidentity.ApplicationName,
+		"/DAPP_NAME=" + productidentity.CommandName,
 		"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName,
 		"/DAPP_EXECUTABLE=" + productidentity.ExecutableName,
+		"/DAPP_REPLACED_EXECUTABLE=" + productidentity.ReplacedExecutableName,
 		"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName,
 		"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName,
 		"/DAPP_LICENSE=" + productidentity.LicenseName,

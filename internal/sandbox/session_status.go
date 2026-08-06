@@ -118,7 +118,7 @@ func inspectSessionDuringOperation(ctx context.Context, dataDirectory string, lo
 	}
 	if !found || operationAfter.ID != operationBefore.ID || operationAfter.RunID != before.RunID ||
 		operationAfter.State != operationStateRunning {
-		return SessionStatus{}, errors.New("retained operation changed terminal state during status inspection; retry `herdr-sandbox status`")
+		return SessionStatus{}, errors.New("retained operation changed terminal state during status inspection; retry `sandbox status`")
 	}
 	status.Operation = &operationAfter
 	status.Warnings = append(status.Warnings, "Stale-state cleanup was deferred while retained reprovisioning is active.")
@@ -129,21 +129,21 @@ func inspectSessionDuringOperation(ctx context.Context, dataDirectory string, lo
 func sessionNextAction(status SessionStatus) string {
 	switch status.State {
 	case SessionStopped:
-		return "Run `herdr-sandbox up` from a configured project."
+		return "Run `sandbox up` from a configured project."
 	case SessionStarting:
-		return "Wait for provisioning, then run `herdr-sandbox status` again."
+		return "Wait for provisioning, then run `sandbox status` again."
 	case SessionReady:
 		if status.Operation != nil && status.Operation.State == operationStateRunning {
-			return "Wait for retained reprovisioning to finish, then run `herdr-sandbox attach`."
+			return "Wait for retained reprovisioning to finish, then run `sandbox attach`."
 		}
-		return "Run `herdr-sandbox attach` to connect without reprovisioning."
+		return "Run `sandbox attach` to connect without reprovisioning."
 	case SessionFailed:
-		return "Inspect the diagnostics above, then run `herdr-sandbox down` before retrying `up`."
+		return "Inspect the diagnostics above, then run `sandbox down` before retrying `up`."
 	case SessionStale:
-		return "Run `herdr-sandbox status` again to retry bounded stale-state cleanup."
+		return "Run `sandbox status` again to retry bounded stale-state cleanup."
 	case SessionUnmanaged:
-		return "Close or otherwise manage the unrelated Windows Sandbox before running `herdr-sandbox up`."
+		return "Close or otherwise manage the unrelated Windows Sandbox before running `sandbox up`."
 	default:
-		return "Run `herdr-sandbox status` again."
+		return "Run `sandbox status` again."
 	}
 }

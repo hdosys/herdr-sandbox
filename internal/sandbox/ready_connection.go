@@ -31,7 +31,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 		}
 		status, inspectErr := inspectSessionDuringOperation(ctx, dataDirectory, err)
 		if inspectErr == nil && status.Operation != nil && status.Operation.State == operationStateRunning {
-			return Connection{}, errors.New("retained reprovisioning is active; wait for it to finish, then run `herdr-sandbox attach` again")
+			return Connection{}, errors.New("retained reprovisioning is active; wait for it to finish, then run `sandbox attach` again")
 		}
 		return Connection{}, fmt.Errorf("open ready Sandbox lifecycle: %w", err)
 	}
@@ -54,14 +54,14 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 		return Connection{}, err
 	}
 	if !found {
-		return Connection{}, errors.New("no app-owned ready Sandbox exists; run `herdr-sandbox up`")
+		return Connection{}, errors.New("no app-owned ready Sandbox exists; run `sandbox up`")
 	}
 	status, err := inspectSessionAt(ctx, dataDirectory)
 	if err != nil {
 		return Connection{}, err
 	}
 	if status.State != SessionReady {
-		return Connection{}, fmt.Errorf("Sandbox state is %s, not ready; run `herdr-sandbox status`", status.State)
+		return Connection{}, fmt.Errorf("Sandbox state is %s, not ready; run `sandbox status`", status.State)
 	}
 	runDirectory := filepath.Join(dataDirectory, "runs", active.RunID)
 	readyPath := filepath.Join(runDirectory, "status", readyFileName)
@@ -76,7 +76,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 		return Connection{}, fmt.Errorf("validate ready Sandbox identity: %w", err)
 	}
 	if ready.HerdrVersion != hostHerdr.version || ready.HerdrProtocol != hostHerdr.protocol {
-		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `herdr-sandbox down` and then `herdr-sandbox up` to provision the current host runtime",
+		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox down` and then `sandbox up` to provision the current host runtime",
 			ready.HerdrVersion, ready.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 	}
 	plan := runPlan{

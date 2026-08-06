@@ -56,10 +56,10 @@ func TestGoBuildArgsUseStrippedProductionBuild(t *testing.T) {
 		"-trimpath",
 		"-buildvcs=false",
 		"-ldflags", "-s -w -X herdr-sandbox/internal/productidentity.Version=0.0.7 -X herdr-sandbox/internal/productidentity.Revision=0123456789abcdef0123456789abcdef01234567",
-		"-o", `build\bin\herdr-sandbox.exe`,
-		"./cmd/herdr-sandbox",
+		"-o", `build\bin\sandbox.exe`,
+		"./cmd/sandbox",
 	}
-	got := goBuildArgs(`build\bin\herdr-sandbox.exe`, buildIdentity{Version: "0.0.7", Revision: "0123456789abcdef0123456789abcdef01234567"})
+	got := goBuildArgs(`build\bin\sandbox.exe`, buildIdentity{Version: "0.0.7", Revision: "0123456789abcdef0123456789abcdef01234567"})
 	if !slices.Equal(got, want) {
 		t.Fatalf("goBuildArgs = %#v, want %#v", got, want)
 	}
