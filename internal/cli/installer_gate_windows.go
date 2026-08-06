@@ -3,11 +3,7 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -40,35 +36,5 @@ func acquireInstallerLifecycleGate(args []string) (func(), error) {
 		_ = syscall.CloseHandle(mutex)
 		return nil, fmt.Errorf("setup, uninstall, or another %s command is already using the installed files; wait for it to finish and try again", productidentity.DisplayName)
 	}
-	if err := rejectPendingInstallerTransaction(); err != nil {
-		_ = syscall.CloseHandle(mutex)
-		return nil, err
-	}
 	return func() { _ = syscall.CloseHandle(mutex) }, nil
-}
-
-func rejectPendingInstallerTransaction() error {
-	executable, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve executable for installer transaction check: %w", err)
-	}
-	localAppData, err := os.UserCacheDir()
-	if err != nil {
-		return fmt.Errorf("resolve local application data for installer transaction check: %w", err)
-	}
-	return rejectPendingInstallerTransactionAt(executable, localAppData)
-}
-
-func rejectPendingInstallerTransactionAt(executable, localAppData string) error {
-	installDirectory := filepath.Join(localAppData, "Programs", productidentity.InstallDirectoryName)
-	if !strings.EqualFold(filepath.Clean(filepath.Dir(executable)), filepath.Clean(installDirectory)) {
-		return nil
-	}
-	transactionDirectory := filepath.Join(filepath.Dir(installDirectory), "."+productidentity.ApplicationName+"-installer-transaction")
-	if _, err := os.Lstat(transactionDirectory); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect pending installer transaction: %w", err)
-	}
-	return fmt.Errorf("a pending %s installer transaction must be recovered; run setup or uninstall again before using the installed command", productidentity.DisplayName)
 }

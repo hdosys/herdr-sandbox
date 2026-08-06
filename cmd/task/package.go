@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"debug/pe"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,11 +23,7 @@ import (
 
 const installerEngineVersion = "3.12"
 
-const (
-	installerDefinitionSchemaVersion = 1
-	installerSchemaVersion           = 1
-	installerUninstallerName         = "uninstall.exe"
-)
+const installerUninstallerName = "uninstall.exe"
 
 var releaseTagPattern = regexp.MustCompile(`^v0\.0\.(0|[1-9][0-9]*)$`)
 var installerProductGUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -57,25 +52,6 @@ type releasePackagePaths struct {
 	ZIPChecksum       string
 	Installer         string
 	InstallerChecksum string
-}
-
-type installerDefinition struct {
-	SchemaVersion            int      `json:"schemaVersion"`
-	InstallerSchemaVersion   int      `json:"installerSchemaVersion"`
-	ProductGUID              string   `json:"productGuid"`
-	ApplicationName          string   `json:"applicationName"`
-	DisplayName              string   `json:"displayName"`
-	Version                  string   `json:"version"`
-	Publisher                string   `json:"publisher"`
-	ProductURL               string   `json:"productUrl"`
-	InstallDirectoryName     string   `json:"installDirectoryName"`
-	RegistryKeyName          string   `json:"registryKeyName"`
-	ExecutableName           string   `json:"executableName"`
-	MarkerFileName           string   `json:"markerFileName"`
-	QuietUninstallHelperName string   `json:"quietUninstallHelperName"`
-	UninstallerName          string   `json:"uninstallerName"`
-	OutputFileName           string   `json:"outputFileName"`
-	OwnedFiles               []string `json:"ownedFiles"`
 }
 
 func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
@@ -475,41 +451,11 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 	return nil
 }
 
-func writeInstallerDefinition(path string, version releaseVersion, outputPath string) error {
-	if err := validateInstallerBuildInputs(version, outputPath); err != nil {
-		return err
-	}
-	definition := installerDefinition{
-		SchemaVersion:            installerDefinitionSchemaVersion,
-		InstallerSchemaVersion:   installerSchemaVersion,
-		ProductGUID:              productidentity.ProductGUID,
-		ApplicationName:          productidentity.ApplicationName,
-		DisplayName:              productidentity.DisplayName,
-		Version:                  version.Display,
-		Publisher:                productidentity.Publisher,
-		ProductURL:               productidentity.ProductURL,
-		InstallDirectoryName:     productidentity.InstallDirectoryName,
-		RegistryKeyName:          productidentity.UninstallKeyName,
-		ExecutableName:           productidentity.ExecutableName,
-		MarkerFileName:           productidentity.InstallerMarkerName,
-		QuietUninstallHelperName: productidentity.QuietUninstallHelperName,
-		UninstallerName:          installerUninstallerName,
-		OutputFileName:           filepath.Base(outputPath),
-		OwnedFiles:               installerOwnedFiles(),
-	}
-	data, err := json.MarshalIndent(definition, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode installer definition: %w", err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write installer definition: %w", err)
-	}
-	return nil
-}
-
 func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirectory, outputPath string, stdout, stderr io.Writer) error {
 	if err := validateReleasePackage(stageDirectory); err != nil {
+		return err
+	}
+	if err := validateInstallerBuildInputs(version, outputPath); err != nil {
 		return err
 	}
 	makensis, err := findMakeNSIS()
@@ -534,11 +480,11 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if err != nil {
 		return fmt.Errorf("resolve installer output: %w", err)
 	}
-	installerStateHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "installer-state.ps1"))
+	pathHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "path.ps1"))
 	if err != nil {
-		return fmt.Errorf("resolve installer state helper: %w", err)
+		return fmt.Errorf("resolve installer PATH helper: %w", err)
 	}
-	if _, err := requireExecutable(installerStateHelper, "installer state helper"); err != nil {
+	if _, err := requireExecutable(pathHelper, "installer PATH helper"); err != nil {
 		return err
 	}
 	quietUninstallHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "quiet-uninstall.ps1"))
@@ -554,19 +500,6 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	}
 	if err := os.Remove(outputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove previous installer output: %w", err)
-	}
-	definitionFile, err := os.CreateTemp(filepath.Dir(outputPath), ".installer-definition-*.json")
-	if err != nil {
-		return fmt.Errorf("create installer definition: %w", err)
-	}
-	definitionPath := definitionFile.Name()
-	if err := definitionFile.Close(); err != nil {
-		_ = os.Remove(definitionPath)
-		return fmt.Errorf("close installer definition: %w", err)
-	}
-	defer func() { _ = os.Remove(definitionPath) }()
-	if err := writeInstallerDefinition(definitionPath, version, outputPath); err != nil {
-		return err
 	}
 	args := []string{
 		"/WX",
@@ -593,9 +526,8 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName,
 		"/DAPP_COPYRIGHT=" + productidentity.Copyright,
 		"/DPACKAGE_DIR=" + stageDirectory,
-		"/DINSTALLER_STATE_HELPER=" + installerStateHelper,
+		"/DPATH_HELPER=" + pathHelper,
 		"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper,
-		"/DINSTALLER_DEFINITION=" + definitionPath,
 		"/DOUTPUT_FILE=" + outputPath,
 		"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath),
 		script,

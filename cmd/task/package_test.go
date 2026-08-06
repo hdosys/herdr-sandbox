@@ -6,13 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image/png"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -57,34 +55,29 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 	}
 }
 
-func TestInstallerDefinitionBindsSafeCurrentIdentityManifest(t *testing.T) {
+func TestInstallerBuildInputsBindSafeCurrentIdentity(t *testing.T) {
 	version, err := parseReleaseVersion("v0.0.10")
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
 	output := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
-	definitionPath := filepath.Join(root, "definition.json")
-	if err := writeInstallerDefinition(definitionPath, version, output); err != nil {
-		t.Fatalf("writeInstallerDefinition: %v", err)
+	if err := validateInstallerBuildInputs(version, output); err != nil {
+		t.Fatalf("validateInstallerBuildInputs: %v", err)
 	}
-	data, err := os.ReadFile(definitionPath)
-	if err != nil {
-		t.Fatal(err)
+	wantOwned := []string{
+		productidentity.BaseScriptName,
+		productidentity.LicenseName,
+		productidentity.StackScriptName,
+		productidentity.QuietUninstallHelperName,
+		installerUninstallerName,
+		productidentity.ExecutableName,
 	}
-	var definition installerDefinition
-	if err := json.Unmarshal(data, &definition); err != nil {
-		t.Fatal(err)
+	if !slices.Equal(installerOwnedFiles(), wantOwned) {
+		t.Fatalf("installer owned files = %v, want %v", installerOwnedFiles(), wantOwned)
 	}
-	if definition.SchemaVersion != installerDefinitionSchemaVersion ||
-		definition.InstallerSchemaVersion != installerSchemaVersion ||
-		definition.ProductGUID != productidentity.ProductGUID ||
-		definition.RegistryKeyName != productidentity.UninstallKeyName ||
-		definition.MarkerFileName != productidentity.InstallerMarkerName ||
-		definition.QuietUninstallHelperName != productidentity.QuietUninstallHelperName ||
-		definition.OutputFileName != filepath.Base(output) ||
-		!slices.Equal(definition.OwnedFiles, installerOwnedFiles()) {
-		t.Fatalf("installer definition = %#v", definition)
+	if err := validateInstallerBuildInputs(version, filepath.Join(root, "wrong.exe")); err == nil {
+		t.Fatal("mismatched installer output name unexpectedly passed")
 	}
 	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "name. ", "a/b"} {
 		if err := validateInstallerLeaf("fixture", value); err == nil {
@@ -338,6 +331,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SetCompressor /SOLID /FINAL lzma`,
 		`ManifestDPIAware true`,
 		`AutoCloseWindow true`,
+		`!define MUI_CUSTOMFUNCTION_UNABORT un.PreventUninstallMutationAbort`,
 		`!define INSTALLER_WELCOME_BITMAP_100 "${__FILEDIR__}\assets\installer-welcome-finish-164x314.bmp"`,
 		`!define INSTALLER_WELCOME_BITMAP_125 "${__FILEDIR__}\assets\installer-welcome-finish-205x393.bmp"`,
 		`!define INSTALLER_WELCOME_BITMAP_150 "${__FILEDIR__}\assets\installer-welcome-finish-246x471.bmp"`,
@@ -385,15 +379,39 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "${PACKAGE_DIR}\${APP_STACK_SCRIPT}"`,
 		`File "/oname=${APP_QUIET_UNINSTALL_HELPER}" "${QUIET_UNINSTALL_HELPER}"`,
 		`WriteUninstaller "$PLUGINSDIR\package\uninstall.exe"`,
-		`File "/oname=installer-state.ps1" "${INSTALLER_STATE_HELPER}"`,
-		`File "/oname=definition.json" "${INSTALLER_DEFINITION}"`,
-		`RunInstallerState "Install"`,
-		`RunInstallerState "InspectUninstall"`,
-		`RunInstallerState "MarkCleanupComplete"`,
-		`RunInstallerState "FinishUninstall"`,
-		`Automatic transaction recovery and direct repair both failed`,
+		`File "/oname=path.ps1" "${PATH_HELPER}"`,
+		`FileOpen $0 "$PLUGINSDIR\package\${APP_INSTALLER_MARKER}" w`,
+		`{"productGuid":"${APP_PRODUCT_GUID}","installerSchema":1}`,
+		`ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "ProductGuid"`,
+		`ReadRegStr $1 HKCU "${UNINSTALL_KEY}" "InstallLocation"`,
+		`EnumRegValue $0 HKCU "${UNINSTALL_KEY}" 0`,
+		`The fixed ${APP_DISPLAY_NAME} install directory is nonempty but unmarked`,
+		`The incomplete ${APP_DISPLAY_NAME} registration points to another location`,
+		`BackupOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker`,
+		`ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`,
+		`ReplaceOwnedFile "${APP_BASE_SCRIPT}"`,
+		`ReplaceOwnedFile "${APP_EXECUTABLE}"`,
+		`RestoreOwnedFile "${APP_EXECUTABLE}" $BackupExecutable`,
+		`RestoreOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker`,
+		`RunPathHelper "Contains"`,
+		`RunPathHelper "Add"`,
+		`RunPathHelper "Remove"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $3`,
+		`WriteRegStr HKCU "${UNINSTALL_KEY}" "ProductGuid" "${APP_PRODUCT_GUID}"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`,
+		`Function un.RestoreRetryOwnership`,
+		`Call un.RestoreRetryOwnership`,
+		`Function un.PreventUninstallMutationAbort`,
+		`Call un.DisableUninstallCancellation`,
+		`KERNEL32::CreateFileW`,
+		`APP_DELETE_ACCESS`,
+		`IfSilent uninstall_cleanup_abort`,
+		`APP_EXIT_UNINSTALL_CLEANUP 82`,
+		`APP_EXIT_UNINSTALL_PARTIAL_CLEANUP 83`,
+		`The working application payload remains installed`,
+		`The prior installer-owned files were restored`,
 		`The first command that needs configuration will try again`,
-		`terminal removal will converge directly`,
 		`MessageBox MB_ICONSTOP|MB_OK`,
 		`/SD IDOK`,
 		`VIProductVersion "${FIXED_VERSION}"`,
@@ -422,6 +440,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`!define APP_EXIT_UNINSTALL_PREFLIGHT 80`,
 		`!define APP_EXIT_UNINSTALL_FINALIZE 81`,
 		`!define APP_EXIT_INTERNAL_STATE 90`,
+		`Delete "$INSTDIR\${NAME}"`,
+		`DeleteRegKey HKCU "${UNINSTALL_KEY}"`,
+		`RMDir "$INSTDIR"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("installer source is missing %q", want)
@@ -440,13 +461,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SendMessage ${HWND_BROADCAST}`,
 		`SendNotifyMessage`,
 		`Local\${APP_UNINSTALL_KEY}`,
-		`ReadRegStr`,
-		`ReadRegDWORD`,
-		`WriteRegStr`,
-		`WriteRegDWORD`,
-		`DeleteRegKey`,
-		`Delete "$INSTDIR`,
-		`RMDir "$INSTDIR`,
+		`installer-state.ps1`,
+		`INSTALLER_STATE_HELPER`,
+		`INSTALLER_DEFINITION`,
+		`RunInstallerState`,
+		`/TIMEOUT=`,
+		`installer-transaction`,
+		`state.json`,
+		`File /r`,
 		`!define PRODUCT_NAME`,
 		`Herdr Sandbox`,
 		`herdr-sandbox`,
@@ -466,7 +488,6 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`WebView`,
 		`updater`,
 		`runtime bundle`,
-		`File /r`,
 		`Stopping the app-owned Sandbox`,
 		`MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage`,
 		`Function PolishInstallerFinishPage`,
@@ -475,31 +496,40 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)
 		}
 	}
-	cleanupIndex := strings.LastIndex(source, `__installer-clean-uninstall`)
-	markIndex := strings.Index(source, `RunInstallerState "MarkCleanupComplete"`)
-	finishIndex := strings.Index(source, `RunInstallerState "FinishUninstall"`)
-	if cleanupIndex < 0 || markIndex <= cleanupIndex || finishIndex <= markIndex {
-		t.Fatalf("clean uninstall must reach its durable phase before terminal file/registration cleanup")
+	markerReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`)
+	baseReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_BASE_SCRIPT}"`)
+	executableReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_EXECUTABLE}"`)
+	if markerReplaceIndex < 0 || baseReplaceIndex <= markerReplaceIndex || executableReplaceIndex <= baseReplaceIndex {
+		t.Fatal("setup must establish its marker, replace support files, and copy the executable last")
 	}
-	for _, want := range []string{
-		`InspectUninstall`,
-		`MarkCleanupComplete`,
-		`FinishUninstall`,
-		`Automatic transaction recovery and direct removal both failed`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("installer source is missing resumable uninstall contract %q", want)
-		}
-	}
-	activationIndex := strings.Index(source, `RunInstallerState "Install"`)
+	installCompleteIndex := strings.Index(source, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`)
 	seedIndex := strings.Index(source, `__installer-seed-configuration`)
-	if activationIndex < 0 || seedIndex <= activationIndex {
-		t.Fatal("installer activation must complete before best-effort configuration seeding")
+	if installCompleteIndex < 0 || seedIndex <= installCompleteIndex {
+		t.Fatal("payload and registration must commit before best-effort configuration seeding")
 	}
-	if strings.Count(source, "Abort") != 1 || !strings.Contains(source, "Quit") {
-		t.Fatal("fatal installer failures must quit instead of stranding the files page")
+	preflightIndex := strings.LastIndex(source, `!insertmacro PreflightOwnedFile "uninstall.exe"`)
+	cleanupIndex := strings.LastIndex(source, `__installer-clean-uninstall`)
+	uninstallMutationIndex := strings.LastIndex(source, `StrCpy $InstallMutationActive "1"`)
+	cleanupMarkerIndex := strings.LastIndex(source, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`)
+	pathRemoveIndex := strings.LastIndex(source, `!insertmacro RunPathHelper "Remove"`)
+	baseDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_BASE_SCRIPT}"`)
+	executableDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_EXECUTABLE}"`)
+	markerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_INSTALLER_MARKER}"`)
+	registryDeleteIndex := strings.LastIndex(source, `DeleteRegKey HKCU "${UNINSTALL_KEY}"`)
+	uninstallerDeleteIndex := strings.LastIndex(source, `Delete "$INSTDIR\uninstall.exe"`)
+	if preflightIndex < 0 || uninstallMutationIndex <= preflightIndex || cleanupIndex <= uninstallMutationIndex || cleanupMarkerIndex <= cleanupIndex ||
+		pathRemoveIndex <= cleanupMarkerIndex || baseDeleteIndex <= pathRemoveIndex ||
+		executableDeleteIndex <= baseDeleteIndex || markerDeleteIndex <= executableDeleteIndex ||
+		registryDeleteIndex <= markerDeleteIndex || uninstallerDeleteIndex <= registryDeleteIndex {
+		t.Fatal("uninstall must preflight, clean, record, remove PATH, remove known files, and delete the uninstaller last")
 	}
-	if strings.Count(source, `/SD IDOK`) < 10 || strings.Count(source, `SetErrorLevel`) < 8 {
+	if strings.Count(source, `Call un.RestoreRetryOwnership`) != 2 {
+		t.Fatal("late registration or uninstaller deletion failure must restore retry ownership")
+	}
+	if strings.Count(source, `StrCpy $ExistingRegistrationOwned "1"`) != 2 {
+		t.Fatal("complete and marker-backed incomplete registration must share repair ownership")
+	}
+	if !strings.Contains(source, "Quit") || strings.Count(source, `/SD IDOK`) < 10 || strings.Count(source, `SetErrorLevel`) < 8 {
 		t.Fatal("interactive failures need messages while silent failures retain stable nonblocking exits")
 	}
 	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
@@ -541,153 +571,57 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName`,
 		`"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName`,
 		`"/DAPP_COPYRIGHT=" + productidentity.Copyright`,
-		`"/DINSTALLER_STATE_HELPER=" + installerStateHelper`,
+		`"/DPATH_HELPER=" + pathHelper`,
 		`"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper`,
-		`"/DINSTALLER_DEFINITION=" + definitionPath`,
 		`"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath)`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("package task is missing canonical installer identity input %q", want)
 		}
 	}
-	for _, forbidden := range []string{"LegacyUninstallKeyName", "legacyInstaller", "APP_LEGACY_UNINSTALL_KEY"} {
+	for _, forbidden := range []string{"LegacyUninstallKeyName", "legacyInstaller", "APP_LEGACY_UNINSTALL_KEY", "installerDefinition", "installer-state.ps1"} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("package task still carries installer backward compatibility %q", forbidden)
 		}
 	}
 }
 
-func TestInstallerStateHelperOwnsTransactionsAndIntentConvergence(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
+func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "path.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(data)
 	for _, want := range []string{
-		`[ValidateSet('Install', 'InspectUninstall', 'MarkCleanupComplete', 'FinishUninstall')]`,
+		`[ValidateSet('Contains', 'Add', 'Remove')]`,
 		`RegistryValueOptions]::DoNotExpandEnvironmentNames`,
 		`RegistryValueKind]::ExpandString`,
-		`Test-PathEntry`,
+		`Test-EffectivePathEntry`,
+		`Test-OwnedPathEntry`,
 		`Resolve-UserPathUpdate`,
-		`Get-RegistryKeySnapshot`,
-		`Restore-RegistryKeySnapshot`,
-		`ProductGuid`,
-		`InstallationId`,
-		`InstallerSchemaVersion`,
-		`Get-Marker`,
-		`Get-FileSHA256`,
-		`Invoke-InstallRollback`,
-		`Invoke-DirectInstallConvergence`,
-		`Invoke-DirectUninstallConvergence`,
-		`Invoke-InstallIntent`,
-		`Invoke-InspectUninstallIntent`,
-		`Complete-UninstallTransaction`,
-		`Assert-TransactionState`,
-		`discarded unusable installer transaction and continued requested operation`,
-		`Installer transaction contains a reparse point and was preserved: $($item.FullName)`,
-		`direct install convergence completed after transaction failure`,
-		`direct uninstall convergence completed after transaction failure`,
-		`DeleteSubKeyTree`,
-		`[IO.Directory]::Delete($script:InstallDirectory, $true)`,
-		`Copy-FileDurable`,
-		`[IO.FileOptions]::WriteThrough`,
-		`discarded interrupted pre-journal installer preparation`,
-		`$oldNames = @()`,
-		`sha256 = Get-FileSHA256 -Path $path`,
-		`FileShare]::None`,
+		`Get-UserPathSnapshot`,
+		`Test-SnapshotEqual`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
 		`[string]::Join(';', [string[]]$kept)`,
-		`Write-InstallerLog`,
+		`[Console]::Out.Write`,
+		`exit 10`,
 	} {
 		if !strings.Contains(source, want) {
-			t.Fatalf("installer state helper is missing %q", want)
+			t.Fatalf("installer PATH helper is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Herdr Sandbox", `"herdr-sandbox"`, "HERDR_SANDBOX_INSTALL_DIRECTORY"} {
+	for _, forbidden := range []string{"Herdr Sandbox", `"herdr-sandbox"`, "HERDR_SANDBOX_INSTALL_DIRECTORY", "Remove-Item", "ProductGuid", "InstallComplete", "CleanupComplete", "Transaction"} {
 		if strings.Contains(source, forbidden) {
-			t.Fatalf("installer state helper contains product-specific or unrelated state pattern %q", forbidden)
-		}
-	}
-	for _, forbidden := range []string{"legacy", "Legacy", "v0.0.9", "HerdrSandbox"} {
-		if strings.Contains(source, forbidden) {
-			t.Fatalf("installer state helper still carries backward compatibility %q", forbidden)
+			t.Fatalf("installer PATH helper contains product-specific or unrelated state pattern %q", forbidden)
 		}
 	}
 }
 
-func TestInstallerStateHelperDiscardsMalformedTransactionAndContinuesIntent(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell 5.1 transaction validation regression")
-	}
-	root := t.TempDir()
-	localAppData := filepath.Join(root, "LocalAppData")
-	installDirectory := filepath.Join(localAppData, "Programs", productidentity.InstallDirectoryName)
-	transactionDirectory := filepath.Join(filepath.Dir(installDirectory), "."+productidentity.ApplicationName+"-installer-transaction")
-	version := releaseVersion{Tag: "v0.0.10", Display: "0.0.10", Fixed: "0.0.10.0"}
-	definitionPath := filepath.Join(root, "definition.json")
-	outputPath := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
-	if err := writeInstallerDefinition(definitionPath, version, outputPath); err != nil {
-		t.Fatal(err)
-	}
-	helper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	newState := func() map[string]any {
-		return map[string]any{
-			"schemaVersion": 1, "transactionId": "11111111-1111-4111-8111-111111111111",
-			"kind": "Unknown", "phase": "Prepared", "installDirectory": installDirectory,
-			"installationId": "22222222-2222-4222-8222-222222222222", "installationState": "Fresh",
-			"currentRegistry": map[string]any{"exists": false, "values": []any{}},
-			"pathBefore":      map[string]any{"keyExists": false, "exists": false, "kind": "", "data": ""},
-			"pathAfter":       nil, "pathChanged": false, "oldFiles": []any{}, "newFiles": []any{}, "cleanupComplete": false,
-		}
-	}
-	for _, test := range []struct {
-		name   string
-		mutate func(map[string]any)
-	}{
-		{name: "unknown kind", mutate: func(map[string]any) {}},
-		{name: "string boolean", mutate: func(state map[string]any) { state["pathChanged"] = "false" }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if err := os.MkdirAll(transactionDirectory, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			state := newState()
-			test.mutate(state)
-			encoded, err := json.Marshal(state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			statePath := filepath.Join(transactionDirectory, "state.json")
-			if err := os.WriteFile(statePath, append(encoded, '\n'), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			command := hiddenCommandContext(ctx, powerShell,
-				"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-				"-File", helper, "-Action", "InspectUninstall", "-DefinitionPath", definitionPath, "-InstallDirectory", installDirectory)
-			command.Env = append(os.Environ(), "LOCALAPPDATA="+localAppData, "TEMP="+root, "TMP="+root)
-			output, runErr := command.CombinedOutput()
-			var exitErr *exec.ExitError
-			if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 10 {
-				t.Fatalf("malformed transaction did not continue uninstall intent, result = %v: %s", runErr, output)
-			}
-			if _, err := os.Stat(transactionDirectory); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("malformed private transaction was not discarded: %v", err)
-			}
-		})
-	}
-}
-
-func TestInstallerStateHelperPreservesPathOwnershipInWindowsPowerShell51(t *testing.T) {
+func TestInstallerPathHelperPreservesPathOwnershipInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 PATH ownership regression")
 	}
-	pathHelper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "installer-state.ps1"))
+	pathHelper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "path.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,35 +631,37 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-NormalizedPath', 'Test-PathEntry', 'Resolve-UserPathUpdate')) {
+foreach ($name in @('Get-NormalizedPath', 'Test-EffectivePathEntry', 'Test-OwnedPathEntry', 'Resolve-UserPathUpdate')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
     Invoke-Expression $definition.Extent.Text
 }
 $target = 'C:\Users\Example\AppData\Local\Programs\Herdr Sandbox'
 function Assert-Update {
-    param([string]$Current, [string]$Action, [bool]$Changed, [string]$Value, [bool]$ExpandVariables = $false)
+    param([string]$Current, [string]$Action, [bool]$Changed, [bool]$Present, [string]$Value, [bool]$ExpandVariables = $false)
     $actual = Resolve-UserPathUpdate -Current $Current -Expected $target -RequestedAction $Action -ExpandVariables $ExpandVariables
-    if ([bool]$actual.Changed -ne $Changed -or [string]$actual.Value -cne $Value) {
-        throw "PATH update $Action [$Current] = changed=$($actual.Changed) value=[$($actual.Value)]"
+    if ([bool]$actual.Changed -ne $Changed -or [bool]$actual.Present -ne $Present -or [string]$actual.Value -cne $Value) {
+        throw "PATH update $Action [$Current] = changed=$($actual.Changed) present=$($actual.Present) value=[$($actual.Value)]"
     }
 }
-Assert-Update -Current '' -Action Add -Changed $true -Value $target
-Assert-Update -Current 'C:\Tools' -Action Add -Changed $true -Value "C:\Tools;$target"
+Assert-Update -Current '' -Action Contains -Changed $false -Present $false -Value ''
+Assert-Update -Current '' -Action Add -Changed $true -Present $true -Value $target
+Assert-Update -Current 'C:\Tools' -Action Add -Changed $true -Present $true -Value "C:\Tools;$target"
 $added = Resolve-UserPathUpdate -Current 'C:\Tools;' -Expected $target -RequestedAction Add -ExpandVariables $false
 if (-not $added.Changed -or $added.Value -cne "C:\Tools;;$target") { throw 'Trailing empty PATH entry was not preserved during add.' }
 $removed = Resolve-UserPathUpdate -Current $added.Value -Expected $target -RequestedAction Remove -ExpandVariables $false
 if (-not $removed.Changed -or $removed.Value -cne 'C:\Tools;') { throw 'Original PATH was not restored after owned removal.' }
-Assert-Update -Current $target -Action Add -Changed $false -Value $target
-Assert-Update -Current ('"' + $target.ToUpperInvariant() + '\"') -Action Add -Changed $false -Value ('"' + $target.ToUpperInvariant() + '\"')
-Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Value $target
+Assert-Update -Current $target -Action Add -Changed $false -Present $true -Value $target
+Assert-Update -Current ('"' + $target.ToUpperInvariant() + '\"') -Action Add -Changed $false -Present $true -Value ('"' + $target.ToUpperInvariant() + '\"')
+Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Present $false -Value $target
 $equivalent = '"' + $target.ToUpperInvariant() + '\"'
-Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Value $equivalent
-Assert-Update -Current 'C:\Tools' -Action Remove -Changed $false -Value 'C:\Tools'
+Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Present $false -Value $equivalent
+Assert-Update -Current 'C:\Tools' -Action Remove -Changed $false -Present $false -Value 'C:\Tools'
 $expandedTarget = Join-Path $env:LOCALAPPDATA 'Programs\Herdr Sandbox'
 $target = $expandedTarget
-Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $false -Value '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -ExpandVariables $true
-Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $true -Value "%%LOCALAPPDATA%%\Programs\Herdr Sandbox;$expandedTarget" -ExpandVariables $false
+Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $false -Present $true -Value '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -ExpandVariables $true
+Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Remove -Changed $false -Present $true -Value '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -ExpandVariables $true
+Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $true -Present $true -Value "%%LOCALAPPDATA%%\Programs\Herdr Sandbox;$expandedTarget" -ExpandVariables $false
 `, quote(pathHelper))
 	scriptPath := filepath.Join(t.TempDir(), "path-ownership.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
@@ -735,6 +671,104 @@ Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Ch
 	command := hiddenCommandContext(context.Background(), powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("PATH ownership regression: %v: %s", err, output)
+	}
+}
+
+func TestQuietUninstallWrapperOwnsPrivateTemporaryCopyAndExitCode(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "quiet-uninstall.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		`function Stop-OwnedProcessTree`,
+		`System32\taskkill.exe`,
+		`@('/PID', [string]$Process.Id, '/T', '/F')`,
+		`$termination.WaitForExit(10000)`,
+		`$Process.WaitForExit(10000)`,
+		`[IO.Directory]::CreateDirectory($temporaryDirectory)`,
+		`$temporary = Join-Path $temporaryDirectory 'uninstall.exe'`,
+		`('_?=' + $installRoot)`,
+		`$process.WaitForExit(1200000)`,
+		`exit $process.ExitCode`,
+		`[IO.File]::Delete($temporary)`,
+		`[IO.Directory]::Delete($temporaryDirectory, $false)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("quiet uninstall helper is missing %q", want)
+		}
+	}
+	if strings.Contains(source, `$process.Kill()`) {
+		t.Fatal("quiet uninstall must terminate the owned process tree, not only the immediate uninstaller")
+	}
+}
+
+func TestQuietUninstallWrapperTerminatesOwnedProcessTreeInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 process-tree termination regression")
+	}
+	helper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "quiet-uninstall.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	root := t.TempDir()
+	controller := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Stop-OwnedProcessTree' }, $true)
+if ($null -eq $definition) { throw 'Missing Stop-OwnedProcessTree.' }
+Invoke-Expression $definition.Extent.Text
+$powerShell = '%s'
+$pidFile = '%s'
+$childScript = '%s'
+[IO.File]::WriteAllText($childScript, 'Start-Sleep -Seconds 120', (New-Object Text.UTF8Encoding($false)))
+$env:HERDR_TEST_POWERSHELL = $powerShell
+$env:HERDR_TEST_PID_FILE = $pidFile
+$env:HERDR_TEST_CHILD_SCRIPT = $childScript
+$parentSource = @'
+$child = Start-Process -FilePath $env:HERDR_TEST_POWERSHELL -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', $env:HERDR_TEST_CHILD_SCRIPT) -WindowStyle Hidden -PassThru
+[IO.File]::WriteAllText($env:HERDR_TEST_PID_FILE, [string]$child.Id, (New-Object Text.UTF8Encoding($false)))
+try { Start-Sleep -Seconds 120 } finally { if (-not $child.HasExited) { $child.Kill() } }
+'@
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parentSource))
+$parent = Start-Process -FilePath $powerShell -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded) -WindowStyle Hidden -PassThru
+try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not [IO.File]::Exists($pidFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 25 }
+    if (-not [IO.File]::Exists($pidFile)) { throw 'Child PID was not published.' }
+    $childPid = [int][IO.File]::ReadAllText($pidFile)
+    Stop-OwnedProcessTree -Process $parent
+    if (-not $parent.HasExited) { throw 'Parent process survived tree termination.' }
+    try {
+        $child = [Diagnostics.Process]::GetProcessById($childPid)
+        if (-not $child.WaitForExit(5000)) { throw 'Child process survived tree termination.' }
+        $child.Dispose()
+    }
+    catch [ArgumentException] {}
+}
+finally {
+    if (-not $parent.HasExited) {
+        $cleanup = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\taskkill.exe') -ArgumentList @('/PID', [string]$parent.Id, '/T', '/F') -WindowStyle Hidden -PassThru
+        [void]$cleanup.WaitForExit(10000)
+        $cleanup.Dispose()
+    }
+    $parent.Dispose()
+}
+`, quote(helper), quote(powerShell), quote(filepath.Join(root, "child.pid")), quote(filepath.Join(root, "child.ps1")))
+	controllerPath := filepath.Join(root, "controller.ps1")
+	if err := os.WriteFile(controllerPath, []byte(controller), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", controllerPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("quiet uninstall process-tree regression: %v: %s", err, output)
 	}
 }
 
