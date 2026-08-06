@@ -6,23 +6,20 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.11 - 2026-08-06
+
 ### Added
 
 - A `handy` virtual project stack provisions the current Handy checkout's Windows
   development toolchain with Bun, Rust/MSVC, latest-stable CMake and WebView2,
-  Vulkan SDK 1.4.309.0, and a verified SPIRV-Headers CMake target. It does not
-  add a Python runtime. Select it with `herdr-sandbox init --stack handy`;
-  application dependencies and models remain project-owned.
+  Vulkan SDK 1.4.309.0, and a verified SPIRV-Headers CMake target. Select it with
+  `herdr-sandbox init --stack handy`.
 
 ### Changed
 
-- The Windows installer now keeps file replacement, rollback, product-GUID
-  ownership, Installed Apps registration, and uninstall directly in NSIS. It uses
-  only focused PATH and quiet-uninstall helpers, preserves unknown sibling files
-  with the final ownership marker, restores silent-uninstall registration after
-  late failures, repairs interrupted upgrade and PATH ownership state, and keeps
-  each cleanup retry result truthful while preserving quiet retry capability,
-  instead of relying on a PowerShell transaction engine.
+- The Windows installer now repairs interrupted upgrades and PATH registration,
+  preserves unknown files in its install directory, retains quiet-uninstall
+  recovery after late failures, and reports cleanup retry outcomes accurately.
 
 ## v0.0.10 - 2026-08-05
 
