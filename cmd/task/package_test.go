@@ -396,10 +396,17 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`RunPathHelper "Contains"`,
 		`RunPathHelper "Add"`,
 		`RunPathHelper "Remove"`,
+		`ReadRegDWORD $PathAddPending HKCU "${UNINSTALL_KEY}" "PathAddPending"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAddPending" 1`,
+		`DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $3`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "ProductGuid" "${APP_PRODUCT_GUID}"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`,
+		`ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" $PartialCleanup`,
 		`Function un.RestoreRetryOwnership`,
 		`Call un.RestoreRetryOwnership`,
 		`Function un.CheckInstallDirectoryResidual`,
@@ -511,7 +518,44 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	if markerReplaceIndex < 0 || baseReplaceIndex <= markerReplaceIndex || executableReplaceIndex <= baseReplaceIndex {
 		t.Fatal("setup must establish its marker, replace support files, and copy the executable last")
 	}
-	installCompleteIndex := strings.Index(source, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`)
+	installStart := strings.Index(source, `Section "Install"`)
+	uninstallStart := strings.Index(source, `Section "Uninstall"`)
+	if installStart < 0 || uninstallStart <= installStart {
+		t.Fatal("missing installer sections")
+	}
+	installSource := source[installStart:uninstallStart]
+	disableCancellationIndex := strings.Index(installSource, `Call DisableInstallCancellation`)
+	incompleteWriteIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0`)
+	installMarkerReplaceIndex := strings.Index(installSource, `!insertmacro ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`)
+	pathIntentIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAddPending" 1`)
+	pathAddIndex := strings.Index(installSource, `!insertmacro RunPathHelper "Add"`)
+	pathOwnershipCommitIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $3`)
+	pathIntentDeleteIndex := strings.Index(installSource, `DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"`)
+	cleanupResetIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0`)
+	installCommitIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`)
+	if disableCancellationIndex < 0 || incompleteWriteIndex <= disableCancellationIndex || installMarkerReplaceIndex <= incompleteWriteIndex {
+		t.Fatal("an owned upgrade must block cancellation, become incomplete, then replace installed payload")
+	}
+	if pathIntentIndex < 0 || pathAddIndex <= pathIntentIndex || pathOwnershipCommitIndex <= pathAddIndex || pathIntentDeleteIndex <= pathOwnershipCommitIndex {
+		t.Fatal("PATH Add intent must persist until PathAdded ownership commits")
+	}
+	if strings.Count(installSource, `StrCpy $PathAddedThisRun "1"`) != 2 {
+		t.Fatal("both changed and concurrently-present PATH Add outcomes must retain installer ownership")
+	}
+	integrationFailureIndex := strings.Index(installSource, `install_integration_failure:`)
+	if integrationFailureIndex < 0 || !strings.Contains(installSource[integrationFailureIndex:], `${ElseIf} $PathAddPending == "1"`) ||
+		!strings.Contains(installSource[integrationFailureIndex:], `${AndIf} $RollbackFailed == "0"`) {
+		t.Fatal("failed or ambiguous PATH rollback must preserve pending ownership state")
+	}
+	if cleanupResetIndex < 0 || installCommitIndex <= cleanupResetIndex {
+		t.Fatal("a successful install must reset prior cleanup failure before its final commit")
+	}
+	rollbackStart := strings.Index(installSource, `install_payload_rollback:`)
+	if rollbackStart < 0 || !strings.Contains(installSource[rollbackStart:], `$InstallCompleteWasComplete == "1"`) ||
+		!strings.Contains(installSource[rollbackStart:], `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`) {
+		t.Fatal("successful payload rollback must restore a previously complete install marker")
+	}
+	installCompleteIndex := installStart + installCommitIndex
 	seedIndex := strings.Index(source, `__installer-seed-configuration`)
 	if installCompleteIndex < 0 || seedIndex <= installCompleteIndex {
 		t.Fatal("payload and registration must commit before best-effort configuration seeding")
@@ -554,10 +598,18 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"`,
 		`${FileExists} "$INSTDIR\${APP_QUIET_UNINSTALL_HELPER}"`,
 		`"QuietUninstallString"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" $PartialCleanup`,
 	} {
 		if !strings.Contains(restoreSource, want) {
 			t.Fatalf("retry ownership is missing %q", want)
 		}
+	}
+	uninstallSource := source[uninstallStart:]
+	cleanupOutcomeReadIndex := strings.Index(uninstallSource, `ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"`)
+	cleanupOutcomeWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1`)
+	cleanupCompleteWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`)
+	if cleanupOutcomeReadIndex < 0 || cleanupOutcomeWriteIndex <= cleanupOutcomeReadIndex || cleanupCompleteWriteIndex <= cleanupOutcomeWriteIndex {
+		t.Fatal("uninstall retry must retain an accepted incomplete cleanup outcome before recording cleanup complete")
 	}
 	if strings.Count(source, `StrCpy $ExistingRegistrationOwned "1"`) != 2 {
 		t.Fatal("complete and marker-backed incomplete registration must share repair ownership")

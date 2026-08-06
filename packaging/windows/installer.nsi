@@ -133,6 +133,8 @@ Var ExistingRegistrationOwned
 Var PathOwnedPreviously
 Var PathPresentBefore
 Var PathAddedThisRun
+Var PathAddPending
+Var InstallCompleteWasComplete
 Var OwnershipMarkerValid
 Var InstallDirectorySafe
 Var BackupBaseScript
@@ -508,6 +510,13 @@ FunctionEnd
     ${ElseIf} $PathOwnedPreviously != "1"
         StrCpy $PathOwnedPreviously "0"
     ${EndIf}
+    ClearErrors
+    ReadRegDWORD $PathAddPending HKCU "${UNINSTALL_KEY}" "PathAddPending"
+    ${If} ${Errors}
+        StrCpy $PathAddPending "0"
+    ${ElseIf} $PathAddPending != "1"
+        StrCpy $PathAddPending "0"
+    ${EndIf}
 !macroend
 
 Function un.RestoreRetryOwnership
@@ -544,6 +553,7 @@ Function un.RestoreRetryOwnership
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" 0
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" $PartialCleanup
     ${If} ${Errors}
         StrCpy $RollbackFailed "1"
         Return
@@ -685,6 +695,8 @@ Section "Install"
     StrCpy $PathOwnedPreviously "0"
     StrCpy $PathPresentBefore "0"
     StrCpy $PathAddedThisRun "0"
+    StrCpy $PathAddPending "0"
+    StrCpy $InstallCompleteWasComplete "0"
     StrCpy $BackupFailed "0"
     StrCpy $PayloadCopyFailed "0"
     StrCpy $RollbackFailed "0"
@@ -721,6 +733,12 @@ Section "Install"
             Quit
         ${EndIf}
         StrCpy $ExistingRegistrationOwned "1"
+        ClearErrors
+        ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "InstallComplete"
+        ${IfNot} ${Errors}
+        ${AndIf} $0 == "1"
+            StrCpy $InstallCompleteWasComplete "1"
+        ${EndIf}
         !insertmacro ReadExistingPathOwnership
     ${Else}
         ClearErrors
@@ -808,6 +826,18 @@ Section "Install"
 
     StrCpy $InstallMutationActive "1"
     Call DisableInstallCancellation
+    ${If} $ExistingRegistrationOwned == "1"
+        ClearErrors
+        WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0
+        ${If} ${Errors}
+            StrCpy $InstallMutationActive "0"
+            Call EnableInstallCancellation
+            MessageBox MB_ICONSTOP|MB_OK "Could not mark the existing ${APP_DISPLAY_NAME} installation incomplete before replacement. No installed files were changed." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INSTALL_FAILED}
+            Quit
+        ${EndIf}
+    ${EndIf}
+
     ; The marker is first so a hard interruption leaves an identifiable root.
     ; Support files are replaced before the executable used by application cleanup.
     !insertmacro ReplaceOwnedFile "${APP_INSTALLER_MARKER}"
@@ -832,7 +862,18 @@ Section "Install"
         StrCpy $InstallFailureMessage "The PATH helper returned an invalid Contains result."
         Goto install_integration_failure
     ${EndIf}
+    ${If} $PathAddPending == "1"
+    ${AndIf} $PathPresentBefore == "1"
+        StrCpy $PathOwnedPreviously "1"
+    ${EndIf}
     ${If} $PathPresentBefore == "0"
+        ClearErrors
+        WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAddPending" 1
+        ${If} ${Errors}
+            StrCpy $InstallFailureMessage "PATH ownership intent could not be recorded before adding the install directory."
+            Goto install_integration_failure
+        ${EndIf}
+        StrCpy $PathAddPending "1"
         !insertmacro RunPathHelper "Add"
         ${If} $0 == "10"
             StrCpy $PathAddedThisRun "1"
@@ -843,6 +884,7 @@ Section "Install"
                 StrCpy $InstallFailureMessage "The current-user PATH did not contain the install directory after Add."
                 Goto install_integration_failure
             ${EndIf}
+            StrCpy $PathAddedThisRun "1"
         ${Else}
             StrCpy $InstallFailureMessage "The PATH helper could not add the install directory: status $0. $1"
             Goto install_integration_failure
@@ -877,6 +919,21 @@ Section "Install"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "ProductGuid" "${APP_PRODUCT_GUID}"
     ${If} ${Errors}
         StrCpy $InstallFailureMessage "ProductGuid could not be recorded."
+        Goto install_integration_failure
+    ${EndIf}
+    ${If} $PathAddPending == "1"
+        ClearErrors
+        DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"
+        ${If} ${Errors}
+            StrCpy $InstallFailureMessage "PATH ownership intent could not be cleared after PathAdded was committed."
+            Goto install_integration_failure
+        ${EndIf}
+        StrCpy $PathAddPending "0"
+    ${EndIf}
+    ClearErrors
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0
+    ${If} ${Errors}
+        StrCpy $InstallFailureMessage "CleanupIncomplete could not be reset."
         Goto install_integration_failure
     ${EndIf}
     ClearErrors
@@ -926,9 +983,20 @@ Section "Install"
             ${If} $0 != "0"
             ${AndIf} $0 != "10"
                 StrCpy $RollbackFailed "1"
+            ${ElseIf} $PathAddPending == "1"
+                ClearErrors
+                DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"
+                ${If} ${Errors}
+                    StrCpy $RollbackFailed "1"
+                ${Else}
+                    StrCpy $PathAddPending "0"
+                ${EndIf}
             ${EndIf}
+        ${ElseIf} $PathAddPending == "1"
+            StrCpy $RollbackFailed "1"
         ${EndIf}
         ${If} $ExistingRegistrationOwned == "0"
+        ${AndIf} $RollbackFailed == "0"
             ClearErrors
             DeleteRegKey HKCU "${UNINSTALL_KEY}"
             ${If} ${Errors}
@@ -956,6 +1024,15 @@ Section "Install"
         !insertmacro RestoreOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker
         ClearErrors
         RMDir "$INSTDIR"
+        ${If} $RollbackFailed == "0"
+        ${AndIf} $ExistingRegistrationOwned == "1"
+        ${AndIf} $InstallCompleteWasComplete == "1"
+            ClearErrors
+            WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1
+            ${If} ${Errors}
+                StrCpy $RollbackFailed "1"
+            ${EndIf}
+        ${EndIf}
         StrCpy $InstallMutationActive "0"
         Call EnableInstallCancellation
         ${If} $RollbackFailed == "0"
@@ -1023,6 +1100,12 @@ Section "Uninstall"
         StrCpy $CleanupComplete "0"
     ${EndIf}
     ClearErrors
+    ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"
+    ${IfNot} ${Errors}
+    ${AndIf} $0 == "1"
+        StrCpy $PartialCleanup "1"
+    ${EndIf}
+    ClearErrors
     ReadRegDWORD $PathOwnedPreviously HKCU "${UNINSTALL_KEY}" "PathAdded"
     ${If} ${Errors}
         StrCpy $PathOwnedPreviously "0"
@@ -1065,6 +1148,13 @@ Section "Uninstall"
             MessageBox MB_ICONEXCLAMATION|MB_YESNO "$InstallFailureMessage Continue removing the application files while preserving residual machine-local state?" /SD IDNO IDYES uninstall_cleanup_continue IDNO uninstall_cleanup_abort
             uninstall_cleanup_continue:
                 StrCpy $PartialCleanup "1"
+                ClearErrors
+                WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1
+                ${If} ${Errors}
+                    MessageBox MB_ICONSTOP|MB_OK "The incomplete application-cleanup outcome could not be recorded. No application files or installer registration were removed. Run uninstall again." /SD IDOK
+                    SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+                    Quit
+                ${EndIf}
                 Goto uninstall_record_cleanup
             uninstall_cleanup_abort:
                 MessageBox MB_ICONSTOP|MB_OK "$InstallFailureMessage No application files or installer registration were removed." /SD IDOK
