@@ -1,6 +1,6 @@
 # herdr-sandbox
 
-**Run coding agents in a disposable, native Windows development environment—without RDP, broad home-directory mounts, or host toolchain drift.**
+**Run coding agents in a disposable, native Windows development environment without RDP, broad home-directory mounts, or host toolchain drift.**
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
@@ -9,7 +9,7 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Deployment time](#deployment-time) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md) · [Tailscale](#stable-tailscale-tailnet-identity-experimental) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Stacks](#supported-stacks) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
@@ -41,17 +41,42 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **Multi-stack provisioning:** .NET 10, Go, Handy, Node.js with Playwright Chromium, Playwright CLI for existing Edge, TradingView Desktop with TVControl, Python, Python AI development with uv, Rust/MSVC, and Zig share one idempotent project-profile model.
+- **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
 - **QR-assisted mobile Herdr over Tailscale (experimental):** preserve one tagged guest identity and connect from an authorized phone, tablet, or computer through a key-only private endpoint without publishing a service to the internet.
 
+## Supported stacks
+
+`sandbox init --stack` offers reusable technology and tool stacks plus separate project shortcuts. Repeat the flag to combine compatible selections.
+
+### Technology and tool stacks
+
+| Selection | Guest tooling |
+| --- | --- |
+| `dotnet` | .NET 10 LTS SDK |
+| `go` | Go |
+| `node` | Node.js LTS, Playwright, and Chromium |
+| `playwright-cli` | Playwright CLI without a bundled browser |
+| `python` | Latest stable Python |
+| `rust` | Rust with MSVC Build Tools |
+| `tradingview` | TradingView Desktop and TVControl |
+| `zig` | Zig |
+
+### Project shortcuts
+
+| Shortcut | Intended setup |
+| --- | --- |
+| `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
+| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
+| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
+
+Project shortcuts do not represent additional technologies. They package complex project setup for convenience. Their preferred long-term home is the repository they serve, in its own `.herdr-sandbox\provision.ps1`. `sandbox plan` expands each shortcut into its concrete stack owners without executing the profile.
+
 ## Deployment time
 
-There is no separate VM to set up or keep updated. With downloads cached, a fresh Sandbox is usually ready in **2–4 minutes** for projects without Rust/MSVC and **4–6 minutes** when Rust/MSVC is included.
-
-Our full compatibility test provisions every built-in stack in one Sandbox, including **.NET, Go, Handy with CMake/Vulkan/WebView2, Herdr/Bun/Rust/MSVC/Zig tooling, Node.js with Playwright Chromium, Playwright CLI for existing Edge, Python with uv, and TradingView Desktop with TVControl**. A first run can take longer because browser, Vulkan SDK, and Visual Studio payloads must be downloaded. Times vary by machine and network; attaching to an already ready Sandbox skips provisioning.
+There is no separate VM to set up or maintain, and only selected stacks are provisioned. With downloads cached, a fresh Sandbox is usually ready in **2 to 4 minutes** without Rust/MSVC and **4 to 6 minutes** with it. First runs can take longer when browser, Vulkan SDK, or Visual Studio payloads must be downloaded. Attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -94,20 +119,13 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` fro
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. Its permanent product-GUID registry key, exact registered location, and matching marker establish ownership. Setup refuses to change a nonempty unmarked directory. User configuration and project profiles live elsewhere and remain separate.
-- NSIS stages the complete small payload, backs up each existing installer-owned file, marks an existing installation incomplete before replacement, writes support files before the executable, and restores both the known prior files and complete registration state if replacement fails. Rerunning setup repairs an interrupted marked installation. It does not use junctions, versioned directories, a persistent transaction journal, or a PowerShell installer engine, and it does not promise rollback after power loss.
-- Reparse points, inaccessible directory state, and files actively locked inside the install directory remain hard Windows safety boundaries. Unknown sibling files and the ownership marker are preserved rather than reclaimed, allowing a later setup run to repair or reinstall the product.
-- Setup and uninstall share one cross-session gate with ordinary application commands, so no command can start against files being replaced or removed.
-- Creates `config.json` and `user.ps1` only when absent; setup and upgrades never replace existing user settings. A seeding failure does not undo a successful installation because the first command that needs configuration retries the same owner.
-- A PATH-only helper adds at most one effective current-user `PATH` entry while preserving unrelated entries, order, empty tokens, and registry type. Setup records pending ownership before Add, so rerunning after an interruption can adopt the exact entry it just added without adopting a preexisting user entry, then refreshes the environment from the committed ownership result. Uninstall removes at most one normalized literal token only when setup recorded that it owns the entry; it never restores the whole historical PATH.
-- Never bundles Herdr/Herdr-Win, agents, an updater, runtime bundles, or Windows prerequisites.
-- Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`.
-- Uninstall never stops a running Sandbox. It validates the product GUID, marker, and exact location, then preflights every known owned file for deletion before removing exact SSH integration and attempting cleanup of app-owned machine-local state and the disposable package cache. A running Sandbox remains open but unmanaged.
-- Successful application cleanup is recorded before PATH or application files are removed, so a finalize retry does not repeat it. Silent cleanup failure stops with a nonzero exit. Interactive uninstall may explicitly continue while preserving residual state; that accepted incomplete-cleanup result is persisted across a later finalize retry and still returns the distinct partial-cleanup exit code. If cleanup completion was interrupted and a later cleanup succeeds, the stale partial result is cleared. Only known files are deleted. The installed uninstaller is removed before the quiet wrapper so a late failure remains quietly retryable. The ownership marker is deleted last only when no unknown sibling remains, then the install directory is removed nonrecursively.
-- Interactive failures explain the exact blocker and next action before closing the installer completely. Silent setup/uninstall never waits for a dialog and returns a stable nonzero status.
-- Silent uninstall uses a small installer-owned wrapper that copies the uninstaller into a private temporary directory, waits for the real `/S _?=` run, returns its exit status, and deletes its exact temporary files. The wrapper remains installed until registration removal succeeds, and a late failure restores its quiet-uninstall registration while the wrapper still exists. Destructive configuration deletion requires the exact `/DELETE_CONFIG` token.
-- **Also delete config.json and user.ps1** is off by default, so settings survive reinstall unless you explicitly select deletion.
-- Project profiles, user configuration unless explicitly selected, and unrelated SSH content remain untouched.
+- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A permanent product GUID, the registered location, and a matching marker establish ownership; setup refuses a nonempty unmarked directory.
+- Setup stages and backs up the four-file payload, restores a failed replacement, and repairs a marked interrupted install when rerun. It does not promise rollback after power loss.
+- Reparse points, inaccessible state, locked application files, and unknown siblings fail closed or remain preserved for a later repair.
+- Setup, uninstall, and application commands share one cross-session gate. The installer adds at most one owned user `PATH` entry, and uninstall removes only that entry.
+- `config.json` and `user.ps1` are created only when absent and survive upgrades. They also survive uninstall unless **Also delete config.json and user.ps1** or silent `/DELETE_CONFIG` is selected.
+- Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It validates ownership, closes only a proven app-owned Sandbox, and removes only exact app-owned SSH, machine-local, cache, registration, and application state. Silent blockers return a nonzero status; interactive uninstall can preserve residual state and continue explicitly.
+- Herdr/Herdr-Win, agents, updaters, runtime bundles, Windows prerequisites, project profiles, unrelated SSH content, and unselected user configuration remain outside installer ownership.
 
 </details>
 
@@ -147,13 +165,13 @@ From the project root, select one or more stacks explicitly:
 sandbox init --stack go
 ```
 
-For an official Herdr upstream checkout without a project profile, select its maintained virtual stack directly:
+For an official Herdr upstream checkout without a project profile, select its project shortcut:
 
 ```powershell
 sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine `dotnet`, `go`, `handy`, `herdr`, `node`, `playwright-cli`, `python`, `python-ai`, `rust`, `tradingview`, and `zig`, or omit the flag for a guided prompt. The virtual `handy` choice includes Bun and Rust/MSVC plus Handy's Windows-native requirements, so it cannot be combined with `rust` or `herdr`. The virtual `herdr` choice already includes Python with the repository-required `python3` command, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Base Git for Windows `sh`, so it cannot be combined with its `python`, `rust`, or `zig` constituents. The virtual `python-ai` choice includes Python 3.13 and uv; it cannot be combined with `python` or `herdr`. `init` validates every selection, writes one direct-call `.herdr-sandbox\provision.ps1`, and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine compatible selections from [Supported stacks](#supported-stacks), or omit it for a guided prompt. Project shortcuts cannot be combined with stacks they already include. `init` writes one direct-call `.herdr-sandbox\provision.ps1` and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -169,7 +187,7 @@ sandbox plan
 sandbox up
 ```
 
-The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. A successful run creates a usable guest workspace and attaches the host Herdr client—not merely SSH or an installed toolchain.
+The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. A successful run creates a usable guest workspace and attaches the host Herdr client, not merely SSH or an installed toolchain.
 
 > [!NOTE]
 > Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
@@ -226,32 +244,37 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 
 ### Project profiles
 
-Profiles call built-in stacks directly so the host can inspect requirements without executing project code:
+Profiles call built-in functions directly so `sandbox plan` can inspect requirements without executing project code.
 
-| Development need | Direct profile call |
+**Reusable stack functions**
+
+| Guest tooling | Direct profile call |
+| --- | --- |
+| Bun | `Install-BunStack` |
+| Cargo Nextest | `Install-CargoNextest` |
+| .NET 10 LTS SDK | `Install-DotNetStack` |
+| Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
+| Just | `Install-Just` |
+| Node.js LTS with Playwright and Chromium | `Install-NodeStack` |
+| Playwright CLI without a bundled browser | `Install-PlaywrightCLIStack` |
+| Python | `Install-PythonStack` |
+| Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
+| TradingView Desktop with TVControl | `Install-TradingViewStack` |
+| uv | `Install-Uv` |
+| Zig | `Install-ZigStack` |
+
+**Project shortcut functions**
+
+| Project setup | Direct profile call |
 | --- | --- |
 | Handy Windows development | `Install-HandyStack -ProjectDirectory $ProjectDirectory` |
 | Herdr/Herdr-Win development | `Install-HerdrStack -ProjectDirectory $ProjectDirectory` |
-| Modern .NET 10 LTS SDK | `Install-DotNetStack` |
-| Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
-| Node.js LTS with Playwright Chromium | `Install-NodeStack` |
-| Playwright CLI attached to existing Edge | `Install-PlaywrightCLIStack` |
-| TradingView Desktop with TVControl | `Install-TradingViewStack` |
-| Bun | `Install-BunStack` |
-| Python (latest stable) | `Install-PythonStack` |
 | Python 3.13 AI/API development with uv | `Install-PythonAIStack` |
-| uv | `Install-Uv` |
-| Zig | `Install-ZigStack` |
-| Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
-| Cargo Nextest | `Install-CargoNextest` |
-| Just | `Install-Just` |
 
-- Keep stack calls direct—not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
-- `Install-HandyStack` is a virtual composition for the current Handy checkout. It validates Handy's package, Bun lock, Cargo package, and checked-in VAD model identities; reuses Bun and Rust/MSVC; installs latest-stable CMake and WebView2; and installs Vulkan SDK 1.4.309.0 to match Handy's current CI. It also supplies and builds against a corrected SPIRV-Headers CMake target because that SDK's bundled config points to an invalid unversioned include root.
-- `Install-HerdrStack` is one virtual composition, not another package provider. It reuses the standard Python, Zig, Rust/MSVC, Bun, Cargo Nextest, and Just stacks; Herdr constrains Python to 3.13 and Zig to 0.15.2, while the standard Rust/MSVC stack honors the checkout's `rust-toolchain.toml`. The Python stack supplies the verified `python3` command, and conditional Base Git exposes and verifies its own `sh.exe`; a Herdr plan fails early if `Git.Git` was removed. Bun remains latest stable unless explicitly versioned. Herdr itself owns only its composition and libghostty's guest-local Zig output state.
-- `Install-PythonAIStack` is another virtual composition. It reuses Python 3.13 and the standalone uv owner. `plan` expands virtual compositions back into their concrete owners without executing the profile.
-- An omitted version always resolves the latest stable release once for installation and verification. The Node stack resolves npm's current stable `playwright@latest` dist-tag on every provisioning run; only `Install-NodeStack -PlaywrightVersion <x.y.z>` requests an exact version. uv follows the same latest-stable package path. The separate agent-facing Playwright CLI stack uses the explicitly approved `@playwright/cli@0.1.17` contract. Exact versions never fall back silently.
-- Built-in stacks own toolchains rather than selecting application dependencies. The Node stack installs only guest-local Playwright tooling and Chromium, exposes its browser path to later shells, and proves a headless launch; it never runs `npm install`/`npm ci` in the mapped project. The separate Playwright CLI stack shares Node.js LTS but downloads no browser and never creates another profile. The TradingView stack similarly installs TVControl as a guest-local command rather than changing the mapped project's `package.json` or lockfile. Project `playwright`/`@playwright/test`, TypeScript, and other npm dependencies remain project-owned. Python AI likewise leaves PyTorch, Transformers, Jupyter, provider SDKs, and other dependencies in the project's `pyproject.toml` and `uv.lock`. `Install-DotNetStack` installs the modern .NET 10 LTS SDK family, not .NET Framework, previews, Visual Studio, or project target frameworks.
+- Keep calls direct, not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
+- Shortcut functions are the temporary convenience compositions described under [Project shortcuts](#project-shortcuts). Prefer project-owned direct calls once a repository carries its own setup.
+- Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
+- Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
 #### Handy Windows development
 
@@ -272,7 +295,7 @@ Use `bun run tauri build` for Handy's production build. Signing and release pack
 
 #### Python AI/API development with uv
 
-Select the dedicated virtual stack for CPU inference, notebooks, or API-based AI projects:
+Select the project shortcut for CPU inference, notebooks, or API-based AI projects:
 
 ```powershell
 sandbox init --stack python-ai
@@ -287,15 +310,15 @@ uv run python app.py
 
 Commit the project's `pyproject.toml` and `uv.lock`; subsequent setup can use `uv sync --locked`. Add the framework, notebook, or provider SDK required by that project rather than installing one global bundle. The initial stack does not configure CUDA; GPU support requires a separately verified native hardware path.
 
-#### Playwright CLI with the guest's existing Edge
+#### Playwright CLI
 
-Select the dedicated stack when an agent should drive the already-running, headed main-user Edge profile instead of Playwright-managed Chromium:
+[Playwright CLI](https://github.com/microsoft/playwright-cli) supports both Chrome and Edge extension channels. This built-in stack installs the exact approved CLI without a browser, then prepares the official extension specifically for the Edge profile already available in Windows Sandbox. The Edge-specific steps below are this stack's current integration choice, not a Playwright CLI limitation.
 
 ```powershell
 sandbox init --stack playwright-cli
 ```
 
-The stack installs Node.js LTS and the exact approved Playwright CLI, exposes only `playwright-cli.cmd`, and registers Microsoft's official [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. Edge may require one manual enable/install action after its next launch. Click the extension icon, copy its `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value, and place that value only in the disposable guest environment:
+The stack also installs Node.js LTS, exposes only `playwright-cli.cmd`, and registers Microsoft's official [Playwright Extension](https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm) from the Chrome Web Store. Edge may require one manual enable/install action after its next launch. Click the extension icon, copy its `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value, and place that value only in the disposable guest environment:
 
 ```powershell
 $env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = '<token from the extension>'
@@ -320,7 +343,7 @@ Select the dedicated stack to install the official TradingView Desktop MSIX payl
 sandbox init --stack tradingview
 ```
 
-The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. For Desktop, it resolves the current official WinGet manifest, verifies the vendor MSIX hash and signature, and extracts the unchanged payload below `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`. This deliberately avoids AppX registration—the package manifest requires build 19042 for registration—while keeping the same official binaries and one latest-stable package owner. Provisioning validates both payloads but does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
+The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. For Desktop, it resolves the current official WinGet manifest, verifies the vendor MSIX hash and signature, and extracts the unchanged payload below `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`. This avoids AppX registration because the package manifest requires build 19042, while retaining the official binaries and one latest-stable package owner. Provisioning validates both payloads but does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
 
 > [!NOTE]
 > Native acceptance passed on Windows build 19041: the extracted official Desktop payload opened a visible window and CDP, `tv launch` selected that exact executable, and `tv status` reported healthy API, datafeed, and compatibility state. No package manifest, signature, hash, or older-version fallback is modified.
@@ -424,7 +447,7 @@ Vulkan remains disabled by default. To install only the LunarG runtime and requi
 
 Provisioning runs `vulkaninfo --summary` and fails when no physical device is exposed. This experimental path does not install the Vulkan SDK, Microsoft's D3D mapping package, a host GPU driver, or enable vendor extensions.
 
-The `handy` project stack is separate from this global runtime opt-in. Handy installs its required Vulkan SDK and compiler tools, but real GPU acceleration still depends on the vGPU exposed by Windows Sandbox and the host graphics stack.
+The `handy` project shortcut is separate from this global runtime opt-in. Handy installs its required Vulkan SDK and compiler tools, but real GPU acceleration still depends on the vGPU exposed by Windows Sandbox and the host graphics stack.
 
 #### Audio policy
 
@@ -446,7 +469,7 @@ Configuration sync is default-on when these host surfaces exist:
 | GitHub Copilot CLI | Copies approved config and reuses successfully imported GitHub CLI accounts. Native Credential Manager tokens stay host-bound. |
 | Pi | Copies approved agent configuration and portable `auth.json`. |
 
-When an enabled agent root—or the shared skills root—is a standard physical Git worktree, sync also transfers its tracked files and bounded `.git` repository so the guest retains the current branch, remote, upstream, index, refs, objects, tracked edits, and tracked deletions. Git hooks, reflogs, linked-worktree pointers, active-operation state, external object stores, non-files ref storage, and known tracked credential/runtime paths are not accepted. Because Git objects and local repository configuration can contain historical or embedded secrets, disable that agent's sync unless its complete configuration-repository history is safe for the guest.
+When an enabled agent root, or the shared skills root, is a standard physical Git worktree, sync also transfers its tracked files and bounded `.git` repository so the guest retains the current branch, remote, upstream, index, refs, objects, tracked edits, and tracked deletions. Git hooks, reflogs, linked-worktree pointers, active-operation state, external object stores, non-files ref storage, and known tracked credential/runtime paths are not accepted. Because Git objects and local repository configuration can contain historical or embedded secrets, disable that agent's sync unless its complete configuration-repository history is safe for the guest.
 
 The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, runtime history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
@@ -655,8 +678,7 @@ go run ./cmd/task package v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` provisions one fresh real Sandbox with .NET, Go, Node.js plus Playwright Chromium, and the Herdr virtual stack (Python, Rust/MSVC, Zig, Bun, Nextest, Just, and `sh`); it launches Chromium headlessly over managed SSH, runs representative version/build/test commands, verifies the libghostty guest-local output contract plus Terminal and Starship transfer, and closes only its exact app-owned guest. It intentionally selects every supported stack as a breadth and compatibility gate, not as a startup-time benchmark for normal project plans. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
-- The same native gate maps a separate Handy-shaped project and verifies CMake, Vulkan SDK 1.4.309.0, the corrected SPIRV-Headers target, and signed WebView2 after its virtual stack provisions successfully.
+- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
 - `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
