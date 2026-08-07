@@ -47,11 +47,9 @@ type releaseVersion struct {
 }
 
 type releasePackagePaths struct {
-	Stage             string
-	ZIP               string
-	ZIPChecksum       string
-	Installer         string
-	InstallerChecksum string
+	Stage     string
+	ZIP       string
+	Installer string
 }
 
 func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
@@ -78,22 +76,14 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	}
 	defer func() { _ = os.RemoveAll(temporaryDirectory) }()
 	generated := releasePackagePaths{
-		Stage:             paths.Stage,
-		ZIP:               filepath.Join(temporaryDirectory, filepath.Base(paths.ZIP)),
-		ZIPChecksum:       filepath.Join(temporaryDirectory, filepath.Base(paths.ZIPChecksum)),
-		Installer:         filepath.Join(temporaryDirectory, filepath.Base(paths.Installer)),
-		InstallerChecksum: filepath.Join(temporaryDirectory, filepath.Base(paths.InstallerChecksum)),
+		Stage:     paths.Stage,
+		ZIP:       filepath.Join(temporaryDirectory, filepath.Base(paths.ZIP)),
+		Installer: filepath.Join(temporaryDirectory, filepath.Base(paths.Installer)),
 	}
 	if err := writeReleaseZIP(generated.Stage, generated.ZIP); err != nil {
 		return err
 	}
-	if err := writeSHA256File(generated.ZIP, generated.ZIPChecksum); err != nil {
-		return err
-	}
 	if err := buildNSISInstaller(ctx, version, generated.Stage, generated.Installer, stdout, stderr); err != nil {
-		return err
-	}
-	if err := writeSHA256File(generated.Installer, generated.InstallerChecksum); err != nil {
 		return err
 	}
 	if err := verifyReleaseArtifactSet(generated); err != nil {
@@ -102,40 +92,28 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := publishReleaseArtifactSet(generated, paths); err != nil {
 		return err
 	}
-	for _, path := range []string{paths.ZIP, paths.ZIPChecksum, paths.Installer, paths.InstallerChecksum} {
-		fmt.Fprintf(stdout, "Release artifact: %s\n", filepath.Clean(path))
+	for _, path := range releaseOutputPaths(paths) {
+		hash, err := fileSHA256(path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Release artifact: %s (sha256:%x)\n", filepath.Clean(path), hash)
 	}
 	return nil
 }
 
 func releaseOutputPaths(paths releasePackagePaths) []string {
-	return []string{paths.ZIP, paths.ZIPChecksum, paths.Installer, paths.InstallerChecksum}
+	return []string{paths.ZIP, paths.Installer}
 }
 
 func verifyReleaseArtifactSet(paths releasePackagePaths) error {
-	for _, pair := range [][2]string{
-		{paths.ZIP, paths.ZIPChecksum},
-		{paths.Installer, paths.InstallerChecksum},
-	} {
-		artifact, checksum := pair[0], pair[1]
+	for _, artifact := range releaseOutputPaths(paths) {
 		info, err := os.Stat(artifact)
 		if err != nil {
 			return fmt.Errorf("inspect generated release artifact: %w", err)
 		}
 		if !info.Mode().IsRegular() || info.Size() == 0 {
 			return fmt.Errorf("generated release artifact must be a nonempty regular file: %s", artifact)
-		}
-		hash, err := fileSHA256(artifact)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(checksum)
-		if err != nil {
-			return fmt.Errorf("read generated release checksum: %w", err)
-		}
-		expected := fmt.Sprintf("%x  %s\n", hash, filepath.Base(artifact))
-		if string(data) != expected {
-			return fmt.Errorf("generated release checksum is invalid: %s", checksum)
 		}
 	}
 	return nil
@@ -193,11 +171,9 @@ func releasePaths(root string, version releaseVersion) releasePackagePaths {
 	zipPath := filepath.Join(dist, baseName+".zip")
 	installerPath := filepath.Join(dist, baseName+"_setup.exe")
 	return releasePackagePaths{
-		Stage:             filepath.Join(root, "build", "package", baseName),
-		ZIP:               zipPath,
-		ZIPChecksum:       zipPath + ".sha256",
-		Installer:         installerPath,
-		InstallerChecksum: installerPath + ".sha256",
+		Stage:     filepath.Join(root, "build", "package", baseName),
+		ZIP:       zipPath,
+		Installer: installerPath,
 	}
 }
 
@@ -308,34 +284,6 @@ func writeReleaseZIP(stageDirectory, outputPath string) (resultErr error) {
 	}
 	if err := replaceGeneratedFile(temporaryPath, outputPath); err != nil {
 		return fmt.Errorf("publish release ZIP: %w", err)
-	}
-	return nil
-}
-
-func writeSHA256File(artifactPath, outputPath string) error {
-	hash, err := fileSHA256(artifactPath)
-	if err != nil {
-		return err
-	}
-	line := fmt.Sprintf("%x  %s\n", hash, filepath.Base(artifactPath))
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return fmt.Errorf("create checksum output directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(outputPath), ".checksum-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create release checksum: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if _, err := io.WriteString(temporary, line); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write release checksum: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close release checksum: %w", err)
-	}
-	if err := replaceGeneratedFile(temporaryPath, outputPath); err != nil {
-		return fmt.Errorf("publish release checksum: %w", err)
 	}
 	return nil
 }

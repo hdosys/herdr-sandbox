@@ -6,11 +6,15 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.12 - 2026-08-07
+
 ### Changed
 
 - The installed and portable command is now `sandbox.exe`, invoked as `sandbox`.
   Setup removes the former executable only for a proven owned upgrade and does not
   retain a compatibility alias.
+- GitHub Releases now display SHA-256 digests for the installer and portable ZIP,
+  which form the complete downloadable artifact set.
 
 ## v0.0.11 - 2026-08-06
 

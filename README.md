@@ -85,7 +85,7 @@ There is no separate VM to set up or maintain, and only selected stacks are prov
 - **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
 - **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
 - **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
-- **Release engineering:** the installer and portable ZIP share one four-file payload, checksums, deterministic ZIP output, in-process file rollback, and product-GUID/marker-bound uninstall ownership.
+- **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/marker-bound uninstall ownership.
 - **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
 
 ## Get started
@@ -107,14 +107,14 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 ### Install Herdr Sandbox
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer, a portable ZIP, and matching `.sha256` sidecars. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer and a portable ZIP. GitHub records and displays the SHA-256 digest of each asset. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
 
 #### Installer (recommended)
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` and its `.sha256` from the latest release, verify the checksum, and run setup. It needs no administrator access, installs for the current user, adds the application to Windows Installed Apps and user `PATH`, and never launches a program or browser automatically.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, adds the application to Windows Installed Apps and user `PATH`, and never launches a program or browser automatically.
 
 > [!WARNING]
-> The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches the sidecar from the same release.
+> The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches GitHub's digest for the same release asset.
 
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
@@ -141,7 +141,7 @@ Herdr-Win remains a separate package and is never bundled or declared as a depen
 
 #### Portable ZIP
 
-Download `herdr-sandbox_<version>_windows_amd64.zip` and its `.sha256`, verify the checksum, and extract all four files into one directory. Keep the three support files beside `sandbox.exe`, then run `.\sandbox.exe` or add that directory to user `PATH`.
+Download `herdr-sandbox_<version>_windows_amd64.zip`, verify its GitHub SHA-256 asset digest, and extract all four files into one directory. Keep the three support files beside `sandbox.exe`, then run `.\sandbox.exe` or add that directory to user `PATH`.
 
 #### Build from source
 
@@ -630,7 +630,7 @@ go run ./cmd/task package v0.0.0
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
 - `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
-- `package` uses pinned NSIS 3.12 and writes the installer, ZIP, and both checksum files under `build\dist` without installing them.
+- `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
 ## License

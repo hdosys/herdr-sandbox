@@ -117,8 +117,9 @@ Omitted package versions intentionally resolve the latest available stable
 version. Pin every required `wingetPackages.versions` entry and project toolchain
 version when reproducibility is part of the threat model.
 
-The current installer is unsigned and may trigger SmartScreen. Verify its SHA-256
-sidecar from the release page, understand that the sidecar is delivered through
-the same GitHub release channel, and confirm `sandbox version` after
-installation. Do not treat stripping, checksums, or Windows Sandbox disposability
-as a substitute for publisher signing or trusted release provenance.
+The current installer is unsigned and may trigger SmartScreen. Compare its local
+SHA-256 with the digest GitHub displays for that Release asset, understand that
+this digest is delivered through the same GitHub release channel, and confirm
+`sandbox version` after installation. Do not treat stripping, digests, or Windows
+Sandbox disposability as a substitute for publisher signing or trusted release
+provenance.

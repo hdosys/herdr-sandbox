@@ -80,8 +80,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $assets = @(Get-ChildItem -LiteralPath 'build\dist' -File | Sort-Object Name)
-          if ($assets.Count -ne 4) {
-              throw "Expected exactly four release assets, found $($assets.Count)."
+          if ($assets.Count -ne 2) {
+              throw "Expected exactly two release assets, found $($assets.Count)."
           }
           $installers = @($assets | Where-Object { $_.Name.EndsWith('_setup.exe', [StringComparison]::Ordinal) })
           if ($installers.Count -ne 1) {
@@ -103,4 +103,15 @@ jobs:
           & gh.exe @arguments
           if ($LASTEXITCODE -ne 0) {
               throw "GitHub release creation failed with exit code $LASTEXITCODE."
+          }
+          $published = (& gh.exe release view $env:RELEASE_TAG --json assets) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub release asset lookup failed with exit code $LASTEXITCODE."
+          }
+          foreach ($asset in $assets) {
+              $matches = @($published.assets | Where-Object { $_.name -ceq $asset.Name })
+              $expectedDigest = 'sha256:' + (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($matches.Count -ne 1 -or [string]$matches[0].digest -cne $expectedDigest) {
+                  throw "GitHub release asset digest did not match $($asset.Name)."
+              }
           }

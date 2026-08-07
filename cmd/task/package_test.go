@@ -50,7 +50,7 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 	paths := releasePaths("root", version)
 	if filepath.Base(paths.ZIP) != "herdr-sandbox_v0.0.7_windows_amd64.zip" ||
 		filepath.Base(paths.Installer) != "herdr-sandbox_v0.0.7_windows_amd64_setup.exe" ||
-		paths.ZIPChecksum != paths.ZIP+".sha256" || paths.InstallerChecksum != paths.Installer+".sha256" {
+		len(releaseOutputPaths(paths)) != 2 {
 		t.Fatalf("release paths = %#v", paths)
 	}
 }
@@ -180,10 +180,8 @@ func TestValidateReleasePackageRejectsExtraOrMissingFiles(t *testing.T) {
 func TestPublishReleaseArtifactSetNeverLeavesMixedOutputs(t *testing.T) {
 	pathsAt := func(directory string) releasePackagePaths {
 		return releasePackagePaths{
-			ZIP:               filepath.Join(directory, "release.zip"),
-			ZIPChecksum:       filepath.Join(directory, "release.zip.sha256"),
-			Installer:         filepath.Join(directory, "release_setup.exe"),
-			InstallerChecksum: filepath.Join(directory, "release_setup.exe.sha256"),
+			ZIP:       filepath.Join(directory, "release.zip"),
+			Installer: filepath.Join(directory, "release_setup.exe"),
 		}
 	}
 	writeSet := func(t *testing.T, paths releasePackagePaths, value string) {
@@ -191,16 +189,10 @@ func TestPublishReleaseArtifactSetNeverLeavesMixedOutputs(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(paths.ZIP), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		for _, path := range []string{paths.ZIP, paths.Installer} {
+		for _, path := range releaseOutputPaths(paths) {
 			if err := os.WriteFile(path, []byte(value+filepath.Base(path)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}
-		if err := writeSHA256File(paths.ZIP, paths.ZIPChecksum); err != nil {
-			t.Fatal(err)
-		}
-		if err := writeSHA256File(paths.Installer, paths.InstallerChecksum); err != nil {
-			t.Fatal(err)
 		}
 	}
 
@@ -884,9 +876,11 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 		`go run ./cmd/task package $env:RELEASE_TAG`,
 		`go run ./cmd/task release-notes $env:RELEASE_TAG`,
 		`Get-ChildItem -LiteralPath 'build\dist' -File`,
-		`$assets.Count -ne 4`,
+		`$assets.Count -ne 2`,
 		`$installers.Count -ne 1`,
 		`VersionInfo.ProductName`,
+		`release view $env:RELEASE_TAG --json assets`,
+		`Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256`,
 		`'--notes', $releaseNotes`,
 		`'--title', "$productName $env:RELEASE_TAG"`,
 	} {
@@ -894,7 +888,7 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
 			t.Fatalf("release workflow is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"--generate-notes", "Compress-Archive", "Invoke-WebRequest", "choco install", "cargo", "herdr.exe'"} {
+	for _, forbidden := range []string{"--generate-notes", "Compress-Archive", "Invoke-WebRequest", "choco install", "cargo", "herdr.exe'", ".sha256", "release verify-asset"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow contains duplicate or out-of-scope packaging %q", forbidden)
 		}
