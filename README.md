@@ -72,7 +72,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 | `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
 | `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
 
-Project shortcuts do not represent additional technologies. They package complex project setup for convenience. Their preferred long-term home is the repository they serve, in its own `.herdr-sandbox\provision.ps1`. `sandbox plan` expands each shortcut into its concrete stack owners without executing the profile.
+Project shortcuts do not represent additional technologies. They package complex project setup for convenience. Their preferred long-term home is the repository they serve, in its own `.herdr-sandbox\provision.ps1`. Dependencies, application commands, and release workflows remain project-owned. `sandbox plan` expands each shortcut into its concrete stack owners without executing the profile.
 
 ## Deployment time
 
@@ -276,41 +276,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
-#### Handy Windows development
-
-From a current [Handy](https://github.com/cjpais/Handy) checkout, create the dedicated profile:
-
-```powershell
-sandbox init --stack handy
-```
-
-The stack provisions the Windows-native prerequisites and verifies the CMake, Vulkan, SPIRV-Headers, and WebView2 boundary without adding Python or changing Handy's dependency files. After the guest is ready, use Handy's own commands:
-
-```powershell
-bun install
-bun tauri dev
-```
-
-Use `bun run tauri build` for Handy's production build. Signing and release packaging remain Handy-owned. To test microphone capture, set `"audioInput": true` in the global Herdr Sandbox configuration before launching a fresh guest. The default `false` deliberately blocks host microphone sharing.
-
-#### Python AI/API development with uv
-
-Select the project shortcut for CPU inference, notebooks, or API-based AI projects:
-
-```powershell
-sandbox init --stack python-ai
-```
-
-It installs the current Python 3.13 patch and latest stable uv, verifies both commands, disables uv-managed Python downloads so the built-in Python stack remains the runtime owner, and preserves uv's concurrency-safe dependency cache at `C:\HerdrSandbox\cache\uv`. Project environments and dependencies remain project-owned:
-
-```powershell
-uv sync
-uv run python app.py
-```
-
-Commit the project's `pyproject.toml` and `uv.lock`; subsequent setup can use `uv sync --locked`. Add the framework, notebook, or provider SDK required by that project rather than installing one global bundle. The initial stack does not configure CUDA; GPU support requires a separately verified native hardware path.
-
-#### Playwright CLI
+#### Playwright CLI integration
 
 [Playwright CLI](https://github.com/microsoft/playwright-cli) supports both Chrome and Edge extension channels. This built-in stack installs the exact approved CLI without a browser, then prepares the official extension specifically for the Edge profile already available in Windows Sandbox. The Edge-specific steps below are this stack's current integration choice, not a Playwright CLI limitation.
 
@@ -334,21 +300,6 @@ playwright-cli.cmd -s=edge-main detach
 ```
 
 Without the token, the official extension asks the user to approve and select a tab. The token bypasses that dialog. A fresh Sandbox has a fresh Edge profile, so the manual extension/token step must currently be repeated. Do not use `playwright-cli open`, `install-browser`, `--persistent`, `--profile`, or another browser/profile with this stack.
-
-#### TradingView Desktop with TVControl
-
-Select the dedicated stack to install the official TradingView Desktop MSIX payload and FerroxLabs [TVControl](https://github.com/FerroxLabs/tvcontrol) without changing project dependencies:
-
-```powershell
-sandbox init --stack tradingview
-```
-
-The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol@latest` to one exact version, and exposes npm's generated `tv.cmd` and `tvcontrol.cmd` while removing their PowerShell shims. For Desktop, it resolves the current official WinGet manifest, verifies the vendor MSIX hash and signature, and extracts the unchanged payload below `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`. This avoids AppX registration because the package manifest requires build 19042, while retaining the official binaries and one latest-stable package owner. Provisioning validates both payloads but does not start TradingView, enable CDP, configure an MCP client, sign in, or inspect chart/account data.
-
-> [!NOTE]
-> Native acceptance passed on Windows build 19041: the extracted official Desktop payload opened a visible window and CDP, `tv launch` selected that exact executable, and `tv status` reported healthy API, datafeed, and compatibility state. No package manifest, signature, hash, or older-version fallback is modified.
-
-`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). It is non-destructive by default; review and preserve open work before explicitly adding `--kill-existing`. Use `tv status` and read TVControl's documentation before chart automation.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
