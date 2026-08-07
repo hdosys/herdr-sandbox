@@ -348,7 +348,7 @@ The stack reuses Node.js LTS, resolves the current stable `@ferroxlabs/tvcontrol
 > [!NOTE]
 > Native acceptance passed on Windows build 19041: the extracted official Desktop payload opened a visible window and CDP, `tv launch` selected that exact executable, and `tv status` reported healthy API, datafeed, and compatibility state. No package manifest, signature, hash, or older-version fallback is modified.
 
-`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). It is non-destructive by default; review and preserve open work before explicitly adding `--kill-existing`. Use `tv status` and read TVControl's documentation before chart automation. TradingView's terms may restrict automated collection, scraping, non-display use, and data redistribution; this stack grants no right to bypass those terms or access controls.
+`tv launch` is an explicit post-ready action that opens TradingView's local CDP port (normally 9222). It is non-destructive by default; review and preserve open work before explicitly adding `--kill-existing`. Use `tv status` and read TVControl's documentation before chart automation.
 
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
