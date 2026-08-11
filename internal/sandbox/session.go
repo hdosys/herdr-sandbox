@@ -27,6 +27,8 @@ const (
 	guestHerdrPath              = guestRootDirectory + `\bin\herdr.exe`
 )
 
+var errSandboxExitedBeforeProvisioning = errors.New("Windows Sandbox exited before provisioning completed")
+
 //go:embed assets/bootstrap.ps1
 var bootstrapScript []byte
 
@@ -96,7 +98,7 @@ func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Co
 	return context.WithTimeout(ctx, timeout)
 }
 
-func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, error) {
+func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Connection, resultErr error) {
 	if runtime.GOOS != "windows" {
 		return Connection{}, errors.New("Windows Sandbox is available only on Windows")
 	}
@@ -249,7 +251,10 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 		return Connection{}, err
 	}
 	runContext, stopSandboxExitWatch := withSandboxProcessExit(runContext, sandboxExited)
-	defer stopSandboxExitWatch()
+	defer func() {
+		stopSandboxExitWatch()
+		resultErr = preserveSandboxProcessExitCause(runContext, resultErr)
+	}()
 	fmt.Fprintln(options.Output, "Windows Sandbox started; waiting for guest provisioning...")
 
 	connectable, err := waitForConnectable(runContext, plan.StatusDirectory, options.Output)
@@ -871,9 +876,9 @@ func withSandboxProcessExit(ctx context.Context, exited <-chan error) (context.C
 		select {
 		case waitErr := <-exited:
 			if waitErr != nil {
-				cancel(fmt.Errorf("Windows Sandbox exited before provisioning completed: %w", waitErr))
+				cancel(fmt.Errorf("%w: %v", errSandboxExitedBeforeProvisioning, waitErr))
 			} else {
-				cancel(errors.New("Windows Sandbox exited before provisioning completed"))
+				cancel(errSandboxExitedBeforeProvisioning)
 			}
 		case <-monitored.Done():
 		}
@@ -882,6 +887,14 @@ func withSandboxProcessExit(ctx context.Context, exited <-chan error) (context.C
 		cancel(nil)
 		<-done
 	}
+}
+
+func preserveSandboxProcessExitCause(ctx context.Context, resultErr error) error {
+	cause := context.Cause(ctx)
+	if !errors.Is(cause, errSandboxExitedBeforeProvisioning) || errors.Is(resultErr, cause) {
+		return resultErr
+	}
+	return errors.Join(cause, resultErr)
 }
 
 func terminateUnpublishedSandbox(command *exec.Cmd) error {

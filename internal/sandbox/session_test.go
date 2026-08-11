@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -76,6 +77,17 @@ func TestWithSandboxProcessExitCancelsProvisioning(t *testing.T) {
 	stop()
 	if cause := context.Cause(ctx); cause == nil || !strings.Contains(cause.Error(), "Windows Sandbox exited before provisioning completed: launcher fixture") {
 		t.Fatalf("process exit cause = %v", cause)
+	}
+}
+
+func TestSandboxProcessExitCauseSurvivesPostLaunchFailure(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cause := fmt.Errorf("%w: launcher fixture", errSandboxExitedBeforeProvisioning)
+	cancel(cause)
+	phaseErr := errors.New("verify SSH: context canceled")
+	got := preserveSandboxProcessExitCause(ctx, phaseErr)
+	if !errors.Is(got, cause) || !errors.Is(got, phaseErr) || !strings.Contains(got.Error(), "launcher fixture") {
+		t.Fatalf("preserved post-launch error = %v", got)
 	}
 }
 
