@@ -659,8 +659,8 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		closeIndex <= timeoutIndex || busyIndex <= closeIndex {
 		t.Fatal("installer must acquire new and abandoned mutexes while failing only for a live owner")
 	}
-	if strings.Count(source, `!insertmacro ReleaseInstallerLifecycleMutex`) != 2 {
-		t.Fatal("setup and uninstall must release their owned lifecycle mutex on terminal GUI exit")
+	if strings.Count(source, `!insertmacro ReleaseInstallerLifecycleMutex`) != 6 {
+		t.Fatal("setup and uninstall must release their owned lifecycle mutex on success, failure, and terminal GUI exit")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)

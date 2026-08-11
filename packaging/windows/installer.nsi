@@ -363,6 +363,14 @@ Function .onGUIEnd
     !insertmacro ReleaseInstallerLifecycleMutex
 FunctionEnd
 
+Function .onInstSuccess
+    !insertmacro ReleaseInstallerLifecycleMutex
+FunctionEnd
+
+Function .onInstFailed
+    !insertmacro ReleaseInstallerLifecycleMutex
+FunctionEnd
+
 Function un.onInit
     ${IfNot} ${AtLeastWin10}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
@@ -397,6 +405,14 @@ Function un.onInit
 FunctionEnd
 
 Function un.onGUIEnd
+    !insertmacro ReleaseInstallerLifecycleMutex
+FunctionEnd
+
+Function un.onUninstSuccess
+    !insertmacro ReleaseInstallerLifecycleMutex
+FunctionEnd
+
+Function un.onUninstFailed
     !insertmacro ReleaseInstallerLifecycleMutex
 FunctionEnd
 
