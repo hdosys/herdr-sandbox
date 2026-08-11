@@ -105,12 +105,12 @@ Unicode true
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
-!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"
-!define APP_LIFECYCLE_WAIT_INTERVAL_MS 100
-!define APP_LIFECYCLE_WAIT_ATTEMPTS 150
+!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v3"
 !define APP_ERROR_FILE_NOT_FOUND 2
 !define APP_ERROR_PATH_NOT_FOUND 3
-!define APP_ERROR_ALREADY_EXISTS 183
+!define APP_WAIT_OBJECT_0 0
+!define APP_WAIT_ABANDONED 128
+!define APP_WAIT_TIMEOUT 258
 !define APP_FILE_ATTRIBUTE_DIRECTORY 0x10
 !define APP_FILE_ATTRIBUTE_REPARSE_POINT 0x400
 !define APP_DELETE_ACCESS 0x00010000
@@ -268,35 +268,41 @@ Function OpenInstalledConfiguration
 FunctionEnd
 
 !macro AcquireInstallerLifecycleMutex
-    ; Existence, rather than mutex ownership, is the process-lifetime gate. The
-    ; non-inheritable handle closes automatically on normal exit or a hard crash.
-    ; A crashed Sandbox can leave its still-terminating command alive briefly, so
-    ; setup waits one bounded interval for that real holder instead of failing the
-    ; first probe. A holder that remains live still blocks mutation fail-closed.
-    StrCpy $2 0
-    ${Do}
-        System::Call 'KERNEL32::SetLastError(i 0)'
-        System::Call 'KERNEL32::CreateMutexW(p 0, i 0, w "${APP_LIFECYCLE_MUTEX_NAME}") p.r1 ?e'
-        Pop $0
-        StrCpy $InstallerLifecycleMutexHandle $1
-        ${If} $1 == 0
-            MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
-            SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
-            Quit
-        ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
-            System::Call 'KERNEL32::CloseHandle(p $1)'
-            StrCpy $InstallerLifecycleMutexHandle 0
-            IntOp $2 $2 + 1
-            ${If} $2 >= ${APP_LIFECYCLE_WAIT_ATTEMPTS}
-                MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command did not finish within 15 seconds. Close that command, then run setup again." /SD IDOK
-                SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
-                Quit
-            ${EndIf}
-            Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}
-        ${Else}
-            ${ExitDo}
-        ${EndIf}
-    ${Loop}
+    ; The mutex is acquired, not inferred from object existence. Windows grants
+    ; an abandoned mutex to the next waiter after a process or system crash.
+    System::Call 'KERNEL32::CreateMutexW(p 0, i 0, w "${APP_LIFECYCLE_MUTEX_NAME}") p.r1'
+    StrCpy $InstallerLifecycleMutexHandle $1
+    ${If} $1 == 0
+        MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
+        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+        Quit
+    ${EndIf}
+    System::Call 'KERNEL32::WaitForSingleObject(p $1, i 0) i.r0'
+    ${If} $0 == ${APP_WAIT_OBJECT_0}
+    ${OrIf} $0 == ${APP_WAIT_ABANDONED}
+        ; This thread now owns the mutex and holds it until terminal process exit.
+        Nop
+    ${ElseIf} $0 == ${APP_WAIT_TIMEOUT}
+        System::Call 'KERNEL32::CloseHandle(p $1)'
+        StrCpy $InstallerLifecycleMutexHandle 0
+        MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command is currently running. Close that live command, then run setup again." /SD IDOK
+        SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
+        Quit
+    ${Else}
+        System::Call 'KERNEL32::CloseHandle(p $1)'
+        StrCpy $InstallerLifecycleMutexHandle 0
+        MessageBox MB_ICONSTOP|MB_OK "Windows could not acquire the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
+        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+        Quit
+    ${EndIf}
+!macroend
+
+!macro ReleaseInstallerLifecycleMutex
+    ${If} $InstallerLifecycleMutexHandle != 0
+        System::Call 'KERNEL32::ReleaseMutex(p $InstallerLifecycleMutexHandle) i.r0'
+        System::Call 'KERNEL32::CloseHandle(p $InstallerLifecycleMutexHandle)'
+        StrCpy $InstallerLifecycleMutexHandle 0
+    ${EndIf}
 !macroend
 
 Function PreventInstallMutationAbort
@@ -353,6 +359,10 @@ Function .onInit
     StrCpy $InstallMutationActive "0"
 FunctionEnd
 
+Function .onGUIEnd
+    !insertmacro ReleaseInstallerLifecycleMutex
+FunctionEnd
+
 Function un.onInit
     ${IfNot} ${AtLeastWin10}
         MessageBox MB_ICONSTOP|MB_OK "${APP_DISPLAY_NAME} requires Windows 10 or later." /SD IDOK
@@ -384,6 +394,10 @@ Function un.onInit
     delete_config:
         StrCpy $DeleteConfigurationOnUninstall "1"
     done:
+FunctionEnd
+
+Function un.onGUIEnd
+    !insertmacro ReleaseInstallerLifecycleMutex
 FunctionEnd
 
 Function un.DeleteConfigurationPage

@@ -20,8 +20,12 @@ release notes remain available on the
   the Sandbox configuration with its registered application.
 - `sandbox up` now stops promptly when its launched Windows Sandbox process exits,
   releases installer coordination, and safely clears the exact stale run on retry
-  even when process exit races cleanup inspection. Setup also waits up to 15
-  seconds for that terminating command before reporting genuine contention.
+  even when process exit races cleanup inspection. Setup now uses actual Windows
+  mutex ownership, so a process or host crash is acquired as abandoned immediately
+  while only a currently live owner blocks installation.
+- Host Herdr inspection now requires `herdr --version` to report a `herdr-win `
+  identity in addition to proving the Windows remote interface; another
+  remote-capable fork is no longer accepted.
 
 ## v0.0.12 - 2026-08-07
 

@@ -445,15 +445,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}`,
 		`$2 == 0`,
 		`sign out and back in`,
-		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"`,
-		`!define APP_LIFECYCLE_WAIT_INTERVAL_MS 100`,
-		`!define APP_LIFECYCLE_WAIT_ATTEMPTS 150`,
+		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v3"`,
 		`KERNEL32::CreateMutexW`,
+		`KERNEL32::WaitForSingleObject`,
+		`KERNEL32::ReleaseMutex`,
 		`KERNEL32::CloseHandle`,
-		`APP_ERROR_ALREADY_EXISTS 183`,
-		`IntOp $2 $2 + 1`,
-		`Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}`,
-		`did not finish within 15 seconds`,
+		`APP_WAIT_ABANDONED 128`,
+		`APP_WAIT_TIMEOUT 258`,
+		`Close that live command`,
 		`${AtLeastWin10}`,
 		`SetOutPath "$INSTDIR"`,
 		`!define APP_EXIT_INVALID_ARGUMENTS 30`,
@@ -486,6 +485,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`SendNotifyMessage`,
 		`Local\${APP_UNINSTALL_KEY}`,
 		`installer-state.ps1`,
+		`InstallerLifecycle.v2`,
+		`APP_LIFECYCLE_WAIT_INTERVAL_MS`,
+		`APP_LIFECYCLE_WAIT_ATTEMPTS`,
 		`INSTALLER_STATE_HELPER`,
 		`INSTALLER_DEFINITION`,
 		`RunInstallerState`,
@@ -648,15 +650,17 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	mutexSource := source[mutexStart : mutexStart+mutexEnd]
 	createIndex := strings.Index(mutexSource, `KERNEL32::CreateMutexW`)
+	waitIndex := strings.Index(mutexSource, `KERNEL32::WaitForSingleObject`)
+	ownedIndex := strings.Index(mutexSource, `${OrIf} $0 == ${APP_WAIT_ABANDONED}`)
+	timeoutIndex := strings.Index(mutexSource, `${ElseIf} $0 == ${APP_WAIT_TIMEOUT}`)
 	closeIndex := strings.Index(mutexSource, `KERNEL32::CloseHandle`)
-	incrementIndex := strings.Index(mutexSource, `IntOp $2 $2 + 1`)
-	limitIndex := strings.Index(mutexSource, `${If} $2 >= ${APP_LIFECYCLE_WAIT_ATTEMPTS}`)
-	waitIndex := strings.Index(mutexSource, `Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}`)
 	busyIndex := strings.Index(mutexSource, `SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}`)
-	loopIndex := strings.Index(mutexSource, `${Loop}`)
-	if createIndex < 0 || closeIndex <= createIndex || incrementIndex <= closeIndex || limitIndex <= incrementIndex ||
-		busyIndex <= limitIndex || waitIndex <= busyIndex || loopIndex <= waitIndex {
-		t.Fatal("installer must close each contended handle, wait boundedly, and fail busy only after the retry window")
+	if createIndex < 0 || waitIndex <= createIndex || ownedIndex <= waitIndex || timeoutIndex <= ownedIndex ||
+		closeIndex <= timeoutIndex || busyIndex <= closeIndex {
+		t.Fatal("installer must acquire new and abandoned mutexes while failing only for a live owner")
+	}
+	if strings.Count(source, `!insertmacro ReleaseInstallerLifecycleMutex`) != 2 {
+		t.Fatal("setup and uninstall must release their owned lifecycle mutex on terminal GUI exit")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)

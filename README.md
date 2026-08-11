@@ -94,7 +94,8 @@ There is no separate VM to set up or maintain, and only selected stacks are prov
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows Terminal and internet access for cache misses.
-- An existing Windows `herdr.exe` with working `--remote` support on host `PATH`.
+- The `herdr-win` Windows `herdr.exe` on host `PATH`; `herdr --version` must begin
+  with `herdr-win ` and its `--remote` interface must pass the capability probe.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -103,7 +104,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-[`herdr-win`](https://github.com/hdosys/herdr-win) currently provides a Windows build with remote attach, but `herdr-sandbox` does not require that fork, package, installer, or managed layout. It capability-checks the `herdr.exe` already on `PATH`, copies the status-reported physical executable and optional complete ConPTY bundle into each fresh guest, and never installs, updates, or replaces host Herdr.
+[`herdr-win`](https://github.com/hdosys/herdr-win) is the required Windows remote distribution. Herdr Sandbox checks that the existing `herdr.exe` on `PATH` reports a `herdr-win ` identity, separately probes its remote interface, copies the status-reported physical executable and optional complete ConPTY bundle into each fresh guest, and never installs, updates, or replaces host Herdr.
 
 ### Install Herdr Sandbox
 
