@@ -343,6 +343,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 	}
+	fmt.Fprintln(stdout, "Preparing Sandbox...")
 	hostHerdr, err := dependencies.resolveHerdr(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "sandbox:", err)
