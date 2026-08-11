@@ -10,6 +10,8 @@ release notes remain available on the
 
 - Fresh configurations now select every coding agent with a verified WinGet
   package. Remove unwanted entries from `wingetPackages.add` before provisioning.
+- Fresh interactive setup now offers a checked option on the Finish page to open
+  the Sandbox configuration with its registered application.
 
 ## v0.0.12 - 2026-08-07
 

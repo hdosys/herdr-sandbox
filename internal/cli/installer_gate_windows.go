@@ -19,7 +19,7 @@ var (
 )
 
 func acquireInstallerLifecycleGate(args []string) (func(), error) {
-	if len(args) > 0 && (args[0] == "__installer-seed-configuration" || args[0] == "__installer-clean-uninstall") {
+	if len(args) > 0 && (args[0] == "__installer-open-configuration" || args[0] == "__installer-seed-configuration" || args[0] == "__installer-clean-uninstall") {
 		return func() {}, nil
 	}
 	name, err := syscall.UTF16PtrFromString(`Global\` + productidentity.ProductGUID + `.InstallerLifecycle.v2`)

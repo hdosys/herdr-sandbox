@@ -343,18 +343,27 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_150}"`,
 		`File "/oname=$PLUGINSDIR\modern-wizard.bmp" "${INSTALLER_WELCOME_BITMAP_125}"`,
 		`!define MUI_FINISHPAGE_NOREBOOTSUPPORT`,
+		`!define MUI_FINISHPAGE_TEXT_LARGE`,
 		`!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"`,
-		`${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.`,
+		`Open a new terminal in a project directory.`,
 		`${APP_NAME} init`,
 		`${APP_NAME} up`,
 		`${APP_NAME} config`,
+		`!define MUI_FINISHPAGE_RUN`,
+		`!define MUI_FINISHPAGE_RUN_TEXT "Open ${APP_DISPLAY_NAME} configuration"`,
+		`!define MUI_FINISHPAGE_RUN_FUNCTION OpenInstalledConfiguration`,
 		`!define MUI_FINISHPAGE_LINK "Open setup and usage guide"`,
 		`!define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"`,
-		`!define MUI_PAGE_CUSTOMFUNCTION_SHOW PositionInstallerFinishLink`,
-		`Function PositionInstallerFinishLink`,
-		`USER32::DrawTextW`,
-		`USER32::SetWindowPos(p $mui.FinishPage.Text`,
-		`USER32::SetWindowPos(p $mui.FinishPage.Link`,
+		`!define MUI_PAGE_CUSTOMFUNCTION_SHOW ConfigureInstallerFinishPage`,
+		`Function ConfigureInstallerFinishPage`,
+		`${NSD_Uncheck} $mui.FinishPage.Run`,
+		`ShowWindow $mui.FinishPage.Run ${SW_HIDE}`,
+		`${NSD_SetFocus} $mui.Button.Next`,
+		`Function OpenInstalledConfiguration`,
+		`IfSilent open_configuration_done`,
+		`${If} $ExistingRegistrationOwned != "0"`,
+		`__installer-open-configuration`,
+		`Run ${APP_NAME} config from a new terminal.`,
 		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
@@ -461,8 +470,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	for _, forbidden := range []string{
 		`MUI_PAGE_DIRECTORY`,
 		`CRCCheck off`,
-		`MUI_FINISHPAGE_RUN`,
+		`MUI_FINISHPAGE_RUN_NOTCHECKED`,
 		`MUI_FINISHPAGE_SHOWREADME`,
+		`MUI_PAGE_CUSTOMFUNCTION_LEAVE OpenInstalledConfiguration`,
 		`MUI_UNPAGE_CONFIRM`,
 		`RequestExecutionLevel admin`,
 		`RMDir /r`,
@@ -499,6 +509,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`updater`,
 		`runtime bundle`,
 		`Stopping the app-owned Sandbox`,
+		`Function PositionInstallerFinishLink`,
 		`MUI_PAGE_CUSTOMFUNCTION_SHOW PolishInstallerFinishPage`,
 		`Function PolishInstallerFinishPage`,
 	} {
@@ -626,10 +637,42 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)
 	installFilesIndex := strings.Index(source, `!insertmacro MUI_PAGE_INSTFILES`)
+	finishOptionIndex := strings.Index(source, `!define MUI_FINISHPAGE_RUN_FUNCTION OpenInstalledConfiguration`)
 	finishPageIndex := strings.Index(source, `!insertmacro MUI_PAGE_FINISH`)
 	uninstallPageIndex := strings.Index(source, `UninstPage custom un.DeleteConfigurationPage`)
 	if welcomePageIndex < 0 || licensePageIndex <= welcomePageIndex || installFilesIndex <= licensePageIndex || finishPageIndex <= installFilesIndex || uninstallPageIndex <= finishPageIndex {
 		t.Fatal("installer flow must end Welcome/License/Files/Finish before uninstaller pages")
+	}
+	if finishOptionIndex < 0 || finishOptionIndex >= finishPageIndex {
+		t.Fatal("configuration-open option must be defined before the Finish page is declared")
+	}
+	openFunctionStart := strings.Index(source, `Function OpenInstalledConfiguration`)
+	if openFunctionStart < 0 {
+		t.Fatal("missing fresh-install configuration-open callback")
+	}
+	openFunctionEnd := strings.Index(source[openFunctionStart:], `FunctionEnd`)
+	if openFunctionEnd < 0 {
+		t.Fatal("unterminated fresh-install configuration-open callback")
+	}
+	openFunctionSource := source[openFunctionStart : openFunctionStart+openFunctionEnd]
+	for _, want := range []string{`IfSilent open_configuration_done`, `${If} $ExistingRegistrationOwned != "0"`, `__installer-open-configuration`} {
+		if !strings.Contains(openFunctionSource, want) {
+			t.Fatalf("fresh-install configuration-open callback is missing %q", want)
+		}
+	}
+	finishConfigurationStart := strings.Index(source, `Function ConfigureInstallerFinishPage`)
+	if finishConfigurationStart < 0 {
+		t.Fatal("missing fresh-install Finish-page configuration")
+	}
+	finishConfigurationEnd := strings.Index(source[finishConfigurationStart:], `FunctionEnd`)
+	if finishConfigurationEnd < 0 {
+		t.Fatal("unterminated fresh-install Finish-page configuration")
+	}
+	finishConfigurationSource := source[finishConfigurationStart : finishConfigurationStart+finishConfigurationEnd]
+	for _, want := range []string{`${If} $ExistingRegistrationOwned != "0"`, `${NSD_Uncheck} $mui.FinishPage.Run`, `ShowWindow $mui.FinishPage.Run ${SW_HIDE}`} {
+		if !strings.Contains(finishConfigurationSource, want) {
+			t.Fatalf("fresh-install Finish-page configuration is missing %q", want)
+		}
 	}
 }
 

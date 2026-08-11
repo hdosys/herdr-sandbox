@@ -111,7 +111,7 @@ Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) 
 
 #### Installer (recommended)
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, adds the application to Windows Installed Apps and user `PATH`, and never launches a program or browser automatically.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds the application to Windows Installed Apps and user `PATH`. A fresh interactive install shows a checked **Open Herdr Sandbox configuration** option on the Finish page. Leave it selected to open `%APPDATA%\herdr-sandbox\config.json` with the application registered for `.json` files. Standard WinGet and other silent installs, plus repairs and upgrades, do not show the option or open the file.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches GitHub's digest for the same release asset.

@@ -199,15 +199,19 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
 !define MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${VERSION}"
 !define MUI_WELCOMEPAGE_TEXT "This setup installs ${APP_DISPLAY_NAME} for your Windows account and creates its default configuration when missing.$\r$\n$\r$\nNo administrator access is required. Open a new terminal after setup so it can find ${APP_NAME} on PATH."
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
+!define MUI_FINISHPAGE_TEXT_LARGE
 !define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
-!define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\n${APP_DISPLAY_NAME} is a command-line tool, so no application window opens.$\r$\n$\r$\nOpen a new terminal and go to a project directory.$\r$\n$\r$\nFor a new project, run:$\r$\n${APP_NAME} init$\r$\n$\r$\nFor an existing profile, run:$\r$\n${APP_NAME} up$\r$\n$\r$\nTo edit settings, run:$\r$\n${APP_NAME} config"
+!define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\nOpen a new terminal in a project directory. Run ${APP_NAME} init for a new project or ${APP_NAME} up for an existing profile."
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_TEXT "Open ${APP_DISPLAY_NAME} configuration"
+!define MUI_FINISHPAGE_RUN_FUNCTION OpenInstalledConfiguration
 !define MUI_FINISHPAGE_LINK "Open setup and usage guide"
 !define MUI_FINISHPAGE_LINK_LOCATION "${APP_PRODUCT_URL}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"
 !insertmacro MUI_PAGE_INSTFILES
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW PositionInstallerFinishLink
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW ConfigureInstallerFinishPage
 !insertmacro MUI_PAGE_FINISH
 UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -237,36 +241,28 @@ Function SelectInstallerWelcomeBitmap
     ${EndIf}
 FunctionEnd
 
-Function PositionInstallerFinishLink
-    System::Store "S"
-    ${NSD_GetText} $mui.FinishPage.Text $0
-    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Text, @r1)'
-    System::Call '*$1(i.r2, i.r3, i.r4, i.r5)'
-    IntOp $4 $4 - $2
-    System::Call '*$1(i 0, i 0, i r4, i 0)'
-    System::Call 'USER32::GetDC(p $mui.FinishPage.Text) p.r6'
-    SendMessage $mui.FinishPage.Text ${WM_GETFONT} 0 0 $7
-    System::Call 'GDI32::SelectObject(p r6, p r7) p.s'
-    System::Call 'USER32::DrawTextW(p r6, w r0, i -1, p r1, i 0x00000C10)'
-    System::Call '*$1(i, i, i, i.r8)'
-    System::Call 'GDI32::SelectObject(p r6, p s)'
-    System::Call 'USER32::ReleaseDC(p $mui.FinishPage.Text, p r6)'
+Function ConfigureInstallerFinishPage
+    ${If} $ExistingRegistrationOwned != "0"
+        ${NSD_Uncheck} $mui.FinishPage.Run
+        ShowWindow $mui.FinishPage.Run ${SW_HIDE}
+        ${NSD_SetFocus} $mui.Button.Next
+    ${EndIf}
+FunctionEnd
 
-    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Text, @r1)'
-    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r1, i 2)'
-    System::Call '*$1(i.r2, i.r3, i.r4, i.r5)'
-    IntOp $7 $4 - $2
-    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Text, p 0, i r2, i r3, i r7, i r8, i 0x14)'
-
-    System::Call 'USER32::GetWindowRect(p $mui.FinishPage.Link, @r1)'
-    System::Call 'USER32::MapWindowPoints(p 0, p $mui.FinishPage, p r1, i 2)'
-    System::Call '*$1(i.r2, i.r4, i.r5, i.r6)'
-    IntOp $7 $5 - $2
-    IntOp $9 $6 - $4
-    IntOp $8 $8 + $3
-    IntOp $8 $8 + $9
-    System::Call 'USER32::SetWindowPos(p $mui.FinishPage.Link, p 0, i r2, i r8, i r7, i r9, i 0x14)'
-    System::Store "L"
+Function OpenInstalledConfiguration
+    IfSilent open_configuration_done
+    ${If} $ExistingRegistrationOwned != "0"
+        Goto open_configuration_done
+    ${EndIf}
+    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" __installer-open-configuration'
+    Pop $0
+    Pop $1
+    ${If} $0 == "error"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is installed, but Windows could not start configuration opening. Run ${APP_NAME} config from a new terminal." /SD IDOK
+    ${ElseIf} $0 != "0"
+        MessageBox MB_ICONEXCLAMATION|MB_OK "${APP_DISPLAY_NAME} is installed, but its configuration could not be opened: application status $0. $1 Run ${APP_NAME} config from a new terminal." /SD IDOK
+    ${EndIf}
+    open_configuration_done:
 FunctionEnd
 
 !macro AcquireInstallerLifecycleMutex

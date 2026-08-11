@@ -140,6 +140,16 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		fmt.Fprintf(stdout, "Opened configuration: %s\n", path)
 		return 0
+	case "__installer-open-configuration":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "sandbox: installer configuration open does not accept arguments")
+			return 2
+		}
+		if _, err := dependencies.openConfig(); err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		}
+		return 0
 	case "__installer-seed-configuration":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "sandbox: installer configuration seed does not accept arguments")

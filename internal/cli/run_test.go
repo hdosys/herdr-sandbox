@@ -76,8 +76,13 @@ func TestFlagParseErrorsUseProductPrefix(t *testing.T) {
 
 func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	openCalls := 0
 	seedCalls := 0
 	cleanCalls := []bool{}
+	dependencies.openConfig = func() (string, error) {
+		openCalls++
+		return `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`, nil
+	}
 	dependencies.seedInstaller = func() error {
 		seedCalls++
 		return nil
@@ -91,18 +96,19 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 		}
 		return nil
 	}
-	for _, args := range [][]string{{"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1"}, {"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}} {
+	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1"}, {"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}} {
 		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
 			t.Fatalf("%v exit code = %d", args, code)
 		}
 	}
-	if seedCalls != 1 || len(cleanCalls) != 2 || cleanCalls[0] || !cleanCalls[1] {
-		t.Fatalf("installer owner calls = seed %d, clean %#v", seedCalls, cleanCalls)
+	if openCalls != 1 || seedCalls != 1 || len(cleanCalls) != 2 || cleanCalls[0] || !cleanCalls[1] {
+		t.Fatalf("installer owner calls = open %d, seed %d, clean %#v", openCalls, seedCalls, cleanCalls)
 	}
 }
 
 func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	dependencies.openConfig = func() (string, error) { return "", errors.New("open fixture") }
 	dependencies.seedInstaller = func() error { return errors.New("seed fixture") }
 	dependencies.cleanInstaller = func(context.Context, bool) error { return errors.New("clean fixture") }
 	for _, test := range []struct {
@@ -110,10 +116,12 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 		wantCode int
 		wantText string
 	}{
+		{args: []string{"__installer-open-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
 		{args: []string{"__installer-seed-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
 		{args: []string{"__installer-clean-uninstall"}, wantCode: 2, wantText: "requires --installer-schema=1"},
 		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "requires --installer-schema=1"},
 		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1"},
+		{args: []string{"__installer-open-configuration"}, wantCode: 1, wantText: "open fixture"},
 		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
 		{args: []string{"__installer-clean-uninstall", "--installer-schema=1"}, wantCode: 1, wantText: "clean fixture"},
 		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}, wantCode: 1, wantText: "clean fixture"},
