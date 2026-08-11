@@ -106,6 +106,8 @@ Unicode true
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
 !define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"
+!define APP_LIFECYCLE_WAIT_INTERVAL_MS 100
+!define APP_LIFECYCLE_WAIT_ATTEMPTS 150
 !define APP_ERROR_FILE_NOT_FOUND 2
 !define APP_ERROR_PATH_NOT_FOUND 3
 !define APP_ERROR_ALREADY_EXISTS 183
@@ -268,21 +270,33 @@ FunctionEnd
 !macro AcquireInstallerLifecycleMutex
     ; Existence, rather than mutex ownership, is the process-lifetime gate. The
     ; non-inheritable handle closes automatically on normal exit or a hard crash.
-    System::Call 'KERNEL32::SetLastError(i 0)'
-    System::Call 'KERNEL32::CreateMutexW(p 0, i 0, w "${APP_LIFECYCLE_MUTEX_NAME}") p.r1 ?e'
-    Pop $0
-    StrCpy $InstallerLifecycleMutexHandle $1
-    ${If} $1 == 0
-        MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
-        SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
-        Quit
-    ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
-        System::Call 'KERNEL32::CloseHandle(p $1)'
-        StrCpy $InstallerLifecycleMutexHandle 0
-        MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command is still running. Close that command or wait for it to finish, then try again." /SD IDOK
-        SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
-        Quit
-    ${EndIf}
+    ; A crashed Sandbox can leave its still-terminating command alive briefly, so
+    ; setup waits one bounded interval for that real holder instead of failing the
+    ; first probe. A holder that remains live still blocks mutation fail-closed.
+    StrCpy $2 0
+    ${Do}
+        System::Call 'KERNEL32::SetLastError(i 0)'
+        System::Call 'KERNEL32::CreateMutexW(p 0, i 0, w "${APP_LIFECYCLE_MUTEX_NAME}") p.r1 ?e'
+        Pop $0
+        StrCpy $InstallerLifecycleMutexHandle $1
+        ${If} $1 == 0
+            MessageBox MB_ICONSTOP|MB_OK "Windows could not create the ${APP_DISPLAY_NAME} installer lifecycle gate. No files were changed." /SD IDOK
+            SetErrorLevel ${APP_EXIT_INTERNAL_STATE}
+            Quit
+        ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
+            System::Call 'KERNEL32::CloseHandle(p $1)'
+            StrCpy $InstallerLifecycleMutexHandle 0
+            IntOp $2 $2 + 1
+            ${If} $2 >= ${APP_LIFECYCLE_WAIT_ATTEMPTS}
+                MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command did not finish within 15 seconds. Close that command, then run setup again." /SD IDOK
+                SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
+                Quit
+            ${EndIf}
+            Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}
+        ${Else}
+            ${ExitDo}
+        ${EndIf}
+    ${Loop}
 !macroend
 
 Function PreventInstallMutationAbort

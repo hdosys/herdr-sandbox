@@ -20,7 +20,8 @@ release notes remain available on the
   the Sandbox configuration with its registered application.
 - `sandbox up` now stops promptly when its launched Windows Sandbox process exits,
   releases installer coordination, and safely clears the exact stale run on retry
-  even when process exit races cleanup inspection.
+  even when process exit races cleanup inspection. Setup also waits up to 15
+  seconds for that terminating command before reporting genuine contention.
 
 ## v0.0.12 - 2026-08-07
 

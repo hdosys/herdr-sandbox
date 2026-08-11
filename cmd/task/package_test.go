@@ -446,10 +446,14 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`$2 == 0`,
 		`sign out and back in`,
 		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v2"`,
+		`!define APP_LIFECYCLE_WAIT_INTERVAL_MS 100`,
+		`!define APP_LIFECYCLE_WAIT_ATTEMPTS 150`,
 		`KERNEL32::CreateMutexW`,
 		`KERNEL32::CloseHandle`,
 		`APP_ERROR_ALREADY_EXISTS 183`,
-		`Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command is still running.`,
+		`IntOp $2 $2 + 1`,
+		`Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}`,
+		`did not finish within 15 seconds`,
 		`${AtLeastWin10}`,
 		`SetOutPath "$INSTDIR"`,
 		`!define APP_EXIT_INVALID_ARGUMENTS 30`,
@@ -633,6 +637,26 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	}
 	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
 		t.Fatal("setup and uninstall must share one process-lifetime lifecycle mutex")
+	}
+	mutexStart := strings.Index(source, `!macro AcquireInstallerLifecycleMutex`)
+	if mutexStart < 0 {
+		t.Fatal("installer lifecycle mutex macro is missing")
+	}
+	mutexEnd := strings.Index(source[mutexStart:], `!macroend`)
+	if mutexEnd < 0 {
+		t.Fatal("installer lifecycle mutex macro is missing")
+	}
+	mutexSource := source[mutexStart : mutexStart+mutexEnd]
+	createIndex := strings.Index(mutexSource, `KERNEL32::CreateMutexW`)
+	closeIndex := strings.Index(mutexSource, `KERNEL32::CloseHandle`)
+	incrementIndex := strings.Index(mutexSource, `IntOp $2 $2 + 1`)
+	limitIndex := strings.Index(mutexSource, `${If} $2 >= ${APP_LIFECYCLE_WAIT_ATTEMPTS}`)
+	waitIndex := strings.Index(mutexSource, `Sleep ${APP_LIFECYCLE_WAIT_INTERVAL_MS}`)
+	busyIndex := strings.Index(mutexSource, `SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}`)
+	loopIndex := strings.Index(mutexSource, `${Loop}`)
+	if createIndex < 0 || closeIndex <= createIndex || incrementIndex <= closeIndex || limitIndex <= incrementIndex ||
+		busyIndex <= limitIndex || waitIndex <= busyIndex || loopIndex <= waitIndex {
+		t.Fatal("installer must close each contended handle, wait boundedly, and fail busy only after the retry window")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)
