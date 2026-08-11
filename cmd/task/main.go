@@ -109,20 +109,27 @@ func taskTimeoutFor(args []string) time.Duration {
 }
 
 func check(ctx context.Context, stdout, stderr io.Writer) error {
+	fmt.Fprintln(stdout, "Checking Go formatting...")
 	if err := checkGoFormat(ctx, stderr); err != nil {
 		return err
 	}
+	fmt.Fprintln(stdout, "Checking Windows PowerShell syntax...")
 	if err := checkPowerShell(ctx, stdout, stderr); err != nil {
 		return err
 	}
-	for _, command := range [][]string{
-		{"go", "test", "./..."},
-		{"go", "vet", "./..."},
+	for _, step := range []struct {
+		message string
+		command []string
+	}{
+		{message: "Running Go tests...", command: []string{"go", "test", "./..."}},
+		{message: "Running go vet...", command: []string{"go", "vet", "./..."}},
 	} {
-		if err := runCommand(ctx, stdout, stderr, command[0], command[1:]...); err != nil {
+		fmt.Fprintln(stdout, step.message)
+		if err := runCommand(ctx, stdout, stderr, step.command[0], step.command[1:]...); err != nil {
 			return err
 		}
 	}
+	fmt.Fprintln(stdout, "Building sandbox...")
 	return build(ctx, stdout, stderr)
 }
 
@@ -185,13 +192,7 @@ func checkPowerShell(ctx context.Context, stdout, stderr io.Writer) error {
 			powerShell = candidate
 		}
 	}
-	parser := `$tokens = $null
-$errors = $null
-    [System.Management.Automation.Language.Parser]::ParseFile($env:HERDR_SANDBOX_POWERSHELL_SCRIPT, [ref]$tokens, [ref]$errors) | Out-Null
-if ($errors.Count -gt 0) {
-    $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }
-    exit 1
-}`
+	absoluteScripts := make([]string, 0, len(scripts))
 	for _, relative := range scripts {
 		script, err := filepath.Abs(relative)
 		if err != nil {
@@ -200,18 +201,40 @@ if ($errors.Count -gt 0) {
 		if _, err := os.Stat(script); err != nil {
 			return fmt.Errorf("find PowerShell script %s: %w", relative, err)
 		}
-		command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", parser)
-		command.Env = append(os.Environ(), "HERDR_SANDBOX_POWERSHELL_SCRIPT="+script)
-		command.Stdout = stdout
-		command.Stderr = stderr
-		if err := command.Run(); err != nil {
-			if runtime.GOOS != "windows" {
-				return fmt.Errorf("validate Windows PowerShell script %s (run this gate on Windows): %w", relative, err)
-			}
-			return fmt.Errorf("validate Windows PowerShell script %s: %w", relative, err)
+		absoluteScripts = append(absoluteScripts, script)
+	}
+	if err := runPowerShellSyntaxCheck(ctx, powerShell, absoluteScripts, stdout, stderr); err != nil {
+		if runtime.GOOS != "windows" {
+			return fmt.Errorf("validate Windows PowerShell scripts (run this gate on Windows): %w", err)
 		}
+		return fmt.Errorf("validate Windows PowerShell scripts: %w", err)
 	}
 	return nil
+}
+
+func runPowerShellSyntaxCheck(ctx context.Context, powerShell string, scripts []string, stdout, stderr io.Writer) error {
+	if len(scripts) == 0 {
+		return nil
+	}
+	parser := `$scriptPaths = @(([Console]::In.ReadToEnd()).Split([char]10))
+$failed = $false
+foreach ($scriptPath in $scriptPaths) {
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors) | Out-Null
+    foreach ($parseError in @($errors)) {
+        [Console]::Error.WriteLine(('{0}: {1}' -f $scriptPath, $parseError.Message))
+        $failed = $true
+    }
+}
+if ($failed) {
+    exit 1
+}`
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", parser)
+	command.Stdin = strings.NewReader(strings.Join(scripts, "\n"))
+	command.Stdout = stdout
+	command.Stderr = stderr
+	return command.Run()
 }
 
 func build(ctx context.Context, stdout, stderr io.Writer) error {

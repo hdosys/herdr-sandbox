@@ -3,9 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunPrintsHelp(t *testing.T) {
@@ -76,6 +80,36 @@ func TestNormalizeSourceRevisionRequiresFullSHA1(t *testing.T) {
 	for _, revision := range []string{"", "abc", strings.Repeat("0", 39), strings.Repeat("g", 40), strings.Repeat("0", 41)} {
 		if _, err := normalizeSourceRevision(revision); err == nil {
 			t.Fatalf("invalid revision unexpectedly succeeded: %q", revision)
+		}
+	}
+}
+
+func TestPowerShellSyntaxCheckReportsEveryInvalidScript(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 syntax boundary")
+	}
+	root := t.TempDir()
+	first := filepath.Join(root, "first.ps1")
+	second := filepath.Join(root, "second.ps1")
+	for path, contents := range map[string]string{
+		first:  "function Broken-First {\n",
+		second: "if ($true) {\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	var stderr bytes.Buffer
+	err := runPowerShellSyntaxCheck(ctx, powerShell, []string{first, second}, &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("invalid PowerShell scripts unexpectedly passed")
+	}
+	for _, path := range []string{first, second} {
+		if !strings.Contains(stderr.String(), path+":") {
+			t.Fatalf("syntax diagnostics did not name %s: %q", path, stderr.String())
 		}
 	}
 }
