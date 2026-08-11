@@ -6,6 +6,11 @@ release notes remain available on the
 
 ## Unreleased
 
+### Changed
+
+- Fresh configurations now select every coding agent with a verified WinGet
+  package. Remove unwanted entries from `wingetPackages.add` before provisioning.
+
 ## v0.0.12 - 2026-08-07
 
 ### Changed

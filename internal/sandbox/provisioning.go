@@ -51,7 +51,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)

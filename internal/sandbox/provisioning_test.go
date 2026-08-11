@@ -2657,7 +2657,7 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale || config.WorkspaceDiscovery != nil ||
-		len(config.WingetPackages.Remove) != 0 || len(config.WingetPackages.Add) != 1 || config.WingetPackages.Add[0] != packageOpenCode ||
+		len(config.WingetPackages.Remove) != 0 || !slices.Equal(config.WingetPackages.Add, defaultCodingAgentPackageIDs()) ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Mounts) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
 	}
@@ -2841,7 +2841,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
 		config.MobileSSHAuthorizedKeys == nil || len(config.MobileSSHAuthorizedKeys) != 0 ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
-		len(config.WingetPackages.Add) != 1 || config.WingetPackages.Add[0] != packageOpenCode ||
+		!slices.Equal(config.WingetPackages.Add, defaultCodingAgentPackageIDs()) ||
 		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Mounts == nil || config.Workspaces == nil {
 		t.Fatalf("seeded config = %#v", config)
 	}
@@ -2861,8 +2861,10 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
 		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)
 	}
-	if !bytes.Contains(seededContents, []byte(`"add": [`+"\n"+`      "SST.opencode"`)) {
-		t.Fatalf("seeded config does not expose replaceable OpenCode addition: %s", seededContents)
+	for _, id := range defaultCodingAgentPackageIDs() {
+		if !bytes.Contains(seededContents, []byte(`"`+id+`"`)) {
+			t.Fatalf("seeded config does not expose default coding agent %s: %s", id, seededContents)
+		}
 	}
 	remaining := seededContents
 	for _, field := range []string{`"cacheDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {

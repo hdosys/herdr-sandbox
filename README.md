@@ -356,7 +356,10 @@ The command creates `config.json` only when absent and never replaces existing s
   "wingetPackages": {
     "remove": [],
     "add": [
-      "SST.opencode"
+      "SST.opencode",
+      "Anthropic.ClaudeCode",
+      "OpenAI.Codex",
+      "GitHub.Copilot"
     ],
     "versions": {}
   }
@@ -376,7 +379,7 @@ The command creates `config.json` only when absent and never replaces existing s
 | `mounts` | Optional user-named non-workspace folders mapped to `C:\Mounts\<name>`. Every entry requires an absolute existing `path` and explicit `readOnly`; at most 16 are allowed. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
 | `wingetPackages.remove` | Known optional Base packages to omit. Core packages cannot be removed. |
-| `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs show `SST.opencode` as a replaceable example; remove or replace that entry to choose another coding agent. |
+| `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs list every coding agent with a verified WinGet package; remove any entries you do not want. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
 Package additions, removals, and version changes apply through `sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
@@ -390,6 +393,9 @@ Vulkan remains disabled by default. To install only the LunarG runtime and requi
   "remove": [],
   "add": [
     "SST.opencode",
+    "Anthropic.ClaudeCode",
+    "OpenAI.Codex",
+    "GitHub.Copilot",
     "KhronosGroup.VulkanRT"
   ],
   "versions": {}
@@ -438,9 +444,9 @@ Mapped folders expose host data across the isolation boundary. Ordinary explicit
 
 #### Agent packages
 
-OpenCode is not a mandatory Base package. Fresh configs list `SST.opencode` under `wingetPackages.add` as a visible example: replace that single ID with the preferred coding-agent package, or remove it to install no coding agent globally. No separate disable entry is required.
+Coding agents are removable additions rather than protected Base packages. Fresh configs list every agent with a verified WinGet package, so remove the entries you do not want or use an empty `add` array to install no coding agent globally. No separate disable entry is required.
 
-To install every coding agent that currently has a verified WinGet package, use:
+The seeded coding-agent package list is:
 
 ```json
 {

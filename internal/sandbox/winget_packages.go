@@ -22,6 +22,9 @@ const (
 	packageGitHubCLI       = "GitHub.cli"
 	packageTailscale       = "Tailscale.Tailscale"
 	packageOpenCode        = "SST.opencode"
+	packageClaudeCode      = "Anthropic.ClaudeCode"
+	packageCodex           = "OpenAI.Codex"
+	packageGitHubCopilot   = "GitHub.Copilot"
 	packageVulkanRuntime   = "KhronosGroup.VulkanRT"
 	packageWinDirStat      = "WinDirStat.WinDirStat"
 	packageFilePilot       = "Voidstar.FilePilot"
@@ -86,7 +89,11 @@ type wingetPackagePlanEntry struct {
 }
 
 func defaultWingetPackageConfiguration() wingetPackageConfiguration {
-	return wingetPackageConfiguration{Remove: []string{}, Add: []string{packageOpenCode}, Versions: map[string]string{}}
+	return wingetPackageConfiguration{Remove: []string{}, Add: defaultCodingAgentPackageIDs(), Versions: map[string]string{}}
+}
+
+func defaultCodingAgentPackageIDs() []string {
+	return []string{packageOpenCode, packageClaudeCode, packageCodex, packageGitHubCopilot}
 }
 
 func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal windowsTerminalConfiguration) (wingetPackagePlan, error) {

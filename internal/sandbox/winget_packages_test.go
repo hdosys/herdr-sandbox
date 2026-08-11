@@ -25,8 +25,13 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	if defaults.enabled(packageTerminalPreview) {
 		t.Fatal("default stable plan contains Terminal Preview")
 	}
-	if len(defaults.Additions) != 1 || defaults.Additions[0].ID != packageOpenCode {
+	if len(defaults.Additions) != len(defaultCodingAgentPackageIDs()) {
 		t.Fatalf("default optional additions = %#v", defaults.Additions)
+	}
+	for _, id := range defaultCodingAgentPackageIDs() {
+		if !defaults.enabled(id) {
+			t.Fatalf("default plan is missing coding agent %s: %#v", id, defaults.Additions)
+		}
 	}
 
 	configuration := wingetPackageConfiguration{
@@ -46,8 +51,13 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 			t.Fatalf("custom plan unexpectedly retained %s", id)
 		}
 	}
-	if !custom.enabled("7zip.7zip") || custom.enabled(packageOpenCode) || len(custom.Additions) != 1 || custom.Additions[0].Version != "26.00" {
+	if !custom.enabled("7zip.7zip") || len(custom.Additions) != 1 || custom.Additions[0].Version != "26.00" {
 		t.Fatalf("custom additions = %#v", custom.Additions)
+	}
+	for _, id := range defaultCodingAgentPackageIDs() {
+		if custom.enabled(id) {
+			t.Fatalf("explicit additions retained default coding agent %s: %#v", id, custom.Additions)
+		}
 	}
 	gitVersion := ""
 	for _, entry := range custom.Defaults {
