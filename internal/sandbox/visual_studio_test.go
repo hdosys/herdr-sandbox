@@ -64,7 +64,7 @@ func TestPrepareVisualStudioLayoutNoopsWithoutRequirement(t *testing.T) {
 func TestWorkspaceRequirementsIncludeNonActiveProjects(t *testing.T) {
 	plan := runPlan{Workspaces: []workspacePlan{
 		{Name: "herdr-sandbox", GuestDirectory: `C:\Workspaces\herdr-sandbox`, Active: true},
-		{Name: "herdr", GuestDirectory: `C:\Workspaces\herdr`, Stacks: []projectStack{stackRustMSVC}},
+		{Name: "native", GuestDirectory: `C:\Workspaces\native`, Stacks: []projectStack{stackCpp}},
 	}}
 	applyWorkspaceRequirements(&plan)
 	if plan.ActiveWorkspace != `C:\Workspaces\herdr-sandbox` {
@@ -72,6 +72,17 @@ func TestWorkspaceRequirementsIncludeNonActiveProjects(t *testing.T) {
 	}
 	if !plan.RequiresVisualStudioLayout {
 		t.Fatal("Visual Studio requirement from non-active workspace was lost")
+	}
+}
+
+func TestVisualStudioRequirementIncludesCppAndRustStacksOnly(t *testing.T) {
+	for _, stacks := range [][]projectStack{{stackCpp}, {stackRustMSVC}, {stackCpp, stackJava}} {
+		if !stacksRequireVisualStudioLayout(stacks) {
+			t.Fatalf("Visual Studio requirement missing for %v", stacks)
+		}
+	}
+	if stacksRequireVisualStudioLayout([]projectStack{stackJava, stackGo}) {
+		t.Fatal("unrelated stacks unexpectedly require Visual Studio")
 	}
 }
 

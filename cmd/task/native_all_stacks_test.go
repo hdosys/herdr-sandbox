@@ -20,7 +20,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"Install-DotNetStack", "Install-GoStack", "Install-HerdrStack", "Install-Uv", "Install-NodeStack", "Install-PlaywrightCLIStack", "Install-TradingViewStack"} {
+	for _, call := range []string{"Install-CppStack", "Install-DotNetStack", "Install-GoStack", "Install-HerdrStack", "Install-JavaStack", "Install-Uv", "Install-NodeStack", "Install-PlaywrightCLIStack", "Install-TradingViewStack"} {
 		if !strings.Contains(string(profile), call) {
 			t.Fatalf("native fixture profile is missing %s", call)
 		}
@@ -39,7 +39,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 			t.Fatalf("native fixture bypasses Handy virtual composition with %s", duplicate)
 		}
 	}
-	for _, source := range []string{"Cargo.toml", "rust-toolchain.toml", "go.mod", "main.go", "main_test.go", "smoke.csproj", "Program.cs", "smoke.js", "smoke.py", "smoke.rs", "smoke.zig", "justfile"} {
+	for _, source := range []string{"Cargo.toml", "rust-toolchain.toml", "go.mod", "main.go", "main_test.go", "smoke.csproj", "Program.cs", "smoke.c", "smoke.cpp", "Smoke.java", "smoke.js", "smoke.py", "smoke.rs", "smoke.zig", "justfile"} {
 		if info, err := os.Stat(filepath.Join(fixture.Project, source)); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			t.Fatalf("native fixture source %s is invalid: %v, %v", source, info, err)
 		}
@@ -62,7 +62,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR", "handy-cmake-version", "handy-glslc-version", `C:\VulkanSDK\1.4.309.0`, "SPIRV-HeadersConfig.cmake", "Microsoft Edge WebView2 Runtime", "handy-native-toolchain"} {
+	for _, required := range []string{"c-compile", "c-run", "native-c-ok", "cpp-compile", "cpp-run", "native-cpp-ok", "msbuild-version", `C:\HerdrSandbox\toolchains\visual-studio`, "java-version", "javac-version", "java-compile", "java-run", "native-java-ok", "JAVA_HOME", "playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR", "handy-cmake-version", "handy-glslc-version", `C:\VulkanSDK\1.4.309.0`, "SPIRV-HeadersConfig.cmake", "Microsoft Edge WebView2 Runtime", "handy-native-toolchain"} {
 		if !strings.Contains(nativeAllStacksSmokeScript, required) {
 			t.Fatalf("native smoke does not verify %s", required)
 		}

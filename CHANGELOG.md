@@ -6,6 +6,12 @@ release notes remain available on the
 
 ## Unreleased
 
+### Added
+
+- New `cpp` and `java` project stacks provide verified x64 C/C++ Build Tools and
+  Microsoft OpenJDK 25 LTS compile/run environments. Select them with
+  `sandbox init --stack cpp` and `sandbox init --stack java`.
+
 ### Changed
 
 - Fresh configurations now select every coding agent with a verified WinGet

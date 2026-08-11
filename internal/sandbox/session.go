@@ -725,7 +725,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}
 	requirements := runPlan{Workspaces: workspaces}
 	applyWorkspaceRequirements(&requirements)
-	if stacksContain(userStacks, stackRustMSVC) {
+	if stacksRequireVisualStudioLayout(userStacks) {
 		requirements.RequiresVisualStudioLayout = true
 	}
 	workspaceManifest, err := encodeGuestWorkspaceManifest(workspaces, requirements.ActiveWorkspace)
@@ -787,7 +787,7 @@ func applyWorkspaceRequirements(plan *runPlan) {
 	plan.ActiveWorkspace = ""
 	plan.RequiresVisualStudioLayout = false
 	for _, workspace := range plan.Workspaces {
-		if workspaceHasStack(workspace, stackRustMSVC) {
+		if stacksRequireVisualStudioLayout(workspace.Stacks) {
 			plan.RequiresVisualStudioLayout = true
 		}
 		if workspace.Active {
@@ -810,6 +810,10 @@ func stacksContain(stacks []projectStack, expected projectStack) bool {
 		}
 	}
 	return false
+}
+
+func stacksRequireVisualStudioLayout(stacks []projectStack) bool {
+	return stacksContain(stacks, stackCpp) || stacksContain(stacks, stackRustMSVC)
 }
 
 func newRunID() (string, error) {

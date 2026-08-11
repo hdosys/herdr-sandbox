@@ -252,8 +252,10 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 | --- | --- |
 | Bun | `Install-BunStack` |
 | Cargo Nextest | `Install-CargoNextest` |
+| C and C++ with MSVC Build Tools | `Install-CppStack` |
 | .NET 10 LTS SDK | `Install-DotNetStack` |
 | Go | `Install-GoStack -ProjectDirectory $ProjectDirectory` |
+| Java 25 LTS with Microsoft OpenJDK | `Install-JavaStack` |
 | Just | `Install-Just` |
 | Node.js LTS with Playwright and Chromium | `Install-NodeStack` |
 | Playwright CLI without a bundled browser | `Install-PlaywrightCLIStack` |
@@ -274,6 +276,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - Keep calls direct, not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
 - Shortcut functions are the temporary convenience compositions described under [Project shortcuts](#project-shortcuts). Prefer project-owned direct calls once a repository carries its own setup.
 - Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
+- The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
 #### Playwright CLI integration

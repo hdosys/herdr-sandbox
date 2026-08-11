@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 11
+# herdr-sandbox-stacks-contract: 12
 
 function Get-StackWebResponseText {
     param(
@@ -321,24 +321,49 @@ function Test-StackVisualStudioLayoutSlot {
     }
 }
 
-function Wait-StackVisualStudioInstalled {
-    param([int]$TimeoutSeconds = 120)
+function Get-StackVisualStudioInstallation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Target
+    )
 
     $vswhere = [string](Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe')
+    if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+        return ''
+    }
+    $arguments = @(
+        '-latest', '-products', '*', '-requires',
+        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        'Microsoft.VisualStudio.Component.Windows11SDK.26100'
+    )
+    $pathResult = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation path inspection' `
+        -FilePath $vswhere -ArgumentList ($arguments + @('-property', 'installationPath')) -TimeoutSeconds 30
+    $versionResult = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation version inspection' `
+        -FilePath $vswhere -ArgumentList ($arguments + @('-property', 'installationVersion')) -TimeoutSeconds 30
+    if (-not $pathResult.Succeeded -or -not $versionResult.Succeeded) {
+        return ''
+    }
+    $installationPath = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$pathResult.Output)) -join ' ').Trim()
+    $installationVersion = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$versionResult.Output)) -join ' ').Trim()
+    if ($installationPath -ine 'C:\HerdrSandbox\toolchains\visual-studio' -or
+        $installationVersion -cne [string]$Target.BuildVersion) {
+        return ''
+    }
+    return $installationPath
+}
+
+function Wait-StackVisualStudioInstalled {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Target,
+        [int]$TimeoutSeconds = 120
+    )
+
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
-        if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
-            $result = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation readiness inspection' `
-                -FilePath $vswhere -ArgumentList @(
-                    '-latest', '-products', '*', '-requires',
-                    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-                    'Microsoft.VisualStudio.Component.Windows11SDK.26100', '-property', 'installationPath'
-                ) -TimeoutSeconds 30
-            $installationPath = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
-            $exitCode = $result.ExitCode
-            if ($exitCode -eq 0 -and ($installationPath -join ' ').Trim() -ieq 'C:\HerdrSandbox\toolchains\visual-studio') {
-                return
-            }
+        $installationPath = Get-StackVisualStudioInstallation -Target $Target
+        if (-not [string]::IsNullOrWhiteSpace($installationPath)) {
+            return
         }
         Start-Sleep -Seconds 2
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -458,8 +483,8 @@ function Set-StackVisualStudioFirewallRule {
 
 function Install-StackVisualStudioBuildTools {
     param(
-        [Parameter(Mandatory = $true)]
-        [Collections.IDictionary]$RustToolchainTask
+        [AllowNull()]
+        [Collections.IDictionary]$RustToolchainTask = $null
     )
 
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -488,55 +513,73 @@ function Install-StackVisualStudioBuildTools {
         }
         $selectedSlot = $matchingSlots[0]
         Write-Output "Visual Studio Build Tools host layout cache hit: $($target.BuildVersion)"
-        $layout = Join-Path $selectedSlot 'layout'
-        $descriptor = [IO.File]::ReadAllText((Join-Path $selectedSlot 'complete.json')) | ConvertFrom-Json
-        $expectedBootstrapperHash = [string]$descriptor.bootstrapperSHA256
-        Write-ProvisioningProgress -Message 'Visual Studio Build Tools guest-local layout materialization'
-        Copy-StackVisualStudioLayoutToGuest -Source $layout -Destination $guestLayout
-        $guestLayoutBootstrapper = Join-Path $guestLayout 'vs_BuildTools.exe'
-        Assert-StackVisualStudioBootstrapper -Path $guestLayoutBootstrapper `
-            -ExpectedSHA256 $expectedBootstrapperHash
-        Assert-StackVisualStudioLayoutIdentity -Layout $guestLayout -Target $target -GuestLocal
-        $channelManifest = Join-Path $guestLayout 'ChannelManifest.json'
-        $catalog = Join-Path $guestLayout 'Catalog.json'
-        $installationArguments = @('--noWeb', '--noUpdateInstaller', '--wait', '--quiet', '--norestart',
-            '--installPath', 'C:\HerdrSandbox\toolchains\visual-studio', '--channelId', 'VisualStudio.17.Release',
-            '--productId', 'Microsoft.VisualStudio.Product.BuildTools', '--channelUri', $channelManifest,
-            '--installChannelUri', $channelManifest, '--installCatalogUri', $catalog)
-        foreach ($componentID in @(Get-StackVisualStudioComponentIDs)) {
-            $installationArguments += @('--add', $componentID)
-        }
-        $installationArguments += @('--addProductLang', 'en-US')
-        $installerEngine = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
-        foreach ($rule in @(
-            @{ Name = 'HerdrSandbox-VSBootstrapper-In'; Direction = 'Inbound'; Program = $guestLayoutBootstrapper },
-            @{ Name = 'HerdrSandbox-VSBootstrapper-Out'; Direction = 'Outbound'; Program = $guestLayoutBootstrapper },
-            @{ Name = 'HerdrSandbox-VSInstaller-In'; Direction = 'Inbound'; Program = $installerEngine },
-            @{ Name = 'HerdrSandbox-VSInstaller-Out'; Direction = 'Outbound'; Program = $installerEngine }
-        )) {
-            Set-StackVisualStudioFirewallRule -Name $rule.Name -Direction $rule.Direction `
-                -Program $rule.Program
-        }
-        $installationGroup = Start-ProvisioningNativeGroup -Tasks @(
-            $RustToolchainTask,
-            [ordered]@{
-                Role = 'Visual Studio Build Tools offline installation'
-                FilePath = $guestLayoutBootstrapper
-                ArgumentList = $installationArguments
-                WorkingDirectory = $guestLayout
-                TimeoutSeconds = 900
+        $installedPath = Get-StackVisualStudioInstallation -Target $target
+        if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
+            Write-Output "Visual Studio Build Tools already matches Current: $($target.BuildVersion)"
+            if ($null -ne $RustToolchainTask) {
+                Invoke-ProvisioningNative -Role ([string]$RustToolchainTask['Role']) `
+                    -FilePath $RustToolchainTask['FilePath'] `
+                    -ArgumentList ([string[]]@($RustToolchainTask['ArgumentList'])) `
+                    -WorkingDirectory ([string]$RustToolchainTask['WorkingDirectory']) `
+                    -TimeoutSeconds ([int]$RustToolchainTask['TimeoutSeconds']) | Out-Null
             }
-        )
-        $installationCompleted = $false
-        try {
-            Complete-ProvisioningNativeGroup -Group $installationGroup | Out-Null
-            $installationCompleted = $true
-        } finally {
-            if (-not $installationCompleted) {
-                Stop-ProvisioningNativeGroup -Group $installationGroup
+        } else {
+            $layout = Join-Path $selectedSlot 'layout'
+            $descriptor = [IO.File]::ReadAllText((Join-Path $selectedSlot 'complete.json')) | ConvertFrom-Json
+            $expectedBootstrapperHash = [string]$descriptor.bootstrapperSHA256
+            Write-ProvisioningProgress -Message 'Visual Studio Build Tools guest-local layout materialization'
+            Copy-StackVisualStudioLayoutToGuest -Source $layout -Destination $guestLayout
+            $guestLayoutBootstrapper = Join-Path $guestLayout 'vs_BuildTools.exe'
+            Assert-StackVisualStudioBootstrapper -Path $guestLayoutBootstrapper `
+                -ExpectedSHA256 $expectedBootstrapperHash
+            Assert-StackVisualStudioLayoutIdentity -Layout $guestLayout -Target $target -GuestLocal
+            $channelManifest = Join-Path $guestLayout 'ChannelManifest.json'
+            $catalog = Join-Path $guestLayout 'Catalog.json'
+            $installationArguments = @('--noWeb', '--noUpdateInstaller', '--wait', '--quiet', '--norestart',
+                '--installPath', 'C:\HerdrSandbox\toolchains\visual-studio', '--channelId', 'VisualStudio.17.Release',
+                '--productId', 'Microsoft.VisualStudio.Product.BuildTools', '--channelUri', $channelManifest,
+                '--installChannelUri', $channelManifest, '--installCatalogUri', $catalog)
+            foreach ($componentID in @(Get-StackVisualStudioComponentIDs)) {
+                $installationArguments += @('--add', $componentID)
             }
+            $installationArguments += @('--addProductLang', 'en-US')
+            $installerEngine = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
+            foreach ($rule in @(
+                @{ Name = 'HerdrSandbox-VSBootstrapper-In'; Direction = 'Inbound'; Program = $guestLayoutBootstrapper },
+                @{ Name = 'HerdrSandbox-VSBootstrapper-Out'; Direction = 'Outbound'; Program = $guestLayoutBootstrapper },
+                @{ Name = 'HerdrSandbox-VSInstaller-In'; Direction = 'Inbound'; Program = $installerEngine },
+                @{ Name = 'HerdrSandbox-VSInstaller-Out'; Direction = 'Outbound'; Program = $installerEngine }
+            )) {
+                Set-StackVisualStudioFirewallRule -Name $rule.Name -Direction $rule.Direction `
+                    -Program $rule.Program
+            }
+            if ($null -eq $RustToolchainTask) {
+                Invoke-ProvisioningNative -Role 'Visual Studio Build Tools offline installation' `
+                    -FilePath $guestLayoutBootstrapper -ArgumentList $installationArguments `
+                    -WorkingDirectory $guestLayout -TimeoutSeconds 900 -WaitForProcessTree | Out-Null
+            } else {
+                $installationGroup = Start-ProvisioningNativeGroup -Tasks @(
+                    $RustToolchainTask,
+                    [ordered]@{
+                        Role = 'Visual Studio Build Tools offline installation'
+                        FilePath = $guestLayoutBootstrapper
+                        ArgumentList = $installationArguments
+                        WorkingDirectory = $guestLayout
+                        TimeoutSeconds = 900
+                    }
+                )
+                $installationCompleted = $false
+                try {
+                    Complete-ProvisioningNativeGroup -Group $installationGroup | Out-Null
+                    $installationCompleted = $true
+                } finally {
+                    if (-not $installationCompleted) {
+                        Stop-ProvisioningNativeGroup -Group $installationGroup
+                    }
+                }
+            }
+            Wait-StackVisualStudioInstalled -Target $target
         }
-        Wait-StackVisualStudioInstalled
         foreach ($slot in @($slotA, $slotB)) {
             if ($slot -ine $selectedSlot -and (Test-Path -LiteralPath $slot)) {
                 Assert-ProvisioningCacheTree -Path $slot
@@ -560,6 +603,144 @@ function Install-StackVisualStudioBuildTools {
         throw $primaryFailure
     }
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+}
+
+function Enable-StackVisualStudioDeveloperEnvironment {
+    $installationRoot = 'C:\HerdrSandbox\toolchains\visual-studio'
+    $developerShell = Join-Path $installationRoot 'Common7\Tools\Launch-VsDevShell.ps1'
+    foreach ($path in @($installationRoot, $developerShell)) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Visual Studio developer environment input is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            ($path -ceq $installationRoot -and -not $item.PSIsContainer) -or
+            ($path -ceq $developerShell -and $item.PSIsContainer)) {
+            throw "Visual Studio developer environment input is unsafe: $path"
+        }
+    }
+
+    $originalLocation = Get-Location
+    try {
+        & $developerShell -Arch 'amd64' -HostArch 'amd64' -SkipAutomaticLocation | Out-Null
+    } finally {
+        Set-Location -LiteralPath $originalLocation.ProviderPath
+    }
+
+    $requiredEnvironment = @(
+        'INCLUDE', 'LIB', 'LIBPATH', 'VCINSTALLDIR', 'VCToolsInstallDir',
+        'VSINSTALLDIR', 'WindowsSdkDir', 'WindowsSDKVersion'
+    )
+    foreach ($name in $requiredEnvironment) {
+        $value = [string][Environment]::GetEnvironmentVariable($name, 'Process')
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            throw "Visual Studio developer environment did not define $name."
+        }
+        [Environment]::SetEnvironmentVariable($name, $value, 'Machine')
+        if ([Environment]::GetEnvironmentVariable($name, 'Machine') -cne $value) {
+            throw "Visual Studio developer environment did not persist $name."
+        }
+    }
+    if ([IO.Path]::GetFullPath($env:VSINSTALLDIR).TrimEnd('\') -ine $installationRoot -or
+        -not [IO.Path]::GetFullPath($env:VCToolsInstallDir).StartsWith(
+            $installationRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Visual Studio developer environment resolved outside the app-owned installation.'
+    }
+
+    $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+    $expectedRoots = [ordered]@{
+        'cl.exe' = $installationRoot
+        'link.exe' = $installationRoot
+        'lib.exe' = $installationRoot
+        'nmake.exe' = $installationRoot
+        'msbuild.exe' = $installationRoot
+        'rc.exe' = $windowsKitsRoot
+    }
+    $resolvedCommands = [ordered]@{}
+    $commandDirectories = @()
+    foreach ($entry in $expectedRoots.GetEnumerator()) {
+        $command = Get-Command $entry.Key -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        $source = [IO.Path]::GetFullPath([string]$command.Source)
+        $expectedRoot = [IO.Path]::GetFullPath([string]$entry.Value).TrimEnd('\')
+        $item = Get-Item -LiteralPath $source -Force
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            -not $source.StartsWith($expectedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Visual Studio developer command is outside its expected owner: $($entry.Key) at $source"
+        }
+        $resolvedCommands[$entry.Key] = $source
+        $directory = Split-Path -Parent $source
+        if (-not ($commandDirectories | Where-Object { $_ -ieq $directory })) {
+            $commandDirectories += $directory
+        }
+    }
+    for ($index = $commandDirectories.Count - 1; $index -ge 0; $index--) {
+        Add-ProvisioningMachinePath -Directory $commandDirectories[$index]
+    }
+    foreach ($entry in $resolvedCommands.GetEnumerator()) {
+        $resolved = Get-Command $entry.Key -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        if ([IO.Path]::GetFullPath([string]$resolved.Source) -ine [string]$entry.Value) {
+            throw "Visual Studio developer command PATH read-back failed: $($entry.Key)"
+        }
+    }
+    return [pscustomobject]@{
+        Compiler = [string]$resolvedCommands['cl.exe']
+        Linker = [string]$resolvedCommands['link.exe']
+        MSBuild = [string]$resolvedCommands['msbuild.exe']
+    }
+}
+
+function Assert-StackCppToolchain {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Compiler
+    )
+
+    $stage = Join-Path 'C:\HerdrSandbox\staging' ('cpp-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    try {
+        $cSource = Join-Path $stage 'probe.c'
+        $cppSource = Join-Path $stage 'probe.cpp'
+        $cExecutable = Join-Path $stage 'c-probe.exe'
+        $cppExecutable = Join-Path $stage 'cpp-probe.exe'
+        $cProgram = @'
+#include <stdio.h>
+int main(void) { puts("c-stack-ok"); return 0; }
+'@
+        $cppProgram = @'
+#include <iostream>
+int main() { std::cout << "cpp-stack-ok\n"; return 0; }
+'@
+        [IO.File]::WriteAllText($cSource, $cProgram + "`n", (New-Object Text.UTF8Encoding($false)))
+        [IO.File]::WriteAllText($cppSource, $cppProgram + "`n", (New-Object Text.UTF8Encoding($false)))
+        Invoke-ProvisioningNative -Role 'MSVC C compiler probe' -FilePath $Compiler `
+            -ArgumentList @('/nologo', '/W4', '/WX', '/TC', $cSource, "/Fe:$cExecutable") `
+            -WorkingDirectory $stage -TimeoutSeconds 120 | Out-Null
+        Invoke-ProvisioningNative -Role 'MSVC C++ compiler probe' -FilePath $Compiler `
+            -ArgumentList @('/nologo', '/W4', '/WX', '/EHsc', '/std:c++20', '/TP', $cppSource, "/Fe:$cppExecutable") `
+            -WorkingDirectory $stage -TimeoutSeconds 120 | Out-Null
+        $cOutput = ((Invoke-ProvisioningNative -Role 'MSVC C executable probe' -FilePath $cExecutable `
+                -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        $cppOutput = ((Invoke-ProvisioningNative -Role 'MSVC C++ executable probe' -FilePath $cppExecutable `
+                -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        if ($cOutput -cne 'c-stack-ok' -or $cppOutput -cne 'cpp-stack-ok') {
+            throw "MSVC C/C++ compile and run verification failed: C=$cOutput C++=$cppOutput"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+    }
+}
+
+function Install-CppStack {
+    [CmdletBinding()]
+    param()
+
+    Write-Output 'Installing Visual Studio C/C++ Build Tools...'
+    Install-StackVisualStudioBuildTools
+    $environment = Enable-StackVisualStudioDeveloperEnvironment
+    Assert-StackCppToolchain -Compiler $environment.Compiler
+    Write-Output "C/C++ ready: $($environment.Compiler)"
 }
 
 function Get-StackRustSHA256 {
@@ -1000,6 +1181,168 @@ function Install-DotNetStack {
         throw ".NET SDK $Version was not present exactly once in dotnet --list-sdks."
     }
     Write-Output ".NET SDK ready: $dotnetVersion"
+}
+
+function Get-StackJavaInstalledVersions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
+    )
+
+    $result = Invoke-ProvisioningNativeResult -Role 'Microsoft OpenJDK 25 installed-version inspection' `
+        -FilePath 'winget.exe' -ArgumentList @(
+            'list', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
+            '--scope', 'machine', '--accept-source-agreements', '--disable-interactivity'
+        ) -TimeoutSeconds 120
+    if ($result.ExitCode -ne 0) {
+        return @()
+    }
+    $pattern = '(?:^|\s)' + [regex]::Escape([string]$Metadata.Id) + '\s+(?<version>\S+)(?:\s|$)'
+    $versions = @()
+    foreach ($line in @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))) {
+        $match = [regex]::Match([string]$line, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($match.Success) {
+            $versions += $match.Groups['version'].Value
+        }
+    }
+    return @($versions)
+}
+
+function Remove-StackJavaPreviousInstallation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata
+    )
+
+    $installedVersions = @(Get-StackJavaInstalledVersions -Metadata $Metadata)
+    if ($installedVersions.Count -eq 0 -or
+        ($installedVersions.Count -eq 1 -and $installedVersions[0] -ceq [string]$Metadata.Version)) {
+        return
+    }
+    Write-Output "Replacing previous Microsoft OpenJDK 25 versions: $($installedVersions -join ', ')"
+    Invoke-ProvisioningNative -Role 'Microsoft OpenJDK 25 previous-version uninstall' `
+        -FilePath 'winget.exe' -ArgumentList @(
+            'uninstall', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
+            '--scope', 'machine', '--all-versions', '--silent', '--accept-source-agreements',
+            '--disable-interactivity'
+        ) -TimeoutSeconds 600 -WaitForProcessTree | Out-Null
+    $remainingVersions = @(Get-StackJavaInstalledVersions -Metadata $Metadata)
+    if ($remainingVersions.Count -ne 0) {
+        throw "Microsoft OpenJDK 25 previous-version uninstall left installed versions: $($remainingVersions -join ', ')"
+    }
+}
+
+function Install-JavaStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^25\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
+    )
+
+    $packageID = 'Microsoft.OpenJDK.25'
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'Microsoft OpenJDK 25' -Id $packageID `
+        -Version $Version -InstallerType 'wix' -Scope 'machine'
+    if ([string]$metadata.Id -cne $packageID -or
+        [string]$metadata.Version -notmatch '^25\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+        throw "Java metadata is not the Microsoft OpenJDK 25 LTS family: $($metadata.Id) $($metadata.Version)"
+    }
+    $Version = [string]$metadata.Version
+    $versionMatch = [regex]::Match($Version, '^(?<language>25\.0\.[0-9]+)\.(?<build>[0-9]+)$')
+    if (-not $versionMatch.Success) {
+        throw "Java package version cannot be mapped to its language version: $Version"
+    }
+    $languageVersion = $versionMatch.Groups['language'].Value
+
+    Write-Output "Installing Microsoft OpenJDK $Version..."
+    Remove-StackJavaPreviousInstallation -Metadata $metadata
+    Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK 25' -Metadata $metadata `
+        -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe' `
+        -InstallerArguments @('ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome') `
+        -RequireAuthenticodeSignature
+    Update-ProvisioningPath
+
+    $javaHomeValue = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($javaHomeValue) -or -not [IO.Path]::IsPathRooted($javaHomeValue)) {
+        throw "Microsoft OpenJDK did not publish an absolute machine JAVA_HOME: $javaHomeValue"
+    }
+    $javaHome = [IO.Path]::GetFullPath($javaHomeValue).TrimEnd('\')
+    $microsoftRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramFiles 'Microsoft')).TrimEnd('\')
+    if (-not $javaHome.StartsWith($microsoftRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Microsoft OpenJDK JAVA_HOME is outside the expected publisher root: $javaHome"
+    }
+    $javaBin = Join-Path $javaHome 'bin'
+    foreach ($directory in @($javaHome, $javaBin)) {
+        if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+            throw "Microsoft OpenJDK directory is missing: $directory"
+        }
+        $item = Get-Item -LiteralPath $directory -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Microsoft OpenJDK directory is a reparse point: $directory"
+        }
+    }
+    $commands = [ordered]@{
+        'java.exe' = Join-Path $javaBin 'java.exe'
+        'javac.exe' = Join-Path $javaBin 'javac.exe'
+    }
+    foreach ($entry in $commands.GetEnumerator()) {
+        if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
+            throw "Microsoft OpenJDK command is missing: $($entry.Value)"
+        }
+        $item = Get-Item -LiteralPath $entry.Value -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Microsoft OpenJDK command is a reparse point: $($entry.Value)"
+        }
+    }
+    $env:JAVA_HOME = $javaHome
+    [Environment]::SetEnvironmentVariable('JAVA_HOME', $javaHome, 'Machine')
+    if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine') -cne $javaHome) {
+        throw 'Microsoft OpenJDK JAVA_HOME read-back failed.'
+    }
+    Add-ProvisioningMachinePath -Directory $javaBin
+    foreach ($entry in $commands.GetEnumerator()) {
+        $resolved = Get-Command $entry.Key -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        if ([IO.Path]::GetFullPath([string]$resolved.Source) -ine [IO.Path]::GetFullPath([string]$entry.Value)) {
+            throw "Microsoft OpenJDK command PATH read-back failed: $($entry.Key)"
+        }
+    }
+
+    $javaVersion = ((Invoke-ProvisioningNative -Role 'Java runtime version verification' `
+            -FilePath $commands['java.exe'] -ArgumentList @('-version') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    $javacVersion = ((Invoke-ProvisioningNative -Role 'Java compiler version verification' `
+            -FilePath $commands['javac.exe'] -ArgumentList @('-version') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    if ($javaVersion -notmatch ('(?m)^openjdk version "' + [regex]::Escape($languageVersion) + '"(?:\s|$)') -or
+        $javaVersion -notmatch '(?i)Microsoft' -or $javacVersion -cne "javac $languageVersion") {
+        throw "Microsoft OpenJDK version verification failed: java=$javaVersion javac=$javacVersion"
+    }
+
+    $stage = Join-Path 'C:\HerdrSandbox\staging' ('java-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    try {
+        $source = Join-Path $stage 'HerdrJavaStackProbe.java'
+        $program = @'
+public final class HerdrJavaStackProbe {
+    public static void main(String[] args) {
+        System.out.println("java-stack-ok");
+    }
+}
+'@
+        [IO.File]::WriteAllText($source, $program + "`n", (New-Object Text.UTF8Encoding($false)))
+        Invoke-ProvisioningNative -Role 'Java compiler probe' -FilePath $commands['javac.exe'] `
+            -ArgumentList @('-d', $stage, $source) -WorkingDirectory $stage -TimeoutSeconds 120 | Out-Null
+        $output = ((Invoke-ProvisioningNative -Role 'Java runtime probe' -FilePath $commands['java.exe'] `
+                -ArgumentList @('-cp', $stage, 'HerdrJavaStackProbe') -WorkingDirectory $stage `
+                -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        if ($output -cne 'java-stack-ok') {
+            throw "Java compile and run verification failed: $output"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+    }
+    Write-Output "Java ready: Microsoft OpenJDK $Version"
 }
 
 function Install-GoStack {

@@ -80,7 +80,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		userStacks = inspectedUserStacks
 		requirements := runPlan{Workspaces: workspaces}
 		applyWorkspaceRequirements(&requirements)
-		requiresVisualStudio = requirements.RequiresVisualStudioLayout || stacksContain(userStacks, stackRustMSVC)
+		requiresVisualStudio = requirements.RequiresVisualStudioLayout || stacksRequireVisualStudioLayout(userStacks)
 	}
 	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
 		return EffectivePlan{}, err
@@ -183,6 +183,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "Oven-sh.Bun"
 	case stackCargoNextest:
 		return "nextest.cargo-nextest"
+	case stackCpp:
+		return "Visual Studio 2022 Build Tools (MSVC + Windows 11 SDK 26100)"
 	case stackDotNet:
 		return "Microsoft.DotNet.SDK.10"
 	case stackGitSH:
@@ -191,6 +193,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "GoLang.Go"
 	case stackHandy:
 		return packageCMake + " + " + packageVulkanSDK + " 1.4.309.0 + " + packageWebView2
+	case stackJava:
+		return packageOpenJDK25
 	case stackJust:
 		return "Casey.Just"
 	case stackNode:

@@ -81,7 +81,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, C/C++, Java, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -228,6 +228,8 @@ Set-StrictMode -Version 2.0
 Install-DotNetStack
 Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
+Install-CppStack
+Install-JavaStack
 Install-Uv
 Install-NodeStack
 Install-PlaywrightCLIStack
@@ -277,6 +279,24 @@ func TestAnswer(t *testing.T) {
 }
 
 Console.WriteLine("dotnet-ok");
+`,
+		filepath.Join(fixture.Project, "smoke.c"): `#include <stdio.h>
+int main(void) {
+    puts("native-c-ok");
+    return 0;
+}
+`,
+		filepath.Join(fixture.Project, "smoke.cpp"): `#include <iostream>
+int main() {
+    std::cout << "native-cpp-ok\n";
+    return 0;
+}
+`,
+		filepath.Join(fixture.Project, "Smoke.java"): `public final class Smoke {
+    public static void main(String[] args) {
+        System.out.println("native-java-ok");
+    }
+}
 `,
 		filepath.Join(fixture.Project, "smoke.js"): `if (21 * 2 !== 42) {
   throw new Error("unexpected answer")
@@ -562,6 +582,43 @@ $tv = (Get-Command 'tv.cmd' -CommandType Application -ErrorAction Stop | Select-
 $tvcontrol = (Get-Command 'tvcontrol.cmd' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $cmake = (Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $glslc = (Get-Command 'glslc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$cl = (Get-Command 'cl.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$msbuild = (Get-Command 'msbuild.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$java = (Get-Command 'java.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$javac = (Get-Command 'javac.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+
+$visualStudioRoot = 'C:\HerdrSandbox\toolchains\visual-studio'
+if (-not [IO.Path]::GetFullPath($cl).StartsWith($visualStudioRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    -not [IO.Path]::GetFullPath($msbuild).StartsWith($visualStudioRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    [string]::IsNullOrWhiteSpace($env:INCLUDE) -or [string]::IsNullOrWhiteSpace($env:LIB)) {
+    throw 'C/C++ toolchain commands or environment are unavailable in the SSH session.'
+}
+$null = Invoke-SmokeTool 'msbuild-version' $msbuild @('-version','-nologo')
+$nativeRoot = Join-Path $root 'native'
+$cExecutable = Join-Path $nativeRoot 'smoke-c.exe'
+$cppExecutable = Join-Path $nativeRoot 'smoke-cpp.exe'
+$null = New-Item -ItemType Directory -Path $nativeRoot -Force
+$null = Invoke-SmokeTool 'c-compile' $cl @('/nologo','/W4','/WX','/TC','C:\Workspaces\project\smoke.c',"/Fo:$nativeRoot\smoke-c.obj","/Fe:$cExecutable")
+$cOutput = Invoke-SmokeTool 'c-run' $cExecutable @()
+Assert-SmokeOutput 'c-run' $cOutput 'native-c-ok'
+$null = Invoke-SmokeTool 'cpp-compile' $cl @('/nologo','/W4','/WX','/EHsc','/std:c++20','/TP','C:\Workspaces\project\smoke.cpp',"/Fo:$nativeRoot\smoke-cpp.obj","/Fe:$cppExecutable")
+$cppOutput = Invoke-SmokeTool 'cpp-run' $cppExecutable @()
+Assert-SmokeOutput 'cpp-run' $cppOutput 'native-cpp-ok'
+
+$javaHome = [IO.Path]::GetFullPath([string]$env:JAVA_HOME).TrimEnd('\')
+if ([string]::IsNullOrWhiteSpace($javaHome) -or
+    [IO.Path]::GetFullPath($java) -ine (Join-Path $javaHome 'bin\java.exe') -or
+    [IO.Path]::GetFullPath($javac) -ine (Join-Path $javaHome 'bin\javac.exe')) {
+    throw 'Microsoft OpenJDK JAVA_HOME or commands are unavailable in the SSH session.'
+}
+$javaVersion = Invoke-SmokeTool 'java-version' $java @('-version')
+Assert-SmokeOutput 'java-version' $javaVersion 'Microsoft'
+$null = Invoke-SmokeTool 'javac-version' $javac @('-version')
+$javaRoot = Join-Path $root 'java'
+$null = New-Item -ItemType Directory -Path $javaRoot -Force
+$null = Invoke-SmokeTool 'java-compile' $javac @('-d',$javaRoot,'C:\Workspaces\project\Smoke.java')
+$javaOutput = Invoke-SmokeTool 'java-run' $java @('-cp',$javaRoot,'Smoke')
+Assert-SmokeOutput 'java-run' $javaOutput 'native-java-ok'
 
 $null = Invoke-SmokeTool 'dotnet-version' $dotnet @('--version')
 $dotnetRoot = Join-Path $root 'dotnet'
@@ -768,6 +825,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: C/C++, Java, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

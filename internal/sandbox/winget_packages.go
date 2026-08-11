@@ -33,6 +33,7 @@ const (
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
 	packageTradingView     = "TradingView.TradingViewDesktop"
 	packageUV              = "astral-sh.uv"
+	packageOpenJDK25       = "Microsoft.OpenJDK.25"
 	packageCMake           = "Kitware.CMake"
 	packageVulkanSDK       = "KhronosGroup.VulkanSDK"
 	packageWebView2        = "Microsoft.EdgeWebView2Runtime"
@@ -56,6 +57,7 @@ var basePackageIDs = []string{
 
 var projectStackPackageIDs = []string{
 	"Microsoft.DotNet.SDK.10",
+	packageOpenJDK25,
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
 	"Oven-sh.Bun",

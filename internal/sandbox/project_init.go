@@ -114,13 +114,15 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
+		return nil, nil, errors.New("select at least one stack: cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
 	}
 	aliases := map[string]projectStack{
+		"cpp":            stackCpp,
 		"dotnet":         stackDotNet,
 		"go":             stackGo,
 		"handy":          stackHandyPreset,
 		"herdr":          stackHerdrPreset,
+		"java":           stackJava,
 		"node":           stackNode,
 		"playwright-cli": stackPlaywrightCLI,
 		"python":         stackPython,
@@ -136,7 +138,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose dotnet, go, handy, herdr, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -196,6 +198,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 	for _, stack := range stacks {
 		var call string
 		switch stack {
+		case stackCpp:
+			call = "Install-CppStack"
 		case stackDotNet:
 			call = "Install-DotNetStack"
 		case stackGo:
@@ -204,6 +208,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-HandyStack -ProjectDirectory $ProjectDirectory"
 		case stackHerdrPreset:
 			call = "Install-HerdrStack -ProjectDirectory $ProjectDirectory"
+		case stackJava:
+			call = "Install-JavaStack"
 		case stackNode:
 			call = "Install-NodeStack"
 		case stackPlaywrightCLI:
