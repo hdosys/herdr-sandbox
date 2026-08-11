@@ -45,7 +45,8 @@ function Test-OwnedPathEntry {
     )
 
     $candidate = $Entry.Trim().Trim([char[]]@('"'))
-    if ([string]::IsNullOrWhiteSpace($candidate) -or $candidate.IndexOf('%') -ge 0) {
+    if ([string]::IsNullOrWhiteSpace($candidate) -or
+        -not [IO.Path]::IsPathRooted($candidate)) {
         return $false
     }
     try {

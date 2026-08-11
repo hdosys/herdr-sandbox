@@ -11,7 +11,7 @@ import (
 	"herdr-sandbox/internal/productidentity"
 )
 
-const installerLifecycleMutexName = `Global\` + productidentity.ProductGUID + `.InstallerLifecycle.v3`
+const installerLifecycleMutexName = `Global\` + productidentity.ProductGUID + `.InstallerLifecycle`
 
 var (
 	installerKernel32     = syscall.NewLazyDLL("kernel32.dll")

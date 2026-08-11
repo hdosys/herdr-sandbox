@@ -26,6 +26,9 @@ release notes remain available on the
 - Host Herdr inspection now requires `herdr --version` to report a `herdr-win `
   identity in addition to proving the Windows remote interface; another
   remote-capable fork is no longer accepted.
+- Installer ownership now keeps one stable unversioned lifecycle mutex across
+  releases, accepts rooted literal PATH entries containing `%`, and rejects a
+  replaced-executable name that collides with any current payload filename.
 
 ## v0.0.12 - 2026-08-07
 

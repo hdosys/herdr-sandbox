@@ -42,6 +42,25 @@ func TestParseReleaseVersion(t *testing.T) {
 	}
 }
 
+func TestValidateReplacedExecutableNameRejectsPathsAndCurrentPayloadCollisions(t *testing.T) {
+	if err := validateReplacedExecutableName(productidentity.ReplacedExecutableName); err != nil {
+		t.Fatalf("canonical replaced executable: %v", err)
+	}
+	for _, value := range []string{
+		"",
+		"..",
+		`..\sandbox.exe`,
+		productidentity.ExecutableName,
+		strings.ToUpper(installerUninstallerName),
+		productidentity.BaseScriptName,
+		productidentity.InstallerMarkerName,
+	} {
+		if err := validateReplacedExecutableName(value); err == nil {
+			t.Fatalf("replaced executable %q unexpectedly passed validation", value)
+		}
+	}
+}
+
 func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 	version, err := parseReleaseVersion("v0.0.7")
 	if err != nil {
@@ -445,7 +464,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}`,
 		`$2 == 0`,
 		`sign out and back in`,
-		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v3"`,
+		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle"`,
 		`KERNEL32::CreateMutexW`,
 		`KERNEL32::WaitForSingleObject`,
 		`KERNEL32::ReleaseMutex`,
@@ -486,6 +505,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`Local\${APP_UNINSTALL_KEY}`,
 		`installer-state.ps1`,
 		`InstallerLifecycle.v2`,
+		`InstallerLifecycle.v3`,
 		`APP_LIFECYCLE_WAIT_INTERVAL_MS`,
 		`APP_LIFECYCLE_WAIT_ATTEMPTS`,
 		`INSTALLER_STATE_HELPER`,
@@ -758,6 +778,7 @@ func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
 		`RegistryValueKind]::ExpandString`,
 		`Test-EffectivePathEntry`,
 		`Test-OwnedPathEntry`,
+		`[IO.Path]::IsPathRooted($candidate)`,
 		`Resolve-UserPathUpdate`,
 		`Get-UserPathSnapshot`,
 		`Test-SnapshotEqual`,
@@ -770,7 +791,7 @@ func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
 			t.Fatalf("installer PATH helper is missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"Herdr Sandbox", `"herdr-sandbox"`, "HERDR_SANDBOX_INSTALL_DIRECTORY", "Remove-Item", "ProductGuid", "InstallComplete", "CleanupComplete", "Transaction"} {
+	for _, forbidden := range []string{"Herdr Sandbox", `"herdr-sandbox"`, "HERDR_SANDBOX_INSTALL_DIRECTORY", "Remove-Item", "ProductGuid", "InstallComplete", "CleanupComplete", "Transaction", "IndexOf('%')"} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("installer PATH helper contains product-specific or unrelated state pattern %q", forbidden)
 		}
@@ -822,6 +843,8 @@ $target = $expandedTarget
 Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $false -Present $true -Value '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -ExpandVariables $true
 Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Remove -Changed $false -Present $true -Value '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -ExpandVariables $true
 Assert-Update -Current '%%LOCALAPPDATA%%\Programs\Herdr Sandbox' -Action Add -Changed $true -Present $true -Value "%%LOCALAPPDATA%%\Programs\Herdr Sandbox;$expandedTarget" -ExpandVariables $false
+$target = 'C:\Users\Example%%Profile\AppData\Local\Programs\Herdr Sandbox'
+Assert-Update -Current $target -Action Remove -Changed $true -Present $false -Value ''
 `, quote(pathHelper))
 	scriptPath := filepath.Join(t.TempDir(), "path-ownership.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {

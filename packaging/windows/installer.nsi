@@ -105,7 +105,7 @@ Unicode true
 
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_UNINSTALL_KEY}"
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 100
-!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle.v3"
+!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle"
 !define APP_ERROR_FILE_NOT_FOUND 2
 !define APP_ERROR_PATH_NOT_FOUND 3
 !define APP_WAIT_OBJECT_0 0
