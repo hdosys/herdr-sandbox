@@ -241,12 +241,15 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (Connection, 
 	if err := ensureNoRunningSandbox(runContext); err != nil {
 		return Connection{}, err
 	}
-	if err := launchSandbox(runContext, plan); err != nil {
+	sandboxExited, err := launchSandbox(runContext, plan)
+	if err != nil {
 		return Connection{}, err
 	}
 	if err := releaseLifecycle(); err != nil {
 		return Connection{}, err
 	}
+	runContext, stopSandboxExitWatch := withSandboxProcessExit(runContext, sandboxExited)
+	defer stopSandboxExitWatch()
 	fmt.Fprintln(options.Output, "Windows Sandbox started; waiting for guest provisioning...")
 
 	connectable, err := waitForConnectable(runContext, plan.StatusDirectory, options.Output)
@@ -838,31 +841,47 @@ func expectedWindowsSandboxExecutable() (string, error) {
 	return filepath.Join(filepath.Clean(windowsDirectory), "System32", "WindowsSandbox.exe"), nil
 }
 
-func launchSandbox(ctx context.Context, plan runPlan) error {
+func launchSandbox(ctx context.Context, plan runPlan) (<-chan error, error) {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("launch Windows Sandbox: %w", err)
+		return nil, fmt.Errorf("launch Windows Sandbox: %w", err)
 	}
 	command := exec.Command(plan.SandboxExecutable, plan.ConfigPath)
 	if err := command.Start(); err != nil {
-		return fmt.Errorf("launch Windows Sandbox: %w", err)
+		return nil, fmt.Errorf("launch Windows Sandbox: %w", err)
 	}
 	if command.Process == nil {
-		return errors.New("launch Windows Sandbox: process identity is unavailable")
+		return nil, errors.New("launch Windows Sandbox: process identity is unavailable")
 	}
 	if err := recordActiveSession(ctx, plan, command.Process.Pid); err != nil {
 		if cleanupErr := terminateUnpublishedSandbox(command); cleanupErr != nil {
-			return errors.Join(err, cleanupErr)
+			return nil, errors.Join(err, cleanupErr)
 		}
-		return err
+		return nil, err
 	}
-	if err := command.Process.Release(); err != nil {
-		_ = removeActiveSession(plan.DataDirectory)
-		if cleanupErr := terminateUnpublishedSandbox(command); cleanupErr != nil {
-			return errors.Join(fmt.Errorf("release Windows Sandbox launcher process: %w", err), cleanupErr)
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
+	return exited, nil
+}
+
+func withSandboxProcessExit(ctx context.Context, exited <-chan error) (context.Context, context.CancelFunc) {
+	monitored, cancel := context.WithCancelCause(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case waitErr := <-exited:
+			if waitErr != nil {
+				cancel(fmt.Errorf("Windows Sandbox exited before provisioning completed: %w", waitErr))
+			} else {
+				cancel(errors.New("Windows Sandbox exited before provisioning completed"))
+			}
+		case <-monitored.Done():
 		}
-		return fmt.Errorf("release Windows Sandbox launcher process: %w", err)
+	}()
+	return monitored, func() {
+		cancel(nil)
+		<-done
 	}
-	return nil
 }
 
 func terminateUnpublishedSandbox(command *exec.Cmd) error {

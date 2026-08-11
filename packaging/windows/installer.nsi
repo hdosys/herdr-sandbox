@@ -279,7 +279,7 @@ FunctionEnd
     ${ElseIf} $0 == ${APP_ERROR_ALREADY_EXISTS}
         System::Call 'KERNEL32::CloseHandle(p $1)'
         StrCpy $InstallerLifecycleMutexHandle 0
-        MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup or uninstall is already running. Wait for it to finish, then try again." /SD IDOK
+        MessageBox MB_ICONEXCLAMATION|MB_OK "Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command is still running. Close that command or wait for it to finish, then try again." /SD IDOK
         SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}
         Quit
     ${EndIf}

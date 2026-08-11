@@ -449,7 +449,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`KERNEL32::CreateMutexW`,
 		`KERNEL32::CloseHandle`,
 		`APP_ERROR_ALREADY_EXISTS 183`,
-		`Another ${APP_DISPLAY_NAME} setup or uninstall is already running.`,
+		`Another ${APP_DISPLAY_NAME} setup, uninstall, or sandbox command is still running.`,
 		`${AtLeastWin10}`,
 		`SetOutPath "$INSTDIR"`,
 		`!define APP_EXIT_INVALID_ARGUMENTS 30`,

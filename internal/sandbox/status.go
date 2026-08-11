@@ -133,7 +133,7 @@ func waitForGuestStatus[T any](
 
 		select {
 		case <-ctx.Done():
-			return zero, fmt.Errorf("wait for Sandbox %s in %s: %w", targetDescription, statusDirectory, ctx.Err())
+			return zero, fmt.Errorf("wait for Sandbox %s in %s: %w", targetDescription, statusDirectory, context.Cause(ctx))
 		case <-ticker.C:
 		}
 	}

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +61,21 @@ func TestWithOptionalTimeoutAddsOnlyExplicitDeadline(t *testing.T) {
 	defer cancelBounded()
 	if _, found := bounded.Deadline(); !found {
 		t.Fatal("explicit timeout did not add a deadline")
+	}
+}
+
+func TestWithSandboxProcessExitCancelsProvisioning(t *testing.T) {
+	exited := make(chan error, 1)
+	ctx, stop := withSandboxProcessExit(context.Background(), exited)
+	exited <- errors.New("launcher fixture")
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Sandbox process exit did not cancel provisioning")
+	}
+	stop()
+	if cause := context.Cause(ctx); cause == nil || !strings.Contains(cause.Error(), "Windows Sandbox exited before provisioning completed: launcher fixture") {
+		t.Fatalf("process exit cause = %v", cause)
 	}
 }
 

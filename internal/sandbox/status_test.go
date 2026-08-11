@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,15 @@ func TestWaitForReadyReturnsGuestFailure(t *testing.T) {
 	_, err := waitForReady(context.Background(), directory, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), `Sandbox phase "openssh" failed`) {
 		t.Fatalf("waitForReady error = %v", err)
+	}
+}
+
+func TestWaitForReadyReportsCancellationCause(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("Windows Sandbox launcher exited"))
+	_, err := waitForReady(ctx, t.TempDir(), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "Windows Sandbox launcher exited") {
+		t.Fatalf("waitForReady cancellation error = %v", err)
 	}
 }
 

@@ -420,6 +420,31 @@ func TestCleanupStaleStateRefusesChangedPreflight(t *testing.T) {
 	}
 }
 
+func TestCleanupStaleStateRetriesWhenOwnedSandboxExitsDuringPreflight(t *testing.T) {
+	dataDirectory := t.TempDir()
+	executable := filepath.Join(dataDirectory, "WindowsSandbox.exe")
+	active := testActiveSession(dataDirectory, "20260724-123456-abcdef12", executable)
+	writeRunDirectoryFixture(t, dataDirectory, active.RunID)
+	writeJSON(t, filepath.Join(dataDirectory, activeSessionFileName), active)
+	managedConfig := filepath.Join(dataDirectory, "ssh", "config")
+	writeLifecycleFixtureFile(t, managedConfig, "Host sandbox\n")
+
+	calls := 0
+	inspect := func(context.Context, string, string) (cleanupProtection, error) {
+		calls++
+		return cleanupProtection{Active: active, Found: true, SandboxGone: calls > 1}, nil
+	}
+	result, err := cleanupStaleStateWithInspector(context.Background(), dataDirectory, executable, inspect)
+	if err != nil || calls != 3 || result.RemovedRuns != 1 || result.ActiveRunID != "" {
+		t.Fatalf("result = %#v, calls = %d, error = %v", result, calls, err)
+	}
+	for _, path := range []string{filepath.Join(dataDirectory, activeSessionFileName), filepath.Join(dataDirectory, "runs", active.RunID), managedConfig} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stale path still exists %s: %v", path, err)
+		}
+	}
+}
+
 func TestCleanupStaleStateRejectsUnsafeSSHBeforeRemovingRuns(t *testing.T) {
 	dataDirectory := t.TempDir()
 	runID := "20260724-123456-abcdef12"
@@ -636,6 +661,26 @@ func TestInspectSandboxProcessReportsMissingPID(t *testing.T) {
 	}
 	if _, found, err := inspectSandboxProcess(context.Background(), 2147483647); err != nil || found {
 		t.Fatalf("missing process found = %t, error = %v", found, err)
+	}
+}
+
+func TestSandboxProcessInspectionHandlesProcessDisappearance(t *testing.T) {
+	script := sandboxProcessInspectionScript(1234)
+	for _, want := range []string{
+		"Get-CimInstance Win32_Process",
+		"$process = Get-Process -Id 1234 -ErrorAction Stop",
+		"if ($null -eq $process) {",
+		"$remaining = Get-CimInstance Win32_Process",
+		"if ($null -eq $remaining) { exit 3 }",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("process inspection script is missing %q: %s", want, script)
+		}
+	}
+	handleIndex := strings.Index(script, "$handle = $process.Handle")
+	startIndex := strings.Index(script, "$startedAtUTC = $process.StartTime")
+	if handleIndex < 0 || startIndex <= handleIndex {
+		t.Fatalf("process inspection must pin the process handle before reading StartTime: %s", script)
 	}
 }
 

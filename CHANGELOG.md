@@ -12,6 +12,9 @@ release notes remain available on the
   package. Remove unwanted entries from `wingetPackages.add` before provisioning.
 - Fresh interactive setup now offers a checked option on the Finish page to open
   the Sandbox configuration with its registered application.
+- `sandbox up` now stops promptly when its launched Windows Sandbox process exits,
+  releases installer coordination, and safely clears the exact stale run on retry
+  even when process exit races cleanup inspection.
 
 ## v0.0.12 - 2026-08-07
 

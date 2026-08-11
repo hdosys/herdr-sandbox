@@ -537,44 +537,59 @@ func cleanupStaleStateWithInspector(ctx context.Context, dataDirectory, executab
 	if err != nil {
 		return CleanResult{}, err
 	}
-	protectedRunID := protection.activeRunID()
-	if protection.SandboxGone {
-		protectedRunID = ""
-	}
-	if err := dataRoot.validate(); err != nil {
-		return CleanResult{ActiveRunID: protectedRunID}, err
-	}
-	plan, err := planInactiveRunDirectories(dataDirectory, protectedRunID)
-	if err != nil {
-		return CleanResult{ActiveRunID: protectedRunID}, err
-	}
-	defer plan.close()
-	revalidated, err := inspect(ctx, dataDirectory, executable)
-	if err != nil {
-		return CleanResult{ActiveRunID: protectedRunID}, err
-	}
-	if revalidated != protection {
-		return CleanResult{ActiveRunID: protectedRunID}, errors.New("refusing automatic cleanup because the Sandbox identity changed during preflight")
-	}
-	if err := dataRoot.validate(); err != nil {
-		return CleanResult{ActiveRunID: protectedRunID}, err
-	}
-	if protection.SandboxGone {
-		if err := removeManagedSSHConfig(dataDirectory); err != nil {
-			return CleanResult{}, fmt.Errorf("remove stale managed SSH configuration: %w", err)
+	for attempt := 0; attempt < 2; attempt++ {
+		protectedRunID := protection.activeRunID()
+		if protection.SandboxGone {
+			protectedRunID = ""
 		}
-	}
-	removed, err := removeInactiveRunDirectories(plan)
-	result := CleanResult{RemovedRuns: removed, ActiveRunID: protectedRunID}
-	if err != nil || !protection.SandboxGone {
-		return result, err
-	}
-	if protection.Found {
-		if err := removeActiveSessionFromCleanupRoot(dataRoot); err != nil {
+		if err := dataRoot.validate(); err != nil {
+			return CleanResult{ActiveRunID: protectedRunID}, err
+		}
+		plan, err := planInactiveRunDirectories(dataDirectory, protectedRunID)
+		if err != nil {
+			return CleanResult{ActiveRunID: protectedRunID}, err
+		}
+		revalidated, err := inspect(ctx, dataDirectory, executable)
+		if err != nil {
+			plan.close()
+			return CleanResult{ActiveRunID: protectedRunID}, err
+		}
+		if revalidated != protection {
+			plan.close()
+			if attempt == 0 && cleanupObservedOwnedSandboxExit(protection, revalidated) {
+				protection = revalidated
+				continue
+			}
+			return CleanResult{ActiveRunID: protectedRunID}, errors.New("refusing automatic cleanup because the Sandbox identity changed during preflight")
+		}
+		if err := dataRoot.validate(); err != nil {
+			plan.close()
+			return CleanResult{ActiveRunID: protectedRunID}, err
+		}
+		if protection.SandboxGone {
+			if err := removeManagedSSHConfig(dataDirectory); err != nil {
+				plan.close()
+				return CleanResult{}, fmt.Errorf("remove stale managed SSH configuration: %w", err)
+			}
+		}
+		removed, err := removeInactiveRunDirectories(plan)
+		plan.close()
+		result := CleanResult{RemovedRuns: removed, ActiveRunID: protectedRunID}
+		if err != nil || !protection.SandboxGone {
 			return result, err
 		}
+		if protection.Found {
+			if err := removeActiveSessionFromCleanupRoot(dataRoot); err != nil {
+				return result, err
+			}
+		}
+		return result, nil
 	}
-	return result, nil
+	return CleanResult{}, errors.New("stale Sandbox cleanup retry was exhausted")
+}
+
+func cleanupObservedOwnedSandboxExit(before, after cleanupProtection) bool {
+	return before.Found && !before.SandboxGone && after.Found && after.SandboxGone && before.Active == after.Active
 }
 
 func inspectCleanupProtection(ctx context.Context, dataDirectory, executable string) (cleanupProtection, error) {
@@ -1030,17 +1045,7 @@ func inspectSandboxProcess(ctx context.Context, pid int) (sandboxProcessSnapshot
 	if err != nil {
 		return sandboxProcessSnapshot{}, false, err
 	}
-	script := fmt.Sprintf(`$ProgressPreference = 'SilentlyContinue'
-$item = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
-if ($null -eq $item) { exit 3 }
-$process = Get-Process -Id %d -ErrorAction Stop
-[ordered]@{
-    pid = [int]$item.ProcessId
-    name = [string]$item.Name
-    executablePath = [string]$item.ExecutablePath
-    startedAtUTC = $process.StartTime.ToUniversalTime().ToString('O')
-    commandLine = [string]$item.CommandLine
-} | ConvertTo-Json -Compress`, pid, pid)
+	script := sandboxProcessInspectionScript(pid)
 	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -1063,6 +1068,40 @@ $process = Get-Process -Id %d -ErrorAction Stop
 		return sandboxProcessSnapshot{}, false, fmt.Errorf("inspect Windows Sandbox process %d: incomplete identity", pid)
 	}
 	return snapshot, true, nil
+}
+
+func sandboxProcessInspectionScript(pid int) string {
+	return fmt.Sprintf(`$ProgressPreference = 'SilentlyContinue'
+$item = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
+if ($null -eq $item) { exit 3 }
+try {
+    $process = Get-Process -Id %d -ErrorAction Stop
+} catch {
+    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
+    if ($null -eq $remaining) { exit 3 }
+    throw
+}
+if ($null -eq $process) {
+    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
+    if ($null -eq $remaining) { exit 3 }
+    throw 'Get-Process returned no process while CIM still reports the requested PID.'
+}
+try {
+    $handle = $process.Handle
+    $startedAtUTC = $process.StartTime.ToUniversalTime().ToString('O')
+} catch {
+    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
+    if ($null -eq $remaining) { exit 3 }
+    throw
+}
+$process.Dispose()
+[ordered]@{
+    pid = [int]$item.ProcessId
+    name = [string]$item.Name
+    executablePath = [string]$item.ExecutablePath
+    startedAtUTC = $startedAtUTC
+    commandLine = [string]$item.CommandLine
+} | ConvertTo-Json -Compress`, pid, pid, pid, pid, pid)
 }
 
 func stopOwnedSandboxProcess(ctx context.Context, active activeSession) (bool, error) {
