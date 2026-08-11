@@ -22,7 +22,7 @@ const (
 	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
 	hostHerdrManifestSchemaVersion  = 3
 	hostHerdrChangedAction          = "run `sandbox down` and then `sandbox up` to provision the current host runtime"
-	hostHerdrVersionPrefix          = "herdr-win "
+	hostHerdrVersionMarker          = "herdr-win"
 )
 
 var hostHerdrRuntimeLayout = []string{
@@ -109,9 +109,6 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v", err)
 	}
-	if version != hostHerdrVersionPrefix+status.Version {
-		return HostHerdr{}, hostHerdrCompatibilityError("host Herdr identity changed during inspection: --version returned %q but client status returned %q", version, status.Version)
-	}
 	runtimeExecutable, err := canonicalHostHerdrExecutable(status.Binary, "active host Herdr runtime")
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("resolve the active host Herdr runtime: %v", err)
@@ -190,7 +187,7 @@ func inspectHostHerdrVersion(ctx context.Context, path string) (string, error) {
 		return "", fmt.Errorf("run --version: %w: %s", err, boundedText(output))
 	}
 	version := strings.TrimSpace(string(output))
-	if !strings.HasPrefix(version, hostHerdrVersionPrefix) || strings.ContainsAny(version, "\r\n") || len(version) > 256 {
+	if !strings.Contains(version, hostHerdrVersionMarker) || strings.ContainsAny(version, "\r\n") || len(version) > 256 {
 		return "", fmt.Errorf("unexpected --version output %q", version)
 	}
 	return version, nil
@@ -362,7 +359,7 @@ func (host HostHerdr) validate() error {
 	if host.commandSize <= 0 || len(host.commandSHA256) != 64 {
 		return errors.New("host Herdr command fingerprint is invalid")
 	}
-	if !strings.HasPrefix(host.version, hostHerdrVersionPrefix) || strings.ContainsAny(host.version, "\r\n") || host.protocol < 1 {
+	if !strings.Contains(host.version, hostHerdrVersionMarker) || strings.ContainsAny(host.version, "\r\n") || host.protocol < 1 {
 		return errors.New("host Herdr version or protocol is invalid")
 	}
 	if len(host.files) != 1 && len(host.files) != len(hostHerdrRuntimeLayout) {

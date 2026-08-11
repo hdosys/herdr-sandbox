@@ -15,7 +15,7 @@ import (
 const (
 	hostHerdrFixtureEnvironment        = "HERDR_SANDBOX_TEST_HOST_HERDR"
 	hostHerdrRemoteExitCodeEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE_EXIT_CODE"
-	hostHerdrVersionNameEnvironment    = "HERDR_SANDBOX_TEST_HOST_HERDR_VERSION_NAME"
+	hostHerdrVersionOutputEnvironment  = "HERDR_SANDBOX_TEST_HOST_HERDR_VERSION_OUTPUT"
 )
 
 func TestMain(m *testing.M) {
@@ -30,7 +30,7 @@ func runHostHerdrFixtureProcess() {
 	arguments := os.Args[1:]
 	switch {
 	case len(arguments) == 1 && arguments[0] == "--version":
-		fmt.Fprintln(os.Stdout, os.Getenv(hostHerdrVersionNameEnvironment)+" "+os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"))
+		fmt.Fprintln(os.Stdout, os.Getenv(hostHerdrVersionOutputEnvironment))
 		os.Exit(0)
 	case len(arguments) == 3 && arguments[0] == "status" && arguments[1] == "client" && arguments[2] == "--json":
 		protocol := 0
@@ -90,7 +90,7 @@ func TestResolveHostHerdrUsesReportedPhysicalRuntimeAndSnapshotsIt(t *testing.T)
 			t.Fatalf("host Herdr %s paths identify different files: expected %q, got %q", expected.role, expected.want, expected.got)
 		}
 	}
-	if host.version != "herdr-win 1.2.3-test" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
+	if host.version != "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
 		t.Fatalf("host identity = %#v", host)
 	}
 
@@ -121,10 +121,21 @@ func TestResolveHostHerdrRejectsRemoteCapableNonHerdrWinBuild(t *testing.T) {
 		t.Skip("Windows executable fixture")
 	}
 	prepareHostHerdrFixture(t)
-	t.Setenv(hostHerdrVersionNameEnvironment, "herdr")
+	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr local (Herdr 0.8.0)")
 	_, err := ResolveHostHerdr(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "herdr-win") || !strings.Contains(err.Error(), hostHerdrCompatibilityAction) {
 		t.Fatalf("non-herdr-win identity error = %v", err)
+	}
+}
+
+func TestResolveHostHerdrAcceptsMarkerOutsideVersionPrefix(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable fixture")
+	}
+	prepareHostHerdrFixture(t)
+	t.Setenv(hostHerdrVersionOutputEnvironment, "local Windows build from herdr-win")
+	if _, err := ResolveHostHerdr(context.Background()); err != nil {
+		t.Fatalf("herdr-win marker outside prefix: %v", err)
 	}
 }
 
@@ -192,7 +203,7 @@ func TestHostHerdrVerifyUnchangedRejectsHostUpdateRace(t *testing.T) {
 	if err := host.verifyUnchanged(context.Background()); err != nil {
 		t.Fatalf("unchanged host Herdr: %v", err)
 	}
-	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "1.2.4-test")
+	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-win local (Herdr 0.8.1, build 346411fa21af.f32339bad77e)")
 	if err := host.verifyUnchanged(context.Background()); err == nil || !strings.Contains(err.Error(), "changed during provisioning") {
 		t.Fatalf("host update race error = %v", err)
 	}
@@ -373,8 +384,8 @@ func prepareHostHerdrFixture(t *testing.T) (string, string) {
 		writeHostHerdrFixtureFile(t, filepath.Join(filepath.Dir(runtimePath), filepath.FromSlash(relative)), relative)
 	}
 	t.Setenv(hostHerdrFixtureEnvironment, "1")
-	t.Setenv(hostHerdrVersionNameEnvironment, "herdr-win")
-	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "1.2.3-test")
+	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)")
+	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "0.8.0-preview.346411fa21af.f32339bad77e")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL", "42")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME", runtimePath)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "error: program not found")

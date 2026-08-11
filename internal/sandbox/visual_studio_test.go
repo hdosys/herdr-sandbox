@@ -3,9 +3,14 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVisualStudioLayoutAssetIsEmbedded(t *testing.T) {
@@ -51,6 +56,54 @@ func TestBoundedVisualStudioOutputRetainsTail(t *testing.T) {
 	}
 	if !bytes.Equal(capture.data, value[len(value)-maximumVisualStudioOutput:]) {
 		t.Fatal("capture did not retain output tail")
+	}
+}
+
+func TestPublishVisualStudioBootstrapperReplacesExistingFileInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	directory := t.TempDir()
+	scriptPath := filepath.Join(directory, "visual-studio-layout.ps1")
+	source := filepath.Join(directory, "source.exe")
+	destination := filepath.Join(directory, "destination.exe")
+	if err := os.WriteFile(scriptPath, visualStudioLayoutScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw 'Visual Studio layout script has parse errors.' }
+$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Publish-HerdrHostVisualStudioBootstrapper' }, $true)
+if ($null -eq $definition) { throw 'Visual Studio bootstrapper publication function is missing.' }
+Invoke-Expression $definition.Extent.Text
+function Assert-HerdrHostCachePath { param([string]$Path) }
+function Assert-HerdrHostVisualStudioBootstrapper {
+    param([string]$Path, [string]$ExpectedSHA256)
+    if ([IO.File]::ReadAllText($Path) -cne $ExpectedSHA256) { throw "Unexpected fixture contents: $Path" }
+}
+$published = Publish-HerdrHostVisualStudioBootstrapper -Source '%s' -Destination '%s' -ExpectedSHA256 'new'
+if ($published -cne '%s' -or [IO.File]::ReadAllText('%s') -cne 'new') {
+    throw 'Visual Studio bootstrapper replacement did not publish the staged file.'
+}
+$files = [IO.Directory]::GetFiles('%s')
+if ($files.Count -ne 3) { throw "Visual Studio bootstrapper replacement left transient files: $files" }
+exit 0
+`, quote(scriptPath), quote(source), quote(destination), quote(destination), quote(destination), quote(directory))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	powerShell := mustWindowsPowerShellPath(t)
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Visual Studio bootstrapper replacement regression: %v: %s", err, output)
 	}
 }
 

@@ -503,7 +503,10 @@ function Read-HostHerdrRuntimeInput {
         throw 'Host Herdr runtime metadata has an unsupported contract.'
     }
     if ($metadata.version -isnot [string] -or
-        ([string]$metadata.version) -notmatch '^herdr [^\r\n]{1,250}$' -or
+        -not ([string]$metadata.version).Contains('herdr-win') -or
+        ([string]$metadata.version).Length -gt 256 -or
+        ([string]$metadata.version).IndexOf("`r") -ge 0 -or
+        ([string]$metadata.version).IndexOf("`n") -ge 0 -or
         $metadata.protocol -isnot [int] -or
         [int]$metadata.protocol -lt 1) {
         throw 'Host Herdr runtime identity is invalid.'

@@ -342,7 +342,7 @@ func TestReadHostHerdrRuntimeInputRejectsJSONTypeCoercionInWindowsPowerShell51(t
 		return fmt.Sprintf(`{"path":"herdr.exe","sha256":"%s","size":%s}`, digest, size)
 	}
 	manifest := func(schema, protocol, files string) string {
-		return fmt.Sprintf(`{"schemaVersion":%s,"version":"herdr 1.2.3","protocol":%s,"files":%s}`, schema, protocol, files)
+		return fmt.Sprintf(`{"schemaVersion":%s,"version":"herdr-win local (Herdr 0.8.0, build 0123456789ab.cdef01234567)","protocol":%s,"files":%s}`, schema, protocol, files)
 	}
 	writeInput := func(name, metadata string) string {
 		t.Helper()
@@ -362,6 +362,7 @@ func TestReadHostHerdrRuntimeInputRejectsJSONTypeCoercionInWindowsPowerShell51(t
 	valid := writeInput("valid", manifest("3", "17", "["+entry("1")+"]"))
 	invalid := []string{
 		writeInput("schema-string", manifest(`"3"`, "17", "["+entry("1")+"]")),
+		writeInput("version-marker", strings.Replace(manifest("3", "17", "["+entry("1")+"]"), "herdr-win", "herdr", 1)),
 		writeInput("protocol-string", manifest("3", `"17"`, "["+entry("1")+"]")),
 		writeInput("protocol-boolean", manifest("3", "true", "["+entry("1")+"]")),
 		writeInput("size-string", manifest("3", "17", "["+entry(`"1"`)+"]")),
@@ -384,7 +385,7 @@ foreach ($name in @('Get-BootstrapFileSHA256', 'Read-HostHerdrRuntimeInput')) {
     Invoke-Expression $definition.Extent.Text
 }
 $valid = Read-HostHerdrRuntimeInput -InputDirectory '%s'
-if ($valid.Version -cne 'herdr 1.2.3' -or $valid.Protocol -isnot [int] -or
+if ($valid.Version -cne 'herdr-win local (Herdr 0.8.0, build 0123456789ab.cdef01234567)' -or $valid.Protocol -isnot [int] -or
     [int]$valid.Protocol -ne 17 -or @($valid.Files).Count -ne 1) {
     throw 'Valid host Herdr runtime metadata was rejected.'
 }

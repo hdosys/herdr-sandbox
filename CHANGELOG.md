@@ -23,9 +23,12 @@ release notes remain available on the
   even when process exit races cleanup inspection. Setup now uses actual Windows
   mutex ownership, so a process or host crash is acquired as abandoned immediately
   while only a currently live owner blocks installation.
-- Host Herdr inspection now requires `herdr --version` to report a `herdr-win `
-  identity in addition to proving the Windows remote interface; another
-  remote-capable fork is no longer accepted.
+- Host Herdr inspection now requires bounded `herdr --version` output to contain
+  `herdr-win` in addition to proving the Windows remote interface. It no longer
+  compares that distribution identity with the independently formatted
+  `status client` version.
+- Visual Studio Build Tools host layout preparation now refreshes an existing
+  cached bootstrapper correctly on cache misses.
 - Installer ownership now keeps one stable unversioned lifecycle mutex across
   releases, accepts rooted literal PATH entries containing `%`, and rejects a
   replaced-executable name that collides with any current payload filename.

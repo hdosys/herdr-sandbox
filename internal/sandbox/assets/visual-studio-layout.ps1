@@ -355,12 +355,15 @@ function Publish-HerdrHostVisualStudioBootstrapper {
     }
 
     $temporary = $Destination + '.new-' + [Guid]::NewGuid().ToString('N')
+    $backup = $null
     Assert-HerdrHostCachePath -Path $temporary
     try {
         [IO.File]::Copy($Source, $temporary, $false)
         Assert-HerdrHostVisualStudioBootstrapper -Path $temporary -ExpectedSHA256 $ExpectedSHA256
         if (Test-Path -LiteralPath $Destination -PathType Leaf) {
-            [IO.File]::Replace($temporary, $Destination, $null, $true)
+            $backup = $Destination + '.old-' + [Guid]::NewGuid().ToString('N')
+            Assert-HerdrHostCachePath -Path $backup
+            [IO.File]::Replace($temporary, $Destination, $backup, $true)
         } else {
             [IO.File]::Move($temporary, $Destination)
         }
@@ -369,6 +372,9 @@ function Publish-HerdrHostVisualStudioBootstrapper {
     } finally {
         if (Test-Path -LiteralPath $temporary) {
             Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+        if (-not [string]::IsNullOrWhiteSpace($backup) -and (Test-Path -LiteralPath $backup)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
         }
     }
 }
