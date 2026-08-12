@@ -25,11 +25,18 @@ func TestCppStackReusesCurrentVisualStudioBuildToolsAndVerifiesCAndCpp(t *testin
 		"'msbuild.exe' = $installationRoot",
 		"'rc.exe' = $windowsKitsRoot",
 		"MSVC C compiler probe",
+		"MSVC C linker probe",
 		"MSVC C++ compiler probe",
+		"MSVC C++ linker probe",
+		"'/Z7'",
+		"'/NOLOGO', '/DEBUG:NONE'",
+		"'/c'",
+		"-TerminateDescendantsAfterRootExit",
 		"'/TC'",
 		"'/TP'",
 		"c-stack-ok",
 		"cpp-stack-ok",
+		"-Linker $environment.Linker",
 	} {
 		if !strings.Contains(section, required) {
 			t.Errorf("C/C++ stack is missing %q", required)
@@ -39,6 +46,9 @@ func TestCppStackReusesCurrentVisualStudioBuildToolsAndVerifiesCAndCpp(t *testin
 		if strings.Contains(section, forbidden) {
 			t.Errorf("C/C++ stack adds a second compiler path with %q", forbidden)
 		}
+	}
+	if count := strings.Count(section, "-TerminateDescendantsAfterRootExit"); count != 4 {
+		t.Fatalf("C/C++ stack has %d root-terminal compiler/linker boundaries; want 4", count)
 	}
 	if effectiveStackPackageOwner(stackCpp) != "Visual Studio 2022 Build Tools (MSVC + Windows 11 SDK 26100)" {
 		t.Fatalf("C/C++ package owner = %q", effectiveStackPackageOwner(stackCpp))

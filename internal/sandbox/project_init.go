@@ -15,6 +15,23 @@ const (
 	stackPythonAIPreset projectStack = "python-ai"
 )
 
+var allProjectInitStacks = []projectStack{
+	stackBun,
+	stackCargoNextest,
+	stackCpp,
+	stackDotNet,
+	stackGo,
+	stackJava,
+	stackJust,
+	stackNode,
+	stackPlaywrightCLI,
+	stackPython,
+	stackRustMSVC,
+	stackTradingView,
+	stackUV,
+	stackZig,
+}
+
 // ProjectInitResult describes the one project profile created by InitializeProject.
 type ProjectInitResult struct {
 	Path   string
@@ -114,7 +131,15 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
+		return nil, nil, errors.New("select at least one stack: all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
+	}
+	for _, value := range requested {
+		if strings.EqualFold(strings.TrimSpace(value), "all") {
+			if len(requested) != 1 {
+				return nil, nil, errors.New("stack \"all\" already includes every standalone technology and tool stack")
+			}
+			return append([]projectStack(nil), allProjectInitStacks...), []string{"all"}, nil
+		}
 	}
 	aliases := map[string]projectStack{
 		"cpp":            stackCpp,
@@ -138,7 +163,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -198,6 +223,10 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 	for _, stack := range stacks {
 		var call string
 		switch stack {
+		case stackBun:
+			call = "Install-BunStack"
+		case stackCargoNextest:
+			call = "Install-CargoNextest"
 		case stackCpp:
 			call = "Install-CppStack"
 		case stackDotNet:
@@ -210,6 +239,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-HerdrStack -ProjectDirectory $ProjectDirectory"
 		case stackJava:
 			call = "Install-JavaStack"
+		case stackJust:
+			call = "Install-Just"
 		case stackNode:
 			call = "Install-NodeStack"
 		case stackPlaywrightCLI:
@@ -222,6 +253,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-RustMSVCStack -ProjectDirectory $ProjectDirectory"
 		case stackTradingView:
 			call = "Install-TradingViewStack"
+		case stackUV:
+			call = "Install-Uv"
 		case stackZig:
 			call = "Install-ZigStack"
 		default:

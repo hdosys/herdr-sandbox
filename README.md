@@ -49,14 +49,17 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 ## Supported stacks
 
-`sandbox init --stack` offers reusable technology and tool stacks plus separate project shortcuts. Repeat the flag to combine compatible selections.
+`sandbox init --stack` offers reusable technology and tool stacks plus separate project shortcuts. Use `--stack all` for every standalone technology and tool stack, or repeat the flag to combine compatible individual selections.
 
 ### Technology and tool stacks
 
 | Selection | Guest tooling |
 | --- | --- |
+| `all` | Every standalone built-in: Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
 | `go` | Go |
+| `java` | Microsoft OpenJDK 25 LTS |
 | `node` | Node.js LTS, Playwright, and Chromium |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
@@ -166,13 +169,19 @@ From the project root, select one or more stacks explicitly:
 sandbox init --stack go
 ```
 
+To select every standalone technology and tool stack at once:
+
+```powershell
+sandbox init --stack all
+```
+
 For an official Herdr upstream checkout without a project profile, select its project shortcut:
 
 ```powershell
 sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine compatible selections from [Supported stacks](#supported-stacks), or omit it for a guided prompt. Project shortcuts cannot be combined with stacks they already include. `init` writes one direct-call `.herdr-sandbox\provision.ps1` and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+Repeat `--stack` to combine compatible individual selections from [Supported stacks](#supported-stacks), or omit it for a guided prompt. `all` cannot be combined with another selection and excludes project-specific shortcuts. Project shortcuts cannot be combined with stacks they already include. `init` writes one direct-call `.herdr-sandbox\provision.ps1` and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 

@@ -1919,6 +1919,7 @@ function Write-ProvisioningProgress { param([string]$Message) }
 function Write-ProvisioningTiming { param([string]$Role, [double]$Seconds) }
 function Get-ProvisioningBoundedDiagnosticText { param([string]$Text, [int]$MaximumBytes) return $Text }
 $global:LASTEXITCODE = 91
+Invoke-ProvisioningNative -Role 'empty arguments' -FilePath (Join-Path $env:SystemRoot 'System32\whoami.exe') -ArgumentList @() | Out-Null
 Invoke-ProvisioningNative -Role 'fixture success' -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', '%s') -WaitForProcessTree | Out-Null
 $failed = $false
 try {
@@ -2147,7 +2148,7 @@ try {
 	}
 }
 
-func TestWaitProvisioningCommandAvailableRejectsExcludedAlias(t *testing.T) {
+func TestWaitProvisioningCommandAvailableRejectsExcludedAliases(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
@@ -2164,16 +2165,17 @@ function Get-Command {
     param($Name, $CommandType, $ErrorAction)
     return @(
         [pscustomobject]@{ Source = 'C:\Users\WDAGUtilityAccount\AppData\Local\Microsoft\WindowsApps\python.exe' },
+        [pscustomobject]@{ Source = 'C:\HerdrSandbox\tools\python\bin\python.exe' },
         [pscustomobject]@{ Source = 'C:\Program Files\Python313\python.exe' }
     )
 }
-$resolved = Wait-ProvisioningCommandAvailable -Role 'Python fixture' -Name 'python.exe' -TimeoutSeconds 1 -DelayMilliseconds 25 -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe'
+$resolved = Wait-ProvisioningCommandAvailable -Role 'Python fixture' -Name 'python.exe' -TimeoutSeconds 1 -DelayMilliseconds 25 -CommandSourceExclusion @('*\Microsoft\WindowsApps\python.exe', 'C:\HerdrSandbox\tools\python\bin\python.exe')
 if ($resolved -cne 'C:\Program Files\Python313\python.exe') { throw "Resolved unexpected Python command: $resolved" }
 `, quote(baseScript))
 	powerShell := mustWindowsPowerShellPath(t)
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("excluded alias regression: %v: %s", err, output)
+		t.Fatalf("excluded aliases regression: %v: %s", err, output)
 	}
 }
 

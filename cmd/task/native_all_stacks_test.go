@@ -62,13 +62,20 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err := json.Unmarshal(configurationData, &configuration); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"c-compile", "c-run", "native-c-ok", "cpp-compile", "cpp-run", "native-cpp-ok", "msbuild-version", `C:\HerdrSandbox\toolchains\visual-studio`, "java-version", "javac-version", "java-compile", "java-run", "native-java-ok", "JAVA_HOME", "playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR", "handy-cmake-version", "handy-glslc-version", `C:\VulkanSDK\1.4.309.0`, "SPIRV-HeadersConfig.cmake", "Microsoft Edge WebView2 Runtime", "handy-native-toolchain"} {
+	for _, required := range []string{"c-compile", "c-link", "c-run", "native-c-ok", "cpp-compile", "cpp-link", "cpp-run", "native-cpp-ok", "'/Z7'", "'/c'", "'/NOLOGO','/DEBUG:NONE'", "msbuild-version", `C:\HerdrSandbox\toolchains\visual-studio`, "java-version", "javac-version", "java-compile", "java-run", "native-java-ok", "JAVA_HOME", "Python commands resolved from unexpected paths", "playwright-chromium", "playwright-cli-version", "mmlmfjhmonkocbjadbfplnigmagldckm", `C:\HerdrSandbox\tools\playwright`, "PLAYWRIGHT_BROWSERS_PATH", "tvcontrol-help", "$tvBin -ceq $tvControlBin", "TVControl commands resolved from unexpected paths", "TradingView.Desktop", `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop`, `C:\HerdrSandbox\tools\tvcontrol`, "portable signed-MSIX payload", "launch intentionally skipped", "bun-run", "python3-version", "uv-version", "uv-cache-dir", "uv-sync", "uv-run", "python-ai-smoke-ok", `C:\HerdrSandbox\cache\uv`, "UV_NO_MANAGED_PYTHON", "herdr-just-toolchain", "python3-just-ok", "bun-just-ok", "cargo-nextest-version", "just-version", "sh-run", "LIBGHOSTTY_VT_ZIG_OUT_DIR", "handy-cmake-version", "handy-glslc-version", `C:\VulkanSDK\1.4.309.0`, "SPIRV-HeadersConfig.cmake", "Microsoft Edge WebView2 Runtime", "handy-native-toolchain"} {
 		if !strings.Contains(nativeAllStacksSmokeScript, required) {
 			t.Fatalf("native smoke does not verify %s", required)
 		}
 	}
 	if strings.Contains(nativeAllStacksSmokeScript, "Get-AppxPackage -Name 'TradingView.Desktop'") {
 		t.Fatal("native TradingView smoke retains the rejected AppX registration path")
+	}
+	if strings.Contains(nativeAllStacksSmokeScript, "tvcontrol-alias-help") {
+		t.Fatal("native TradingView smoke invokes the long-lived TVControl MCP server as help")
+	}
+	if !strings.Contains(nativeAllStacksSmokeScript, `@('-e',"console.log('bun-smoke-ok')")`) ||
+		strings.Contains(nativeAllStacksSmokeScript, `@('-e','console.log("bun-smoke-ok")')`) {
+		t.Fatal("native Bun smoke does not preserve its JavaScript string through Windows PowerShell")
 	}
 	if len(configuration.Mounts) != 2 || configuration.Mounts["reference"].Path != fixture.ReadOnlyMount ||
 		!configuration.Mounts["reference"].ReadOnly || configuration.Mounts["worktrees"].Path != fixture.WritableMount ||
@@ -83,11 +90,16 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	}
 	for _, path := range []string{
 		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"),
+		filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"),
 		filepath.Join(fixture.WritableMount, "host-worktrees.txt"),
 	} {
 		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			t.Fatalf("native folder-mount fixture %s is invalid: %v, %v", path, info, err)
 		}
+	}
+	smokeScript, err := os.ReadFile(filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"))
+	if err != nil || string(smokeScript) != nativeAllStacksSmokeScript {
+		t.Fatalf("native smoke fixture script does not match its repository owner: %v", err)
 	}
 	for _, absent := range []string{
 		filepath.Join(fixture.AppData, "GitHub CLI", "hosts.yml"),
@@ -100,6 +112,22 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	terminal, err := os.ReadFile(filepath.Join(fixture.LocalAppData, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState", "settings.json"))
 	if err != nil || !strings.Contains(string(terminal), `"theme": "light"`) || !strings.Contains(string(terminal), `"colorScheme": "Herdr Native Light"`) {
 		t.Fatalf("native Terminal fixture = %q, %v", terminal, err)
+	}
+}
+
+func TestNativeAllStacksSmokeCommandUsesReadOnlyFixtureScript(t *testing.T) {
+	sshConfig := `C:\Runs\native\.ssh\config`
+	command := nativeAllStacksSmokeCommand(context.Background(), "ssh.exe", sshConfig)
+	want := strings.Join([]string{
+		"-T", "-F", sshConfig, "sandbox",
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass", "-File", nativeAllStacksSmokeGuestPath,
+	}, "\x00")
+	if got := strings.Join(command.Args[1:], "\x00"); got != want {
+		t.Fatalf("native smoke SSH arguments = %q, want %q", got, want)
+	}
+	if command.Stdin != nil || strings.Contains(want, "-EncodedCommand") || strings.Contains(want, nativeAllStacksSmokeScript) {
+		t.Fatal("native smoke payload remains on the SSH command line or standard input")
 	}
 }
 

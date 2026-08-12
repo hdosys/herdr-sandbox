@@ -214,6 +214,76 @@ if (-not $timeoutResult.TimedOut -or $timeoutResult.Succeeded) {
 	}
 }
 
+func TestProvisioningProcessCanTerminateOwnedDescendantsAfterRootExit(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows Job Object root-terminal regression")
+	}
+	root := t.TempDir()
+	baseScript := defaultProvisioningPath(t, baseProvisioningName)
+	processSource := filepath.Join(filepath.Dir(baseScript), "..", "internal", "sandbox", "assets", provisioningProcessName)
+	processSource, err := filepath.Abs(processSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	powerShell := mustWindowsPowerShellPath(t)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	write := func(name, contents string) string {
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	child := write("root-terminal-child.ps1", `param([string]$Root)
+[IO.File]::WriteAllText((Join-Path $Root 'child.pid'), [string]$PID)
+Start-Sleep -Seconds 30
+[IO.File]::WriteAllText((Join-Path $Root 'child.survived'), 'survived')
+`)
+	rootProcess := write("root-terminal.ps1", `param([string]$Root, [string]$PowerShell, [string]$Child)
+$childProcess = Start-Process -FilePath $PowerShell -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $Child, $Root) -WindowStyle Hidden -PassThru
+try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (-not (Test-Path -LiteralPath (Join-Path $Root 'child.pid') -PathType Leaf)) {
+        if ([DateTime]::UtcNow -ge $deadline) { exit 71 }
+        Start-Sleep -Milliseconds 20
+    }
+    [Console]::Out.Write('ROOT-TERMINAL')
+} finally {
+    $childProcess.Dispose()
+}
+`)
+	harness := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Add-Type -Path '%s'
+$tokens = $null
+$errors = $null
+$baseAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('New-ProvisioningNativeSpec', 'Invoke-ProvisioningNativeResult')) {
+    $definition = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing Base process function: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+function Write-ProvisioningProgress { param([string]$Message) }
+function Write-ProvisioningTiming { param([string]$Role, [double]$Seconds) }
+$result = Invoke-ProvisioningNativeResult -Role 'root-terminal cleanup' -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', '%s', '%s', '%s', '%s') -WorkingDirectory '%s' -TimeoutSeconds 10 -TerminateDescendantsAfterRootExit
+if (-not $result.Succeeded -or [string]$result.Output -cne 'ROOT-TERMINAL' -or $result.ElapsedMilliseconds -ge 5000) {
+    throw "Root-terminal result failed: $($result | Format-List | Out-String)"
+}
+$childID = [int][IO.File]::ReadAllText((Join-Path '%s' 'child.pid'))
+if ($null -ne (Get-Process -Id $childID -ErrorAction SilentlyContinue)) {
+    throw "Residual owned child remains active: $childID"
+}
+if (Test-Path -LiteralPath (Join-Path '%s' 'child.survived') -PathType Leaf) {
+    throw 'Residual owned child reached its post-root action.'
+}
+`, quote(processSource), quote(baseScript), quote(powerShell), quote(rootProcess), quote(root), quote(powerShell), quote(child), quote(root), quote(root), quote(root))
+	harnessPath := write("root-terminal-regression.ps1", harness)
+	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("root-terminal descendant cleanup regression: %v: %s", err, output)
+	}
+}
+
 func TestProvisioningProcessOwnerKillsTreeWhenOwningPowerShellExits(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows Job Object parent-exit regression")

@@ -1,4 +1,4 @@
-// herdr-sandbox-provisioning-process-contract: 2
+// herdr-sandbox-provisioning-process-contract: 3
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -20,6 +20,7 @@ namespace HerdrSandbox
         public string WorkingDirectory { get; set; }
         public int TimeoutMilliseconds { get; set; }
         public int[] SuccessExitCodes { get; set; }
+        public bool TerminateDescendantsAfterRootExit { get; set; }
     }
 
     public sealed class ProvisioningProcessResult
@@ -37,7 +38,7 @@ namespace HerdrSandbox
 
     public static class ProvisioningProcess
     {
-        public const int ContractVersion = 2;
+        public const int ContractVersion = 3;
         public const int MaximumGroupTasks = 2;
         public const int MaximumConcurrentDownloads = 3;
 
@@ -631,6 +632,7 @@ namespace HerdrSandbox
 
         private ProvisioningProcessResult CompleteOwnedProcessTree()
         {
+            bool residualDescendantsTerminated = false;
             while (true)
             {
                 NativeMethods.JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting =
@@ -647,6 +649,30 @@ namespace HerdrSandbox
                 if (accounting.ActiveProcesses == 0)
                 {
                     break;
+                }
+
+                if (spec.TerminateDescendantsAfterRootExit && !residualDescendantsTerminated)
+                {
+                    uint rootWait = NativeMethods.WaitForSingleObject(processHandle, 0);
+                    if (rootWait == NativeMethods.WAIT_OBJECT_0)
+                    {
+                        residualDescendantsTerminated = true;
+                        if (!NativeMethods.TerminateJobObject(jobHandle, 1))
+                        {
+                            int terminationError = Marshal.GetLastWin32Error();
+                            if (terminationError != NativeMethods.ERROR_ACCESS_DENIED)
+                            {
+                                throw new Win32Exception(
+                                    terminationError,
+                                    "terminate residual provisioning descendants " + spec.Role);
+                            }
+                        }
+                        continue;
+                    }
+                    if (rootWait == NativeMethods.WAIT_FAILED)
+                    {
+                        NativeMethods.ThrowLastError("inspect provisioning root process " + spec.Role);
+                    }
                 }
 
                 uint message;
@@ -937,6 +963,7 @@ namespace HerdrSandbox
         internal const uint OPEN_EXISTING = 3;
         internal const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
         internal const uint WAIT_OBJECT_0 = 0;
+        internal const uint WAIT_FAILED = 0xFFFFFFFF;
         internal const int WAIT_TIMEOUT = 258;
         internal const int ERROR_ACCESS_DENIED = 5;
 

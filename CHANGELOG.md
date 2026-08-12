@@ -11,6 +11,8 @@ release notes remain available on the
 - New `cpp` and `java` project stacks provide verified x64 C/C++ Build Tools and
   Microsoft OpenJDK 25 LTS compile/run environments. Select them with
   `sandbox init --stack cpp` and `sandbox init --stack java`.
+- `sandbox init --stack all` creates one direct-call profile for every standalone
+  technology and tool stack while keeping project-specific shortcuts separate.
 
 ### Changed
 
@@ -29,6 +31,12 @@ release notes remain available on the
   `status client` version.
 - Visual Studio Build Tools host layout preparation now refreshes an existing
   cached bootstrapper correctly on cache misses.
+- Guest provisioning now installs the pinned VC++ runtime before stack packages,
+  preventing the Vulkan SDK prerequisite from opening an interactive installer.
+  Handy now validates its CMake packages separately and uses the verified direct
+  compiler path, avoiding reusable MSBuild or Debug PDB workers.
+- Python 3 stacks now expose adjacent verified `python` and `python3` commands so
+  uv-created Windows virtual environments retain a valid base executable.
 - Installer ownership now keeps one stable unversioned lifecycle mutex across
   releases, accepts rooted literal PATH entries containing `%`, and rejects a
   replaced-executable name that collides with any current payload filename.

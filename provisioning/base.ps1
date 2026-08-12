@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 48
+# herdr-sandbox-base-contract: 49
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -24,13 +24,13 @@ if (-not [IO.Path]::IsPathRooted($ProcessOwnerPath) -or
 $processOwnerFile = Get-Item -LiteralPath $ProcessOwnerPath -Force
 if (($processOwnerFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
     $processOwnerFile.Length -le 0 -or $processOwnerFile.Length -gt 524288 -or
-    -not [IO.File]::ReadAllText($ProcessOwnerPath).Contains('// herdr-sandbox-provisioning-process-contract: 2')) {
+    -not [IO.File]::ReadAllText($ProcessOwnerPath).Contains('// herdr-sandbox-provisioning-process-contract: 3')) {
     throw "Provisioning process owner has an unsupported identity: $ProcessOwnerPath"
 }
 if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
     Add-Type -Path $ProcessOwnerPath
 }
-if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 2 -or
+if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 3 -or
     [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2 -or
     [HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3) {
     throw 'Provisioning process owner contract is invalid.'
@@ -299,8 +299,10 @@ function New-ProvisioningNativeSpec {
         [Parameter(Mandatory = $true)]
         [object]$FilePath,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
+        [switch]$TerminateDescendantsAfterRootExit,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
@@ -351,6 +353,7 @@ function New-ProvisioningNativeSpec {
     $spec.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
     $spec.TimeoutMilliseconds = $TimeoutSeconds * 1000
     $spec.SuccessExitCodes = [int[]]@($acceptedExitCodes.Keys | Sort-Object)
+    $spec.TerminateDescendantsAfterRootExit = [bool]$TerminateDescendantsAfterRootExit
     return $spec
 }
 
@@ -370,15 +373,19 @@ function Invoke-ProvisioningNativeResult {
         [Parameter(Mandatory = $true)]
         [object]$FilePath,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
         [switch]$WaitForProcessTree,
+        [switch]$TerminateDescendantsAfterRootExit,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
 
     $spec = New-ProvisioningNativeSpec -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
-        -SuccessExitCodes $SuccessExitCodes -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
+        -SuccessExitCodes $SuccessExitCodes `
+        -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
+        -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
@@ -397,16 +404,20 @@ function Invoke-ProvisioningNative {
         [Parameter(Mandatory = $true)]
         [object]$FilePath,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
         [switch]$WaitForProcessTree,
+        [switch]$TerminateDescendantsAfterRootExit,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
 
-    # Every invocation owns the complete tree; WaitForProcessTree remains a source-compatible marker.
+    # Every invocation owns the complete tree. The opt-in cleanup applies only after the root is terminal.
+    # WaitForProcessTree remains a source-compatible marker.
     $result = Invoke-ProvisioningNativeResult -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
         -SuccessExitCodes $SuccessExitCodes -WaitForProcessTree:$WaitForProcessTree `
+        -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $output = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
     if (-not $result.Succeeded) {
@@ -524,7 +535,8 @@ function Wait-ProvisioningCommandAvailable {
         [string]$Name,
         [int]$TimeoutSeconds = 120,
         [int]$DelayMilliseconds = 500,
-        [string]$CommandSourceExclusion = ''
+        [AllowEmptyCollection()]
+        [string[]]$CommandSourceExclusion = @()
     )
 
     if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 300 -or
@@ -535,8 +547,11 @@ function Wait-ProvisioningCommandAvailable {
     do {
         Update-ProvisioningPath
         $commands = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)
-        if (-not [string]::IsNullOrWhiteSpace($CommandSourceExclusion)) {
-            $commands = @($commands | Where-Object { $_.Source -notlike $CommandSourceExclusion })
+        foreach ($sourceExclusion in @($CommandSourceExclusion)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$sourceExclusion)) {
+                $pattern = [string]$sourceExclusion
+                $commands = @($commands | Where-Object { ([string]$_.Source) -notlike $pattern })
+            }
         }
         $command = $commands | Select-Object -First 1
         if ($null -ne $command) {

@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 12
+# herdr-sandbox-stacks-contract: 13
 
 function Get-StackWebResponseText {
     param(
@@ -692,7 +692,9 @@ function Enable-StackVisualStudioDeveloperEnvironment {
 function Assert-StackCppToolchain {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Compiler
+        [string]$Compiler,
+        [Parameter(Mandatory = $true)]
+        [string]$Linker
     )
 
     $stage = Join-Path 'C:\HerdrSandbox\staging' ('cpp-stack-probe-' + [Guid]::NewGuid().ToString('N'))
@@ -700,6 +702,8 @@ function Assert-StackCppToolchain {
     try {
         $cSource = Join-Path $stage 'probe.c'
         $cppSource = Join-Path $stage 'probe.cpp'
+        $cObject = Join-Path $stage 'c-probe.obj'
+        $cppObject = Join-Path $stage 'cpp-probe.obj'
         $cExecutable = Join-Path $stage 'c-probe.exe'
         $cppExecutable = Join-Path $stage 'cpp-probe.exe'
         $cProgram = @'
@@ -713,11 +717,18 @@ int main() { std::cout << "cpp-stack-ok\n"; return 0; }
         [IO.File]::WriteAllText($cSource, $cProgram + "`n", (New-Object Text.UTF8Encoding($false)))
         [IO.File]::WriteAllText($cppSource, $cppProgram + "`n", (New-Object Text.UTF8Encoding($false)))
         Invoke-ProvisioningNative -Role 'MSVC C compiler probe' -FilePath $Compiler `
-            -ArgumentList @('/nologo', '/W4', '/WX', '/TC', $cSource, "/Fe:$cExecutable") `
-            -WorkingDirectory $stage -TimeoutSeconds 120 | Out-Null
+            -ArgumentList @('/nologo', '/W4', '/WX', '/Z7', '/TC', '/c', $cSource, "/Fo:$cObject") `
+            -WorkingDirectory $stage -TimeoutSeconds 60 -TerminateDescendantsAfterRootExit | Out-Null
+        Invoke-ProvisioningNative -Role 'MSVC C linker probe' -FilePath $Linker `
+            -ArgumentList @('/NOLOGO', '/DEBUG:NONE', "/OUT:$cExecutable", $cObject) `
+            -WorkingDirectory $stage -TimeoutSeconds 30 -TerminateDescendantsAfterRootExit | Out-Null
         Invoke-ProvisioningNative -Role 'MSVC C++ compiler probe' -FilePath $Compiler `
-            -ArgumentList @('/nologo', '/W4', '/WX', '/EHsc', '/std:c++20', '/TP', $cppSource, "/Fe:$cppExecutable") `
-            -WorkingDirectory $stage -TimeoutSeconds 120 | Out-Null
+            -ArgumentList @('/nologo', '/W4', '/WX', '/Z7', '/EHsc', '/std:c++20', '/TP', '/c',
+                $cppSource, "/Fo:$cppObject") -WorkingDirectory $stage -TimeoutSeconds 60 `
+            -TerminateDescendantsAfterRootExit | Out-Null
+        Invoke-ProvisioningNative -Role 'MSVC C++ linker probe' -FilePath $Linker `
+            -ArgumentList @('/NOLOGO', '/DEBUG:NONE', "/OUT:$cppExecutable", $cppObject) `
+            -WorkingDirectory $stage -TimeoutSeconds 30 -TerminateDescendantsAfterRootExit | Out-Null
         $cOutput = ((Invoke-ProvisioningNative -Role 'MSVC C executable probe' -FilePath $cExecutable `
                 -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
         $cppOutput = ((Invoke-ProvisioningNative -Role 'MSVC C++ executable probe' -FilePath $cppExecutable `
@@ -739,7 +750,7 @@ function Install-CppStack {
     Write-Output 'Installing Visual Studio C/C++ Build Tools...'
     Install-StackVisualStudioBuildTools
     $environment = Enable-StackVisualStudioDeveloperEnvironment
-    Assert-StackCppToolchain -Compiler $environment.Compiler
+    Assert-StackCppToolchain -Compiler $environment.Compiler -Linker $environment.Linker
     Write-Output "C/C++ ready: $($environment.Compiler)"
 }
 
@@ -1620,8 +1631,9 @@ function Install-PlaywrightCLIStack {
     }
 
     $cliDirectory = Join-Path $toolRoot 'node_modules\@playwright\cli'
-    $playwrightDirectory = Join-Path $toolRoot 'node_modules\playwright'
-    $playwrightCoreDirectory = Join-Path $toolRoot 'node_modules\playwright-core'
+    $cliDependencies = Join-Path $cliDirectory 'node_modules'
+    $playwrightDirectory = Join-Path $cliDependencies 'playwright'
+    $playwrightCoreDirectory = Join-Path $cliDependencies 'playwright-core'
     $packagePaths = @(
         (Join-Path $cliDirectory 'package.json'),
         (Join-Path $playwrightDirectory 'package.json'),
@@ -1887,19 +1899,24 @@ function Install-TradingViewStack {
     $tvControlBin = [string]$package.bin.tvcontrol
     if ([string]$package.name -cne '@ferroxlabs/tvcontrol' -or
         [string]$package.version -cne $TVControlVersion -or
-        [string]$package.engines.node -notmatch '^>=\d+\.\d+\.\d+$' -or
-        [string]::IsNullOrWhiteSpace($tvBin) -or $tvBin -cne $tvControlBin -or
-        $tvBin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or $tvBin.StartsWith('/') -or
-        @($tvBin.Split('/') | Where-Object { $_ -ceq '..' }).Count -ne 0) {
+        [string]$package.engines.node -notmatch '^>=\d+\.\d+\.\d+$') {
         throw "TVControl package identity does not match exact version $TVControlVersion."
     }
-    $cliEntry = Join-Path $packageDirectory ($tvBin.Replace('/', '\'))
     $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
-    $cliEntryPath = [IO.Path]::GetFullPath($cliEntry)
-    if (-not $cliEntryPath.StartsWith($packageRootPath, [StringComparison]::OrdinalIgnoreCase) -or
-        -not (Test-Path -LiteralPath $cliEntryPath -PathType Leaf) -or
-        ((Get-Item -LiteralPath $cliEntryPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "TVControl CLI entry is missing or unsafe: $cliEntryPath"
+    foreach ($bin in @($tvBin, $tvControlBin)) {
+        if ([string]::IsNullOrWhiteSpace($bin) -or $bin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or
+            $bin.StartsWith('/') -or @($bin.Split('/') | Where-Object { $_ -ceq '..' }).Count -ne 0) {
+            throw "TVControl package identity does not match exact version $TVControlVersion."
+        }
+    }
+    $tvCLIEntryPath = [IO.Path]::GetFullPath((Join-Path $packageDirectory ($tvBin.Replace('/', '\'))))
+    $tvControlEntryPath = [IO.Path]::GetFullPath((Join-Path $packageDirectory ($tvControlBin.Replace('/', '\'))))
+    foreach ($cliEntryPath in @($tvCLIEntryPath, $tvControlEntryPath)) {
+        if (-not $cliEntryPath.StartsWith($packageRootPath, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $cliEntryPath -PathType Leaf) -or
+            ((Get-Item -LiteralPath $cliEntryPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TVControl CLI entry is missing or unsafe: $cliEntryPath"
+        }
     }
 
     $tvCommand = Join-Path $toolRoot 'tv.cmd'
@@ -1928,10 +1945,10 @@ function Install-TradingViewStack {
         }
     }
     $helpText = ((Invoke-ProvisioningNative -Role 'TVControl CLI help verification' -FilePath $node `
-        -ArgumentList @($cliEntryPath, '--help')) -join [Environment]::NewLine).Trim()
+        -ArgumentList @($tvCLIEntryPath, '--help')) -join [Environment]::NewLine).Trim()
     if (-not $helpText.StartsWith('Usage: tv <command> [options]', [StringComparison]::Ordinal) -or
-        $helpText -notmatch '(?m)^  status\s+Check CDP connection to TradingView$' -or
-        $helpText -notmatch '(?m)^  launch\s+Launch TradingView with CDP enabled$') {
+        $helpText -notmatch '(?m)^  status\s+\S' -or
+        $helpText -notmatch '(?m)^  launch\s+\S') {
         throw 'TVControl CLI help output is unexpected.'
     }
 
@@ -2017,17 +2034,24 @@ function Install-PythonStack {
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
     $Series = [string]$pythonSelection.Series
     $Version = [string]$pythonSelection.Version
+    $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
+    $pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'
+    $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
+    $pythonSourceExclusions = @('*\Microsoft\WindowsApps\python.exe', $pythonAlias)
     Write-Output "Installing Python $Version..."
     Install-ProvisioningWinGetPackage -Role 'Python' -Id "Python.Python.$Series" -Version $Version `
         -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' -DeferCommandReadiness `
         -RequireAuthenticodeSignature
     $pythonPath = Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
-        -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe'
+        -CommandSourceExclusion $pythonSourceExclusions
     $runtimeVersion = ($Version -split '\.')[0..2] -join '.'
     $pythonPattern = '^Python ' + [regex]::Escape($runtimeVersion) + '$'
-    $pythonVersion = Assert-ProvisioningCommand -Role 'Python' -Name 'python.exe' `
-        -VersionArguments @('--version') -ExpectedPattern $pythonPattern
+    $pythonVersion = ((Invoke-ProvisioningNative -Role 'Python version check' -FilePath $pythonPath `
+                -ArgumentList @('--version')) -join [Environment]::NewLine).Trim()
+    if ($pythonVersion -notmatch $pythonPattern) {
+        throw "Python version output is unexpected: $pythonVersion"
+    }
     Write-Output "Python ready: $pythonVersion"
     if ($Series -notmatch '^3\.') {
         return
@@ -2036,7 +2060,6 @@ function Install-PythonStack {
     if (($pythonInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Python command is a reparse point: $pythonPath"
     }
-    $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
     foreach ($directory in @('C:\HerdrSandbox\tools', 'C:\HerdrSandbox\tools\python', $pythonAliasDirectory)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -2047,34 +2070,42 @@ function Install-PythonStack {
             throw "Python command directory is unsafe: $directory"
         }
     }
-    $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
-    if (Test-Path -LiteralPath $python3) {
-        $python3Info = Get-Item -LiteralPath $python3 -Force
-        if ($python3Info.PSIsContainer -or
-            ($python3Info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Python 3 command path is unsafe: $python3"
+    $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
+    foreach ($pythonCommand in @($pythonAlias, $python3)) {
+        if (Test-Path -LiteralPath $pythonCommand) {
+            $pythonCommandInfo = Get-Item -LiteralPath $pythonCommand -Force
+            if ($pythonCommandInfo.PSIsContainer -or
+                ($pythonCommandInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Python command path is unsafe: $pythonCommand"
+            }
+        }
+        $pythonCommandHash = if (Test-Path -LiteralPath $pythonCommand -PathType Leaf) {
+            (Get-FileHash -LiteralPath $pythonCommand -Algorithm SHA256).Hash
+        } else {
+            ''
+        }
+        if ($pythonCommandHash -cne $pythonHash) {
+            Copy-Item -LiteralPath $pythonPath -Destination $pythonCommand -Force
+            $pythonCommandHash = (Get-FileHash -LiteralPath $pythonCommand -Algorithm SHA256).Hash
+        }
+        if ($pythonCommandHash -cne $pythonHash) {
+            throw "Python command copy failed verification: $pythonCommand"
         }
     }
-    $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
-    $python3Hash = if (Test-Path -LiteralPath $python3 -PathType Leaf) {
-        (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
-    } else {
-        ''
-    }
-    if ($python3Hash -cne $pythonHash) {
-        Copy-Item -LiteralPath $pythonPath -Destination $python3 -Force
-        $python3Hash = (Get-FileHash -LiteralPath $python3 -Algorithm SHA256).Hash
-    }
-    if ($python3Hash -cne $pythonHash) {
-        throw 'Python 3 command copy failed verification.'
-    }
     Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
+    $resolvedPython = Wait-ProvisioningCommandAvailable -Role 'App-local Python command' -Name 'python.exe'
+    if ([IO.Path]::GetFullPath($resolvedPython) -ine [IO.Path]::GetFullPath($pythonAlias)) {
+        throw "Python command resolved from an unexpected path: $resolvedPython"
+    }
+    $pythonAliasVersion = Assert-ProvisioningCommand -Role 'App-local Python command' -Name 'python.exe' `
+        -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
     $resolvedPython3 = Wait-ProvisioningCommandAvailable -Role 'Python 3 command' -Name 'python3.exe'
     if ([IO.Path]::GetFullPath($resolvedPython3) -ine [IO.Path]::GetFullPath($python3)) {
         throw "Python 3 command resolved from an unexpected path: $resolvedPython3"
     }
     $python3Version = Assert-ProvisioningCommand -Role 'Python 3 command' -Name 'python3.exe' `
         -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
+    Write-Output "App-local Python command ready: $pythonAliasVersion"
     Write-Output "Python 3 command ready: $python3Version"
 }
 
@@ -2571,7 +2602,9 @@ endif()
 function Assert-HandyNativeToolchain {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$CMakePrefix
+        [string]$CMakePrefix,
+        [Parameter(Mandatory = $true)]
+        [string]$VulkanRoot
     )
 
     $cmake = Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
@@ -2581,12 +2614,13 @@ function Assert-HandyNativeToolchain {
     New-Item -ItemType Directory -Path $source -Force | Out-Null
     try {
         $cmakeLists = @'
-cmake_minimum_required(VERSION 3.14)
-project(handy_stack_probe LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.24)
+project(handy_stack_probe LANGUAGES NONE)
 find_package(Vulkan COMPONENTS glslc REQUIRED)
 find_package(SPIRV-Headers CONFIG REQUIRED)
-add_executable(handy_stack_probe main.cpp)
-target_link_libraries(handy_stack_probe PRIVATE Vulkan::Headers SPIRV-Headers::SPIRV-Headers)
+if(NOT TARGET Vulkan::Headers OR NOT TARGET SPIRV-Headers::SPIRV-Headers)
+  message(FATAL_ERROR "Handy CMake targets are unavailable")
+endif()
 '@
         $main = @'
 #include <vulkan/vulkan.h>
@@ -2597,16 +2631,26 @@ int main() { return VK_API_VERSION_1_0 == 0; }
             (New-Object Text.UTF8Encoding($false)))
         [IO.File]::WriteAllText((Join-Path $source 'main.cpp'), $main,
             (New-Object Text.UTF8Encoding($false)))
+        $environment = Enable-StackVisualStudioDeveloperEnvironment
         Invoke-ProvisioningNative -Role 'Handy native CMake configuration' -FilePath $cmake.Source `
-            -ArgumentList @('-S', $source, '-B', $build, '-G', 'Visual Studio 17 2022', '-A', 'x64',
-                "-DCMAKE_PREFIX_PATH=$CMakePrefix") -TimeoutSeconds 300 | Out-Null
-        Invoke-ProvisioningNative -Role 'Handy native CMake build' -FilePath $cmake.Source `
-            -ArgumentList @('--build', $build, '--config', 'Release') -TimeoutSeconds 300 | Out-Null
-        $probe = Join-Path $build 'Release\handy_stack_probe.exe'
+            -ArgumentList @('-S', $source, '-B', $build, '-G', 'NMake Makefiles',
+                "-DCMAKE_PREFIX_PATH=$CMakePrefix") -TimeoutSeconds 30 | Out-Null
+        $vulkanInclude = Join-Path $VulkanRoot 'Include'
+        $object = Join-Path $stage 'handy_stack_probe.obj'
+        $probe = Join-Path $stage 'handy_stack_probe.exe'
+        Invoke-ProvisioningNative -Role 'Handy native C++ compilation' -FilePath $environment.Compiler `
+            -ArgumentList @('/nologo', '/W4', '/WX', '/Z7', '/EHsc', '/std:c++20', '/TP',
+                '/c', (Join-Path $source 'main.cpp'), "/I$vulkanInclude", "/Fo:$object") `
+            -WorkingDirectory $stage -TimeoutSeconds 60 -TerminateDescendantsAfterRootExit | Out-Null
+        Invoke-ProvisioningNative -Role 'Handy native C++ linking' -FilePath $environment.Linker `
+            -ArgumentList @('/NOLOGO', '/DEBUG:NONE', "/OUT:$probe", $object) `
+            -WorkingDirectory $stage -TimeoutSeconds 30 -TerminateDescendantsAfterRootExit | Out-Null
         if (-not (Test-Path -LiteralPath $probe -PathType Leaf) -or
             ((Get-Item -LiteralPath $probe -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Handy native CMake probe did not produce one regular executable: $probe"
+            throw "Handy native compiler probe did not produce one regular executable: $probe"
         }
+        Invoke-ProvisioningNative -Role 'Handy native C++ execution' -FilePath $probe `
+            -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30 | Out-Null
     } finally {
         if (Test-Path -LiteralPath $stage) {
             Remove-Item -LiteralPath $stage -Recurse -Force
@@ -2720,7 +2764,7 @@ function Install-HandyStack {
     Install-BunStack
     Install-RustMSVCStack -ProjectDirectory $rustRoot
     $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
-    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix
+    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
 
     Write-Output "Handy CMake ready: $cmakeVersion"
     Write-Output "Handy Vulkan SDK ready: $vulkanVersion"

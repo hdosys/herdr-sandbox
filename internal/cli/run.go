@@ -20,7 +20,7 @@ const usage = `Usage:
   sandbox config
   sandbox version
   sandbox plan
-  sandbox init [--stack cpp|dotnet|go|handy|herdr|java|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
+  sandbox init [--stack all|cpp|dotnet|go|handy|herdr|java|node|playwright-cli|python|python-ai|rust|tradingview|zig]...
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   sandbox attach
   sandbox status
@@ -394,7 +394,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	flags := flag.NewFlagSet("sandbox init", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var selected stackSelections
-	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, zig")
+	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, zig")
 	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -432,7 +432,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 }
 
 func promptForStacks(input io.Reader, output io.Writer) ([]string, error) {
-	fmt.Fprintln(output, "Available stacks: cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, zig")
+	fmt.Fprintln(output, "Available stacks: all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, zig")
 	fmt.Fprint(output, "Select one or more stacks (comma or space separated): ")
 	reader := bufio.NewReader(io.LimitReader(input, 4097))
 	line, err := reader.ReadString('\n')

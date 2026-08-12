@@ -88,6 +88,66 @@ func TestHandySPIRVPackageCorrectsPinnedSDKConfigWithoutVcpkg(t *testing.T) {
 	}
 }
 
+func TestHandyNativeProbeSeparatesCMakeAndCompilerBoundaries(t *testing.T) {
+	text := readDefaultStackProvisioning(t)
+	start := strings.Index(text, "function Assert-HandyNativeToolchain")
+	end := strings.Index(text, "function Install-HandyStack")
+	if start < 0 || end <= start {
+		t.Fatal("Handy native toolchain probe is missing")
+	}
+	section := text[start:end]
+	for _, required := range []string{
+		"$environment = Enable-StackVisualStudioDeveloperEnvironment",
+		"project(handy_stack_probe LANGUAGES NONE)",
+		"find_package(Vulkan COMPONENTS glslc REQUIRED)",
+		"find_package(SPIRV-Headers CONFIG REQUIRED)",
+		"TARGET Vulkan::Headers",
+		"TARGET SPIRV-Headers::SPIRV-Headers",
+		"Handy native CMake configuration",
+		"'NMake Makefiles'",
+		"Handy native C++ compilation",
+		"-FilePath $environment.Compiler",
+		"-TerminateDescendantsAfterRootExit",
+		"'/Z7'",
+		"'/c'",
+		`"/I$vulkanInclude"`,
+		`"/Fo:$object"`,
+		"Handy native C++ linking",
+		"-FilePath $environment.Linker",
+		"'/NOLOGO', '/DEBUG:NONE'",
+		`"/OUT:$probe"`,
+		"Handy native C++ execution",
+	} {
+		if !strings.Contains(section, required) {
+			t.Fatalf("Handy native probe is missing separated boundary contract %q", required)
+		}
+	}
+	if count := strings.Count(section, "-TimeoutSeconds 30"); count != 3 {
+		t.Fatalf("Handy native probe has %d thirty-second deadlines; want 3", count)
+	}
+	if count := strings.Count(section, "-TimeoutSeconds 60"); count != 1 {
+		t.Fatalf("Handy native probe has %d one-minute deadlines; want 1", count)
+	}
+	if count := strings.Count(section, "-TerminateDescendantsAfterRootExit"); count != 2 {
+		t.Fatalf("Handy native probe has %d root-terminal compiler/linker boundaries; want 2", count)
+	}
+	for _, forbidden := range []string{
+		"Visual Studio 17 2022",
+		"MSBUILDDISABLENODEREUSE",
+		"CMAKE_TRY_COMPILE_CONFIGURATION",
+		"add_executable(handy_stack_probe",
+		"target_link_libraries(handy_stack_probe",
+		"Handy native CMake build",
+		"'-DCMAKE_BUILD_TYPE=Release'",
+		`"/Fe:$probe"`,
+		"'/link'",
+	} {
+		if strings.Contains(section, forbidden) {
+			t.Fatalf("Handy native probe retains compiler-enabled CMake path %q", forbidden)
+		}
+	}
+}
+
 func TestProvisioningEXEAdapterRequiresExactArguments(t *testing.T) {
 	base := readDefaultBaseProvisioning(t)
 	for _, required := range []string{

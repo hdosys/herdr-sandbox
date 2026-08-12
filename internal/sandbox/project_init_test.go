@@ -49,6 +49,54 @@ func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 	}
 }
 
+func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"ALL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "all" {
+		t.Fatalf("stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	calls := []string{
+		"Install-BunStack",
+		"Install-CargoNextest",
+		"Install-CppStack",
+		"Install-DotNetStack",
+		"Install-GoStack -ProjectDirectory $ProjectDirectory",
+		"Install-JavaStack",
+		"Install-Just",
+		"Install-NodeStack",
+		"Install-PlaywrightCLIStack",
+		"Install-PythonStack",
+		"Install-RustMSVCStack -ProjectDirectory $ProjectDirectory",
+		"Install-TradingViewStack",
+		"Install-Uv",
+		"Install-ZigStack",
+	}
+	last := -1
+	for _, call := range calls {
+		if count := strings.Count(text, call); count != 1 {
+			t.Fatalf("all profile contains %d calls to %q: %s", count, call, text)
+		}
+		index := strings.Index(text, call)
+		if index <= last {
+			t.Fatalf("all profile does not contain ordered direct call %q: %s", call, text)
+		}
+		last = index
+	}
+	for _, shortcut := range []string{"Install-HandyStack", "Install-HerdrStack", "Install-PythonAIStack"} {
+		if strings.Contains(text, shortcut) {
+			t.Fatalf("all profile contains project-specific shortcut %q: %s", shortcut, text)
+		}
+	}
+}
+
 func TestInitializeProjectWritesHerdrVirtualStack(t *testing.T) {
 	project := t.TempDir()
 	result, err := InitializeProject(project, []string{"herdr"})
@@ -122,7 +170,7 @@ func TestInitializeProjectWritesPythonAIVirtualStack(t *testing.T) {
 }
 
 func TestInitializeProjectRejectsSelectionsBeforeFilesystemMutation(t *testing.T) {
-	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"handy", "rust"}, {"handy", "herdr"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "python-ai"}, {"herdr", "zig"}, {"python-ai", "python"}} {
+	for _, requested := range [][]string{nil, {"unknown"}, {"go", "GO"}, {"all", "go"}, {"all", "ALL"}, {"handy", "rust"}, {"handy", "herdr"}, {"herdr", "rust"}, {"herdr", "python"}, {"herdr", "python-ai"}, {"herdr", "zig"}, {"python-ai", "python"}} {
 		project := t.TempDir()
 		if _, err := InitializeProject(project, requested); err == nil {
 			t.Fatalf("selection %v unexpectedly succeeded", requested)

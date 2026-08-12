@@ -754,14 +754,8 @@ try {
         throw "WinGet version mismatch. Expected $ExpectedWinGetVersion but got $wingetVersion."
     }
 
-    Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
-    & $baseProvisioning -Phase 'Development' -ProjectProvisioningDirectory $projectProvisioningDirectory `
-        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
-    $powerShell7 = Get-PowerShell7Installation
-    $powerShell7Executable = $powerShell7.Executable
-
-    Write-ProgressStatus -Phase 'herdr-runtime' -Message 'Installing the pinned Microsoft VC++ runtime required by Herdr'
+    Write-ProgressStatus -Phase 'development-provisioning' `
+        -Message 'Installing the pinned Microsoft VC++ runtime required by development tools and Herdr'
     $vcRuntimeInstaller = Join-Path $env:TEMP 'VC_redist.x64.exe'
     $vcRuntimeInstaller = Get-PinnedBootstrapAsset -Role 'VC++ runtime' -CacheKey 'vc-runtime' `
         -Uri $VCRuntimeUrl -ExpectedSHA256 $VCRuntimeSha256 -FileName 'VC_redist.x64.exe' `
@@ -772,6 +766,13 @@ try {
     if ($vcRuntimeProcess.ExitCode -notin @(0, 1638)) {
         throw "VC++ runtime installer exited with code $($vcRuntimeProcess.ExitCode)."
     }
+
+    Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
+    & $baseProvisioning -Phase 'Development' -ProjectProvisioningDirectory $projectProvisioningDirectory `
+        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
+        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
+    $powerShell7 = Get-PowerShell7Installation
+    $powerShell7Executable = $powerShell7.Executable
 
     Write-ProgressStatus -Phase 'herdr-install' -Message 'Provisioning the verified host Herdr runtime'
     $herdrInstallRoot = 'C:\HerdrSandbox'

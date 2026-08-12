@@ -22,6 +22,7 @@ import (
 const (
 	nativeAllStacksMarkerContents = "herdr-sandbox native-all-stacks fixture v1\n"
 	nativeAllStacksUpTimeout      = "90m"
+	nativeAllStacksSmokeGuestPath = `C:\Mounts\reference\native-all-stacks-smoke.ps1`
 )
 
 func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr error) {
@@ -207,8 +208,9 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
   }
 }
 `, fixture.ReadOnlyMount, fixture.WritableMount, fixture.HandyProject),
-		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"): "read-only-mount-ok\n",
-		filepath.Join(fixture.WritableMount, "host-worktrees.txt"): "read-write-mount-ok\n",
+		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"):          "read-only-mount-ok\n",
+		filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"): nativeAllStacksSmokeScript,
+		filepath.Join(fixture.WritableMount, "host-worktrees.txt"):          "read-write-mount-ok\n",
 		filepath.Join(fixture.AppData, "herdr-sandbox", "user.ps1"): `# herdr-sandbox-user-contract: 1
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -483,12 +485,7 @@ func runNativeAllStacksSmoke(ctx context.Context, fixture nativeAllStacksFixture
 		return errors.New("native all-stack test requires ssh.exe on PATH")
 	}
 	sshConfig := filepath.Join(fixture.LocalAppData, "herdr-sandbox", "ssh", "config")
-	arguments := []string{
-		"-F", sshConfig,
-		"sandbox",
-		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodeNativePowerShell(nativeAllStacksSmokeScript),
-	}
-	command := hiddenCommandContext(ctx, ssh, arguments...)
+	command := nativeAllStacksSmokeCommand(ctx, ssh, sshConfig)
 	command.Dir = fixture.Project
 	command.Env = environment
 	command.Stdout = stdout
@@ -497,6 +494,13 @@ func runNativeAllStacksSmoke(ctx context.Context, fixture nativeAllStacksFixture
 		return fmt.Errorf("run all-stack smoke over managed SSH: %w", err)
 	}
 	return nil
+}
+
+func nativeAllStacksSmokeCommand(ctx context.Context, ssh, sshConfig string) *hiddenprocess.Command {
+	return hiddenCommandContext(ctx, ssh,
+		"-T", "-F", sshConfig, "sandbox",
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass", "-File", nativeAllStacksSmokeGuestPath)
 }
 
 func encodeNativePowerShell(script string) string {
@@ -583,12 +587,19 @@ $tvcontrol = (Get-Command 'tvcontrol.cmd' -CommandType Application -ErrorAction 
 $cmake = (Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $glslc = (Get-Command 'glslc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $cl = (Get-Command 'cl.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$link = (Get-Command 'link.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $msbuild = (Get-Command 'msbuild.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $java = (Get-Command 'java.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $javac = (Get-Command 'javac.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
+$pythonAliasRoot = 'C:\HerdrSandbox\tools\python\bin'
+if ([IO.Path]::GetFullPath($python) -ine (Join-Path $pythonAliasRoot 'python.exe') -or
+    [IO.Path]::GetFullPath($python3) -ine (Join-Path $pythonAliasRoot 'python3.exe')) {
+    throw 'Python commands resolved from unexpected paths.'
+}
 $visualStudioRoot = 'C:\HerdrSandbox\toolchains\visual-studio'
 if (-not [IO.Path]::GetFullPath($cl).StartsWith($visualStudioRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+    -not [IO.Path]::GetFullPath($link).StartsWith($visualStudioRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
     -not [IO.Path]::GetFullPath($msbuild).StartsWith($visualStudioRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
     [string]::IsNullOrWhiteSpace($env:INCLUDE) -or [string]::IsNullOrWhiteSpace($env:LIB)) {
     throw 'C/C++ toolchain commands or environment are unavailable in the SSH session.'
@@ -598,10 +609,12 @@ $nativeRoot = Join-Path $root 'native'
 $cExecutable = Join-Path $nativeRoot 'smoke-c.exe'
 $cppExecutable = Join-Path $nativeRoot 'smoke-cpp.exe'
 $null = New-Item -ItemType Directory -Path $nativeRoot -Force
-$null = Invoke-SmokeTool 'c-compile' $cl @('/nologo','/W4','/WX','/TC','C:\Workspaces\project\smoke.c',"/Fo:$nativeRoot\smoke-c.obj","/Fe:$cExecutable")
+$null = Invoke-SmokeTool 'c-compile' $cl @('/nologo','/W4','/WX','/Z7','/TC','/c','C:\Workspaces\project\smoke.c',"/Fo:$nativeRoot\smoke-c.obj")
+$null = Invoke-SmokeTool 'c-link' $link @('/NOLOGO','/DEBUG:NONE',"/OUT:$cExecutable","$nativeRoot\smoke-c.obj")
 $cOutput = Invoke-SmokeTool 'c-run' $cExecutable @()
 Assert-SmokeOutput 'c-run' $cOutput 'native-c-ok'
-$null = Invoke-SmokeTool 'cpp-compile' $cl @('/nologo','/W4','/WX','/EHsc','/std:c++20','/TP','C:\Workspaces\project\smoke.cpp',"/Fo:$nativeRoot\smoke-cpp.obj","/Fe:$cppExecutable")
+$null = Invoke-SmokeTool 'cpp-compile' $cl @('/nologo','/W4','/WX','/Z7','/EHsc','/std:c++20','/TP','/c','C:\Workspaces\project\smoke.cpp',"/Fo:$nativeRoot\smoke-cpp.obj")
+$null = Invoke-SmokeTool 'cpp-link' $link @('/NOLOGO','/DEBUG:NONE',"/OUT:$cppExecutable","$nativeRoot\smoke-cpp.obj")
 $cppOutput = Invoke-SmokeTool 'cpp-run' $cppExecutable @()
 Assert-SmokeOutput 'cpp-run' $cppOutput 'native-cpp-ok'
 
@@ -694,21 +707,28 @@ if ([string]$tradingViewManifest.Package.Identity.Name -cne 'TradingView.Desktop
     throw 'TradingView Desktop package identity is invalid.'
 }
 $tvControlRoot = 'C:\HerdrSandbox\tools\tvcontrol'
+$expectedTVCommand = Join-Path $tvControlRoot 'tv.cmd'
+$expectedTVControlCommand = Join-Path $tvControlRoot 'tvcontrol.cmd'
+if ([IO.Path]::GetFullPath($tv) -ine [IO.Path]::GetFullPath($expectedTVCommand) -or
+    [IO.Path]::GetFullPath($tvcontrol) -ine [IO.Path]::GetFullPath($expectedTVControlCommand)) {
+    throw 'TVControl commands resolved from unexpected paths.'
+}
 $tvControlPackagePath = Join-Path $tvControlRoot 'node_modules\@ferroxlabs\tvcontrol\package.json'
 $tvControlPackage = [IO.File]::ReadAllText($tvControlPackagePath) | ConvertFrom-Json
+$tvBin = [string]$tvControlPackage.bin.tv
+$tvControlBin = [string]$tvControlPackage.bin.tvcontrol
 if ([string]$tvControlPackage.name -cne '@ferroxlabs/tvcontrol' -or
     [string]$tvControlPackage.version -notmatch '^\d+\.\d+\.\d+$' -or
-    [string]$tvControlPackage.bin.tv -cne [string]$tvControlPackage.bin.tvcontrol) {
+    [string]::IsNullOrWhiteSpace($tvBin) -or [string]::IsNullOrWhiteSpace($tvControlBin) -or
+    $tvBin -ceq $tvControlBin) {
     throw 'TVControl installed package identity is invalid.'
 }
 $tvHelp = Invoke-SmokeTool 'tvcontrol-help' $tv @('--help')
 Assert-SmokeOutput 'tvcontrol-help' $tvHelp 'Usage: tv <command> [options]'
-$tvControlHelp = Invoke-SmokeTool 'tvcontrol-alias-help' $tvcontrol @('--help')
-Assert-SmokeOutput 'tvcontrol-alias-help' $tvControlHelp 'TradingView with CDP enabled'
 foreach ($shim in @((Join-Path $tvControlRoot 'tv.ps1'), (Join-Path $tvControlRoot 'tvcontrol.ps1'))) {
     if (Test-Path -LiteralPath $shim) { throw "TVControl PowerShell shim remains installed: $shim" }
 }
-[Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload and TVControl CLI OK; launch intentionally skipped')
+[Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload, TVControl command mappings, and CLI help OK; launch intentionally skipped')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'
@@ -741,7 +761,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $uvRoot 'uv.lock') -PathType Leaf) -
 
 $null = Invoke-SmokeTool 'cargo-version' $cargo @('--version')
 $null = Invoke-SmokeTool 'bun-version' $bun @('--version')
-$bunOutput = Invoke-SmokeTool 'bun-run' $bun @('-e','console.log("bun-smoke-ok")')
+$bunOutput = Invoke-SmokeTool 'bun-run' $bun @('-e',"console.log('bun-smoke-ok')")
 Assert-SmokeOutput 'bun-run' $bunOutput 'bun-smoke-ok'
 $null = Invoke-SmokeTool 'cargo-nextest-version' $nextest @('--version')
 $null = Invoke-SmokeTool 'just-version' $just @('--version')

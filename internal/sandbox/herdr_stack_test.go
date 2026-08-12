@@ -58,7 +58,7 @@ func TestHerdrVirtualStackComposesMaintainedProjectRequirements(t *testing.T) {
 	}
 }
 
-func TestPythonStackOwnsPython3Command(t *testing.T) {
+func TestPythonStackOwnsAppLocalPythonCommands(t *testing.T) {
 	text := readDefaultStackProvisioning(t)
 	start := strings.Index(text, "function Install-PythonStack")
 	if start < 0 {
@@ -71,13 +71,20 @@ func TestPythonStackOwnsPython3Command(t *testing.T) {
 	section := text[start : start+end]
 	last := -1
 	for _, required := range []string{
-		"$pythonPath = Wait-ProvisioningCommandAvailable",
-		"Python ready:",
 		"C:\\HerdrSandbox\\tools\\python\\bin",
+		"$pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'",
+		"$python3 = Join-Path $pythonAliasDirectory 'python3.exe'",
+		"$pythonSourceExclusions = @('*\\Microsoft\\WindowsApps\\python.exe', $pythonAlias)",
+		"$pythonPath = Wait-ProvisioningCommandAvailable",
+		"-CommandSourceExclusion $pythonSourceExclusions",
+		"Python ready:",
 		"$pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash",
-		"Copy-Item -LiteralPath $pythonPath -Destination $python3 -Force",
-		"$resolvedPython3 = Wait-ProvisioningCommandAvailable",
+		"foreach ($pythonCommand in @($pythonAlias, $python3))",
+		"Copy-Item -LiteralPath $pythonPath -Destination $pythonCommand -Force",
+		"$resolvedPython = Wait-ProvisioningCommandAvailable",
 		"[regex]::Escape($pythonVersion)",
+		"$resolvedPython3 = Wait-ProvisioningCommandAvailable",
+		"App-local Python command ready:",
 		"Python 3 command ready:",
 	} {
 		index := strings.Index(section, required)
@@ -86,8 +93,8 @@ func TestPythonStackOwnsPython3Command(t *testing.T) {
 		}
 		last = index
 	}
-	if !strings.Contains(section, "Get-FileHash -LiteralPath $python3 -Algorithm SHA256") {
-		t.Fatal("Python stack does not verify the copied Python 3 command")
+	if !strings.Contains(section, "Get-FileHash -LiteralPath $pythonCommand -Algorithm SHA256") {
+		t.Fatal("Python stack does not verify the copied app-local commands")
 	}
 	if strings.Contains(section, "tools\\herdr") || strings.Contains(section, "Herdr Python") {
 		t.Fatal("generic Python command compatibility remains Herdr-specific")
