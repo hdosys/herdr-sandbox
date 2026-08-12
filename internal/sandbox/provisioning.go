@@ -51,7 +51,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"updateGitRepositories\": true,\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -172,20 +172,22 @@ type workspaceDiscoveryConfiguration struct {
 }
 
 type codingAgentSyncConfiguration struct {
-	OpenCode      bool `json:"opencode"`
-	ClaudeCode    bool `json:"claudeCode"`
-	Codex         bool `json:"codex"`
-	GitHubCopilot bool `json:"githubCopilot"`
-	Pi            bool `json:"pi"`
+	UpdateGitRepositories bool `json:"updateGitRepositories"`
+	OpenCode              bool `json:"opencode"`
+	ClaudeCode            bool `json:"claudeCode"`
+	Codex                 bool `json:"codex"`
+	GitHubCopilot         bool `json:"githubCopilot"`
+	Pi                    bool `json:"pi"`
 }
 
 func defaultCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
 	return codingAgentSyncConfiguration{
-		OpenCode:      true,
-		ClaudeCode:    true,
-		Codex:         true,
-		GitHubCopilot: true,
-		Pi:            true,
+		UpdateGitRepositories: true,
+		OpenCode:              true,
+		ClaudeCode:            true,
+		Codex:                 true,
+		GitHubCopilot:         true,
+		Pi:                    true,
 	}
 }
 
@@ -926,6 +928,8 @@ func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncC
 			return codingAgentSyncConfiguration{}, fmt.Errorf("field %q: %w", name, err)
 		}
 		switch name {
+		case "updateGitRepositories":
+			configuration.UpdateGitRepositories = enabled
 		case "opencode":
 			configuration.OpenCode = enabled
 		case "claudeCode":

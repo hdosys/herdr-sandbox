@@ -81,6 +81,11 @@ These are deliberate non-guarantees:
   and known credential/runtime paths are excluded or rejected, but remote URLs or
   historical objects may still contain secrets. Disable that agent's sync unless
   its complete configuration-repository history is safe for guest processes.
+- Default-on coding-agent Git updates contact each configured upstream and may
+  fast-forward the selected host configuration repositories before transfer. They
+  use existing host Git credential configuration without opening an interactive
+  prompt. Treat each configured remote as trusted host configuration input, or set
+  `codingAgentSync.updateGitRepositories` to `false` for copy-only behavior.
 - OpenCode's guest-managed policy grants all permissions. Defender cloud/security
   features and SmartScreen are intentionally restricted in the disposable guest.
   This favors an unrestricted development environment, not hostile-code

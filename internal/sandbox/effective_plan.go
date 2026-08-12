@@ -51,6 +51,7 @@ type EffectivePlan struct {
 	Tailscale                   bool
 	MobileSSHAuthorizedKeyCount int
 	WindowsTerminal             string
+	UpdateAgentGitRepositories  bool
 	CodingAgents                []string
 	GlobalStacks                []string
 	Packages                    []EffectivePackage
@@ -103,6 +104,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		Tailscale:                   provisioning.Tailscale,
 		MobileSSHAuthorizedKeyCount: len(provisioning.MobileSSHAuthorizedKeys),
 		WindowsTerminal:             provisioning.WindowsTerminal.Edition,
+		UpdateAgentGitRepositories:  provisioning.CodingAgentSync.UpdateGitRepositories,
 		CodingAgents:                codingAgentSyncNames(provisioning.CodingAgentSync),
 		RequiresVisualStudio:        requiresVisualStudio,
 	}

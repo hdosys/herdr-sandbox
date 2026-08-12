@@ -622,6 +622,7 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
 	fmt.Fprintf(output, "  Mobile SSH authorized keys: %d\n", plan.MobileSSHAuthorizedKeyCount)
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
+	fmt.Fprintf(output, "  Update agent Git repositories: %s\n", enabledDisabled(plan.UpdateAgentGitRepositories))
 
 	fmt.Fprintln(output, "\nCoding agents")
 	printBulletList(output, sortedFold(plan.CodingAgents), "  ")

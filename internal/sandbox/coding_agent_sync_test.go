@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,7 @@ func TestLoadGlobalConfigurationDefaultsAndOverridesCodingAgentSync(t *testing.T
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	want := codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: false, GitHubCopilot: true, Pi: true}
+	want := codingAgentSyncConfiguration{UpdateGitRepositories: true, OpenCode: true, ClaudeCode: true, Codex: false, GitHubCopilot: true, Pi: true}
 	if configuration.CodingAgentSync != want {
 		t.Fatalf("codingAgentSync = %#v, want %#v", configuration.CodingAgentSync, want)
 	}
@@ -43,6 +44,7 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 		`{"codingAgentSync":{"codex":null}}`,
 		`{"codingAgentSync":{"codex":"true"}}`,
 		`{"codingAgentSync":{"openCode":true}}`,
+		`{"codingAgentSync":{"updateGitRepositories":null}}`,
 		`{"codingAgentSync":{"codex":true,"codex":false}}`,
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
@@ -50,6 +52,22 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 		if _, err := loadGlobalConfiguration(path); err == nil {
 			t.Fatalf("invalid codingAgentSync unexpectedly succeeded: %s", input)
 		}
+	}
+}
+
+func TestLoadGlobalConfigurationCanDisableGitRepositoryUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeTestFile(t, path, `{"codingAgentSync":{"updateGitRepositories":false}}`)
+	configuration, err := loadGlobalConfiguration(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.CodingAgentSync.UpdateGitRepositories {
+		t.Fatalf("codingAgentSync Git update remained enabled: %#v", configuration.CodingAgentSync)
+	}
+	if !configuration.CodingAgentSync.OpenCode || !configuration.CodingAgentSync.ClaudeCode || !configuration.CodingAgentSync.Codex ||
+		!configuration.CodingAgentSync.GitHubCopilot || !configuration.CodingAgentSync.Pi {
+		t.Fatalf("disabling Git update changed agent selections: %#v", configuration.CodingAgentSync)
 	}
 }
 
@@ -198,10 +216,12 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, packagePlan, string(packagePlanData))
 	herdrConfig := filepath.Join(root, "herdr.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
+	copyOnlySelection := defaultCodingAgentSyncConfiguration()
+	copyOnlySelection.UpdateGitRepositories = false
 
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		CodingAgents: codingAgentConfigurationSources{
-			Selection:                defaultCodingAgentSyncConfiguration(),
+			Selection:                copyOnlySelection,
 			OpenCodeDirectory:        openCode,
 			OpenCodeAuthentication:   openCodeAuth,
 			ClaudeCodeDirectory:      claude,
@@ -382,6 +402,222 @@ func TestArchiveAgentGitRepositoryRestoresUpstreamAndTrackedChanges(t *testing.T
 	runAgentGitTest(t, restored, "fsck", "--no-dangling")
 }
 
+func TestUpdateAgentGitRepositoryFastForwardsBeforeArchivingAndPreservesLocalChanges(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
+	seed := filepath.Join(root, "seed")
+	initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json", "README.md"})
+	repository := filepath.Join(root, "host")
+	runAgentGitTest(t, root, "clone", remote, repository)
+	hookMarker := filepath.Join(root, "post-merge-ran")
+	hook := filepath.Join(repository, ".git", "hooks", "post-merge")
+	writeTestFile(t, hook, "#!/bin/sh\nprintf ran > '"+filepath.ToSlash(hookMarker)+"'\n")
+	configuredHookMarker := filepath.Join(root, "configured-hook-ran")
+	runAgentGitTest(t, repository, "config", "hook.audit.command", "printf ran > '"+filepath.ToSlash(configuredHookMarker)+"'")
+	for _, event := range disabledAgentGitUpdateHookEvents {
+		runAgentGitTest(t, repository, "config", "--add", "hook.audit.event", event)
+	}
+	writeTestFile(t, filepath.Join(seed, "opencode.json"), `{"version":2}`)
+	runAgentGitTest(t, seed, "add", "--", "opencode.json")
+	runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
+	runAgentGitTest(t, seed, "push", "origin", "main")
+
+	writeTestFile(t, filepath.Join(repository, "README.md"), "local edit")
+	if err := updateAgentGitRepository(context.Background(), repository); err != nil {
+		t.Fatalf("updateAgentGitRepository: %v", err)
+	}
+	if _, err := os.Lstat(hookMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("automatic update executed a Git hook: %v", err)
+	}
+	if _, err := os.Lstat(configuredHookMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("automatic update executed a configured Git hook: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(repository, "opencode.json")); err != nil || string(got) != `{"version":2}` {
+		t.Fatalf("fast-forwarded config = %q, err = %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(repository, "README.md")); err != nil || string(got) != "local edit" {
+		t.Fatalf("local change = %q, err = %v", got, err)
+	}
+	if head, upstream := strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "HEAD")), strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "@{upstream}")); head != upstream {
+		t.Fatalf("fast-forwarded HEAD %s does not match upstream %s", head, upstream)
+	}
+	if got := strings.TrimSpace(runAgentGitTest(t, repository, "status", "--porcelain=v1")); got != "M README.md" {
+		t.Fatalf("updated repository status = %q", got)
+	}
+}
+
+func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testing.T) {
+	t.Run("repository without remotes", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		runAgentGitTest(t, repository, "init", "--initial-branch=main")
+		configureAgentGitTestIdentity(t, repository)
+		runAgentGitTest(t, repository, "add", "--", "opencode.json")
+		runAgentGitTest(t, repository, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "fixture")
+		head := strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "HEAD"))
+		if err := updateAgentGitRepository(context.Background(), repository); err != nil {
+			t.Fatalf("repository without remotes: %v", err)
+		}
+		if got := strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "HEAD")); got != head {
+			t.Fatalf("repository without remotes changed HEAD from %s to %s", head, got)
+		}
+	})
+
+	t.Run("remote without upstream", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		runAgentGitTest(t, repository, "config", "--unset", "branch.main.remote")
+		runAgentGitTest(t, repository, "config", "--unset", "branch.main.merge")
+		if err := updateAgentGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "no upstream") {
+			t.Fatalf("missing upstream error = %v", err)
+		}
+	})
+
+	t.Run("detached head", func(t *testing.T) {
+		repository := filepath.Join(t.TempDir(), "opencode")
+		if err := os.MkdirAll(repository, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
+		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
+		runAgentGitTest(t, repository, "checkout", "--detach")
+		if err := updateAgentGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "must be on a branch") {
+			t.Fatalf("detached HEAD error = %v", err)
+		}
+	})
+
+	t.Run("diverged", func(t *testing.T) {
+		root := t.TempDir()
+		remote := filepath.Join(root, "remote.git")
+		runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
+		seed := filepath.Join(root, "seed")
+		initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json"})
+		host := filepath.Join(root, "host")
+		runAgentGitTest(t, root, "clone", remote, host)
+		configureAgentGitTestIdentity(t, host)
+		writeTestFile(t, filepath.Join(host, "host.md"), "host")
+		runAgentGitTest(t, host, "add", "--", "host.md")
+		runAgentGitTest(t, host, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "host")
+		hostHead := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD"))
+		writeTestFile(t, filepath.Join(seed, "remote.md"), "remote")
+		runAgentGitTest(t, seed, "add", "--", "remote.md")
+		runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "remote")
+		runAgentGitTest(t, seed, "push", "origin", "main")
+		if err := updateAgentGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
+			t.Fatalf("diverged update error = %v", err)
+		}
+		if got := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD")); got != hostHead {
+			t.Fatalf("diverged update changed HEAD from %s to %s", hostHead, got)
+		}
+	})
+
+	t.Run("overlapping working tree change", func(t *testing.T) {
+		root := t.TempDir()
+		remote := filepath.Join(root, "remote.git")
+		runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
+		seed := filepath.Join(root, "seed")
+		initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json"})
+		host := filepath.Join(root, "host")
+		runAgentGitTest(t, root, "clone", remote, host)
+		writeTestFile(t, filepath.Join(host, "opencode.json"), `{"version":"local"}`)
+		hostHead := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD"))
+		writeTestFile(t, filepath.Join(seed, "opencode.json"), `{"version":"upstream"}`)
+		runAgentGitTest(t, seed, "add", "--", "opencode.json")
+		runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
+		runAgentGitTest(t, seed, "push", "origin", "main")
+		if err := updateAgentGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
+			t.Fatalf("overlapping change update error = %v", err)
+		}
+		if got := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD")); got != hostHead {
+			t.Fatalf("overlapping change update changed HEAD from %s to %s", hostHead, got)
+		}
+		if got, err := os.ReadFile(filepath.Join(host, "opencode.json")); err != nil || string(got) != `{"version":"local"}` {
+			t.Fatalf("overlapping change update changed local file to %q: %v", got, err)
+		}
+		if _, err := os.Lstat(filepath.Join(host, ".git", "MERGE_HEAD")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("overlapping change left merge state: %v", err)
+		}
+	})
+}
+
+func TestArchiveCodingAgentConfigurationUpdatesBeforeReadingAllowlistedFiles(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
+	seed := filepath.Join(root, "seed")
+	initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json"})
+	host := filepath.Join(root, "host")
+	runAgentGitTest(t, root, "clone", remote, host)
+	writeTestFile(t, filepath.Join(seed, "opencode.json"), `{"version":2}`)
+	runAgentGitTest(t, seed, "add", "--", "opencode.json")
+	runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
+	runAgentGitTest(t, seed, "push", "origin", "main")
+
+	archived := map[string][]byte{}
+	err := archiveCodingAgentConfiguration(context.Background(), codingAgentConfigurationSources{
+		Selection:         codingAgentSyncConfiguration{UpdateGitRepositories: true, OpenCode: true},
+		OpenCodeDirectory: host,
+	}, func(source, destination string) error {
+		contents, readErr := os.ReadFile(source)
+		if readErr == nil {
+			archived[filepath.ToSlash(destination)] = contents
+		}
+		return readErr
+	}, func(contents []byte, destination, _ string) error {
+		archived[filepath.ToSlash(destination)] = append([]byte(nil), contents...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(archived["opencode/opencode.json"]); got != `{"version":2}` {
+		t.Fatalf("archived config = %q", got)
+	}
+}
+
+func TestArchiveCodingAgentConfigurationCanSkipGitRepositoryUpdate(t *testing.T) {
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
+	seed := filepath.Join(root, "seed")
+	initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json"})
+	host := filepath.Join(root, "host")
+	runAgentGitTest(t, root, "clone", remote, host)
+	writeTestFile(t, filepath.Join(seed, "opencode.json"), `{"version":2}`)
+	runAgentGitTest(t, seed, "add", "--", "opencode.json")
+	runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
+	runAgentGitTest(t, seed, "push", "origin", "main")
+
+	archived := map[string][]byte{}
+	err := archiveCodingAgentConfiguration(context.Background(), codingAgentConfigurationSources{
+		Selection:         codingAgentSyncConfiguration{OpenCode: true},
+		OpenCodeDirectory: host,
+	}, func(source, destination string) error {
+		contents, readErr := os.ReadFile(source)
+		if readErr == nil {
+			archived[filepath.ToSlash(destination)] = contents
+		}
+		return readErr
+	}, func(contents []byte, destination, _ string) error {
+		archived[filepath.ToSlash(destination)] = append([]byte(nil), contents...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(archived["opencode/opencode.json"]); got != "opencode.json" {
+		t.Fatalf("disabled Git update archived %q", got)
+	}
+}
+
 func TestArchiveAgentGitRepositoryRejectsTrackedCredentialsAndGitFiles(t *testing.T) {
 	t.Run("tracked credential", func(t *testing.T) {
 		repository := filepath.Join(t.TempDir(), "codex")
@@ -478,15 +714,26 @@ func TestArchiveAgentGitRepositoryRejectsTrackedCredentialsAndGitFiles(t *testin
 }
 
 func TestAgentGitEnvironmentDropsInheritedOverrides(t *testing.T) {
-	environment := agentGitEnvironment([]string{"PATH=C:\\tools", "GIT_DIR=C:\\outside", "git_work_tree=C:\\worktree", "OTHER=value"})
+	environment := agentGitEnvironment([]string{"PATH=C:\\tools", "GIT_DIR=C:\\outside", "git_work_tree=C:\\worktree", "GCM_INTERACTIVE=Always", "GCM_TRACE=1", "SSH_ASKPASS_REQUIRE=force", "OTHER=value"})
 	joined := strings.ToUpper(strings.Join(environment, "\n"))
-	if strings.Contains(joined, "GIT_DIR=C:\\OUTSIDE") || strings.Contains(joined, "GIT_WORK_TREE=C:\\WORKTREE") {
+	if strings.Contains(joined, "GIT_DIR=C:\\OUTSIDE") || strings.Contains(joined, "GIT_WORK_TREE=C:\\WORKTREE") ||
+		strings.Contains(joined, "GCM_INTERACTIVE=ALWAYS") || strings.Contains(joined, "GCM_TRACE=1") || strings.Contains(joined, "SSH_ASKPASS_REQUIRE=FORCE") {
 		t.Fatalf("inherited Git override survived: %q", environment)
 	}
-	for _, required := range []string{"GIT_CONFIG_GLOBAL=", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "OTHER=VALUE"} {
+	for _, required := range []string{"GIT_CONFIG_GLOBAL=", "GIT_CONFIG_NOSYSTEM=1", "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=NEVER", "SSH_ASKPASS_REQUIRE=NEVER", "OTHER=VALUE"} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("Git environment is missing %q: %q", required, environment)
 		}
+	}
+	updateEnvironment := strings.ToUpper(strings.Join(agentGitUpdateEnvironment([]string{"PATH=C:\\tools", "GIT_DIR=C:\\outside", "GCM_INTERACTIVE=Always", "GCM_TRACE=1", "SSH_ASKPASS_REQUIRE=force", "OTHER=value"}), "\n"))
+	for _, required := range []string{"GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=NEVER", "SSH_ASKPASS_REQUIRE=NEVER", "GIT_SSH_COMMAND=SSH -OBATCHMODE=YES", "OTHER=VALUE"} {
+		if !strings.Contains(updateEnvironment, required) {
+			t.Fatalf("Git update environment is missing %q: %q", required, updateEnvironment)
+		}
+	}
+	if strings.Contains(updateEnvironment, "GIT_DIR=C:\\OUTSIDE") || strings.Contains(updateEnvironment, "GIT_CONFIG_GLOBAL=") ||
+		strings.Contains(updateEnvironment, "GCM_INTERACTIVE=ALWAYS") || strings.Contains(updateEnvironment, "GCM_TRACE=1") || strings.Contains(updateEnvironment, "SSH_ASKPASS_REQUIRE=FORCE") {
+		t.Fatalf("Git update environment retained overrides or discarded user configuration: %q", updateEnvironment)
 	}
 }
 
@@ -706,16 +953,55 @@ func initializeAgentGitRepository(t *testing.T, directory, name string, tracked 
 	runAgentGitTest(t, directory, "update-ref", "refs/remotes/origin/main", "HEAD")
 }
 
+func initializeAgentGitRepositoryAtRemote(t *testing.T, directory, remote string, tracked []string) {
+	t.Helper()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range tracked {
+		path := filepath.Join(directory, filepath.FromSlash(relative))
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, path, relative)
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runAgentGitTest(t, directory, "init", "--initial-branch=main")
+	configureAgentGitTestIdentity(t, directory)
+	arguments := append([]string{"add", "--"}, tracked...)
+	runAgentGitTest(t, directory, arguments...)
+	runAgentGitTest(t, directory, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "fixture")
+	runAgentGitTest(t, directory, "remote", "add", "origin", remote)
+	runAgentGitTest(t, directory, "push", "--set-upstream", "origin", "main")
+}
+
+func configureAgentGitTestIdentity(t *testing.T, directory string) {
+	t.Helper()
+	runAgentGitTest(t, directory, "config", "user.name", "Herdr Sandbox Test")
+	runAgentGitTest(t, directory, "config", "user.email", "herdr-sandbox@example.invalid")
+}
+
 func runAgentGitTest(t *testing.T, directory string, arguments ...string) string {
 	t.Helper()
 	commandArguments := append([]string{"-C", directory}, arguments...)
 	command := hiddenCommand("git", commandArguments...)
-	command.Env = agentGitEnvironment(command.Env)
+	command.Env = agentGitTestEnvironment(command.Env)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(arguments, " "), err, output)
 	}
 	return string(output)
+}
+
+func agentGitTestEnvironment(parent []string) []string {
+	return append(withoutAgentGitOverrides(parent),
+		"GIT_TERMINAL_PROMPT=0",
+		"GCM_INTERACTIVE=Never",
+		"SSH_ASKPASS_REQUIRE=never",
+	)
 }
 
 func readConfigurationArchiveForTest(t *testing.T, data []byte) (map[string]bool, map[string][]byte) {

@@ -29,6 +29,12 @@ release notes remain available on the
 
 ### Changed
 
+- Git-backed coding-agent configuration now fast-forwards from its configured
+  upstream on the host before transfer by default. Local edits are retained when
+  Git can update safely; divergence, conflicts, missing upstream configuration,
+  authentication, network, and timeout failures stop the sync for explicit user
+  resolution. Set `codingAgentSync.updateGitRepositories` to `false` for copy-only
+  behavior.
 - Fresh configurations now select every coding agent with a verified WinGet
   package. Remove unwanted entries from `wingetPackages.add` before provisioning.
 - Fresh interactive setup now offers a checked option on the Finish page to open

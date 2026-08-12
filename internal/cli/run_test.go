@@ -566,15 +566,16 @@ func TestRunPlanUsesOnlyReadOnlyResolver(t *testing.T) {
 
 func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	plan := sandbox.EffectivePlan{
-		ConfigurationPath:   `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`,
-		ConfigurationExists: true,
-		UserScriptPath:      `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
-		CacheDirectory:      `D:\herdr-cache`,
-		WorktreeDirectory:   `E:\herdr-worktrees`,
-		MemoryMB:            32768,
-		WindowsTerminal:     "stable",
-		CodingAgents:        []string{"OpenCode", "Claude Code"},
-		GlobalStacks:        []string{"rust", "go"},
+		ConfigurationPath:          `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`,
+		ConfigurationExists:        true,
+		UserScriptPath:             `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
+		CacheDirectory:             `D:\herdr-cache`,
+		WorktreeDirectory:          `E:\herdr-worktrees`,
+		MemoryMB:                   32768,
+		WindowsTerminal:            "stable",
+		UpdateAgentGitRepositories: true,
+		CodingAgents:               []string{"OpenCode", "Claude Code"},
+		GlobalStacks:               []string{"rust", "go"},
 		Packages: []sandbox.EffectivePackage{
 			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
 		},
@@ -594,7 +595,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
-		"Mobile SSH authorized keys: 0",
+		"Mobile SSH authorized keys: 0", "Update agent Git repositories: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",

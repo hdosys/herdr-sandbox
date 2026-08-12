@@ -132,6 +132,11 @@ func archiveCodingAgentConfiguration(
 	add func(string, string) error,
 	addData func([]byte, string, string) error,
 ) error {
+	if sources.Selection.UpdateGitRepositories {
+		if err := updateCodingAgentGitRepositories(ctx, sources); err != nil {
+			return err
+		}
+	}
 	archivedDestinations := map[string]string{}
 	gitTrackedDeletions := map[string][]string{}
 	addConfiguration := func(source, destination string) error {
@@ -255,6 +260,36 @@ func archiveCodingAgentConfiguration(
 		return err
 	}
 	return addData(manifest, codingAgentSyncManifestArchivePath, "coding-agent sync manifest")
+}
+
+func updateCodingAgentGitRepositories(ctx context.Context, sources codingAgentConfigurationSources) error {
+	repositories := []struct {
+		enabled   bool
+		name      string
+		directory string
+	}{
+		{sources.Selection.OpenCode, "OpenCode", sources.OpenCodeDirectory},
+		{sources.Selection.ClaudeCode, "Claude Code", sources.ClaudeCodeDirectory},
+		{sources.Selection.Codex, "Codex", sources.CodexDirectory},
+		{sources.Selection.GitHubCopilot, "GitHub Copilot", sources.GitHubCopilotDirectory},
+		{sources.Selection.Pi, "Pi", sources.PiDirectory},
+		{sources.SharedSkillsDirectory != "", "shared agent skills", sources.SharedSkillsDirectory},
+	}
+	updated := map[string]bool{}
+	for _, repository := range repositories {
+		if !repository.enabled || repository.directory == "" {
+			continue
+		}
+		identity := strings.ToLower(filepath.Clean(repository.directory))
+		if updated[identity] {
+			continue
+		}
+		updated[identity] = true
+		if err := updateAgentGitRepository(ctx, repository.directory); err != nil {
+			return fmt.Errorf("update %s configuration before sync: %w", repository.name, err)
+		}
+	}
+	return nil
 }
 
 func archiveCodexConfiguration(directory string, add func(string, string) error) error {

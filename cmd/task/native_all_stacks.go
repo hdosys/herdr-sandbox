@@ -188,6 +188,7 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
     }
   },
   "codingAgentSync": {
+    "updateGitRepositories": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,

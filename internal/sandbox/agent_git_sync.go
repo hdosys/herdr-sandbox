@@ -15,8 +15,18 @@ import (
 
 const (
 	agentGitInspectionTimeout = 30 * time.Second
+	agentGitUpdateTimeout     = 2 * time.Minute
 	maximumAgentGitOutput     = 4 * 1024 * 1024
 )
+
+var disabledAgentGitUpdateHookEvents = []string{
+	"commit-msg",
+	"post-index-change",
+	"post-merge",
+	"pre-auto-gc",
+	"pre-merge-commit",
+	"reference-transaction",
+}
 
 var excludedAgentGitMetadataDirectories = map[string]bool{
 	"hooks":    true,
@@ -53,6 +63,95 @@ var rejectedAgentGitMetadataFiles = map[string]bool{
 	"revert_head":      true,
 }
 
+func updateAgentGitRepository(ctx context.Context, directory string) error {
+	if directory == "" {
+		return nil
+	}
+	gitDirectory := filepath.Join(directory, ".git")
+	info, err := os.Lstat(gitDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect agent Git directory before update: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("agent configuration Git metadata must be one physical .git directory: %s", gitDirectory)
+	}
+	gitExecutable, err := findAgentGitExecutable()
+	if err != nil {
+		return err
+	}
+
+	updateContext, cancel := context.WithTimeout(ctx, agentGitUpdateTimeout)
+	defer cancel()
+	if err := validateAgentGitRepository(updateContext, gitExecutable, directory, gitDirectory); err != nil {
+		return err
+	}
+	remotesOutput, err := runAgentGit(updateContext, gitExecutable, directory, 32*1024, "enumerate agent configuration remotes", "remote")
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(remotesOutput)) == 0 {
+		return nil
+	}
+	configuredRemotes := splitAgentGitLines(remotesOutput)
+	branchOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve agent configuration branch",
+		"symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return fmt.Errorf("agent configuration repository must be on a branch before automatic update: %w", err)
+	}
+	branch := strings.TrimSpace(string(branchOutput))
+	if !strings.HasPrefix(branch, "refs/heads/") || strings.TrimPrefix(branch, "refs/heads/") == "" || strings.ContainsAny(branch, "\x00\r\n") {
+		return errors.New("agent configuration repository returned an invalid current branch")
+	}
+	upstreamOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve agent configuration upstream",
+		"for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", "--count=1", branch)
+	if err != nil {
+		return err
+	}
+	upstreamFields := bytes.Split(bytes.TrimRight(upstreamOutput, "\r\n"), []byte{0})
+	if (len(upstreamFields) == 1 && len(upstreamFields[0]) == 0) ||
+		(len(upstreamFields) == 2 && len(upstreamFields[0]) == 0 && len(upstreamFields[1]) == 0) {
+		return errors.New("agent configuration repository has remotes but its current branch has no upstream; configure one or disable codingAgentSync.updateGitRepositories")
+	}
+	if len(upstreamFields) != 2 || len(upstreamFields[0]) == 0 || len(upstreamFields[1]) == 0 ||
+		!utf8.Valid(upstreamFields[0]) || !utf8.Valid(upstreamFields[1]) ||
+		bytes.ContainsAny(upstreamFields[0], "\r\n") || bytes.ContainsAny(upstreamFields[1], "\r\n") {
+		return errors.New("agent configuration repository returned invalid upstream metadata")
+	}
+	remoteRef := string(upstreamFields[1])
+	upstreamRemote := string(upstreamFields[0])
+	remoteConfigured := false
+	for _, remote := range configuredRemotes {
+		if remote == upstreamRemote {
+			remoteConfigured = true
+			break
+		}
+	}
+	if !remoteConfigured {
+		return fmt.Errorf("agent configuration upstream does not use a configured remote: %q", upstreamRemote)
+	}
+	if !strings.HasPrefix(remoteRef, "refs/heads/") || strings.TrimPrefix(remoteRef, "refs/heads/") == "" {
+		return fmt.Errorf("agent configuration upstream is not a remote branch: %s", remoteRef)
+	}
+
+	pullArguments := []string{
+		"-c", "core.hooksPath=" + os.DevNull,
+		"-c", "credential.interactive=false",
+		"-c", "credential.modalPrompt=false",
+	}
+	for _, event := range disabledAgentGitUpdateHookEvents {
+		pullArguments = append(pullArguments, "-c", "hook."+event+".enabled=false")
+	}
+	pullArguments = append(pullArguments,
+		"pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-verify", "--no-recurse-submodules", "--no-tags", "--quiet", "--", upstreamRemote, remoteRef)
+	if _, err := runAgentGitUpdate(updateContext, gitExecutable, directory, 32*1024, "fast-forward agent configuration from its upstream", pullArguments...); err != nil {
+		return fmt.Errorf("update agent configuration repository %s; resolve local changes, divergence, authentication, or network access on the host, or disable codingAgentSync.updateGitRepositories: %w", directory, err)
+	}
+	return nil
+}
+
 func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot string, add func(string, string) error) ([]string, error) {
 	if directory == "" {
 		return nil, nil
@@ -68,12 +167,9 @@ func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot strin
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, fmt.Errorf("agent configuration Git metadata must be one physical .git directory: %s", gitDirectory)
 	}
-	gitExecutable, err := exec.LookPath("git.exe")
+	gitExecutable, err := findAgentGitExecutable()
 	if err != nil {
-		gitExecutable, err = exec.LookPath("git")
-	}
-	if err != nil {
-		return nil, errors.New("Git is required to inspect an agent configuration repository")
+		return nil, err
 	}
 
 	inspectionContext, cancel := context.WithTimeout(ctx, agentGitInspectionTimeout)
@@ -110,6 +206,17 @@ func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot strin
 		return nil, err
 	}
 	return deleted, nil
+}
+
+func findAgentGitExecutable() (string, error) {
+	gitExecutable, err := exec.LookPath("git.exe")
+	if err != nil {
+		gitExecutable, err = exec.LookPath("git")
+	}
+	if err != nil {
+		return "", errors.New("Git is required to inspect or update an agent configuration repository")
+	}
+	return gitExecutable, nil
 }
 
 func validateAgentGitRepository(ctx context.Context, gitExecutable, directory, gitDirectory string) error {
@@ -281,10 +388,22 @@ func archiveAgentGitMetadata(directory, archiveRoot string, add func(string, str
 }
 
 func runAgentGit(ctx context.Context, executable, directory string, maximumOutput int, role string, arguments ...string) ([]byte, error) {
+	return runAgentGitCommand(ctx, executable, directory, maximumOutput, role, false, arguments...)
+}
+
+func runAgentGitUpdate(ctx context.Context, executable, directory string, maximumOutput int, role string, arguments ...string) ([]byte, error) {
+	return runAgentGitCommand(ctx, executable, directory, maximumOutput, role, true, arguments...)
+}
+
+func runAgentGitCommand(ctx context.Context, executable, directory string, maximumOutput int, role string, update bool, arguments ...string) ([]byte, error) {
 	commandArguments := []string{"-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", directory}
 	commandArguments = append(commandArguments, arguments...)
 	command := hiddenCommandContext(ctx, executable, commandArguments...)
-	command.Env = agentGitEnvironment(command.Env)
+	if update {
+		command.Env = agentGitUpdateEnvironment(command.Env)
+	} else {
+		command.Env = agentGitEnvironment(command.Env)
+	}
 	stdout := boundedCommandOutput{maximum: maximumOutput}
 	stderr := boundedCommandOutput{maximum: 4096}
 	defer stdout.clear()
@@ -295,6 +414,9 @@ func runAgentGit(ctx context.Context, executable, directory string, maximumOutpu
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("%s: %w", role, ctx.Err())
 		}
+		if update {
+			return nil, fmt.Errorf("%s: %w; Git diagnostics redacted", role, err)
+		}
 		return nil, fmt.Errorf("%s: %w: %s", role, err, stderr.text())
 	}
 	if stdout.overflow {
@@ -304,20 +426,41 @@ func runAgentGit(ctx context.Context, executable, directory string, maximumOutpu
 }
 
 func agentGitEnvironment(parent []string) []string {
-	environment := make([]string, 0, len(parent)+4)
-	for _, entry := range parent {
-		name, _, found := strings.Cut(entry, "=")
-		if found && strings.HasPrefix(strings.ToUpper(name), "GIT_") {
-			continue
-		}
-		environment = append(environment, entry)
-	}
+	environment := withoutAgentGitOverrides(parent)
 	return append(environment,
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_OPTIONAL_LOCKS=0",
 		"GIT_TERMINAL_PROMPT=0",
+		"GCM_INTERACTIVE=Never",
+		"SSH_ASKPASS_REQUIRE=never",
 	)
+}
+
+func agentGitUpdateEnvironment(parent []string) []string {
+	environment := withoutAgentGitOverrides(parent)
+	return append(environment,
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_TERMINAL_PROMPT=0",
+		"GCM_INTERACTIVE=Never",
+		"SSH_ASKPASS_REQUIRE=never",
+		"GIT_SSH_COMMAND=ssh -oBatchMode=yes",
+	)
+}
+
+func withoutAgentGitOverrides(parent []string) []string {
+	environment := make([]string, 0, len(parent)+6)
+	for _, entry := range parent {
+		name, _, found := strings.Cut(entry, "=")
+		if found {
+			upper := strings.ToUpper(name)
+			if strings.HasPrefix(upper, "GIT_") || strings.HasPrefix(upper, "GCM_") || upper == "SSH_ASKPASS_REQUIRE" {
+				continue
+			}
+		}
+		environment = append(environment, entry)
+	}
+	return environment
 }
 
 func splitAgentGitLines(output []byte) []string {

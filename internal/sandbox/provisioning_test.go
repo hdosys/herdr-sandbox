@@ -2959,6 +2959,9 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
 		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
 	}
+	if !bytes.Contains(seededContents, []byte(`"updateGitRepositories": true`)) || !config.CodingAgentSync.UpdateGitRepositories {
+		t.Fatalf("seeded config does not expose default-on agent Git updates: %s", seededContents)
+	}
 	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
 		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)
 	}

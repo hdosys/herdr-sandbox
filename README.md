@@ -371,6 +371,7 @@ The command creates `config.json` only when absent and never replaces existing s
   "tailscale": false,
   "mobileSSHAuthorizedKeys": [],
   "codingAgentSync": {
+    "updateGitRepositories": true,
     "opencode": true,
     "claudeCode": true,
     "codex": true,
@@ -415,7 +416,7 @@ The command creates `config.json` only when absent and never replaces existing s
 | `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
 | `tailscale` | Exact boolean opt-in for the stable tagged identity. Omitted or `false` leaves Tailscale install-only. |
 | `mobileSSHAuthorizedKeys` | Up to eight unique device-owned `ssh-ed25519` public keys. A nonempty array requires `tailscale: true`; changing it requires a fresh Sandbox. Never put private keys here. |
-| `codingAgentSync` | Five exact booleans; all default to `true`. Set one to `false` to skip that agent. |
+| `codingAgentSync` | Six exact booleans; all default to `true`. Set `updateGitRepositories` to `false` to skip host Git updates, or set an agent field to `false` to skip that agent. |
 | `workspaces` | User-named project roots mapped to `C:\Workspaces\<name>`. Names are arbitrary but unique; values are absolute existing host folders. |
 | `mounts` | Optional user-named non-workspace folders mapped to `C:\Mounts\<name>`. Every entry requires an absolute existing `path` and explicit `readOnly`; at most 16 are allowed. |
 | `workspaceDiscovery` | Optional direct-child project discovery with an absolute `root` and multiple `exclude` regular expressions. Empty or omitted `root` disables it. |
@@ -467,7 +468,9 @@ Configuration sync is default-on when these host surfaces exist:
 | GitHub Copilot CLI | Copies approved config and reuses successfully imported GitHub CLI accounts. Native Credential Manager tokens stay host-bound. |
 | Pi | Copies approved agent configuration and portable `auth.json`. |
 
-When an enabled agent root, or the shared skills root, is a standard physical Git worktree, sync also transfers its tracked files and bounded `.git` repository so the guest retains the current branch, remote, upstream, index, refs, objects, tracked edits, and tracked deletions. Git hooks, reflogs, linked-worktree pointers, active-operation state, external object stores, non-files ref storage, and known tracked credential/runtime paths are not accepted. Because Git objects and local repository configuration can contain historical or embedded secrets, disable that agent's sync unless its complete configuration-repository history is safe for the guest.
+When an enabled agent root, or the shared skills root, is a standard physical Git worktree, sync also transfers its tracked files and bounded `.git` repository so the guest retains the current branch, remote, upstream, index, refs, objects, tracked edits, and tracked deletions. Before reading any of those files, default-on `updateGitRepositories` updates every such host repository from its current branch upstream with a promptless, hook-free, fast-forward-only pull. Local uncommitted changes remain when Git can apply the fast-forward without overwriting them. Divergence, overlapping local changes, a detached `HEAD`, a repository with remotes but no current-branch upstream, authentication failure, network failure, or timeout stops configuration sync and leaves resolution to the user. A repository without remotes is copied unchanged. Set `updateGitRepositories` to `false` for deliberate offline or host-snapshot behavior. `sandbox plan` reports the setting but never performs the update.
+
+Git hooks, reflogs, linked-worktree pointers, active-operation state, external object stores, non-files ref storage, and known tracked credential/runtime paths are not accepted. Because Git objects and local repository configuration can contain historical or embedded secrets, disable that agent's sync unless its complete configuration-repository history is safe for the guest.
 
 The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, runtime history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
