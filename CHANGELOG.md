@@ -9,7 +9,9 @@ release notes remain available on the
 ### Added
 
 - Optional `worktreeDirectory` support now maps one dedicated persistent host root
-  to `C:\Worktrees` and configures guest Herdr to create native Git worktrees there.
+  to `C:\Worktrees`, configures guest Herdr to create native Git worktrees there,
+  and teaches selected guest agents to use Herdr's create, discover, reopen, and
+  remove lifecycle while retaining the user's own cleanup policy.
 - Selecting the TradingView stack now carries an available host TradingView
   Desktop login into the disposable guest through the verified configuration
   transfer, without copying the host profile or unrelated cookies.

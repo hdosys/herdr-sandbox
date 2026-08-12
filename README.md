@@ -485,7 +485,18 @@ Mapped folders expose host data across the isolation boundary. Ordinary explicit
 
 #### Persistent Herdr worktrees
 
-Set `worktreeDirectory` when Herdr should create linked Git checkouts that survive disposal of the guest. Herdr Sandbox maps that one dedicated host root read/write at `C:\Worktrees`, sets guest Herdr's native `[worktrees].directory` to it, and trusts only `C:/Worktrees/*` in guest Git. Herdr and Git remain the create, list, and remove owners. Automatic worktree paths follow Herdr's `<root>\<repository>\<branch>` layout.
+Set `worktreeDirectory` when Herdr should create linked Git checkouts that survive disposal of the guest. Herdr Sandbox maps that one dedicated host root read/write at `C:\Worktrees`, sets guest Herdr's native `[worktrees].directory` to it, and trusts only `C:/Worktrees/*` in guest Git. Automatic paths follow Herdr's `<root>\<repository>\<branch>` layout.
+
+Use Herdr for the complete worktree lifecycle so each checkout is also represented by a Herdr workspace:
+
+| Goal | Command | Result |
+| --- | --- | --- |
+| Create and open | `herdr worktree create --cwd "<main-checkout>" --branch "<branch>" --base "<ref>"` | Creates the linked checkout below `C:\Worktrees` and opens it as a Herdr workspace. Omit `--branch` for Herdr's generated branch; omit `--path` so the configured persistent root remains authoritative. |
+| Discover | `herdr worktree list --cwd "<main-checkout>" --json` | Lists the repository's Git worktrees and any open Herdr workspace ID. |
+| Reopen | `herdr worktree open --cwd "<main-checkout>" --path "<checkout>"` | Opens an existing linked checkout as a Herdr workspace, including after a fresh Sandbox launch. |
+| Remove | `herdr worktree remove --workspace "<workspace-id>"` | Closes that Herdr workspace and removes its linked checkout through Git. It does not delete the branch. `--force` can discard modified or untracked files and should be used only when explicitly intended. |
+
+When worktrees are enabled, configuration sync adds one guest-only managed routing block to the native global instructions of each selected OpenCode, Claude Code, Codex, GitHub Copilot, and Pi agent. It tells agents to use the commands above instead of inventing a temporary path. It does not decide whether an agent should create or remove a worktree; applicable user and project instructions retain that policy. Host instruction files remain unchanged. The shared `%USERPROFILE%\.agents\skills` directory remains a skills owner, not a universal `AGENTS.md` location.
 
 The directory must already exist, be absolute and non-reparse, and must not overlap a workspace, generic mount, cache, configuration, private run state, protected root, or sensitive credential location. Changing or disabling it requires `sandbox down` before the next `up`. `sandbox clean` and uninstall preserve the entire directory, including when configuration deletion is selected.
 
