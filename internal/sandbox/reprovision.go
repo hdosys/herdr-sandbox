@@ -92,6 +92,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	plan.Workspaces = snapshot.Workspaces
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace
 	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
+	plan.TradingViewEnabled = snapshot.TradingViewEnabled
 	if plan.RequiresVisualStudioLayout {
 		if err := updateOperation("visual-studio-layout", "Preparing the required Visual Studio Build Tools layout on the host."); err != nil {
 			return Connection{}, err
@@ -143,7 +144,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	}
 	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.Directory)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.TradingViewEnabled, snapshot.Directory)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err

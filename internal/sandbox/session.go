@@ -65,6 +65,7 @@ type runPlan struct {
 	MobileSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
 	CodingAgentSync            codingAgentSyncConfiguration
+	TradingViewEnabled         bool
 	WindowsTerminal            windowsTerminalConfiguration
 	ConfigPath                 string
 	PrivateKeyPath             string
@@ -85,6 +86,7 @@ type provisioningSnapshot struct {
 	Workspaces                 []workspacePlan
 	ActiveWorkspace            string
 	RequiresVisualStudioLayout bool
+	TradingViewEnabled         bool
 }
 
 func DefaultOptions() Options {
@@ -302,7 +304,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, filepath.Join(plan.InputDirectory, "provisioning"))
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.TradingViewEnabled, filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -584,6 +586,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	plan.Workspaces = snapshot.Workspaces
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace
 	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
+	plan.TradingViewEnabled = snapshot.TradingViewEnabled
 	if err := os.WriteFile(plan.ConfigPath, config, 0o600); err != nil {
 		return runPlan{}, fmt.Errorf("write Windows Sandbox configuration: %w", err)
 	}
@@ -745,6 +748,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		Workspaces:                 workspaces,
 		ActiveWorkspace:            requirements.ActiveWorkspace,
 		RequiresVisualStudioLayout: requirements.RequiresVisualStudioLayout,
+		TradingViewEnabled:         provisioningStacksContain(userStacks, workspaces, stackTradingView),
 	}, nil
 }
 

@@ -66,7 +66,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
 | `rust` | Rust with MSVC Build Tools |
-| `tradingview` | TradingView Desktop and TVControl |
+| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
 | `zig` | Zig |
 
 ### Project shortcuts
@@ -293,6 +293,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
 - The `android` stack installs Google's signed command-line tools and latest stable Platform Tools under `C:\HerdrSandbox\tools\android-sdk`, sets `ANDROID_HOME`, and provides an isolated Microsoft OpenJDK 17 at `ANDROID_JAVA_HOME`. An Android-only profile also activates that JDK for terminal Gradle builds when no machine `JAVA_HOME` exists. It never replaces an existing `JAVA_HOME`, and a selected standalone Java stack remains the final Java 25 owner. Android SDK platforms, build-tools versions, Gradle wrappers, application dependencies, and project files remain project-owned.
 - The `nsis` stack installs the latest stable `NSIS.NSIS` compiler by default and proves a real installer compile. Use it alone with `sandbox init --stack nsis` for installer-only projects. This repository pins NSIS 3.12 in its own project profile because the release package task requires that exact compiler.
+- When the `tradingview` stack is selected, configuration sync makes an available standard host TradingView Desktop login usable in the guest. It transfers only the authenticated TradingView `sessionid` cookies over the verified SSH path, not the host profile, broker/site cookies, or encryption key. A missing host profile or login is a clean no-op. Close guest TradingView Desktop before retained reprovisioning needs to refresh that session.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
 #### Android device connection

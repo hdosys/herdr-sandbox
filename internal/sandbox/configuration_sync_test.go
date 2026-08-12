@@ -233,7 +233,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgentSyncConfiguration{})
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgentSyncConfiguration{}, false)
 	if err != nil {
 		t.Fatalf("disabled integrations triggered host discovery: %v", err)
 	}
@@ -751,20 +751,22 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	if err := packages.validate(terminal); err != nil {
 		t.Fatalf("validate native run package plan: %v", err)
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 }
 
 func TestDecodeDevelopmentConfigurationSyncResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true}`)
+	valid := []byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`)
 	result, err := decodeDevelopmentConfigurationSyncResult(valid)
-	if err != nil || result.CopiedFiles != 4 {
+	if err != nil || result.CopiedFiles != 4 || result.TradingViewAuthenticatedCookies != 1 || !result.TradingViewAuthenticationVerified {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
-		[]byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"extra":true}`),
-		[]byte(`{"schemaVersion":6,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true} {}`),
+		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true,"extra":true}`),
+		[]byte(`{"schemaVersion":7,"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`),
+		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1}`),
+		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true} {}`),
 	} {
 		if _, err := decodeDevelopmentConfigurationSyncResult(invalid); err == nil {
 			t.Fatalf("invalid result unexpectedly succeeded: %s", invalid)
@@ -851,6 +853,10 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("[config-sync] apply-github-copilot"),
 		[]byte("[config-sync] apply-pi"),
 		[]byte("[AllowEmptyCollection()][object[]]$Paths"),
+		[]byte("[config-sync] apply-tradingview-authentication"),
+		[]byte("TradingView Desktop is running in the guest"),
+		[]byte("HerdrSandbox.TradingViewCookieSync"),
+		[]byte("tradingViewAuthenticationVerified = $tradingViewAuthenticationVerified"),
 	} {
 		if !bytes.Contains(remoteScript, required) {
 			t.Fatalf("remote configuration script is missing %q", required)

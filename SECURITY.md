@@ -43,6 +43,11 @@ The product protects these boundaries:
   fresh Sandbox without making the private key portable to another host user.
 - Approved portable agent and GitHub credentials are streamed only over the
   verified SSH channel and are not placed in host run mappings or logs.
+- When the TradingView stack is selected, only unpartitioned `sessionid` cookies
+  for `tradingview.com` subdomains are decrypted in bounded host memory and
+  streamed over that verified SSH channel. The host profile key, `Local State`,
+  complete cookie database, broker cookies, and unrelated site state never enter
+  run mappings or the transfer archive. Missing host login state is a no-op.
 - Whole home/AppData roots, app-owned private state, reparse-bearing paths, and
   known credential roots such as `.ssh`, `.gnupg`, cloud/Kubernetes/Docker auth
   directories, supported coding-agent auth roots, GitHub CLI state, and Windows
@@ -88,12 +93,18 @@ These are deliberate non-guarantees:
 - Explicitly running TVControl against TradingView Desktop opens a local Chrome
   DevTools Protocol endpoint with powerful chart/UI access and exposes signed-in
   TradingView content to guest processes. The stack installs and verifies the
-  official signed MSIX payload but never opens that endpoint or authenticates.
+  official signed MSIX payload but never opens that endpoint or performs an
+  interactive authentication flow.
   Desktop is already guest-local, so TVControl does not need its protected-MSIX
   copy fallback; launch is non-destructive unless the user explicitly supplies
   `--kill-existing`. TradingView terms and market-data licenses
   may prohibit automation, scraping, non-display use, or redistribution regardless
   of local execution; the stack does not grant rights or bypass access controls.
+- A transferred TradingView session is deliberately readable and usable by any
+  guest administrator process. Close the Sandbox to discard that guest copy, and
+  do not select the TradingView stack when its account session must not be exposed
+  to the guest workload. Configuration sync refuses to replace those cookies while
+  guest TradingView Desktop is running rather than terminating the application.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale identity restoration remains experimental until the documented native
   two-fresh-Sandbox and peer-connectivity gate passes.

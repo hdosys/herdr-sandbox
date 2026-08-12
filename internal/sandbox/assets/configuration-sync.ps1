@@ -351,6 +351,26 @@ function Enable-OpenCodeAllowAllPolicy {
     Assert-OpenCodeAllowAll
     return $true
 }
+function Test-TradingViewJSONInteger {
+    param([AllowNull()][object]$Value)
+    return $Value -is [int] -or $Value -is [long]
+}
+function Test-TradingViewCookieHost {
+    param([AllowEmptyString()][string]$HostKey)
+    if ([string]::IsNullOrWhiteSpace($HostKey) -or $HostKey.Length -gt 512 -or
+        $HostKey.Trim() -cne $HostKey -or $HostKey -match '[\x00\r\n]') {
+        return $false
+    }
+    $folded = $HostKey.ToLowerInvariant()
+    return $folded -ceq 'tradingview.com' -or $folded -ceq '.tradingview.com' -or
+        $folded.EndsWith('.tradingview.com', [StringComparison]::Ordinal)
+}
+function Test-TradingViewCookieValue {
+    param([AllowEmptyString()][string]$Value)
+    return -not [string]::IsNullOrEmpty($Value) -and
+        [Text.Encoding]::UTF8.GetByteCount($Value) -le 16384 -and
+        $Value -match '^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$'
+}
 $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $packagePlanPath = Join-Path $expanded 'herdr-sandbox\winget-packages.json'
@@ -444,6 +464,8 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $starshipPreset = ''
     $starshipConfigured = $false
     $terminalEdition = ''
+    $tradingViewAuthenticatedCookies = 0
+    $tradingViewAuthenticationVerified = $false
 
     if ([bool]$agentSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode')
@@ -674,6 +696,128 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     Remove-Item -LiteralPath $githubAuthenticationPath -Force
     }
 
+    $tradingViewAuthenticationPath = Join-Path $expanded 'tradingview\authentication.json'
+    if (Test-Path -LiteralPath $tradingViewAuthenticationPath -PathType Leaf) {
+    [Console]::Error.WriteLine('[config-sync] apply-tradingview-authentication')
+    $tradingViewAuthenticationFile = Get-Item -LiteralPath $tradingViewAuthenticationPath -Force
+    if (($tradingViewAuthenticationFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $tradingViewAuthenticationFile.Length -le 0 -or $tradingViewAuthenticationFile.Length -gt 65536) {
+        throw 'TradingView authentication input is not one bounded regular file.'
+    }
+    try {
+        $tradingViewAuthentication = [IO.File]::ReadAllText($tradingViewAuthenticationPath) | ConvertFrom-Json
+    } catch {
+        throw 'TradingView authentication input is not valid JSON.'
+    }
+    $tradingViewAuthenticationProperties = @($tradingViewAuthentication.PSObject.Properties.Name | Sort-Object)
+    if (($tradingViewAuthenticationProperties -join '|') -cne 'cookies|schemaVersion' -or
+        $tradingViewAuthentication.schemaVersion -isnot [int] -or
+        [int]$tradingViewAuthentication.schemaVersion -ne 1 -or
+        $tradingViewAuthentication.cookies -isnot [array]) {
+        throw 'TradingView authentication input has an unsupported contract.'
+    }
+    $tradingViewCookies = @($tradingViewAuthentication.cookies)
+    if ($tradingViewCookies.Count -gt 4) {
+        throw 'TradingView authentication input contains too many cookies.'
+    }
+    $tradingViewCookieIdentities = @{}
+    $expectedTradingViewCookieProperties = @(
+        'creationUtc', 'hostKey', 'topFrameSiteKey', 'name', 'value', 'path', 'expiresUtc',
+        'secure', 'httpOnly', 'lastAccessUtc', 'hasExpires', 'persistent', 'priority', 'sameSite',
+        'sourceScheme', 'sourcePort', 'lastUpdateUtc', 'sourceType', 'crossSiteAncestor'
+    ) | Sort-Object
+    foreach ($cookie in $tradingViewCookies) {
+        $cookieProperties = @($cookie.PSObject.Properties.Name | Sort-Object)
+        if (($cookieProperties -join '|') -cne ($expectedTradingViewCookieProperties -join '|') -or
+            $cookie.hostKey -isnot [string] -or -not (Test-TradingViewCookieHost -HostKey ([string]$cookie.hostKey)) -or
+            $cookie.topFrameSiteKey -isnot [string] -or [string]$cookie.topFrameSiteKey -cne '' -or
+            $cookie.name -isnot [string] -or [string]$cookie.name -cne 'sessionid' -or
+            $cookie.value -isnot [string] -or -not (Test-TradingViewCookieValue -Value ([string]$cookie.value)) -or
+            $cookie.path -isnot [string] -or [string]::IsNullOrEmpty([string]$cookie.path) -or
+            -not ([string]$cookie.path).StartsWith('/', [StringComparison]::Ordinal) -or
+            [Text.Encoding]::UTF8.GetByteCount([string]$cookie.path) -gt 1024 -or [string]$cookie.path -match '[\x00\r\n]' -or
+            $cookie.secure -isnot [bool] -or $cookie.httpOnly -isnot [bool] -or
+            $cookie.hasExpires -isnot [bool] -or $cookie.persistent -isnot [bool] -or
+            $cookie.crossSiteAncestor -isnot [bool] -or [bool]$cookie.crossSiteAncestor -or
+            -not (Test-TradingViewJSONInteger $cookie.creationUtc) -or [long]$cookie.creationUtc -lt 0 -or
+            -not (Test-TradingViewJSONInteger $cookie.expiresUtc) -or [long]$cookie.expiresUtc -lt 0 -or
+            -not (Test-TradingViewJSONInteger $cookie.lastAccessUtc) -or [long]$cookie.lastAccessUtc -lt 0 -or
+            -not (Test-TradingViewJSONInteger $cookie.lastUpdateUtc) -or [long]$cookie.lastUpdateUtc -lt 0 -or
+            -not (Test-TradingViewJSONInteger $cookie.priority) -or [int]$cookie.priority -lt 0 -or [int]$cookie.priority -gt 2 -or
+            -not (Test-TradingViewJSONInteger $cookie.sameSite) -or [int]$cookie.sameSite -lt -1 -or [int]$cookie.sameSite -gt 2 -or
+            -not (Test-TradingViewJSONInteger $cookie.sourceScheme) -or [int]$cookie.sourceScheme -lt 0 -or [int]$cookie.sourceScheme -gt 2 -or
+            -not (Test-TradingViewJSONInteger $cookie.sourcePort) -or [int]$cookie.sourcePort -lt -1 -or [int]$cookie.sourcePort -gt 65535 -or
+            -not (Test-TradingViewJSONInteger $cookie.sourceType) -or [int]$cookie.sourceType -lt 0 -or [int]$cookie.sourceType -gt 3 -or
+            [bool]$cookie.hasExpires -ne [bool]$cookie.persistent -or
+            ([bool]$cookie.hasExpires -and [long]$cookie.expiresUtc -eq 0)) {
+            throw 'TradingView authentication input contains invalid cookie data.'
+        }
+        $identity = ([string]$cookie.hostKey).ToLowerInvariant() + "`0" + [string]$cookie.topFrameSiteKey + "`0" +
+            [string]$cookie.name + "`0" + [string]$cookie.path + "`0" + [int]$cookie.sourceScheme + "`0" +
+            [int]$cookie.sourcePort + "`0" + [bool]$cookie.crossSiteAncestor
+        if ($tradingViewCookieIdentities.ContainsKey($identity)) {
+            throw 'TradingView authentication input contains duplicate cookies.'
+        }
+        $tradingViewCookieIdentities[$identity] = $true
+    }
+    if ($tradingViewCookies.Count -gt 0) {
+        $runningTradingView = @(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)
+        if ($runningTradingView.Count -ne 0) {
+            throw 'TradingView Desktop is running in the guest; close it before reapplying authentication.'
+        }
+        $tradingViewAdapterPath = Join-Path $expanded 'herdr-sandbox\tradingview-cookie-sync.cs'
+        if (-not (Test-Path -LiteralPath $tradingViewAdapterPath -PathType Leaf)) {
+            throw 'TradingView cookie sync adapter is missing.'
+        }
+        $null = Add-Type -Path $tradingViewAdapterPath
+        $tradingViewRecordType = 'HerdrSandbox.TradingViewCookieRecord' -as [type]
+        if ($null -eq $tradingViewRecordType) {
+            throw 'TradingView cookie sync adapter type is unavailable.'
+        }
+        $typedTradingViewCookies = [Array]::CreateInstance($tradingViewRecordType, $tradingViewCookies.Count)
+        for ($index = 0; $index -lt $tradingViewCookies.Count; $index++) {
+            $cookie = $tradingViewCookies[$index]
+            $record = New-Object 'HerdrSandbox.TradingViewCookieRecord'
+            $record.CreationUtc = [long]$cookie.creationUtc
+            $record.HostKey = [string]$cookie.hostKey
+            $record.TopFrameSiteKey = [string]$cookie.topFrameSiteKey
+            $record.Name = [string]$cookie.name
+            $record.Value = [string]$cookie.value
+            $record.Path = [string]$cookie.path
+            $record.ExpiresUtc = [long]$cookie.expiresUtc
+            $record.Secure = [bool]$cookie.secure
+            $record.HttpOnly = [bool]$cookie.httpOnly
+            $record.LastAccessUtc = [long]$cookie.lastAccessUtc
+            $record.HasExpires = [bool]$cookie.hasExpires
+            $record.Persistent = [bool]$cookie.persistent
+            $record.Priority = [int]$cookie.priority
+            $record.SameSite = [int]$cookie.sameSite
+            $record.SourceScheme = [int]$cookie.sourceScheme
+            $record.SourcePort = [int]$cookie.sourcePort
+            $record.LastUpdateUtc = [long]$cookie.lastUpdateUtc
+            $record.SourceType = [int]$cookie.sourceType
+            $record.CrossSiteAncestor = [bool]$cookie.crossSiteAncestor
+            $typedTradingViewCookies.SetValue($record, $index)
+        }
+        $tradingViewCookieDatabase = Join-Path $env:APPDATA 'TradingView\Network\Cookies'
+        Assert-ConfigurationDestinationPath -Path $tradingViewCookieDatabase
+        Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
+        try {
+            $tradingViewAuthenticatedCookies = [HerdrSandbox.TradingViewCookieSync]::Import(
+                $tradingViewCookieDatabase, $typedTradingViewCookies)
+        } finally {
+            foreach ($record in $typedTradingViewCookies) { $record.Value = [string]::Empty }
+            foreach ($cookie in $tradingViewCookies) { $cookie.value = [string]::Empty }
+        }
+    } else {
+        Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
+    }
+    if (Test-Path -LiteralPath $tradingViewAuthenticationPath) {
+        throw 'TradingView authentication input cleanup failed.'
+    }
+    $tradingViewAuthenticationVerified = $true
+    }
+
     [Console]::Error.WriteLine('[config-sync] apply-herdr')
     $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
     $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
@@ -809,7 +953,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     }
 Write-Output ([ordered]@{
-    schemaVersion = 6
+    schemaVersion = 7
     archiveSha256 = $digest
     copiedFiles = $script:CopiedConfigurationFiles
     openCodePermissionVerified = $openCodePermissionVerified
@@ -819,4 +963,6 @@ Write-Output ([ordered]@{
     githubAuthenticatedAccounts = $githubAccounts.Count
     githubAuthenticationVerified = $githubAuthenticationVerified
     herdrConfigurationReloaded = $true
+    tradingViewAuthenticatedCookies = $tradingViewAuthenticatedCookies
+    tradingViewAuthenticationVerified = $tradingViewAuthenticationVerified
 } | ConvertTo-Json -Compress)

@@ -8,6 +8,9 @@ release notes remain available on the
 
 ### Added
 
+- Selecting the TradingView stack now carries an available host TradingView
+  Desktop login into the disposable guest through the verified configuration
+  transfer, without copying the host profile or unrelated cookies.
 - A new `android` stack provisions verified Android command-line build tooling,
   latest stable Platform Tools, an isolated OpenJDK 17, and wireless ADB
   `pair`/`connect` support without adding a host USB bridge.

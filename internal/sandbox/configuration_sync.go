@@ -241,33 +241,37 @@ func (configuration windowsTerminalConfiguration) validate() error {
 }
 
 type hostConfigurationSources struct {
-	GitConfig                string
-	GitConfigDirectory       string
-	GitIgnore                string
-	GitAttributes            string
-	GitHubCLIConfiguration   string
-	GitHubCLIAuthentication  []byte
-	CodingAgents             codingAgentConfigurationSources
-	HerdrConfig              string
-	WindowsTerminalSettings  string
-	WindowsTerminalFragments string
-	WindowsTerminalEdition   string
-	StarshipPreset           string
-	WorkspaceManifest        string
-	PackagePlan              string
+	GitConfig                 string
+	GitConfigDirectory        string
+	GitIgnore                 string
+	GitAttributes             string
+	GitHubCLIConfiguration    string
+	GitHubCLIAuthentication   []byte
+	TradingViewProfile        string
+	TradingViewAuthentication []byte
+	CodingAgents              codingAgentConfigurationSources
+	HerdrConfig               string
+	WindowsTerminalSettings   string
+	WindowsTerminalFragments  string
+	WindowsTerminalEdition    string
+	StarshipPreset            string
+	WorkspaceManifest         string
+	PackagePlan               string
 }
 
 type developmentConfigurationSyncResult struct {
-	SchemaVersion                int    `json:"schemaVersion"`
-	ArchiveSHA256                string `json:"archiveSha256"`
-	CopiedFiles                  int    `json:"copiedFiles"`
-	OpenCodePermissionVerified   bool   `json:"openCodePermissionVerified"`
-	WindowsTerminalEdition       string `json:"windowsTerminalEdition"`
-	StarshipPreset               string `json:"starshipPreset"`
-	StarshipConfigured           bool   `json:"starshipConfigured"`
-	GitHubAuthenticatedAccounts  int    `json:"githubAuthenticatedAccounts"`
-	GitHubAuthenticationVerified bool   `json:"githubAuthenticationVerified"`
-	HerdrConfigurationReloaded   bool   `json:"herdrConfigurationReloaded"`
+	SchemaVersion                     int    `json:"schemaVersion"`
+	ArchiveSHA256                     string `json:"archiveSha256"`
+	CopiedFiles                       int    `json:"copiedFiles"`
+	OpenCodePermissionVerified        bool   `json:"openCodePermissionVerified"`
+	WindowsTerminalEdition            string `json:"windowsTerminalEdition"`
+	StarshipPreset                    string `json:"starshipPreset"`
+	StarshipConfigured                bool   `json:"starshipConfigured"`
+	GitHubAuthenticatedAccounts       int    `json:"githubAuthenticatedAccounts"`
+	GitHubAuthenticationVerified      bool   `json:"githubAuthenticationVerified"`
+	HerdrConfigurationReloaded        bool   `json:"herdrConfigurationReloaded"`
+	TradingViewAuthenticatedCookies   int    `json:"tradingViewAuthenticatedCookies"`
+	TradingViewAuthenticationVerified bool   `json:"tradingViewAuthenticationVerified"`
 }
 
 type githubCLIAuthentication struct {
@@ -305,7 +309,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != codingAgentSyncManifestArchivePath {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
 			count++
 		}
 	}
@@ -313,8 +317,17 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 }
 
 func decodeDevelopmentConfigurationSyncResult(output []byte) (developmentConfigurationSyncResult, error) {
+	trimmed := bytes.TrimSpace(output)
+	if err := validateExactJSONObjectShape(trimmed, "guest development configuration result", []string{
+		"schemaVersion", "archiveSha256", "copiedFiles", "openCodePermissionVerified",
+		"windowsTerminalEdition", "starshipPreset", "starshipConfigured",
+		"githubAuthenticatedAccounts", "githubAuthenticationVerified", "herdrConfigurationReloaded",
+		"tradingViewAuthenticatedCookies", "tradingViewAuthenticationVerified",
+	}); err != nil {
+		return developmentConfigurationSyncResult{}, fmt.Errorf("decode guest development configuration result: %w", err)
+	}
 	var result developmentConfigurationSyncResult
-	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(output)))
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return developmentConfigurationSyncResult{}, fmt.Errorf("decode guest development configuration result: %w: %s", err, boundedText(output))
@@ -562,14 +575,14 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, provisioningInput string) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled bool, provisioningInput string) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
 	if err := packages.validate(terminal); err != nil {
 		return err
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgents)
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgents, tradingViewEnabled)
 	if err != nil {
 		return err
 	}
@@ -582,6 +595,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
 	}
 	expectedGitHubAccounts := 0
+	expectedTradingViewCookies := 0
 	if packages.enabled(packageGitHubCLI) {
 		authenticationPayload, accountCount, err := exportGitHubCLIAuthentication(ctx, sources.GitHubCLIConfiguration)
 		if err != nil {
@@ -590,6 +604,15 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		sources.GitHubCLIAuthentication = authenticationPayload
 		defer clear(sources.GitHubCLIAuthentication)
 		expectedGitHubAccounts = accountCount
+	}
+	if tradingViewEnabled {
+		authenticationPayload, cookieCount, err := exportTradingViewAuthentication(ctx, sources.TradingViewProfile)
+		if err != nil {
+			return err
+		}
+		sources.TradingViewAuthentication = authenticationPayload
+		defer clear(sources.TradingViewAuthentication)
+		expectedTradingViewCookies = cookieCount
 	}
 	archive, err := buildDevelopmentConfigurationArchive(ctx, sources, configurationSyncScript)
 	if err != nil {
@@ -610,7 +633,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 6 {
+	if result.SchemaVersion != 7 {
 		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
 	}
 	if result.ArchiveSHA256 != expectedDigest {
@@ -637,6 +660,9 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	if !result.HerdrConfigurationReloaded {
 		return errors.New("verify guest Herdr configuration: server did not report a successful reload")
+	}
+	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != tradingViewEnabled {
+		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies)
 	}
 	return nil
 }
@@ -686,7 +712,7 @@ try {
 exit 0`, staging, expectedArchiveLength, expectedDigest)
 }
 
-func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration) (hostConfigurationSources, error) {
+func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled bool) (hostConfigurationSources, error) {
 	if err := packages.validate(terminal); err != nil {
 		return hostConfigurationSources{}, err
 	}
@@ -699,6 +725,12 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 		return hostConfigurationSources{}, fmt.Errorf("APPDATA is not absolute: %q", roamingAppData)
 	}
 	sources := hostConfigurationSources{HerdrConfig: filepath.Join(roamingAppData, "herdr", "config.toml")}
+	if tradingViewEnabled {
+		sources.TradingViewProfile, err = defaultTradingViewProfilePath()
+		if err != nil {
+			return hostConfigurationSources{}, err
+		}
+	}
 	sources.CodingAgents, err = defaultCodingAgentConfigurationSources(userHome, codingAgents)
 	if err != nil {
 		return hostConfigurationSources{}, err
@@ -907,6 +939,20 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 		}
 		if err := addData(sources.GitHubCLIAuthentication, githubCLIAuthenticationArchivePath, "GitHub CLI authentication"); err != nil {
 			return nil, fmt.Errorf("archive GitHub CLI authentication: %w", err)
+		}
+	}
+	if len(sources.TradingViewAuthentication) != 0 {
+		if _, err := decodeTradingViewAuthentication(sources.TradingViewAuthentication); err != nil {
+			return nil, fmt.Errorf("validate TradingView authentication payload: %w", err)
+		}
+		if len(tradingViewCookieSyncSource) == 0 {
+			return nil, errors.New("TradingView cookie sync source is empty")
+		}
+		if err := addData(sources.TradingViewAuthentication, tradingViewAuthenticationArchivePath, "TradingView authentication"); err != nil {
+			return nil, fmt.Errorf("archive TradingView authentication: %w", err)
+		}
+		if err := addData(tradingViewCookieSyncSource, tradingViewCookieSyncSourceArchivePath, "TradingView cookie sync source"); err != nil {
+			return nil, fmt.Errorf("archive TradingView cookie sync source: %w", err)
 		}
 	}
 
