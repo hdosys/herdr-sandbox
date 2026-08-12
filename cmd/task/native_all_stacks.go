@@ -187,8 +187,11 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
       "readOnly": false
     }
   },
+  "configurationSync": {
+    "pullHostGitRepositoriesOnUp": false,
+    "pullHostGitRepositoriesOnDown": false
+  },
   "codingAgentSync": {
-    "updateGitRepositories": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,

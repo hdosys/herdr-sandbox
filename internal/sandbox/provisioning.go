@@ -51,7 +51,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"codingAgentSync\": {\n    \"updateGitRepositories\": true,\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -138,6 +138,7 @@ type provisioningPlan struct {
 	AudioInput              bool
 	Tailscale               bool
 	MobileSSHAuthorizedKeys []string
+	ConfigurationSync       configurationSyncConfiguration
 	CodingAgentSync         codingAgentSyncConfiguration
 	PackageConfiguration    wingetPackageConfiguration
 	Packages                wingetPackagePlan
@@ -154,6 +155,7 @@ type globalConfiguration struct {
 	AudioInput              bool                             `json:"audioInput"`
 	Tailscale               bool                             `json:"tailscale"`
 	MobileSSHAuthorizedKeys []string                         `json:"mobileSSHAuthorizedKeys"`
+	ConfigurationSync       configurationSyncConfiguration   `json:"configurationSync"`
 	Mounts                  map[string]mountConfiguration    `json:"mounts"`
 	CodingAgentSync         codingAgentSyncConfiguration     `json:"codingAgentSync"`
 	WingetPackages          wingetPackageConfiguration       `json:"wingetPackages"`
@@ -172,22 +174,32 @@ type workspaceDiscoveryConfiguration struct {
 }
 
 type codingAgentSyncConfiguration struct {
-	UpdateGitRepositories bool `json:"updateGitRepositories"`
-	OpenCode              bool `json:"opencode"`
-	ClaudeCode            bool `json:"claudeCode"`
-	Codex                 bool `json:"codex"`
-	GitHubCopilot         bool `json:"githubCopilot"`
-	Pi                    bool `json:"pi"`
+	OpenCode      bool `json:"opencode"`
+	ClaudeCode    bool `json:"claudeCode"`
+	Codex         bool `json:"codex"`
+	GitHubCopilot bool `json:"githubCopilot"`
+	Pi            bool `json:"pi"`
+}
+
+type configurationSyncConfiguration struct {
+	PullHostGitRepositoriesOnUp   bool `json:"pullHostGitRepositoriesOnUp"`
+	PullHostGitRepositoriesOnDown bool `json:"pullHostGitRepositoriesOnDown"`
 }
 
 func defaultCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
 	return codingAgentSyncConfiguration{
-		UpdateGitRepositories: true,
-		OpenCode:              true,
-		ClaudeCode:            true,
-		Codex:                 true,
-		GitHubCopilot:         true,
-		Pi:                    true,
+		OpenCode:      true,
+		ClaudeCode:    true,
+		Codex:         true,
+		GitHubCopilot: true,
+		Pi:            true,
+	}
+}
+
+func defaultConfigurationSyncConfiguration() configurationSyncConfiguration {
+	return configurationSyncConfiguration{
+		PullHostGitRepositoriesOnUp:   true,
+		PullHostGitRepositoriesOnDown: true,
 	}
 }
 
@@ -626,6 +638,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		AudioInput:              configuration.AudioInput,
 		Tailscale:               configuration.Tailscale,
 		MobileSSHAuthorizedKeys: mobileSSHAuthorizedKeys,
+		ConfigurationSync:       configuration.ConfigurationSync,
 		CodingAgentSync:         configuration.CodingAgentSync,
 		PackageConfiguration:    configuration.WingetPackages,
 		Mounts:                  mounts,
@@ -636,11 +649,12 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 func loadGlobalConfiguration(path string) (globalConfiguration, error) {
 	defaultMemory := defaultMemoryMB
 	config := globalConfiguration{
-		MemoryMB:        &defaultMemory,
-		CodingAgentSync: defaultCodingAgentSyncConfiguration(),
-		WingetPackages:  defaultWingetPackageConfiguration(),
-		Mounts:          map[string]mountConfiguration{},
-		Workspaces:      map[string]string{},
+		MemoryMB:          &defaultMemory,
+		ConfigurationSync: defaultConfigurationSyncConfiguration(),
+		CodingAgentSync:   defaultCodingAgentSyncConfiguration(),
+		WingetPackages:    defaultWingetPackageConfiguration(),
+		Mounts:            map[string]mountConfiguration{},
+		Workspaces:        map[string]string{},
 	}
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -771,6 +785,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.CodingAgentSync = agents
+		case "configurationSync":
+			configurationSync, err := decodeConfigurationSyncConfiguration(decoder)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.ConfigurationSync = configurationSync
 		default:
 			return fmt.Errorf("unknown field %q", key)
 		}
@@ -928,8 +948,6 @@ func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncC
 			return codingAgentSyncConfiguration{}, fmt.Errorf("field %q: %w", name, err)
 		}
 		switch name {
-		case "updateGitRepositories":
-			configuration.UpdateGitRepositories = enabled
 		case "opencode":
 			configuration.OpenCode = enabled
 		case "claudeCode":
@@ -950,6 +968,56 @@ func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncC
 	}
 	if closing != json.Delim('}') {
 		return codingAgentSyncConfiguration{}, errors.New("coding-agent sync object is not closed")
+	}
+	return configuration, nil
+}
+
+func decodeConfigurationSyncConfiguration(decoder *json.Decoder) (configurationSyncConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return configurationSyncConfiguration{}, err
+	}
+	if opening != json.Delim('{') {
+		return configurationSyncConfiguration{}, errors.New("must be a JSON object")
+	}
+	configuration := defaultConfigurationSyncConfiguration()
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return configurationSyncConfiguration{}, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return configurationSyncConfiguration{}, errors.New("configuration-sync field name must be a string")
+		}
+		if seen[name] {
+			return configurationSyncConfiguration{}, fmt.Errorf("duplicate field %q", name)
+		}
+		seen[name] = true
+		raw, err := decodeNonNullJSONValue(decoder, name)
+		if err != nil {
+			return configurationSyncConfiguration{}, err
+		}
+		var enabled bool
+		if err := json.Unmarshal(raw, &enabled); err != nil {
+			return configurationSyncConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+		}
+		switch name {
+		case "pullHostGitRepositoriesOnUp":
+			configuration.PullHostGitRepositoriesOnUp = enabled
+		case "pullHostGitRepositoriesOnDown":
+			configuration.PullHostGitRepositoriesOnDown = enabled
+		default:
+			return configurationSyncConfiguration{}, fmt.Errorf("unknown field %q", name)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return configurationSyncConfiguration{}, err
+	}
+	if closing != json.Delim('}') {
+		return configurationSyncConfiguration{}, errors.New("configuration-sync object is not closed")
 	}
 	return configuration, nil
 }

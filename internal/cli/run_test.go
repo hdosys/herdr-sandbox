@@ -24,7 +24,7 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	for _, required := range []string{
 		"sandbox version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
-		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox down", "sandbox clean",
+		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
 		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
 	} {
@@ -44,12 +44,17 @@ func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.
 	standalone := "android|cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig"
 	trailing := "all|handy|herdr|python-ai"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
+		if name == "usage" {
+			for _, line := range strings.Split(text, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "sandbox init ") {
+					text = line
+					break
+				}
+			}
+		}
 		previous := -1
 		for _, stack := range strings.Split(standalone+"|"+trailing, "|") {
 			index := strings.Index(text, stack)
-			if name == "usage" {
-				index = strings.Index(strings.Split(text, "\n")[4], stack)
-			}
 			if index <= previous {
 				t.Fatalf("%s stack order is invalid at %q: %q", name, stack, text)
 			}
@@ -166,7 +171,7 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 }
 
 func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
-	for _, command := range []string{"plan", "attach", "status", "mobile", "down", "clean"} {
+	for _, command := range []string{"plan", "attach", "status", "mobile", "pull-host-config", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
 		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
@@ -422,6 +427,10 @@ func TestRunDownUsesInjectedOwner(t *testing.T) {
 				order = append(order, "down")
 				return test.result, test.downError
 			}
+			dependencies.pullHostConfigOnDown = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+				order = append(order, "pull")
+				return sandbox.HostConfigurationPullResult{}, nil
+			}
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
 			code := runWithCommandDependencies(context.Background(), []string{"down"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
@@ -430,8 +439,80 @@ func TestRunDownUsesInjectedOwner(t *testing.T) {
 			if test.downError != nil {
 				output, unexpectedOutput = stderr.String(), stdout.String()
 			}
-			if code != test.wantCode || strings.Join(order, "|") != "cleanup|down" || unexpectedOutput != "" || !strings.Contains(output, test.wantOutput) {
+			wantOrder := "cleanup|down|pull"
+			if test.downError != nil {
+				wantOrder = "cleanup|down"
+			}
+			if code != test.wantCode || strings.Join(order, "|") != wantOrder || unexpectedOutput != "" || !strings.Contains(output, test.wantOutput) {
 				t.Fatalf("code = %d, order = %v, stdout = %q, stderr = %q", code, order, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunDownStopsBeforePullAndReportsPostStopPullFailure(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	order := []string{}
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+		order = append(order, "cleanup")
+		return sandbox.CleanResult{}, nil
+	}
+	dependencies.down = func(context.Context) (sandbox.DownResult, error) {
+		order = append(order, "down")
+		return sandbox.DownResult{RunID: "run"}, nil
+	}
+	dependencies.pullHostConfigOnDown = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		order = append(order, "pull")
+		return sandbox.HostConfigurationPullResult{Pulled: []string{"OpenCode configuration"}}, errors.New("diverged")
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"down"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 1 || strings.Join(order, "|") != "cleanup|down|pull" || !strings.Contains(stdout.String(), "Result: stopped") ||
+		!strings.Contains(stdout.String(), "OpenCode configuration") || !strings.Contains(stderr.String(), "Sandbox is stopped") {
+		t.Fatalf("code = %d, order = %v, stdout = %q, stderr = %q", code, order, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunPullHostConfigUsesExplicitOwner(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	calls := 0
+	dependencies.pullHostConfig = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		calls++
+		return sandbox.HostConfigurationPullResult{
+			Pulled:  []string{"OpenCode configuration"},
+			Skipped: []string{"Herdr configuration: not a Git repository"},
+		}, nil
+	}
+	var stdout, stderr bytes.Buffer
+	code := runWithCommandDependencies(context.Background(), []string{"pull-host-config"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 0 || calls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Pulled:") ||
+		!strings.Contains(stdout.String(), "OpenCode configuration") || !strings.Contains(stdout.String(), "not a Git repository") {
+		t.Fatalf("code = %d, calls = %d, stdout = %q, stderr = %q", code, calls, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunPullHostConfigAndUpReportPartialResultsBeforeFailure(t *testing.T) {
+	for _, command := range []string{"pull-host-config", "up"} {
+		t.Run(command, func(t *testing.T) {
+			dependencies := defaultCommandDependencies()
+			result := sandbox.HostConfigurationPullResult{Pulled: []string{"OpenCode configuration"}}
+			failure := errors.New("later repository diverged")
+			dependencies.pullHostConfig = func(context.Context) (sandbox.HostConfigurationPullResult, error) { return result, failure }
+			dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) { return result, failure }
+			dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
+			dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
+			dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+				t.Fatal("failed pull reached up")
+				return sandbox.Connection{}, nil
+			}
+			args := []string{command}
+			if command == "up" {
+				args = append(args, "--no-attach")
+			}
+			var stdout, stderr bytes.Buffer
+			code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+			if code != 1 || !strings.Contains(stdout.String(), "OpenCode configuration") || !strings.Contains(stderr.String(), failure.Error()) {
+				t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 			}
 		})
 	}
@@ -454,6 +535,10 @@ func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.
 	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		upCalled = true
 		return sandbox.Connection{}, nil
+	}
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		t.Fatal("noninteractive attach validation reached host configuration pull")
+		return sandbox.HostConfigurationPullResult{}, nil
 	}
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
@@ -479,6 +564,10 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 		order = append(order, "cleanup")
 		return sandbox.CleanResult{}, nil
 	}
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		order = append(order, "pull")
+		return sandbox.HostConfigurationPullResult{}, nil
+	}
 	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		order = append(order, "up")
 		return sandbox.Connection{}, nil
@@ -489,7 +578,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
+	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|pull|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
 		t.Fatalf("code = %d, validated = %t, attached = %t, order = %v, stdout = %q", code, validated, attached, order, stdout.String())
 	}
 }
@@ -566,16 +655,17 @@ func TestRunPlanUsesOnlyReadOnlyResolver(t *testing.T) {
 
 func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	plan := sandbox.EffectivePlan{
-		ConfigurationPath:          `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`,
-		ConfigurationExists:        true,
-		UserScriptPath:             `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
-		CacheDirectory:             `D:\herdr-cache`,
-		WorktreeDirectory:          `E:\herdr-worktrees`,
-		MemoryMB:                   32768,
-		WindowsTerminal:            "stable",
-		UpdateAgentGitRepositories: true,
-		CodingAgents:               []string{"OpenCode", "Claude Code"},
-		GlobalStacks:               []string{"rust", "go"},
+		ConfigurationPath:             `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`,
+		ConfigurationExists:           true,
+		UserScriptPath:                `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
+		CacheDirectory:                `D:\herdr-cache`,
+		WorktreeDirectory:             `E:\herdr-worktrees`,
+		MemoryMB:                      32768,
+		WindowsTerminal:               "stable",
+		PullHostGitRepositoriesOnUp:   true,
+		PullHostGitRepositoriesOnDown: true,
+		CodingAgents:                  []string{"OpenCode", "Claude Code"},
+		GlobalStacks:                  []string{"rust", "go"},
 		Packages: []sandbox.EffectivePackage{
 			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
 		},
@@ -595,7 +685,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
-		"Mobile SSH authorized keys: 0", "Update agent Git repositories: enabled",
+		"Mobile SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",

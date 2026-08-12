@@ -378,7 +378,7 @@ func installOpenCodeAllowAllPolicyForTest(t *testing.T, programData string) stri
 	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeAllowAllPolicy\n"
 	scriptPath := filepath.Join(t.TempDir(), "install-opencode-allow-all.ps1")
 	writeTestFile(t, scriptPath, script)
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	command.Env = append(os.Environ(), "ProgramData="+programData)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("install OpenCode allow-all policy: %v: %s", err, output)
@@ -2959,8 +2959,10 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
 		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
 	}
-	if !bytes.Contains(seededContents, []byte(`"updateGitRepositories": true`)) || !config.CodingAgentSync.UpdateGitRepositories {
-		t.Fatalf("seeded config does not expose default-on agent Git updates: %s", seededContents)
+	if !bytes.Contains(seededContents, []byte(`"pullHostGitRepositoriesOnUp": true`)) ||
+		!bytes.Contains(seededContents, []byte(`"pullHostGitRepositoriesOnDown": true`)) ||
+		!config.ConfigurationSync.PullHostGitRepositoriesOnUp || !config.ConfigurationSync.PullHostGitRepositoriesOnDown {
+		t.Fatalf("seeded config does not expose default-on host configuration pulls: %s", seededContents)
 	}
 	if !bytes.Contains(seededContents, []byte(`"mounts": {}`)) {
 		t.Fatalf("seeded config does not expose named folder mounts: %s", seededContents)

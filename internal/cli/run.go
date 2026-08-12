@@ -18,6 +18,7 @@ import (
 
 const usage = `Usage:
   sandbox config
+  sandbox pull-host-config
   sandbox version
   sandbox plan
   sandbox init [--stack android|cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig|all|handy|herdr|python-ai]...
@@ -30,6 +31,7 @@ const usage = `Usage:
 
 Commands:
   config  create the global config when absent and open it with the registered .json application
+  pull-host-config  fast-forward transferred Git-backed configuration roots on the host
   version print the application version and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
@@ -37,7 +39,7 @@ Commands:
   attach  verify and attach to the exact ready Sandbox without re-provisioning
   status  report the app-owned Sandbox; proven stale app state may be cleaned
   mobile  show the ready private mobile Herdr endpoint and its secret-free QR code
-  down    stop only the exact app-owned Sandbox
+  down    stop only the exact app-owned Sandbox, then optionally pull host configuration
   clean   remove inactive app-owned run workspaces
 
 Configuration:
@@ -47,6 +49,7 @@ Configuration:
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
   - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
+  - configurationSync host Git pull choices for up and down
   - codingAgentSync choices
   - wingetPackages additions, removals, and version pins
 
@@ -72,6 +75,9 @@ type commandDependencies struct {
 	resolveHerdr               func(context.Context) (sandbox.HostHerdr, error)
 	up                         func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error)
 	down                       func(context.Context) (sandbox.DownResult, error)
+	pullHostConfig             func(context.Context) (sandbox.HostConfigurationPullResult, error)
+	pullHostConfigOnUp         func(context.Context) (sandbox.HostConfigurationPullResult, error)
+	pullHostConfigOnDown       func(context.Context) (sandbox.HostConfigurationPullResult, error)
 	openReady                  func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error)
 	attach                     func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
 	validateAttach             func(io.Reader, io.Writer, io.Writer) error
@@ -90,6 +96,9 @@ func defaultCommandDependencies() commandDependencies {
 		resolveHerdr:               sandbox.ResolveHostHerdr,
 		up:                         sandbox.Up,
 		down:                       sandbox.Down,
+		pullHostConfig:             sandbox.PullHostConfiguration,
+		pullHostConfigOnUp:         sandbox.PullHostConfigurationOnUp,
+		pullHostConfigOnDown:       sandbox.PullHostConfigurationOnDown,
 		openReady:                  sandbox.OpenReadyConnection,
 		attach:                     sandbox.Attach,
 		validateAttach:             sandbox.ValidateInteractiveAttachStreams,
@@ -137,6 +146,22 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		fmt.Fprintf(stdout, "Opened configuration: %s\n", path)
+		return 0
+	case "pull-host-config":
+		if commandHelpRequested(args) {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+		if len(args) != 1 {
+			fmt.Fprintf(stderr, "sandbox: pull-host-config does not accept arguments\n\n%s", usage)
+			return 2
+		}
+		result, err := dependencies.pullHostConfig(ctx)
+		printHostConfigurationPullResult(stdout, result)
+		if err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		}
 		return 0
 	case "__installer-open-configuration":
 		if len(args) != 1 {
@@ -280,6 +305,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		printDownResult(stdout, result)
+		pullResult, pullErr := dependencies.pullHostConfigOnDown(ctx)
+		printHostConfigurationPullResult(stdout, pullResult)
+		if pullErr != nil {
+			fmt.Fprintln(stderr, "sandbox: Sandbox is stopped, but pulling host configuration failed:", pullErr)
+			return 1
+		}
 		return 0
 	case "clean":
 		if commandHelpRequested(args) {
@@ -357,6 +388,13 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	}
 	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 		return 1
+	}
+	if pulled, err := dependencies.pullHostConfigOnUp(ctx); err != nil {
+		printHostConfigurationPullResult(stdout, pulled)
+		fmt.Fprintln(stderr, "sandbox:", err)
+		return 1
+	} else {
+		printHostConfigurationPullResult(stdout, pulled)
 	}
 
 	connection, err := dependencies.up(ctx, options, hostHerdr)
@@ -483,6 +521,27 @@ func printDownResult(output io.Writer, result sandbox.DownResult) {
 	}
 	fmt.Fprintln(output, "  Result: stopped")
 	fmt.Fprintf(output, "  Run: %s\n", result.RunID)
+}
+
+func printHostConfigurationPullResult(output io.Writer, result sandbox.HostConfigurationPullResult) {
+	if len(result.Pulled) == 0 && len(result.Skipped) == 0 {
+		return
+	}
+	fmt.Fprintln(output, "Host configuration")
+	if len(result.Pulled) == 0 {
+		fmt.Fprintln(output, "  Pulled: no Git repositories")
+	} else {
+		fmt.Fprintln(output, "  Pulled:")
+		for _, name := range result.Pulled {
+			fmt.Fprintf(output, "    - %s\n", name)
+		}
+	}
+	if len(result.Skipped) > 0 {
+		fmt.Fprintln(output, "  Skipped:")
+		for _, description := range result.Skipped {
+			fmt.Fprintf(output, "    - %s\n", description)
+		}
+	}
 }
 
 func printCleanResult(output io.Writer, result sandbox.CleanResult) {
@@ -622,7 +681,8 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
 	fmt.Fprintf(output, "  Mobile SSH authorized keys: %d\n", plan.MobileSSHAuthorizedKeyCount)
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
-	fmt.Fprintf(output, "  Update agent Git repositories: %s\n", enabledDisabled(plan.UpdateAgentGitRepositories))
+	fmt.Fprintf(output, "  Pull host Git repositories on up: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnUp))
+	fmt.Fprintf(output, "  Pull host Git repositories on down: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnDown))
 
 	fmt.Fprintln(output, "\nCoding agents")
 	printBulletList(output, sortedFold(plan.CodingAgents), "  ")

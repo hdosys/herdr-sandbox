@@ -20,6 +20,12 @@ func TestRunUpReportsPreparationBeforeHostInspection(t *testing.T) {
 		}
 		return sandbox.HostHerdr{}, errors.New("host inspection fixture")
 	}
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		if got := stdout.String(); got != "Preparing Sandbox...\n" {
+			t.Fatalf("output before host configuration pull = %q", got)
+		}
+		return sandbox.HostConfigurationPullResult{}, nil
+	}
 	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) {
 		t.Fatal("failed host inspection reached cleanup")
 		return sandbox.CleanResult{}, nil

@@ -63,62 +63,62 @@ var rejectedAgentGitMetadataFiles = map[string]bool{
 	"revert_head":      true,
 }
 
-func updateAgentGitRepository(ctx context.Context, directory string) error {
+func updateHostConfigurationGitRepository(ctx context.Context, directory string) (bool, error) {
 	if directory == "" {
-		return nil
+		return false, nil
 	}
 	gitDirectory := filepath.Join(directory, ".git")
 	info, err := os.Lstat(gitDirectory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect agent Git directory before update: %w", err)
+		return false, fmt.Errorf("inspect host configuration Git directory before update: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("agent configuration Git metadata must be one physical .git directory: %s", gitDirectory)
+		return false, fmt.Errorf("host configuration Git metadata must be one physical .git directory: %s", gitDirectory)
 	}
 	gitExecutable, err := findAgentGitExecutable()
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	updateContext, cancel := context.WithTimeout(ctx, agentGitUpdateTimeout)
 	defer cancel()
 	if err := validateAgentGitRepository(updateContext, gitExecutable, directory, gitDirectory); err != nil {
-		return err
+		return false, err
 	}
-	remotesOutput, err := runAgentGit(updateContext, gitExecutable, directory, 32*1024, "enumerate agent configuration remotes", "remote")
+	remotesOutput, err := runAgentGit(updateContext, gitExecutable, directory, 32*1024, "enumerate host configuration remotes", "remote")
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(bytes.TrimSpace(remotesOutput)) == 0 {
-		return nil
+		return false, nil
 	}
 	configuredRemotes := splitAgentGitLines(remotesOutput)
-	branchOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve agent configuration branch",
+	branchOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve host configuration branch",
 		"symbolic-ref", "--quiet", "HEAD")
 	if err != nil {
-		return fmt.Errorf("agent configuration repository must be on a branch before automatic update: %w", err)
+		return false, fmt.Errorf("host configuration repository must be on a branch before automatic update: %w", err)
 	}
 	branch := strings.TrimSpace(string(branchOutput))
 	if !strings.HasPrefix(branch, "refs/heads/") || strings.TrimPrefix(branch, "refs/heads/") == "" || strings.ContainsAny(branch, "\x00\r\n") {
-		return errors.New("agent configuration repository returned an invalid current branch")
+		return false, errors.New("host configuration repository returned an invalid current branch")
 	}
-	upstreamOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve agent configuration upstream",
+	upstreamOutput, err := runAgentGit(updateContext, gitExecutable, directory, 1024, "resolve host configuration upstream",
 		"for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", "--count=1", branch)
 	if err != nil {
-		return err
+		return false, err
 	}
 	upstreamFields := bytes.Split(bytes.TrimRight(upstreamOutput, "\r\n"), []byte{0})
 	if (len(upstreamFields) == 1 && len(upstreamFields[0]) == 0) ||
 		(len(upstreamFields) == 2 && len(upstreamFields[0]) == 0 && len(upstreamFields[1]) == 0) {
-		return errors.New("agent configuration repository has remotes but its current branch has no upstream; configure one or disable codingAgentSync.updateGitRepositories")
+		return false, errors.New("host configuration repository has remotes but its current branch has no upstream; configure one or disable the automatic host Git pull")
 	}
 	if len(upstreamFields) != 2 || len(upstreamFields[0]) == 0 || len(upstreamFields[1]) == 0 ||
 		!utf8.Valid(upstreamFields[0]) || !utf8.Valid(upstreamFields[1]) ||
 		bytes.ContainsAny(upstreamFields[0], "\r\n") || bytes.ContainsAny(upstreamFields[1], "\r\n") {
-		return errors.New("agent configuration repository returned invalid upstream metadata")
+		return false, errors.New("host configuration repository returned invalid upstream metadata")
 	}
 	remoteRef := string(upstreamFields[1])
 	upstreamRemote := string(upstreamFields[0])
@@ -130,10 +130,10 @@ func updateAgentGitRepository(ctx context.Context, directory string) error {
 		}
 	}
 	if !remoteConfigured {
-		return fmt.Errorf("agent configuration upstream does not use a configured remote: %q", upstreamRemote)
+		return false, fmt.Errorf("host configuration upstream does not use a configured remote: %q", upstreamRemote)
 	}
 	if !strings.HasPrefix(remoteRef, "refs/heads/") || strings.TrimPrefix(remoteRef, "refs/heads/") == "" {
-		return fmt.Errorf("agent configuration upstream is not a remote branch: %s", remoteRef)
+		return false, fmt.Errorf("host configuration upstream is not a remote branch: %s", remoteRef)
 	}
 
 	pullArguments := []string{
@@ -146,10 +146,10 @@ func updateAgentGitRepository(ctx context.Context, directory string) error {
 	}
 	pullArguments = append(pullArguments,
 		"pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-verify", "--no-recurse-submodules", "--no-tags", "--quiet", "--", upstreamRemote, remoteRef)
-	if _, err := runAgentGitUpdate(updateContext, gitExecutable, directory, 32*1024, "fast-forward agent configuration from its upstream", pullArguments...); err != nil {
-		return fmt.Errorf("update agent configuration repository %s; resolve local changes, divergence, authentication, or network access on the host, or disable codingAgentSync.updateGitRepositories: %w", directory, err)
+	if _, err := runAgentGitUpdate(updateContext, gitExecutable, directory, 32*1024, "fast-forward host configuration from its upstream", pullArguments...); err != nil {
+		return false, fmt.Errorf("update host configuration repository %s; resolve local changes, divergence, authentication, or network access on the host, or disable the applicable automatic host Git pull: %w", directory, err)
 	}
-	return nil
+	return true, nil
 }
 
 func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot string, add func(string, string) error) ([]string, error) {

@@ -23,7 +23,7 @@ func TestLoadGlobalConfigurationDefaultsAndOverridesCodingAgentSync(t *testing.T
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	want := codingAgentSyncConfiguration{UpdateGitRepositories: true, OpenCode: true, ClaudeCode: true, Codex: false, GitHubCopilot: true, Pi: true}
+	want := codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: false, GitHubCopilot: true, Pi: true}
 	if configuration.CodingAgentSync != want {
 		t.Fatalf("codingAgentSync = %#v, want %#v", configuration.CodingAgentSync, want)
 	}
@@ -44,7 +44,6 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 		`{"codingAgentSync":{"codex":null}}`,
 		`{"codingAgentSync":{"codex":"true"}}`,
 		`{"codingAgentSync":{"openCode":true}}`,
-		`{"codingAgentSync":{"updateGitRepositories":null}}`,
 		`{"codingAgentSync":{"codex":true,"codex":false}}`,
 	} {
 		path := filepath.Join(t.TempDir(), "config.json")
@@ -55,19 +54,40 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 	}
 }
 
-func TestLoadGlobalConfigurationCanDisableGitRepositoryUpdates(t *testing.T) {
+func TestLoadGlobalConfigurationDefaultsAndOverridesConfigurationSync(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestFile(t, path, `{"codingAgentSync":{"updateGitRepositories":false}}`)
+	writeTestFile(t, path, `{"configurationSync":{"pullHostGitRepositoriesOnDown":false}}`)
 	configuration, err := loadGlobalConfiguration(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.CodingAgentSync.UpdateGitRepositories {
-		t.Fatalf("codingAgentSync Git update remained enabled: %#v", configuration.CodingAgentSync)
+	want := configurationSyncConfiguration{PullHostGitRepositoriesOnUp: true, PullHostGitRepositoriesOnDown: false}
+	if configuration.ConfigurationSync != want {
+		t.Fatalf("configurationSync = %#v, want %#v", configuration.ConfigurationSync, want)
 	}
-	if !configuration.CodingAgentSync.OpenCode || !configuration.CodingAgentSync.ClaudeCode || !configuration.CodingAgentSync.Codex ||
-		!configuration.CodingAgentSync.GitHubCopilot || !configuration.CodingAgentSync.Pi {
-		t.Fatalf("disabling Git update changed agent selections: %#v", configuration.CodingAgentSync)
+	missing, err := loadGlobalConfiguration(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.ConfigurationSync != defaultConfigurationSyncConfiguration() {
+		t.Fatalf("missing configurationSync = %#v", missing.ConfigurationSync)
+	}
+}
+
+func TestLoadGlobalConfigurationRejectsInvalidConfigurationSync(t *testing.T) {
+	for _, input := range []string{
+		`{"configurationSync":null}`,
+		`{"configurationSync":false}`,
+		`{"configurationSync":{"pullHostGitRepositoriesOnUp":null}}`,
+		`{"configurationSync":{"pullHostGitRepositoriesOnDown":"true"}}`,
+		`{"configurationSync":{"pullOnUp":true}}`,
+		`{"configurationSync":{"pullHostGitRepositoriesOnUp":true,"pullHostGitRepositoriesOnUp":false}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		writeTestFile(t, path, input)
+		if _, err := loadGlobalConfiguration(path); err == nil {
+			t.Fatalf("invalid configurationSync unexpectedly succeeded: %s", input)
+		}
 	}
 }
 
@@ -216,12 +236,9 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, packagePlan, string(packagePlanData))
 	herdrConfig := filepath.Join(root, "herdr.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
-	copyOnlySelection := defaultCodingAgentSyncConfiguration()
-	copyOnlySelection.UpdateGitRepositories = false
-
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		CodingAgents: codingAgentConfigurationSources{
-			Selection:                copyOnlySelection,
+			Selection:                defaultCodingAgentSyncConfiguration(),
 			OpenCodeDirectory:        openCode,
 			OpenCodeAuthentication:   openCodeAuth,
 			ClaudeCodeDirectory:      claude,
@@ -424,8 +441,8 @@ func TestUpdateAgentGitRepositoryFastForwardsBeforeArchivingAndPreservesLocalCha
 	runAgentGitTest(t, seed, "push", "origin", "main")
 
 	writeTestFile(t, filepath.Join(repository, "README.md"), "local edit")
-	if err := updateAgentGitRepository(context.Background(), repository); err != nil {
-		t.Fatalf("updateAgentGitRepository: %v", err)
+	if _, err := updateHostConfigurationGitRepository(context.Background(), repository); err != nil {
+		t.Fatalf("updateHostConfigurationGitRepository: %v", err)
 	}
 	if _, err := os.Lstat(hookMarker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("automatic update executed a Git hook: %v", err)
@@ -459,7 +476,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 		runAgentGitTest(t, repository, "add", "--", "opencode.json")
 		runAgentGitTest(t, repository, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "fixture")
 		head := strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "HEAD"))
-		if err := updateAgentGitRepository(context.Background(), repository); err != nil {
+		if _, err := updateHostConfigurationGitRepository(context.Background(), repository); err != nil {
 			t.Fatalf("repository without remotes: %v", err)
 		}
 		if got := strings.TrimSpace(runAgentGitTest(t, repository, "rev-parse", "HEAD")); got != head {
@@ -476,7 +493,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
 		runAgentGitTest(t, repository, "config", "--unset", "branch.main.remote")
 		runAgentGitTest(t, repository, "config", "--unset", "branch.main.merge")
-		if err := updateAgentGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "no upstream") {
+		if _, err := updateHostConfigurationGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "no upstream") {
 			t.Fatalf("missing upstream error = %v", err)
 		}
 	})
@@ -489,7 +506,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
 		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
 		runAgentGitTest(t, repository, "checkout", "--detach")
-		if err := updateAgentGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "must be on a branch") {
+		if _, err := updateHostConfigurationGitRepository(context.Background(), repository); err == nil || !strings.Contains(err.Error(), "must be on a branch") {
 			t.Fatalf("detached HEAD error = %v", err)
 		}
 	})
@@ -511,7 +528,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 		runAgentGitTest(t, seed, "add", "--", "remote.md")
 		runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "remote")
 		runAgentGitTest(t, seed, "push", "origin", "main")
-		if err := updateAgentGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
+		if _, err := updateHostConfigurationGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
 			t.Fatalf("diverged update error = %v", err)
 		}
 		if got := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD")); got != hostHead {
@@ -533,7 +550,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 		runAgentGitTest(t, seed, "add", "--", "opencode.json")
 		runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
 		runAgentGitTest(t, seed, "push", "origin", "main")
-		if err := updateAgentGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
+		if _, err := updateHostConfigurationGitRepository(context.Background(), host); err == nil || !strings.Contains(err.Error(), "resolve local changes") {
 			t.Fatalf("overlapping change update error = %v", err)
 		}
 		if got := strings.TrimSpace(runAgentGitTest(t, host, "rev-parse", "HEAD")); got != hostHead {
@@ -548,42 +565,7 @@ func TestUpdateAgentGitRepositoryRefusesUnsafeStatesWithoutChangingHead(t *testi
 	})
 }
 
-func TestArchiveCodingAgentConfigurationUpdatesBeforeReadingAllowlistedFiles(t *testing.T) {
-	root := t.TempDir()
-	remote := filepath.Join(root, "remote.git")
-	runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
-	seed := filepath.Join(root, "seed")
-	initializeAgentGitRepositoryAtRemote(t, seed, remote, []string{"opencode.json"})
-	host := filepath.Join(root, "host")
-	runAgentGitTest(t, root, "clone", remote, host)
-	writeTestFile(t, filepath.Join(seed, "opencode.json"), `{"version":2}`)
-	runAgentGitTest(t, seed, "add", "--", "opencode.json")
-	runAgentGitTest(t, seed, "-c", "core.hooksPath="+os.DevNull, "commit", "-m", "upstream")
-	runAgentGitTest(t, seed, "push", "origin", "main")
-
-	archived := map[string][]byte{}
-	err := archiveCodingAgentConfiguration(context.Background(), codingAgentConfigurationSources{
-		Selection:         codingAgentSyncConfiguration{UpdateGitRepositories: true, OpenCode: true},
-		OpenCodeDirectory: host,
-	}, func(source, destination string) error {
-		contents, readErr := os.ReadFile(source)
-		if readErr == nil {
-			archived[filepath.ToSlash(destination)] = contents
-		}
-		return readErr
-	}, func(contents []byte, destination, _ string) error {
-		archived[filepath.ToSlash(destination)] = append([]byte(nil), contents...)
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(archived["opencode/opencode.json"]); got != `{"version":2}` {
-		t.Fatalf("archived config = %q", got)
-	}
-}
-
-func TestArchiveCodingAgentConfigurationCanSkipGitRepositoryUpdate(t *testing.T) {
+func TestArchiveCodingAgentConfigurationDoesNotPullGitRepository(t *testing.T) {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
 	runAgentGitTest(t, root, "init", "--bare", "--initial-branch=main", remote)
@@ -856,7 +838,7 @@ if (-not $rejected) { throw 'Destination junction was not rejected.' }
 `
 	scriptPath := filepath.Join(root, "coding-agent-sync-regression.ps1")
 	writeTestFile(t, scriptPath, script)
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	command.Env = append(os.Environ(),
 		"SYNC_SOURCE="+sourceRoot,
 		"SYNC_DESTINATION="+destinationRoot,
