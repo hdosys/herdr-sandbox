@@ -1151,8 +1151,12 @@ func upsertHerdrConfigValue(lines []string, sectionName, key, replacement string
 	inSection := false
 	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && !strings.HasPrefix(trimmed, "[[") {
-			section := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]"))
+		if strings.HasPrefix(trimmed, "[") {
+			header, exact := herdrConfigHeader(trimmed)
+			if !exact {
+				continue
+			}
+			section := herdrConfigSectionName(header)
 			if inSection {
 				sectionEnd = index
 				inSection = false

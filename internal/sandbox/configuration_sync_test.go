@@ -421,6 +421,10 @@ func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
 			}
 		})
 	}
+	withComment, err := patchGuestHerdrConfigWithWorktreeDirectory([]byte("[worktrees] # retained comment\ninclude_repo_name = true\n"), guestWorktreeDirectory)
+	if err != nil || strings.Count(string(withComment), "[worktrees]") != 1 || !strings.Contains(string(withComment), `directory = "C:/Worktrees"`) {
+		t.Fatalf("commented worktrees section patch = %q, error = %v", withComment, err)
+	}
 }
 
 func TestBuildGuestHerdrConfigAllowsMissingHostConfig(t *testing.T) {
