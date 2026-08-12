@@ -55,17 +55,11 @@ Behavior:
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
-const installerCleanUninstallTimeout = 15 * time.Minute
+const installerCleanUninstallTimeout = 15 * time.Second
 
 const stackSelectionHelp = "android, cpp, dotnet, go, java, node, nsis, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, python-ai"
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	release, err := acquireInstallerLifecycleGate(args)
-	if err != nil {
-		fmt.Fprintln(stderr, "sandbox:", err)
-		return 1
-	}
-	defer release()
 	return runWithCommandDependencies(ctx, args, stdin, stdout, stderr, defaultCommandDependencies())
 }
 
@@ -73,36 +67,38 @@ type staleCleanup func(context.Context) (sandbox.CleanResult, error)
 type sessionInspector func(context.Context) (sandbox.SessionStatus, error)
 
 type commandDependencies struct {
-	cleanup        staleCleanup
-	inspect        sessionInspector
-	resolveHerdr   func(context.Context) (sandbox.HostHerdr, error)
-	up             func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error)
-	down           func(context.Context) (sandbox.DownResult, error)
-	openReady      func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error)
-	attach         func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
-	validateAttach func(io.Reader, io.Writer, io.Writer) error
-	resolvePlan    func(context.Context, string) (sandbox.EffectivePlan, error)
-	initialize     func(string, []string) (sandbox.ProjectInitResult, error)
-	openConfig     func() (string, error)
-	seedInstaller  func() error
-	cleanInstaller func(context.Context, bool) error
+	cleanup                    staleCleanup
+	inspect                    sessionInspector
+	resolveHerdr               func(context.Context) (sandbox.HostHerdr, error)
+	up                         func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error)
+	down                       func(context.Context) (sandbox.DownResult, error)
+	openReady                  func(context.Context, io.Writer, sandbox.HostHerdr) (sandbox.Connection, error)
+	attach                     func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
+	validateAttach             func(io.Reader, io.Writer, io.Writer) error
+	resolvePlan                func(context.Context, string) (sandbox.EffectivePlan, error)
+	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
+	openConfig                 func() (string, error)
+	seedInstaller              func() error
+	cleanInstaller             func(context.Context, bool) error
+	cleanInstallerWithLockHeld func(context.Context, bool) error
 }
 
 func defaultCommandDependencies() commandDependencies {
 	return commandDependencies{
-		cleanup:        sandbox.CleanupStaleState,
-		inspect:        sandbox.InspectSession,
-		resolveHerdr:   sandbox.ResolveHostHerdr,
-		up:             sandbox.Up,
-		down:           sandbox.Down,
-		openReady:      sandbox.OpenReadyConnection,
-		attach:         sandbox.Attach,
-		validateAttach: sandbox.ValidateInteractiveAttachStreams,
-		resolvePlan:    sandbox.ResolveEffectivePlan,
-		initialize:     sandbox.InitializeProject,
-		openConfig:     sandbox.OpenConfiguration,
-		seedInstaller:  sandbox.SeedInstallerConfiguration,
-		cleanInstaller: sandbox.CleanInstallerData,
+		cleanup:                    sandbox.CleanupStaleState,
+		inspect:                    sandbox.InspectSession,
+		resolveHerdr:               sandbox.ResolveHostHerdr,
+		up:                         sandbox.Up,
+		down:                       sandbox.Down,
+		openReady:                  sandbox.OpenReadyConnection,
+		attach:                     sandbox.Attach,
+		validateAttach:             sandbox.ValidateInteractiveAttachStreams,
+		resolvePlan:                sandbox.ResolveEffectivePlan,
+		initialize:                 sandbox.InitializeProject,
+		openConfig:                 sandbox.OpenConfiguration,
+		seedInstaller:              sandbox.SeedInstallerConfiguration,
+		cleanInstaller:             sandbox.CleanInstallerData,
+		cleanInstallerWithLockHeld: sandbox.CleanInstallerDataWithLockHeld,
 	}
 }
 
@@ -164,15 +160,23 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	case "__installer-clean-uninstall":
 		deleteConfiguration := false
-		if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--delete-configuration" {
+		lockHeld := false
+		if len(args) == 4 && args[1] == "--installer-schema=1" && args[2] == "--installer-lock-held" && args[3] == "--delete-configuration" {
 			deleteConfiguration = true
-		} else if len(args) != 2 || args[1] != "--installer-schema=1" {
-			fmt.Fprintln(stderr, "sandbox: installer clean uninstall requires --installer-schema=1 and accepts only --delete-configuration after it")
+			lockHeld = true
+		} else if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--installer-lock-held" {
+			lockHeld = true
+		} else {
+			fmt.Fprintln(stderr, "sandbox: installer clean uninstall requires --installer-schema=1 --installer-lock-held and accepts only --delete-configuration after it")
 			return 2
 		}
 		cleanupContext, cancel := context.WithTimeout(ctx, installerCleanUninstallTimeout)
 		defer cancel()
-		if err := dependencies.cleanInstaller(cleanupContext, deleteConfiguration); err != nil {
+		clean := dependencies.cleanInstaller
+		if lockHeld {
+			clean = dependencies.cleanInstallerWithLockHeld
+		}
+		if err := clean(cleanupContext, deleteConfiguration); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}

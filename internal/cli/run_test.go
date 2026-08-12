@@ -97,6 +97,7 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	openCalls := 0
 	seedCalls := 0
 	cleanCalls := []bool{}
+	lockedCleanCalls := []bool{}
 	dependencies.openConfig = func() (string, error) {
 		openCalls++
 		return `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`, nil
@@ -109,18 +110,27 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 		cleanCalls = append(cleanCalls, deleteConfiguration)
 		deadline, ok := ctx.Deadline()
 		remaining := time.Until(deadline)
-		if !ok || remaining > installerCleanUninstallTimeout || remaining < installerCleanUninstallTimeout-time.Minute {
+		if !ok || remaining > installerCleanUninstallTimeout || remaining < installerCleanUninstallTimeout-time.Second {
 			t.Fatalf("installer cleanup deadline = %v, found = %t", deadline, ok)
 		}
 		return nil
 	}
-	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1"}, {"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}} {
+	dependencies.cleanInstallerWithLockHeld = func(ctx context.Context, deleteConfiguration bool) error {
+		lockedCleanCalls = append(lockedCleanCalls, deleteConfiguration)
+		deadline, ok := ctx.Deadline()
+		remaining := time.Until(deadline)
+		if !ok || remaining > installerCleanUninstallTimeout || remaining < installerCleanUninstallTimeout-time.Second {
+			t.Fatalf("installer locked cleanup deadline = %v, found = %t", deadline, ok)
+		}
+		return nil
+	}
+	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1", "--installer-lock-held"}, {"__installer-clean-uninstall", "--installer-schema=1", "--installer-lock-held", "--delete-configuration"}} {
 		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
 			t.Fatalf("%v exit code = %d", args, code)
 		}
 	}
-	if openCalls != 1 || seedCalls != 1 || len(cleanCalls) != 2 || cleanCalls[0] || !cleanCalls[1] {
-		t.Fatalf("installer owner calls = open %d, seed %d, clean %#v", openCalls, seedCalls, cleanCalls)
+	if openCalls != 1 || seedCalls != 1 || len(cleanCalls) != 0 || len(lockedCleanCalls) != 2 || lockedCleanCalls[0] || !lockedCleanCalls[1] {
+		t.Fatalf("installer owner calls = open %d, seed %d, clean %#v, locked clean %#v", openCalls, seedCalls, cleanCalls, lockedCleanCalls)
 	}
 }
 
@@ -129,6 +139,7 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	dependencies.openConfig = func() (string, error) { return "", errors.New("open fixture") }
 	dependencies.seedInstaller = func() error { return errors.New("seed fixture") }
 	dependencies.cleanInstaller = func(context.Context, bool) error { return errors.New("clean fixture") }
+	dependencies.cleanInstallerWithLockHeld = func(context.Context, bool) error { return errors.New("locked clean fixture") }
 	for _, test := range []struct {
 		args     []string
 		wantCode int
@@ -141,8 +152,10 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1"},
 		{args: []string{"__installer-open-configuration"}, wantCode: 1, wantText: "open fixture"},
 		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1"}, wantCode: 1, wantText: "clean fixture"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}, wantCode: 1, wantText: "clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1"}, wantCode: 2, wantText: "requires --installer-schema=1 --installer-lock-held"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1 --installer-lock-held"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--installer-lock-held"}, wantCode: 1, wantText: "locked clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--installer-lock-held", "--delete-configuration"}, wantCode: 1, wantText: "locked clean fixture"},
 	} {
 		var stderr bytes.Buffer
 		code := runWithCommandDependencies(context.Background(), test.args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)

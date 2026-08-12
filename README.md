@@ -128,9 +128,9 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest relea
 - Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A permanent product GUID, the registered location, and a matching marker establish ownership; setup refuses a nonempty unmarked directory.
 - Setup stages and backs up the four-file payload, restores a failed replacement, and repairs a marked interrupted install when rerun. It does not promise rollback after power loss.
 - Reparse points, inaccessible state, locked application files, and unknown siblings fail closed or remain preserved for a later repair.
-- Setup, uninstall, and application commands share one cross-session gate. The installer adds at most one owned user `PATH` entry, and uninstall removes only that entry.
+- Setup and uninstall share one installer-only gate, so ordinary `sandbox` commands no longer cause a false "another installer is running" result. Destructive uninstall cleanup additionally holds the existing application lifecycle gate continuously until executable removal. Setup adds at most one effective user `PATH` entry; owned uninstall removes all literal duplicates of that fixed directory while preserving environment-expression and unrelated entries.
 - `config.json` and `user.ps1` are created only when absent and survive upgrades. They also survive uninstall unless **Also delete config.json and user.ps1** or silent `/DELETE_CONFIG` is selected.
-- Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It validates ownership, closes only a proven app-owned Sandbox, and removes only exact app-owned SSH, machine-local, cache, registration, and application state. Silent blockers return a nonzero status; interactive uninstall can preserve residual state and continue explicitly.
+- Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It validates ownership and removes only exact app-owned SSH, machine-local, cache, registration, and application state. Silent cleanup is bounded to 30 seconds and returns a nonzero status instead of hanging. A running Sandbox is preserved and becomes unmanaged.
 - Herdr/Herdr-Win, agents, updaters, runtime bundles, Windows prerequisites, project profiles, unrelated SSH content, and unselected user configuration remain outside installer ownership.
 
 </details>
@@ -500,7 +500,7 @@ When worktrees are enabled, configuration sync adds one guest-only managed routi
 
 The directory must already exist, be absolute and non-reparse, and must not overlap a workspace, generic mount, cache, configuration, private run state, protected root, or sensitive credential location. Changing or disabling it requires `sandbox down` before the next `up`. `sandbox clean` and uninstall preserve the entire directory, including when configuration deletion is selected.
 
-These are guest-native linked worktrees, not portable host-side checkouts. Git stores their linked metadata in the mapped main repository, and the linked checkout records guest paths. Keep the same main workspace mapped at the same `C:\Workspaces\<name>` path on later launches, perform worktree lifecycle operations through guest Herdr or guest Git, and remove linked worktrees before removing their main workspace. Herdr Sandbox does not add leases, pruning, or automatic worktree deletion.
+These are guest-native linked worktrees, not portable host-side checkouts. Git stores their linked metadata in the mapped main repository, and the linked checkout records guest paths. Keep the same main workspace mapped at the same `C:\Workspaces\<name>` path on later launches, perform worktree lifecycle operations through guest Herdr, and remove linked worktrees before removing their main workspace. Herdr Sandbox does not add leases, pruning, or automatic worktree deletion.
 
 #### Agent packages
 

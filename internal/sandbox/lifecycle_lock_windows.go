@@ -19,7 +19,7 @@ var (
 
 func acquireLifecycleLock(ctx context.Context) (func() error, error) {
 	runtime.LockOSThread()
-	name, err := syscall.UTF16PtrFromString(`Local\herdr-sandbox-lifecycle-v1`)
+	name, err := syscall.UTF16PtrFromString(`Local\` + applicationName + `-lifecycle-v1`)
 	if err != nil {
 		runtime.UnlockOSThread()
 		return nil, fmt.Errorf("encode lifecycle mutex name: %w", err)

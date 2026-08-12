@@ -98,9 +98,29 @@ func TestInstallerBuildInputsBindSafeCurrentIdentity(t *testing.T) {
 	if err := validateInstallerBuildInputs(version, filepath.Join(root, "wrong.exe")); err == nil {
 		t.Fatal("mismatched installer output name unexpectedly passed")
 	}
-	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "name. ", "a/b"} {
+	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "NUL.anything", `quote".exe`, " name.exe", "name.exe ", "name.", "a/b", "bad\x01.exe"} {
 		if err := validateInstallerLeaf("fixture", value); err == nil {
 			t.Fatalf("unsafe installer leaf unexpectedly passed: %q", value)
+		}
+	}
+}
+
+func TestInstallerLeafCanonicalizationRejectsWin32Aliases(t *testing.T) {
+	for _, test := range []struct {
+		left  string
+		right string
+	}{
+		{left: "app.exe", right: "APP.EXE"},
+		{left: "app.exe", right: "app.exe."},
+		{left: "app.exe", right: "app.exe "},
+	} {
+		if canonicalInstallerLeaf(test.left) != canonicalInstallerLeaf(test.right) {
+			t.Fatalf("canonicalInstallerLeaf(%q) != canonicalInstallerLeaf(%q)", test.left, test.right)
+		}
+	}
+	for _, reserved := range []string{"CON", "con.txt", "NUL.anything", "COM1.log", "lpt9"} {
+		if err := validateInstallerLeaf("fixture", reserved); err == nil {
+			t.Fatalf("reserved Windows leaf unexpectedly passed: %q", reserved)
 		}
 	}
 }
@@ -337,12 +357,15 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`CRCCheck force`,
 		`AllowSkipFiles off`,
 		`InstallDir "$LOCALAPPDATA\Programs\${APP_INSTALL_DIRECTORY}"`,
+		`!define APP_INSTALLER_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerExclusive"`,
+		`!define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_APPLICATION_NAME}-lifecycle-v1"`,
+		`!insertmacro AcquireInstallerMutex ${FAILURE_CODE}`,
+		`Another ${APP_DISPLAY_NAME} setup or uninstall is running.`,
 		`SetDatablockOptimize on`,
 		`SetCompressorDictSize 8`,
 		`SetCompressor /SOLID /FINAL lzma`,
 		`ManifestDPIAware true`,
 		`AutoCloseWindow true`,
-		`!define MUI_CUSTOMFUNCTION_UNABORT un.PreventUninstallMutationAbort`,
 		`!define INSTALLER_WELCOME_BITMAP_100 "${__FILEDIR__}\assets\installer-welcome-finish-164x314.bmp"`,
 		`!define INSTALLER_WELCOME_BITMAP_125 "${__FILEDIR__}\assets\installer-welcome-finish-205x393.bmp"`,
 		`!define INSTALLER_WELCOME_BITMAP_150 "${__FILEDIR__}\assets\installer-welcome-finish-246x471.bmp"`,
@@ -379,20 +402,17 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`ShowWindow $mui.FinishPage.Run ${SW_HIDE}`,
 		`${NSD_SetFocus} $mui.Button.Next`,
 		`Function OpenInstalledConfiguration`,
-		`IfSilent open_configuration_done`,
-		`${If} $ExistingRegistrationOwned != "0"`,
+		`IfSilent done`,
+		`${If} $ExistingInstallation == "1"`,
 		`__installer-open-configuration`,
 		`Run ${APP_NAME} config from a new terminal.`,
 		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
-		`StrCmp $0 "/DELETE_CONFIG" delete_config`,
-		`StrCmp $0 "/S /DELETE_CONFIG" delete_config`,
-		`Unsupported uninstall arguments`,
+		`${GetOptions} $0 " /DELETE_CONFIG " $1`,
 		`${NSD_CreateCheckbox}`,
 		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
 		`A running Sandbox stays open but becomes unmanaged`,
-		`any running Sandbox stays open`,
 		`File "${PACKAGE_DIR}\${APP_BASE_SCRIPT}"`,
 		`File "${PACKAGE_DIR}\${APP_EXECUTABLE}"`,
 		`File "${PACKAGE_DIR}\${APP_LICENSE}"`,
@@ -400,56 +420,45 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`File "/oname=${APP_QUIET_UNINSTALL_HELPER}" "${QUIET_UNINSTALL_HELPER}"`,
 		`WriteUninstaller "$PLUGINSDIR\package\uninstall.exe"`,
 		`File "/oname=path.ps1" "${PATH_HELPER}"`,
-		`FileOpen $0 "$PLUGINSDIR\package\${APP_INSTALLER_MARKER}" w`,
-		`{"productGuid":"${APP_PRODUCT_GUID}","installerSchema":1}`,
+		`Function ${PREFIX}WriteOwnershipMarker`,
+		`FileWrite $0 '{"productGuid":"${APP_PRODUCT_GUID}","installerSchema":${APP_INSTALLER_SCHEMA}}`,
+		`Call ${PREFIX}CheckMarkerAtPath`,
 		`ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "ProductGuid"`,
 		`ReadRegStr $1 HKCU "${UNINSTALL_KEY}" "InstallLocation"`,
 		`EnumRegValue $0 HKCU "${UNINSTALL_KEY}" 0`,
-		`The fixed ${APP_DISPLAY_NAME} install directory is nonempty but unmarked`,
-		`The incomplete ${APP_DISPLAY_NAME} registration points to another location`,
-		`BackupOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker`,
-		`BackupOwnedFile "${APP_REPLACED_EXECUTABLE}" $BackupReplacedExecutable`,
-		`ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`,
-		`ReplaceOwnedFile "${APP_BASE_SCRIPT}"`,
-		`ReplaceOwnedFile "${APP_EXECUTABLE}"`,
-		`RestoreOwnedFile "${APP_EXECUTABLE}" $BackupExecutable`,
-		`RestoreOwnedFile "${APP_REPLACED_EXECUTABLE}" $BackupReplacedExecutable`,
-		`RestoreOwnedFile "${APP_INSTALLER_MARKER}" $BackupMarker`,
-		`RunPathHelper "Contains"`,
-		`RunPathHelper "Add"`,
-		`RunPathHelper "Remove"`,
-		`ReadRegDWORD $PathAddPending HKCU "${UNINSTALL_KEY}" "PathAddPending"`,
+		`The fixed install directory is nonempty but unmarked`,
+		`The incomplete registration points to another location`,
+		`!insertmacro BackupFile "${APP_INSTALLER_MARKER}"`,
+		`!insertmacro InstallFile "${APP_INSTALLER_MARKER}"`,
+		`!insertmacro InstallFile "${APP_BASE_SCRIPT}"`,
+		`!insertmacro InstallFile "${APP_EXECUTABLE}"`,
+		`!insertmacro RestoreFile "${APP_EXECUTABLE}"`,
+		`!insertmacro RestoreFile "${APP_INSTALLER_MARKER}"`,
+		`StrCpy $PathAction "Contains"`,
+		`StrCpy $PathAction "Add"`,
+		`StrCpy $PathAction "Remove"`,
+		`ReadRegDWORD $PathPending HKCU "${UNINSTALL_KEY}" "PathAddPending"`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAddPending" 1`,
 		`DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"`,
-		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $3`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $PathOwned`,
 		`WriteRegStr HKCU "${UNINSTALL_KEY}" "ProductGuid" "${APP_PRODUCT_GUID}"`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallerSchemaVersion" ${APP_INSTALLER_SCHEMA}`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "MinimumCompatibleUninstallerSchema" ${APP_INSTALLER_SCHEMA}`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`,
-		`ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"`,
-		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1`,
-		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" $PartialCleanup`,
-		`Function un.RestoreRetryOwnership`,
-		`Call un.RestoreRetryOwnership`,
-		`Function un.CheckInstallDirectoryResidual`,
+		`Function un.CheckDirectoryResidual`,
 		`!define APP_ERROR_FILE_NOT_FOUND 2`,
 		`!define APP_ERROR_PATH_NOT_FOUND 3`,
 		`GetFileAttributesW(w "$INSTDIR") i.r0 ?e`,
-		`CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"`,
-		`!insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"`,
-		`!insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"`,
-		`!insertmacro DeleteOwnedFileAfterRegistration "${APP_INSTALLER_MARKER}"`,
-		`its ownership marker and directory were preserved`,
-		`Function un.PreventUninstallMutationAbort`,
-		`Call un.DisableUninstallCancellation`,
-		`KERNEL32::CreateFileW`,
-		`APP_DELETE_ACCESS`,
-		`IfSilent uninstall_cleanup_abort`,
-		`APP_EXIT_UNINSTALL_CLEANUP 82`,
-		`APP_EXIT_UNINSTALL_PARTIAL_CLEANUP 83`,
-		`The working application payload remains installed`,
-		`The prior installer-owned files were restored`,
-		`The first command that needs configuration will try again`,
+		`!insertmacro DeleteFinal "${APP_QUIET_UNINSTALL_HELPER}"`,
+		`!insertmacro DeleteFinal "uninstall.exe"`,
+		`!insertmacro DeleteFinal "${APP_INSTALLER_MARKER}"`,
+		`!insertmacro AcquireLifecycleMutex ${APP_EXIT_UNINSTALL_FAILED}`,
+		`--installer-lock-held`,
+		`Cleanup will run again on the next uninstall attempt`,
+		`The previous files were restored`,
+		`The application will retry when needed`,
 		`MessageBox MB_ICONSTOP|MB_OK`,
 		`/SD IDOK`,
 		`VIProductVersion "${FIXED_VERSION}"`,
@@ -464,23 +473,18 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`i ${APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS}`,
 		`$2 == 0`,
 		`sign out and back in`,
-		`!define APP_LIFECYCLE_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerLifecycle"`,
 		`KERNEL32::CreateMutexW`,
 		`KERNEL32::WaitForSingleObject`,
 		`KERNEL32::ReleaseMutex`,
 		`KERNEL32::CloseHandle`,
 		`APP_WAIT_ABANDONED 128`,
 		`APP_WAIT_TIMEOUT 258`,
-		`Close that live command`,
 		`${AtLeastWin10}`,
 		`SetOutPath "$INSTDIR"`,
-		`!define APP_EXIT_INVALID_ARGUMENTS 30`,
-		`!define APP_EXIT_LIFECYCLE_BUSY 41`,
+		`!define APP_EXIT_INSTALLER_BUSY 41`,
 		`!define APP_EXIT_UNSUPPORTED_PLATFORM 50`,
 		`!define APP_EXIT_INSTALL_FAILED 70`,
-		`!define APP_EXIT_UNINSTALL_PREFLIGHT 80`,
-		`!define APP_EXIT_UNINSTALL_FINALIZE 81`,
-		`!define APP_EXIT_INTERNAL_STATE 90`,
+		`!define APP_EXIT_UNINSTALL_FAILED 80`,
 		`Delete "$INSTDIR\${NAME}"`,
 		`DeleteRegKey HKCU "${UNINSTALL_KEY}"`,
 		`RMDir "$INSTDIR"`,
@@ -506,6 +510,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`installer-state.ps1`,
 		`InstallerLifecycle.v2`,
 		`InstallerLifecycle.v3`,
+		`acquireInstallerLifecycleGate`,
 		`APP_LIFECYCLE_WAIT_INTERVAL_MS`,
 		`APP_LIFECYCLE_WAIT_ATTEMPTS`,
 		`INSTALLER_STATE_HELPER`,
@@ -513,6 +518,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		`RunInstallerState`,
 		`/TIMEOUT=`,
 		`installer-transaction`,
+		`CleanupIncomplete`,
+		`RestoreRetryOwnership`,
+		`PreflightOwnedFile`,
 		`state.json`,
 		`File /r`,
 		`!define PRODUCT_NAME`,
@@ -543,9 +551,9 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 			t.Fatalf("installer source contains out-of-scope pattern %q", forbidden)
 		}
 	}
-	markerReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`)
-	baseReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_BASE_SCRIPT}"`)
-	executableReplaceIndex := strings.Index(source, `!insertmacro ReplaceOwnedFile "${APP_EXECUTABLE}"`)
+	markerReplaceIndex := strings.Index(source, `!insertmacro InstallFile "${APP_INSTALLER_MARKER}"`)
+	baseReplaceIndex := strings.Index(source, `!insertmacro InstallFile "${APP_BASE_SCRIPT}"`)
+	executableReplaceIndex := strings.Index(source, `!insertmacro InstallFile "${APP_EXECUTABLE}"`)
 	if markerReplaceIndex < 0 || baseReplaceIndex <= markerReplaceIndex || executableReplaceIndex <= baseReplaceIndex {
 		t.Fatal("setup must establish its marker, replace support files, and copy the executable last")
 	}
@@ -555,37 +563,23 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		t.Fatal("missing installer sections")
 	}
 	installSource := source[installStart:uninstallStart]
-	disableCancellationIndex := strings.Index(installSource, `Call DisableInstallCancellation`)
 	incompleteWriteIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0`)
-	installMarkerReplaceIndex := strings.Index(installSource, `!insertmacro ReplaceOwnedFile "${APP_INSTALLER_MARKER}"`)
+	installMarkerReplaceIndex := strings.Index(installSource, `!insertmacro InstallFile "${APP_INSTALLER_MARKER}"`)
 	pathIntentIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAddPending" 1`)
-	pathAddIndex := strings.Index(installSource, `!insertmacro RunPathHelper "Add"`)
-	pathOwnershipCommitIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $3`)
-	pathIntentDeleteIndex := strings.Index(installSource, `DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"`)
-	cleanupResetIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0`)
+	pathAddIndex := strings.Index(installSource, `StrCpy $PathAction "Add"`)
+	pathOwnershipCommitIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $PathOwned`)
+	pathIntentDeleteIndex := strings.LastIndex(installSource, `DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"`)
 	installCommitIndex := strings.Index(installSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`)
-	if disableCancellationIndex < 0 || incompleteWriteIndex <= disableCancellationIndex || installMarkerReplaceIndex <= incompleteWriteIndex {
-		t.Fatal("an owned upgrade must block cancellation, become incomplete, then replace installed payload")
+	if incompleteWriteIndex < 0 || installMarkerReplaceIndex <= incompleteWriteIndex {
+		t.Fatal("an owned upgrade must become incomplete before replacing installed payload")
 	}
-	if pathIntentIndex < 0 || pathAddIndex <= pathIntentIndex || pathOwnershipCommitIndex <= pathAddIndex || pathIntentDeleteIndex <= pathOwnershipCommitIndex {
-		t.Fatal("PATH Add intent must persist until PathAdded ownership commits")
+	if pathIntentIndex < 0 || pathAddIndex <= pathIntentIndex || pathOwnershipCommitIndex <= pathAddIndex || pathIntentDeleteIndex <= pathAddIndex {
+		t.Fatal("PATH Add intent must precede mutation and reach an explicit terminal decision before install commit")
 	}
-	if strings.Count(installSource, `StrCpy $PathAddedThisRun "1"`) != 2 {
-		t.Fatal("both changed and concurrently-present PATH Add outcomes must retain installer ownership")
+	if !strings.Contains(installSource, `Presence after an interrupted intent does not prove who added it.`) {
+		t.Fatal("stale PATH Add intent must recover without claiming ambiguous ownership")
 	}
-	integrationFailureIndex := strings.Index(installSource, `install_integration_failure:`)
-	if integrationFailureIndex < 0 || !strings.Contains(installSource[integrationFailureIndex:], `${ElseIf} $PathAddPending == "1"`) ||
-		!strings.Contains(installSource[integrationFailureIndex:], `${AndIf} $RollbackFailed == "0"`) {
-		t.Fatal("failed or ambiguous PATH rollback must preserve pending ownership state")
-	}
-	if cleanupResetIndex < 0 || installCommitIndex <= cleanupResetIndex {
-		t.Fatal("a successful install must reset prior cleanup failure before its final commit")
-	}
-	postCommitSource := installSource[installCommitIndex:]
-	if !strings.Contains(postCommitSource, `${If} $3 == "1"`) || !strings.Contains(postCommitSource, `!insertmacro NotifyPathChanged`) {
-		t.Fatal("committed PATH ownership must trigger refresh after both current and recovered Add")
-	}
-	rollbackStart := strings.Index(installSource, `install_payload_rollback:`)
+	rollbackStart := strings.Index(installSource, `install_rollback:`)
 	if rollbackStart < 0 || !strings.Contains(installSource[rollbackStart:], `$InstallCompleteWasComplete == "1"`) ||
 		!strings.Contains(installSource[rollbackStart:], `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 1`) {
 		t.Fatal("successful payload rollback must restore a previously complete install marker")
@@ -595,72 +589,35 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	if installCompleteIndex < 0 || seedIndex <= installCompleteIndex {
 		t.Fatal("payload and registration must commit before best-effort configuration seeding")
 	}
-	preflightIndex := strings.LastIndex(source, `!insertmacro PreflightOwnedFile "uninstall.exe"`)
 	cleanupIndex := strings.LastIndex(source, `__installer-clean-uninstall`)
-	uninstallMutationIndex := strings.LastIndex(source, `StrCpy $InstallMutationActive "1"`)
 	cleanupMarkerIndex := strings.LastIndex(source, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`)
-	pathRemoveIndex := strings.LastIndex(source, `!insertmacro RunPathHelper "Remove"`)
-	baseDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_BASE_SCRIPT}"`)
-	executableDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFile "${APP_EXECUTABLE}"`)
+	pathRemoveIndex := strings.LastIndex(source, `StrCpy $PathAction "Remove"`)
+	baseDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteRetryable "${APP_BASE_SCRIPT}"`)
+	executableDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteRetryable "${APP_EXECUTABLE}"`)
 	registryDeleteIndex := strings.LastIndex(source, `DeleteRegKey HKCU "${UNINSTALL_KEY}"`)
-	quietDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "${APP_QUIET_UNINSTALL_HELPER}"`)
-	uninstallerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "uninstall.exe"`)
-	residualCheckIndex := strings.LastIndex(source, `Call un.CheckInstallDirectoryResidual`)
-	markerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteOwnedFileAfterRegistration "${APP_INSTALLER_MARKER}"`)
+	quietDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteFinal "${APP_QUIET_UNINSTALL_HELPER}"`)
+	uninstallerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteFinal "uninstall.exe"`)
+	residualCheckIndex := strings.LastIndex(source, `Call un.CheckDirectoryResidual`)
+	markerDeleteIndex := strings.LastIndex(source, `!insertmacro DeleteFinal "${APP_INSTALLER_MARKER}"`)
 	directoryDeleteIndex := strings.LastIndex(source, `RMDir "$INSTDIR"`)
-	if preflightIndex < 0 || uninstallMutationIndex <= preflightIndex || cleanupIndex <= uninstallMutationIndex || cleanupMarkerIndex <= cleanupIndex ||
+	if cleanupIndex < 0 || cleanupMarkerIndex <= cleanupIndex ||
 		pathRemoveIndex <= cleanupMarkerIndex || baseDeleteIndex <= pathRemoveIndex ||
-		executableDeleteIndex <= baseDeleteIndex || registryDeleteIndex <= executableDeleteIndex ||
+		executableDeleteIndex <= cleanupMarkerIndex || baseDeleteIndex <= executableDeleteIndex || registryDeleteIndex <= baseDeleteIndex ||
 		uninstallerDeleteIndex <= registryDeleteIndex || quietDeleteIndex <= uninstallerDeleteIndex ||
 		residualCheckIndex <= quietDeleteIndex || markerDeleteIndex <= residualCheckIndex ||
 		directoryDeleteIndex <= markerDeleteIndex {
 		t.Fatal("uninstall must delete registration, uninstaller, quiet helper, then the final ownership marker")
 	}
-	if strings.Count(source, `Call un.RestoreRetryOwnership`) < 4 ||
-		strings.Count(source, `!insertmacro DeleteOwnedFileAfterRegistration`) != 3 {
-		t.Fatal("every failure after registration removal must restore retry ownership")
-	}
-	restoreStart := strings.Index(source, `Function un.RestoreRetryOwnership`)
-	if restoreStart < 0 {
-		t.Fatal("missing retry-ownership function")
-	}
-	restoreEnd := strings.Index(source[restoreStart:], `FunctionEnd`)
-	if restoreEnd < 0 {
-		t.Fatal("missing retry-ownership function")
-	}
-	restoreSource := source[restoreStart : restoreStart+restoreEnd]
-	for _, want := range []string{
-		`CopyFiles /SILENT "$EXEPATH" "$INSTDIR\uninstall.exe"`,
-		`${FileExists} "$INSTDIR\${APP_QUIET_UNINSTALL_HELPER}"`,
-		`"QuietUninstallString"`,
-		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" $PartialCleanup`,
-	} {
-		if !strings.Contains(restoreSource, want) {
-			t.Fatalf("retry ownership is missing %q", want)
-		}
-	}
-	uninstallSource := source[uninstallStart:]
-	cleanupOutcomeReadIndex := strings.Index(uninstallSource, `ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "CleanupIncomplete"`)
-	cleanupOutcomeWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 1`)
-	cleanupFailureGotoIndex := strings.Index(uninstallSource, `Goto uninstall_record_cleanup`)
-	cleanupSuccessResetIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupIncomplete" 0`)
-	cleanupRecordLabelIndex := strings.Index(uninstallSource, `uninstall_record_cleanup:`)
-	cleanupCompleteWriteIndex := strings.Index(uninstallSource, `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 1`)
-	if cleanupOutcomeReadIndex < 0 || cleanupOutcomeWriteIndex <= cleanupOutcomeReadIndex ||
-		cleanupFailureGotoIndex <= cleanupOutcomeWriteIndex || cleanupSuccessResetIndex <= cleanupFailureGotoIndex ||
-		cleanupRecordLabelIndex <= cleanupSuccessResetIndex || cleanupCompleteWriteIndex <= cleanupRecordLabelIndex {
-		t.Fatal("uninstall retry must preserve failed cleanup but reset it after a later successful cleanup")
-	}
-	if strings.Count(source, `StrCpy $ExistingRegistrationOwned "1"`) != 2 {
+	if strings.Count(source, `StrCpy $ExistingRegistryOwned "1"`) != 2 {
 		t.Fatal("complete and marker-backed incomplete registration must share repair ownership")
 	}
 	if !strings.Contains(source, "Quit") || strings.Count(source, `/SD IDOK`) < 10 || strings.Count(source, `SetErrorLevel`) < 8 {
 		t.Fatal("interactive failures need messages while silent failures retain stable nonblocking exits")
 	}
-	if strings.Count(source, `!insertmacro AcquireInstallerLifecycleMutex`) != 2 {
-		t.Fatal("setup and uninstall must share one process-lifetime lifecycle mutex")
+	if strings.Count(source, `!insertmacro AcquireInstallerMutex ${FAILURE_CODE}`) != 1 {
+		t.Fatal("setup and uninstall must share one installer-only mutex initializer")
 	}
-	mutexStart := strings.Index(source, `!macro AcquireInstallerLifecycleMutex`)
+	mutexStart := strings.Index(source, `!macro AcquireInstallerMutex FAILURE_CODE`)
 	if mutexStart < 0 {
 		t.Fatal("installer lifecycle mutex macro is missing")
 	}
@@ -674,13 +631,15 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 	ownedIndex := strings.Index(mutexSource, `${OrIf} $0 == ${APP_WAIT_ABANDONED}`)
 	timeoutIndex := strings.Index(mutexSource, `${ElseIf} $0 == ${APP_WAIT_TIMEOUT}`)
 	closeIndex := strings.Index(mutexSource, `KERNEL32::CloseHandle`)
-	busyIndex := strings.Index(mutexSource, `SetErrorLevel ${APP_EXIT_LIFECYCLE_BUSY}`)
 	if createIndex < 0 || waitIndex <= createIndex || ownedIndex <= waitIndex || timeoutIndex <= ownedIndex ||
-		closeIndex <= timeoutIndex || busyIndex <= closeIndex {
+		closeIndex <= timeoutIndex || !strings.Contains(mutexSource, `APP_EXIT_INSTALLER_BUSY`) {
 		t.Fatal("installer must acquire new and abandoned mutexes while failing only for a live owner")
 	}
-	if strings.Count(source, `!insertmacro ReleaseInstallerLifecycleMutex`) != 6 {
-		t.Fatal("setup and uninstall must release their owned lifecycle mutex on success, failure, and terminal GUI exit")
+	if strings.Count(source, `!insertmacro ReleaseInstallerMutex`) != 6 {
+		t.Fatal("setup and uninstall must release their installer mutex on success, failure, and terminal GUI exit")
+	}
+	if strings.Count(source, `!insertmacro AcquireLifecycleMutex ${APP_EXIT_UNINSTALL_FAILED}`) != 1 || strings.Contains(installSource, `AcquireLifecycleMutex`) {
+		t.Fatal("the application lifecycle mutex must be held only across destructive uninstall cleanup")
 	}
 	welcomePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_WELCOME`)
 	licensePageIndex := strings.Index(source, `!insertmacro MUI_PAGE_LICENSE`)
@@ -703,7 +662,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		t.Fatal("unterminated fresh-install configuration-open callback")
 	}
 	openFunctionSource := source[openFunctionStart : openFunctionStart+openFunctionEnd]
-	for _, want := range []string{`IfSilent open_configuration_done`, `${If} $ExistingRegistrationOwned != "0"`, `__installer-open-configuration`} {
+	for _, want := range []string{`IfSilent done`, `${If} $ExistingInstallation == "1"`, `__installer-open-configuration`} {
 		if !strings.Contains(openFunctionSource, want) {
 			t.Fatalf("fresh-install configuration-open callback is missing %q", want)
 		}
@@ -717,7 +676,7 @@ func TestInstallerSourceUsesLeanPerUserPackageContract(t *testing.T) {
 		t.Fatal("unterminated fresh-install Finish-page configuration")
 	}
 	finishConfigurationSource := source[finishConfigurationStart : finishConfigurationStart+finishConfigurationEnd]
-	for _, want := range []string{`${If} $ExistingRegistrationOwned != "0"`, `${NSD_Uncheck} $mui.FinishPage.Run`, `ShowWindow $mui.FinishPage.Run ${SW_HIDE}`} {
+	for _, want := range []string{`${If} $ExistingInstallation == "1"`, `${NSD_Uncheck} $mui.FinishPage.Run`, `ShowWindow $mui.FinishPage.Run ${SW_HIDE}`} {
 		if !strings.Contains(finishConfigurationSource, want) {
 			t.Fatalf("fresh-install Finish-page configuration is missing %q", want)
 		}
@@ -734,6 +693,7 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 		`"herdr-sandbox/internal/productidentity"`,
 		`"/WX"`,
 		`"/DAPP_NAME=" + productidentity.CommandName`,
+		`"/DAPP_APPLICATION_NAME=" + productidentity.ApplicationName`,
 		`"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName`,
 		`"/DAPP_EXECUTABLE=" + productidentity.ExecutableName`,
 		`"/DAPP_REPLACED_EXECUTABLE=" + productidentity.ReplacedExecutableName`,
@@ -776,14 +736,14 @@ func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
 		`[ValidateSet('Contains', 'Add', 'Remove')]`,
 		`RegistryValueOptions]::DoNotExpandEnvironmentNames`,
 		`RegistryValueKind]::ExpandString`,
+		`Test-FullyQualifiedWindowsPath`,
 		`Test-EffectivePathEntry`,
 		`Test-OwnedPathEntry`,
-		`[IO.Path]::IsPathRooted($candidate)`,
 		`Resolve-UserPathUpdate`,
 		`Get-UserPathSnapshot`,
 		`Test-SnapshotEqual`,
 		`$kept = New-Object 'Collections.Generic.List[string]'`,
-		`[string]::Join(';', [string[]]$kept)`,
+		`[string]::Join(';', $remaining)`,
 		`[Console]::Out.Write`,
 		`exit 10`,
 	} {
@@ -812,7 +772,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-NormalizedPath', 'Test-EffectivePathEntry', 'Test-OwnedPathEntry', 'Resolve-UserPathUpdate')) {
+foreach ($name in @('Test-FullyQualifiedWindowsPath', 'Get-NormalizedPath', 'Test-EffectivePathEntry', 'Test-OwnedPathEntry', 'Resolve-UserPathUpdate')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
     Invoke-Expression $definition.Extent.Text
@@ -831,12 +791,12 @@ Assert-Update -Current 'C:\Tools' -Action Add -Changed $true -Present $true -Val
 $added = Resolve-UserPathUpdate -Current 'C:\Tools;' -Expected $target -RequestedAction Add -ExpandVariables $false
 if (-not $added.Changed -or $added.Value -cne "C:\Tools;;$target") { throw 'Trailing empty PATH entry was not preserved during add.' }
 $removed = Resolve-UserPathUpdate -Current $added.Value -Expected $target -RequestedAction Remove -ExpandVariables $false
-if (-not $removed.Changed -or $removed.Value -cne 'C:\Tools;') { throw 'Original PATH was not restored after owned removal.' }
+if (-not $removed.Changed -or $removed.Value -cne 'C:\Tools;') { throw 'Literal duplicate cleanup did not converge PATH.' }
 Assert-Update -Current $target -Action Add -Changed $false -Present $true -Value $target
 Assert-Update -Current ('"' + $target.ToUpperInvariant() + '\"') -Action Add -Changed $false -Present $true -Value ('"' + $target.ToUpperInvariant() + '\"')
-Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Present $false -Value $target
+Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Present $false -Value ''
 $equivalent = '"' + $target.ToUpperInvariant() + '\"'
-Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Present $false -Value $equivalent
+Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Present $false -Value ''
 Assert-Update -Current 'C:\Tools' -Action Remove -Changed $false -Present $false -Value 'C:\Tools'
 $expandedTarget = Join-Path $env:LOCALAPPDATA 'Programs\Herdr Sandbox'
 $target = $expandedTarget
@@ -867,15 +827,17 @@ func TestQuietUninstallWrapperOwnsPrivateTemporaryCopyAndExitCode(t *testing.T) 
 		`function Stop-OwnedProcessTree`,
 		`System32\taskkill.exe`,
 		`@('/PID', [string]$Process.Id, '/T', '/F')`,
-		`$termination.WaitForExit(10000)`,
-		`$Process.WaitForExit(10000)`,
-		`[IO.Directory]::CreateDirectory($temporaryDirectory)`,
-		`$temporary = Join-Path $temporaryDirectory 'uninstall.exe'`,
-		`('_?=' + $installRoot)`,
-		`$process.WaitForExit(1200000)`,
-		`exit $process.ExitCode`,
-		`[IO.File]::Delete($temporary)`,
-		`[IO.Directory]::Delete($temporaryDirectory, $false)`,
+		`[Diagnostics.Stopwatch]::StartNew()`,
+		`$termination.WaitForExit(2500)`,
+		`5000 - [int]$cleanup.ElapsedMilliseconds`,
+		`$tempDirectory = Join-Path $tempRoot`,
+		`$tempUninstaller = Join-Path $tempDirectory 'uninstall.exe'`,
+		`$startInfo.Arguments = '/S _?=' + $installPath`,
+		`25000 - [int]$total.ElapsedMilliseconds`,
+		`$process.WaitForExit($operationBudget)`,
+		`Quiet uninstall exceeded its 30-second total limit.`,
+		`$exitCode = $process.ExitCode`,
+		`Remove-Item -LiteralPath $tempDirectory -Recurse -Force`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("quiet uninstall helper is missing %q", want)

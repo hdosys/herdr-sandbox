@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRemoveManagedSSHIncludePreservesUnrelatedConfiguration(t *testing.T) {
@@ -65,6 +66,31 @@ func TestInstallerCleanupNeverOwnsSandboxTermination(t *testing.T) {
 		if strings.Contains(string(source), forbidden) {
 			t.Errorf("installer cleanup retains Sandbox lifecycle path %q", forbidden)
 		}
+	}
+}
+
+func TestCleanInstallerDataWithLockHeldDoesNotReacquireLifecycleLock(t *testing.T) {
+	paths := installerCleanPaths{
+		DataDirectory:          filepath.Join(t.TempDir(), "data"),
+		ConfigurationDirectory: filepath.Join(t.TempDir(), "config"),
+		CacheDirectory:         filepath.Join(t.TempDir(), "cache"),
+		InstallDirectory:       filepath.Join(t.TempDir(), "install"),
+		UserHome:               t.TempDir(),
+	}
+	for _, path := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory, paths.InstallDirectory} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release, err := acquireLifecycleLock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := cleanInstallerDataWithLockHeldAt(ctx, paths, false); err != nil {
+		t.Fatalf("cleanup under parent-held lifecycle lock: %v", err)
 	}
 }
 

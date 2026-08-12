@@ -53,6 +53,11 @@ release notes remain available on the
 - Installer ownership now keeps one stable unversioned lifecycle mutex across
   releases, accepts rooted literal PATH entries containing `%`, and rejects a
   replaced-executable name that collides with any current payload filename.
+- Setup and uninstall now use a dedicated installer-only gate, so ordinary
+  Sandbox commands no longer trigger a false installer-busy message. The simpler
+  direct model removes the application-wide installer gate and transaction
+  machinery, verifies every ownership-marker write, bounds quiet uninstall to 30
+  seconds, and keeps destructive cleanup race-free under the existing app lock.
 
 ## v0.0.12 - 2026-08-07
 

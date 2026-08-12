@@ -69,6 +69,21 @@ func CleanInstallerData(ctx context.Context, deleteConfiguration bool) error {
 	return releaseErr
 }
 
+// CleanInstallerDataWithLockHeld is the strict NSIS handoff. The parent
+// uninstaller already owns the lifecycle mutex, so reacquiring it here would
+// deadlock. No ordinary application command may use this entrypoint.
+func CleanInstallerDataWithLockHeld(ctx context.Context, deleteConfiguration bool) error {
+	paths, err := resolveInstallerCleanPaths()
+	if err != nil {
+		return err
+	}
+	return cleanInstallerDataWithLockHeldAt(ctx, paths, deleteConfiguration)
+}
+
+func cleanInstallerDataWithLockHeldAt(ctx context.Context, paths installerCleanPaths, deleteConfiguration bool) error {
+	return cleanInstallerDataAt(ctx, paths, deleteConfiguration)
+}
+
 func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 	dataDirectory, err := defaultDataDirectory()
 	if err != nil {

@@ -321,7 +321,7 @@ func installerOwnedFiles() []string {
 }
 
 func validateInstallerLeaf(role, value string) error {
-	if value == "" || strings.TrimSpace(value) != value || value == "." || value == ".." || len(value) > 120 {
+	if value == "" || strings.Trim(value, " ") != value || value == "." || value == ".." || len(value) > 120 {
 		return fmt.Errorf("%s must be a nonempty bounded leaf name: %q", role, value)
 	}
 	if filepath.Base(value) != value || strings.ContainsAny(value, `<>:"/\|?*`) || strings.HasSuffix(value, ".") || strings.HasSuffix(value, " ") {
@@ -332,12 +332,16 @@ func validateInstallerLeaf(role, value string) error {
 			return fmt.Errorf("%s contains a control character: %q", role, value)
 		}
 	}
-	base := strings.ToUpper(strings.TrimSuffix(value, filepath.Ext(value)))
+	base := strings.ToUpper(strings.SplitN(value, ".", 2)[0])
 	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
 		(len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9') {
 		return fmt.Errorf("%s uses a reserved Windows device name: %q", role, value)
 	}
 	return nil
+}
+
+func canonicalInstallerLeaf(value string) string {
+	return strings.ToLower(strings.TrimRight(value, " ."))
 }
 
 func validateReplacedExecutableName(value string) error {
@@ -346,7 +350,7 @@ func validateReplacedExecutableName(value string) error {
 	}
 	currentFiles := append(installerOwnedFiles(), productidentity.InstallerMarkerName)
 	for _, current := range currentFiles {
-		if strings.EqualFold(value, current) {
+		if canonicalInstallerLeaf(value) == canonicalInstallerLeaf(current) {
 			return fmt.Errorf("replaced executable %q collides with current installer-owned file %q", value, current)
 		}
 	}
@@ -399,7 +403,7 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 	}
 	seen := map[string]string{}
 	for _, name := range append(installerOwnedFiles(), productidentity.InstallerMarkerName) {
-		key := strings.ToLower(name)
+		key := canonicalInstallerLeaf(name)
 		if previous, exists := seen[key]; exists {
 			return fmt.Errorf("installer file names collide case-insensitively: %q and %q", previous, name)
 		}
@@ -473,6 +477,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DVERSION=" + version.Display,
 		"/DFIXED_VERSION=" + version.Fixed,
 		"/DAPP_NAME=" + productidentity.CommandName,
+		"/DAPP_APPLICATION_NAME=" + productidentity.ApplicationName,
 		"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName,
 		"/DAPP_EXECUTABLE=" + productidentity.ExecutableName,
 		"/DAPP_REPLACED_EXECUTABLE=" + productidentity.ReplacedExecutableName,
