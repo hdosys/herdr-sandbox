@@ -104,6 +104,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	var archivedTerminalSettings []byte
 	var archivedHerdrConfig []byte
 	var archivedStarshipPreset []byte
+	var archivedAgentWorktreeInstructions []byte
 	for _, file := range reader.File {
 		entries[file.Name] = true
 		if file.Name == "windows-terminal/settings.json" {
@@ -139,8 +140,19 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 				t.Fatal(err)
 			}
 		}
+		if file.Name == configurationAgentWorktreeInstructionsArchivePath {
+			stream, openErr := file.Open()
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			archivedAgentWorktreeInstructions, err = io.ReadAll(stream)
+			stream.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, configurationWorktreeDirectoryArchivePath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
+	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, configurationWorktreeDirectoryArchivePath, configurationAgentWorktreeInstructionsArchivePath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
 		if !entries[required] {
 			t.Fatalf("archive is missing %s: %#v", required, entries)
 		}
@@ -183,6 +195,73 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	}
 	if string(archivedStarshipPreset) != starshipCatppuccinLattePreset+"\n" {
 		t.Fatalf("archived Starship preset = %q", archivedStarshipPreset)
+	}
+	if !bytes.Equal(archivedAgentWorktreeInstructions, agentWorktreeInstructions) || validateAgentWorktreeInstructions(archivedAgentWorktreeInstructions) != nil {
+		t.Fatalf("archived agent worktree instructions = %q", archivedAgentWorktreeInstructions)
+	}
+}
+
+func TestBuildDevelopmentConfigurationArchiveOmitsAgentWorktreeInstructionsWhenDisabled(t *testing.T) {
+	root := t.TempDir()
+	packagePlan := filepath.Join(root, wingetPackagePlanFileName)
+	writeTestFile(t, packagePlan, `{}`)
+	archive, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
+		HerdrConfig: filepath.Join(root, "missing-herdr.toml"),
+		PackagePlan: packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := readConfigurationArchiveEntriesForTest(t, archive)
+	if entries[configurationAgentWorktreeInstructionsArchivePath] || entries[configurationWorktreeDirectoryArchivePath] {
+		t.Fatalf("disabled worktree archive entries = %#v", entries)
+	}
+}
+
+func readConfigurationArchiveEntriesForTest(t *testing.T, data []byte) (map[string]bool, map[string][]byte) {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]bool{}
+	contents := map[string][]byte{}
+	for _, file := range reader.File {
+		entries[file.Name] = true
+		stream, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[file.Name], err = io.ReadAll(stream)
+		stream.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return entries, contents
+}
+
+func TestAgentWorktreeInstructionsOwnHerdrLifecycleWithoutCleanupPolicy(t *testing.T) {
+	if err := validateAgentWorktreeInstructions(agentWorktreeInstructions); err != nil {
+		t.Fatal(err)
+	}
+	text := string(agentWorktreeInstructions)
+	for _, required := range []string{
+		`herdr worktree create --cwd`,
+		`herdr worktree list --cwd`,
+		`herdr worktree open --cwd`,
+		`herdr worktree remove --workspace`,
+		`does not decide whether or when`,
+		`does not delete`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("agent instructions are missing %q: %s", required, text)
+		}
+	}
+	for _, forbidden := range []string{"must remove", "always remove", "automatically remove", `%TEMP%`} {
+		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
+			t.Fatalf("agent instructions invent cleanup/path policy %q: %s", forbidden, text)
+		}
 	}
 }
 
@@ -880,7 +959,15 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 	for _, required := range [][]byte{
 		[]byte("herdr-sandbox\\workspaces.json"),
 		[]byte("herdr-sandbox\\worktree-directory.txt"),
+		[]byte("herdr-sandbox\\agent-worktree-instructions.md"),
 		[]byte("C:/Worktrees/*"),
+		[]byte("[config-sync] apply-agent-worktree-instructions"),
+		[]byte(".config\\opencode\\AGENTS.md"),
+		[]byte(".claude\\CLAUDE.md"),
+		[]byte(".codex\\AGENTS.md"),
+		[]byte(".copilot\\instructions\\herdr-sandbox-worktrees.instructions.md"),
+		[]byte(".pi\\agent\\AGENTS.md"),
+		[]byte("Agent worktree instructions do not match the worktree-directory contract"),
 		[]byte("--replace-all' 'safe.directory"),
 		[]byte("Git safe-directory verification failed"),
 		[]byte("Get-Command -Name 'herdr.exe' -CommandType Application"),

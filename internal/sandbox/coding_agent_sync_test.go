@@ -591,10 +591,10 @@ if (Test-Path -LiteralPath (Join-Path $env:SYNC_DESTINATION 'removed.md')) { thr
 $unsafeDeletionRejected = $false
 try {
     Remove-VerifiedTrackedConfigurationFiles -Destination $env:SYNC_DESTINATION -Paths @('../outside.txt')
-} catch {
-    if ($_.Exception.Message -notmatch 'unsafe') { throw }
-    $unsafeDeletionRejected = $true
-}
+	} catch {
+	    if ($_.Exception.Message -notmatch 'unsafe') { throw }
+	    $unsafeDeletionRejected = $true
+	}
 if (-not $unsafeDeletionRejected) { throw 'Unsafe tracked deletion was accepted.' }
 Sync-OptionalConfigurationFile -Source $env:SYNC_MISSING_AUTH -Destination $env:SYNC_EXISTING_AUTH
 if ([IO.File]::ReadAllText($env:SYNC_EXISTING_AUTH) -cne 'keep-auth') { throw 'Absent authentication source changed the destination.' }
@@ -618,6 +618,75 @@ if (-not $rejected) { throw 'Destination junction was not rejected.' }
 	)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("coding-agent PowerShell sync regression: %v: %s", err, output)
+	}
+}
+
+func TestCodingAgentPowerShellProjectsManagedWorktreeInstructionsIdempotently(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 configuration-sync regression")
+	}
+	contents := configurationSyncScript
+	start := bytes.Index(contents, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(contents, []byte("function Get-OpenCodeAllowAllPermissions"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync managed-instruction helper block was not found")
+	}
+	root := t.TempDir()
+	source := filepath.Join(root, "agent-worktree-instructions.md")
+	writeTestFile(t, source, string(agentWorktreeInstructions))
+	destinations := []string{
+		filepath.Join(root, ".config", "opencode", "AGENTS.md"),
+		filepath.Join(root, ".claude", "CLAUDE.md"),
+		filepath.Join(root, ".codex", "AGENTS.md"),
+		filepath.Join(root, ".copilot", "instructions", "herdr-sandbox-worktrees.instructions.md"),
+		filepath.Join(root, ".pi", "agent", "AGENTS.md"),
+	}
+	for _, destination := range destinations {
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, destination, "personal instructions\r\n")
+	}
+	script := string(contents[start:end]) + `
+$destinations = @((ConvertFrom-Json -InputObject $env:SYNC_DESTINATIONS))
+Set-ManagedAgentWorktreeInstructions -Source $env:SYNC_SOURCE -Destinations $destinations
+Set-ManagedAgentWorktreeInstructions -Source $env:SYNC_SOURCE -Destinations $destinations
+foreach ($destination in $destinations) {
+	$text = [IO.File]::ReadAllText([string]$destination).Replace([string]([char]13) + [char]10, [string][char]10)
+    if (-not $text.StartsWith('<!-- herdr-sandbox:worktrees:start -->')) { throw "Managed block was not prepended: $destination" }
+    if (([regex]::Matches($text, [regex]::Escape('<!-- herdr-sandbox:worktrees:start -->'))).Count -ne 1 -or
+        ([regex]::Matches($text, [regex]::Escape('<!-- herdr-sandbox:worktrees:end -->'))).Count -ne 1) {
+        throw "Managed block is not unique: $destination"
+    }
+	if (-not $text.EndsWith('personal instructions' + [char]10)) { throw "Personal instructions were not preserved: $destination" }
+}
+`
+	encodedDestinations, err := json.Marshal(destinations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	command.Env = append(os.Environ(), "SYNC_SOURCE="+source, "SYNC_DESTINATIONS="+string(encodedDestinations))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("managed worktree instruction projection: %v: %s", err, output)
+	}
+
+	malformed := filepath.Join(root, "malformed.md")
+	writeTestFile(t, malformed, agentWorktreeInstructionsStart+"\n"+agentWorktreeInstructionsStart+"\n"+agentWorktreeInstructionsEnd+"\n")
+	rejectionScript := string(contents[start:end]) + `
+$rejected = $false
+try {
+    Set-ManagedAgentWorktreeInstructions -Source $env:SYNC_SOURCE -Destinations @($env:SYNC_DESTINATION)
+} catch {
+    if ($_.Exception.Message -notmatch 'ownership markers') { throw }
+    $rejected = $true
+}
+if (-not $rejected) { throw 'Malformed ownership markers were accepted.' }
+`
+	command = hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(rejectionScript))
+	command.Env = append(os.Environ(), "SYNC_SOURCE="+source, "SYNC_DESTINATION="+malformed)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("malformed managed worktree instruction rejection: %v: %s", err, output)
 	}
 }
 

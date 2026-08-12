@@ -9,6 +9,7 @@ if ([string]::IsNullOrWhiteSpace($archive) -or [string]::IsNullOrWhiteSpace($exp
     throw 'Development configuration launcher state is invalid.'
 }
 $script:CopiedConfigurationFiles = 0
+$script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
 function Assert-ConfigurationDestinationPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     $fullPath = [IO.Path]::GetFullPath($Path)
@@ -160,6 +161,54 @@ function Sync-ClaudeCodeUserState {
         throw 'Claude Code user MCP configuration verification failed.'
     }
     $script:CopiedConfigurationFiles += 1
+}
+function Set-ManagedAgentWorktreeInstructions {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string[]]$Destinations
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw 'Agent worktree instruction source is missing.'
+    }
+    $block = [IO.File]::ReadAllText($Source).Replace("`r`n", "`n").TrimEnd("`r", "`n")
+    $startMarker = '<!-- herdr-sandbox:worktrees:start -->'
+    $endMarker = '<!-- herdr-sandbox:worktrees:end -->'
+    if (-not $block.StartsWith($startMarker, [StringComparison]::Ordinal) -or
+        -not $block.EndsWith($endMarker, [StringComparison]::Ordinal) -or
+        ([regex]::Matches($block, [regex]::Escape($startMarker))).Count -ne 1 -or
+        ([regex]::Matches($block, [regex]::Escape($endMarker))).Count -ne 1) {
+        throw 'Agent worktree instruction source has invalid ownership markers.'
+    }
+    foreach ($destination in $Destinations) {
+        Assert-ConfigurationDestinationPath -Path $destination
+        $existing = ''
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $existing = [IO.File]::ReadAllText($destination).Replace("`r`n", "`n")
+        }
+        $startMatches = [regex]::Matches($existing, [regex]::Escape($startMarker))
+        $endMatches = [regex]::Matches($existing, [regex]::Escape($endMarker))
+        if ($startMatches.Count -ne $endMatches.Count -or $startMatches.Count -gt 1) {
+            throw "Agent worktree instruction destination has invalid ownership markers: $destination"
+        }
+        if ($startMatches.Count -eq 1) {
+            if ($endMatches[0].Index -le $startMatches[0].Index) {
+                throw "Agent worktree instruction destination has invalid marker ordering: $destination"
+            }
+            $after = $endMatches[0].Index + $endMatches[0].Length
+            $existing = $existing.Remove($startMatches[0].Index, $after - $startMatches[0].Index)
+        }
+        $existing = $existing.TrimStart("`r", "`n")
+        $updated = $block + "`n"
+        if (-not [string]::IsNullOrWhiteSpace($existing)) {
+            $updated += "`n" + $existing.TrimEnd("`r", "`n") + "`n"
+        }
+        $destinationDirectory = Split-Path -Parent $destination
+        New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+        [IO.File]::WriteAllText($destination, $updated, $script:Utf8NoBom)
+        if ([IO.File]::ReadAllText($destination).Replace("`r`n", "`n") -cne $updated) {
+            throw "Agent worktree instruction destination verification failed: $destination"
+        }
+    }
 }
 function Get-OpenCodeAllowAllPermissions {
     return [ordered]@{
@@ -527,6 +576,41 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         }
     }
 
+    $worktreeDirectoryPath = Join-Path $expanded 'herdr-sandbox\worktree-directory.txt'
+    $agentWorktreeInstructions = Join-Path $expanded 'herdr-sandbox\agent-worktree-instructions.md'
+    $worktreeDirectoryConfigured = Test-Path -LiteralPath $worktreeDirectoryPath -PathType Leaf
+    $agentWorktreeInstructionsAvailable = Test-Path -LiteralPath $agentWorktreeInstructions -PathType Leaf
+    if ($worktreeDirectoryConfigured -ne $agentWorktreeInstructionsAvailable) {
+        throw 'Agent worktree instructions do not match the worktree-directory contract.'
+    }
+    if ($worktreeDirectoryConfigured) {
+        $worktreeDirectory = [IO.File]::ReadAllText($worktreeDirectoryPath).Trim()
+        if ($worktreeDirectory -cne 'C:\Worktrees' -or
+            -not (Test-Path -LiteralPath $worktreeDirectory -PathType Container)) {
+            throw 'Herdr worktree directory metadata is invalid during configuration sync.'
+        }
+        [Console]::Error.WriteLine('[config-sync] apply-agent-worktree-instructions')
+        $agentWorktreeDestinations = @()
+        if ([bool]$agentSync.opencode) {
+            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.config\opencode\AGENTS.md')
+        }
+        if ([bool]$agentSync.claudeCode) {
+            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.claude\CLAUDE.md')
+        }
+        if ([bool]$agentSync.codex) {
+            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.codex\AGENTS.md')
+        }
+        if ([bool]$agentSync.githubCopilot) {
+            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.copilot\instructions\herdr-sandbox-worktrees.instructions.md')
+        }
+        if ([bool]$agentSync.pi) {
+            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.pi\agent\AGENTS.md')
+        }
+        if ($agentWorktreeDestinations.Count -gt 0) {
+            Set-ManagedAgentWorktreeInstructions -Source $agentWorktreeInstructions -Destinations $agentWorktreeDestinations
+        }
+    }
+
     if ($gitEnabled) {
         [Console]::Error.WriteLine('[config-sync] apply-git')
         $gitConfig = Join-Path $expanded 'git\.gitconfig'
@@ -581,13 +665,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         if ($activeWorkspaceMatches -ne 1) {
             throw 'Workspace manifest active workspace is invalid during configuration sync.'
         }
-        $worktreeDirectoryPath = Join-Path $expanded 'herdr-sandbox\worktree-directory.txt'
-        if (Test-Path -LiteralPath $worktreeDirectoryPath -PathType Leaf) {
-            $worktreeDirectory = [IO.File]::ReadAllText($worktreeDirectoryPath).Trim()
-            if ($worktreeDirectory -cne 'C:\Worktrees' -or
-                -not (Test-Path -LiteralPath $worktreeDirectory -PathType Container)) {
-                throw 'Herdr worktree directory metadata is invalid during configuration sync.'
-            }
+        if ($worktreeDirectoryConfigured) {
             $safeDirectories += 'C:/Worktrees/*'
         }
         $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source

@@ -22,30 +22,39 @@ import (
 //go:embed assets/configuration-sync.ps1
 var configurationSyncScript []byte
 
+//go:embed assets/agent-worktree-instructions.md
+var agentWorktreeInstructions []byte
+
 const (
-	maximumConfigurationFileSize              = 32 * 1024 * 1024
-	maximumConfigurationSize                  = 128 * 1024 * 1024
-	windowsTerminalStableEdition              = "stable"
-	windowsTerminalPreviewEdition             = "preview"
-	windowsTerminalEditionArchivePath         = "windows-terminal/edition.txt"
-	starshipPresetArchivePath                 = "starship/preset.txt"
-	githubCLIAuthenticationArchivePath        = "github-cli/authentication.json"
-	configurationApplyScriptArchivePath       = "herdr-sandbox/apply.ps1"
-	configurationWorkspaceManifestPath        = "herdr-sandbox/workspaces.json"
-	configurationPackagePlanArchivePath       = "herdr-sandbox/winget-packages.json"
-	configurationWorktreeDirectoryArchivePath = "herdr-sandbox/worktree-directory.txt"
-	powerShellProfileGUID                     = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
-	powerShellCommandLine                     = `pwsh.exe`
-	windowsTerminalGuestFont                  = "GeistMono Nerd Font"
-	windowsTerminalLightTheme                 = "light"
-	windowsTerminalDarkTheme                  = "dark"
-	starshipPastelPowerlinePreset             = "pastel-powerline"
-	starshipCatppuccinLattePreset             = "catppuccin-powerline-latte"
-	maximumGitHubCLIAccounts                  = 32
-	maximumGitHubCLIStatusSize                = 256 * 1024
-	maximumGitHubCLITokenSize                 = 16 * 1024
-	maximumGitHubCLILoginSize                 = 1024
-	maximumConfigurationFiles                 = 4096
+	agentWorktreeInstructionsStart = "<!-- herdr-sandbox:worktrees:start -->"
+	agentWorktreeInstructionsEnd   = "<!-- herdr-sandbox:worktrees:end -->"
+)
+
+const (
+	maximumConfigurationFileSize                      = 32 * 1024 * 1024
+	maximumConfigurationSize                          = 128 * 1024 * 1024
+	windowsTerminalStableEdition                      = "stable"
+	windowsTerminalPreviewEdition                     = "preview"
+	windowsTerminalEditionArchivePath                 = "windows-terminal/edition.txt"
+	starshipPresetArchivePath                         = "starship/preset.txt"
+	githubCLIAuthenticationArchivePath                = "github-cli/authentication.json"
+	configurationApplyScriptArchivePath               = "herdr-sandbox/apply.ps1"
+	configurationWorkspaceManifestPath                = "herdr-sandbox/workspaces.json"
+	configurationPackagePlanArchivePath               = "herdr-sandbox/winget-packages.json"
+	configurationWorktreeDirectoryArchivePath         = "herdr-sandbox/worktree-directory.txt"
+	configurationAgentWorktreeInstructionsArchivePath = "herdr-sandbox/agent-worktree-instructions.md"
+	powerShellProfileGUID                             = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
+	powerShellCommandLine                             = `pwsh.exe`
+	windowsTerminalGuestFont                          = "GeistMono Nerd Font"
+	windowsTerminalLightTheme                         = "light"
+	windowsTerminalDarkTheme                          = "dark"
+	starshipPastelPowerlinePreset                     = "pastel-powerline"
+	starshipCatppuccinLattePreset                     = "catppuccin-powerline-latte"
+	maximumGitHubCLIAccounts                          = 32
+	maximumGitHubCLIStatusSize                        = 256 * 1024
+	maximumGitHubCLITokenSize                         = 16 * 1024
+	maximumGitHubCLILoginSize                         = 1024
+	maximumConfigurationFiles                         = 4096
 )
 
 type windowsTerminalConfiguration struct {
@@ -55,6 +64,34 @@ type windowsTerminalConfiguration struct {
 	PackageFamilyName string
 	SettingsPath      string
 	FragmentsPath     string
+}
+
+func validateAgentWorktreeInstructions(data []byte) error {
+	if len(data) == 0 || len(data) > 32*1024 {
+		return errors.New("embedded agent worktree instructions must be nonempty and bounded")
+	}
+	if bytes.IndexByte(data, 0) >= 0 || bytes.Count(data, []byte(agentWorktreeInstructionsStart)) != 1 || bytes.Count(data, []byte(agentWorktreeInstructionsEnd)) != 1 {
+		return errors.New("embedded agent worktree instructions have invalid ownership markers")
+	}
+	text := string(data)
+	start := strings.Index(text, agentWorktreeInstructionsStart)
+	end := strings.Index(text, agentWorktreeInstructionsEnd)
+	if start != 0 || end <= start || strings.TrimSpace(text[end+len(agentWorktreeInstructionsEnd):]) != "" {
+		return errors.New("embedded agent worktree instructions have invalid marker ordering")
+	}
+	for _, required := range []string{
+		`herdr worktree create --cwd`,
+		`herdr worktree list --cwd`,
+		`herdr worktree open --cwd`,
+		`herdr worktree remove --workspace`,
+		`Omit ` + "`--path`",
+		`This does not delete`,
+	} {
+		if !strings.Contains(text, required) {
+			return fmt.Errorf("embedded agent worktree instructions are missing %q", required)
+		}
+	}
+	return nil
 }
 
 func detectHostWindowsTerminalConfiguration() (windowsTerminalConfiguration, error) {
@@ -311,7 +348,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != configurationAgentWorktreeInstructionsArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
 			count++
 		}
 	}
@@ -899,6 +936,12 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 		}
 		if err := addData([]byte(guestWorktreeDirectory+"\n"), configurationWorktreeDirectoryArchivePath, "guest worktree directory"); err != nil {
 			return nil, fmt.Errorf("archive worktree directory: %w", err)
+		}
+		if err := validateAgentWorktreeInstructions(agentWorktreeInstructions); err != nil {
+			return nil, err
+		}
+		if err := addData(agentWorktreeInstructions, configurationAgentWorktreeInstructionsArchivePath, "guest agent worktree instructions"); err != nil {
+			return nil, fmt.Errorf("archive guest agent worktree instructions: %w", err)
 		}
 	}
 
