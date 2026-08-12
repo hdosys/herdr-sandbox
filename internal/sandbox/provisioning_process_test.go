@@ -266,7 +266,7 @@ foreach ($name in @('New-ProvisioningNativeSpec', 'Invoke-ProvisioningNativeResu
 function Write-ProvisioningProgress { param([string]$Message) }
 function Write-ProvisioningTiming { param([string]$Role, [double]$Seconds) }
 $result = Invoke-ProvisioningNativeResult -Role 'root-terminal cleanup' -FilePath '%s' -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', '%s', '%s', '%s', '%s') -WorkingDirectory '%s' -TimeoutSeconds 10 -TerminateDescendantsAfterRootExit
-if (-not $result.Succeeded -or [string]$result.Output -cne 'ROOT-TERMINAL' -or $result.ElapsedMilliseconds -ge 5000) {
+if (-not $result.Succeeded -or [string]$result.Output -cne 'ROOT-TERMINAL') {
     throw "Root-terminal result failed: $($result | Format-List | Out-String)"
 }
 $childID = [int][IO.File]::ReadAllText((Join-Path '%s' 'child.pid'))

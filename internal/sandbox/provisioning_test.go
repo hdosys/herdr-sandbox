@@ -376,7 +376,9 @@ func installOpenCodeAllowAllPolicyForTest(t *testing.T, programData string) stri
 		t.Fatal("configuration-sync OpenCode policy helper block was not found")
 	}
 	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeAllowAllPolicy\n"
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	scriptPath := filepath.Join(t.TempDir(), "install-opencode-allow-all.ps1")
+	writeTestFile(t, scriptPath, script)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath)
 	command.Env = append(os.Environ(), "ProgramData="+programData)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("install OpenCode allow-all policy: %v: %s", err, output)

@@ -607,7 +607,9 @@ try {
 }
 if (-not $rejected) { throw 'Destination junction was not rejected.' }
 `
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	scriptPath := filepath.Join(root, "coding-agent-sync-regression.ps1")
+	writeTestFile(t, scriptPath, script)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath)
 	command.Env = append(os.Environ(),
 		"SYNC_SOURCE="+sourceRoot,
 		"SYNC_DESTINATION="+destinationRoot,
