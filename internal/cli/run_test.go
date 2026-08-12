@@ -557,6 +557,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		ConfigurationExists: true,
 		UserScriptPath:      `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
 		CacheDirectory:      `D:\herdr-cache`,
+		WorktreeDirectory:   `E:\herdr-worktrees`,
 		MemoryMB:            32768,
 		WindowsTerminal:     "stable",
 		CodingAgents:        []string{"OpenCode", "Claude Code"},
@@ -579,7 +580,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	var output bytes.Buffer
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
-		"Effective plan\n\nConfiguration", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
+		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
 		"Mobile SSH authorized keys: 0",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",

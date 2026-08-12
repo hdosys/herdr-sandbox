@@ -93,6 +93,31 @@ func TestRenderConfigMapsNamedFoldersWithExplicitAccessOutsideWorkspaces(t *test
 	}
 }
 
+func TestRenderConfigMapsDedicatedWritableWorktreeDirectory(t *testing.T) {
+	workspaces := []workspacePlan{{Name: "project", HostDirectory: `D:\Project`, GuestDirectory: `C:\Workspaces\project`}}
+	encoded, err := renderConfigWithWorktreeDirectory(
+		`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, `F:\HerdrWorktrees`, nil, workspaces, 4096, false, false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config wsbConfiguration
+	if err := xml.Unmarshal(encoded, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.MappedFolders.Folders) != 5 {
+		t.Fatalf("mapped folders = %#v", config.MappedFolders.Folders)
+	}
+	worktrees := config.MappedFolders.Folders[1]
+	if worktrees.HostFolder != `F:\HerdrWorktrees` || worktrees.SandboxFolder != guestWorktreeDirectory || worktrees.ReadOnly {
+		t.Fatalf("worktree mapping = %#v", worktrees)
+	}
+	workspace := config.MappedFolders.Folders[2]
+	if workspace.SandboxFolder != `C:\Workspaces\project` || workspace.ReadOnly {
+		t.Fatalf("workspace mapping = %#v", workspace)
+	}
+}
+
 func TestRenderConfigAudioOutputOptInKeepsMicrophoneDisabled(t *testing.T) {
 	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\cache`, nil, nil, 4096, true, false)
 	if err != nil {
@@ -294,6 +319,18 @@ func TestPhysicalMappedDirectoryDetectsSubstAlias(t *testing.T) {
 	if _, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: drive + `\`, Exclude: []string{}}); err == nil || !strings.Contains(err.Error(), "must not contain a user profile") {
 		t.Fatalf("SUBST-protected discovery root error = %v", err)
 	}
+	worktrees := filepath.Join(target, "worktrees")
+	if err := os.MkdirAll(worktrees, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configurationRoot := filepath.Join(drive+`\`, "worktrees", "configuration")
+	if err := os.MkdirAll(configurationRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(configurationRoot, globalConfigurationName), `{"worktreeDirectory":"`+filepath.ToSlash(worktrees)+`"}`)
+	if _, err := resolveProvisioningAt(target, configurationRoot, t.TempDir()); err == nil || !strings.Contains(err.Error(), "overlaps user configuration") {
+		t.Fatalf("SUBST configuration-root overlap error = %v", err)
+	}
 }
 
 func TestRenderConfigRejectsUnsafeLayout(t *testing.T) {
@@ -339,6 +376,21 @@ func TestRenderConfigRejectsUnsafeFolderMountLayouts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := renderConfig(`C:\Runs\input`, `C:\Runs\status`, `F:\Cache`, mounts, []workspacePlan{workspace}, 4096, false, false); err == nil {
 				t.Fatal("unsafe folder mount layout unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func TestRenderConfigRejectsUnsafeWorktreeDirectoryLayouts(t *testing.T) {
+	workspace := workspacePlan{Name: "project", HostDirectory: `D:\Project`, GuestDirectory: `C:\Workspaces\project`}
+	for name, directory := range map[string]string{
+		"relative":          `worktrees`,
+		"workspace overlap": `D:\Project\worktrees`,
+		"cache overlap":     `F:\Cache\worktrees`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := renderConfigWithWorktreeDirectory(`C:\Runs\input`, `C:\Runs\status`, `F:\Cache`, directory, nil, []workspacePlan{workspace}, 4096, false, false); err == nil {
+				t.Fatal("unsafe worktree directory layout unexpectedly succeeded")
 			}
 		})
 	}

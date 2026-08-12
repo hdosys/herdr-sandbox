@@ -61,6 +61,7 @@ type runPlan struct {
 	InputDirectory             string
 	StatusDirectory            string
 	CacheDirectory             string
+	WorktreeDirectory          string
 	Tailscale                  bool
 	MobileSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
@@ -304,7 +305,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.TradingViewEnabled, filepath.Join(plan.InputDirectory, "provisioning"))
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -511,6 +512,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		MobileSSHAuthorizedKeys: append([]string(nil), provisioning.MobileSSHAuthorizedKeys...),
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
+		WorktreeDirectory:       provisioning.WorktreeDirectory,
 		Mounts:                  provisioning.Mounts,
 		Workspaces:              provisioning.Workspaces,
 		WindowsTerminal:         provisioning.WindowsTerminal,
@@ -537,6 +539,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
+	if plan.WorktreeDirectory != "" {
+		plan.WorktreeDirectory, err = ensurePhysicalDirectory(plan.WorktreeDirectory, "worktree")
+		if err != nil {
+			return runPlan{}, err
+		}
+	}
 	plan.Mounts, err = canonicalMountPlans(plan.Mounts)
 	if err != nil {
 		return runPlan{}, err
@@ -545,12 +553,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
-	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Mounts, plan.Workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.Mounts, plan.Workspaces); err != nil {
 		return runPlan{}, err
 	}
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfig(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithWorktreeDirectory(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -598,8 +606,8 @@ type physicalMapping struct {
 	identity string
 }
 
-func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
-	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+3)
+func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
+	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+4)
 	for _, mapped := range []struct {
 		role string
 		path string
@@ -609,6 +617,13 @@ func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, ca
 			return err
 		}
 		mappings = append(mappings, physicalMapping{role: mapped.role, identity: identity})
+	}
+	if worktreeDirectory != "" {
+		identity, err := physicalMappedDirectory(worktreeDirectory)
+		if err != nil {
+			return fmt.Errorf("worktree directory: %w", err)
+		}
+		mappings = append(mappings, physicalMapping{role: "worktree directory", identity: identity})
 	}
 	for _, mount := range mounts {
 		identity, err := physicalMappedDirectory(mount.HostDirectory)

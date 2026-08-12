@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	guestInputDirectory  = `C:\SandboxBootstrap`
-	guestStatusDirectory = `C:\SandboxStatus`
-	guestRootDirectory   = `C:\HerdrSandbox`
-	guestCacheDirectory  = guestRootDirectory + `\cache`
-	guestBootstrapScript = guestInputDirectory + `\bootstrap.ps1`
+	guestInputDirectory    = `C:\SandboxBootstrap`
+	guestStatusDirectory   = `C:\SandboxStatus`
+	guestRootDirectory     = `C:\HerdrSandbox`
+	guestCacheDirectory    = guestRootDirectory + `\cache`
+	guestWorktreeDirectory = `C:\Worktrees`
+	guestBootstrapScript   = guestInputDirectory + `\bootstrap.ps1`
 )
 
 type wsbConfiguration struct {
@@ -69,6 +70,10 @@ func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
 }
 
 func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+	return renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+}
+
+func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
 	if len(mounts) > maximumMounts {
 		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
 	}
@@ -85,10 +90,18 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts
 	cleanStatus := filepath.Clean(statusDirectory)
 	cleanCache := filepath.Clean(cacheDirectory)
 	hostMappings := []string{cleanInput, cleanStatus, cleanCache}
+	cleanWorktrees := ""
+	if worktreeDirectory != "" {
+		if !filepath.IsAbs(worktreeDirectory) {
+			return nil, errors.New("worktree directory must be absolute")
+		}
+		cleanWorktrees = filepath.Clean(worktreeDirectory)
+		hostMappings = append(hostMappings, cleanWorktrees)
+	}
 	for left := range hostMappings {
 		for right := left + 1; right < len(hostMappings); right++ {
 			if hostPathsOverlap(hostMappings[left], hostMappings[right]) {
-				return nil, errors.New("Sandbox input, status, and cache directories must not overlap")
+				return nil, errors.New("Sandbox input, status, cache, and worktree directories must not overlap")
 			}
 		}
 	}
@@ -97,7 +110,10 @@ func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts
 	}
 
 	mappings := []wsbMappedFolder{{HostFolder: cleanInput, SandboxFolder: guestInputDirectory, ReadOnly: true}}
-	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}}
+	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}, strings.ToLower(guestWorktreeDirectory): {}}
+	if cleanWorktrees != "" {
+		mappings = append(mappings, wsbMappedFolder{HostFolder: cleanWorktrees, SandboxFolder: guestWorktreeDirectory, ReadOnly: false})
+	}
 	for _, mount := range mounts {
 		if !workspaceNamePattern.MatchString(mount.Name) {
 			return nil, fmt.Errorf("folder mount name is invalid: %q", mount.Name)

@@ -607,6 +607,11 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  User script: %s\n", plan.UserScriptPath)
 	fmt.Fprintf(output, "  User script state: %s\n", userState)
 	fmt.Fprintf(output, "  Cache: %s\n", plan.CacheDirectory)
+	worktreeDirectory := plan.WorktreeDirectory
+	if worktreeDirectory == "" {
+		worktreeDirectory = "disabled"
+	}
+	fmt.Fprintf(output, "  Worktree directory: %s\n", worktreeDirectory)
 	fmt.Fprintf(output, "  Memory: %d MB\n", plan.MemoryMB)
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))

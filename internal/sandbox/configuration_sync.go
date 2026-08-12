@@ -23,28 +23,29 @@ import (
 var configurationSyncScript []byte
 
 const (
-	maximumConfigurationFileSize        = 32 * 1024 * 1024
-	maximumConfigurationSize            = 128 * 1024 * 1024
-	windowsTerminalStableEdition        = "stable"
-	windowsTerminalPreviewEdition       = "preview"
-	windowsTerminalEditionArchivePath   = "windows-terminal/edition.txt"
-	starshipPresetArchivePath           = "starship/preset.txt"
-	githubCLIAuthenticationArchivePath  = "github-cli/authentication.json"
-	configurationApplyScriptArchivePath = "herdr-sandbox/apply.ps1"
-	configurationWorkspaceManifestPath  = "herdr-sandbox/workspaces.json"
-	configurationPackagePlanArchivePath = "herdr-sandbox/winget-packages.json"
-	powerShellProfileGUID               = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
-	powerShellCommandLine               = `pwsh.exe`
-	windowsTerminalGuestFont            = "GeistMono Nerd Font"
-	windowsTerminalLightTheme           = "light"
-	windowsTerminalDarkTheme            = "dark"
-	starshipPastelPowerlinePreset       = "pastel-powerline"
-	starshipCatppuccinLattePreset       = "catppuccin-powerline-latte"
-	maximumGitHubCLIAccounts            = 32
-	maximumGitHubCLIStatusSize          = 256 * 1024
-	maximumGitHubCLITokenSize           = 16 * 1024
-	maximumGitHubCLILoginSize           = 1024
-	maximumConfigurationFiles           = 4096
+	maximumConfigurationFileSize              = 32 * 1024 * 1024
+	maximumConfigurationSize                  = 128 * 1024 * 1024
+	windowsTerminalStableEdition              = "stable"
+	windowsTerminalPreviewEdition             = "preview"
+	windowsTerminalEditionArchivePath         = "windows-terminal/edition.txt"
+	starshipPresetArchivePath                 = "starship/preset.txt"
+	githubCLIAuthenticationArchivePath        = "github-cli/authentication.json"
+	configurationApplyScriptArchivePath       = "herdr-sandbox/apply.ps1"
+	configurationWorkspaceManifestPath        = "herdr-sandbox/workspaces.json"
+	configurationPackagePlanArchivePath       = "herdr-sandbox/winget-packages.json"
+	configurationWorktreeDirectoryArchivePath = "herdr-sandbox/worktree-directory.txt"
+	powerShellProfileGUID                     = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
+	powerShellCommandLine                     = `pwsh.exe`
+	windowsTerminalGuestFont                  = "GeistMono Nerd Font"
+	windowsTerminalLightTheme                 = "light"
+	windowsTerminalDarkTheme                  = "dark"
+	starshipPastelPowerlinePreset             = "pastel-powerline"
+	starshipCatppuccinLattePreset             = "catppuccin-powerline-latte"
+	maximumGitHubCLIAccounts                  = 32
+	maximumGitHubCLIStatusSize                = 256 * 1024
+	maximumGitHubCLITokenSize                 = 16 * 1024
+	maximumGitHubCLILoginSize                 = 1024
+	maximumConfigurationFiles                 = 4096
 )
 
 type windowsTerminalConfiguration struct {
@@ -251,6 +252,7 @@ type hostConfigurationSources struct {
 	TradingViewAuthentication []byte
 	CodingAgents              codingAgentConfigurationSources
 	HerdrConfig               string
+	WorktreeDirectory         string
 	WindowsTerminalSettings   string
 	WindowsTerminalFragments  string
 	WindowsTerminalEdition    string
@@ -309,7 +311,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
 			count++
 		}
 	}
@@ -575,7 +577,7 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled bool, provisioningInput string) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
@@ -593,6 +595,9 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	sources.PackagePlan = filepath.Join(provisioningInput, wingetPackagePlanFileName)
 	if packages.enabled(packageGit) || sources.WindowsTerminalSettings != "" {
 		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
+	}
+	if worktreesEnabled {
+		sources.WorktreeDirectory = guestWorktreeDirectory
 	}
 	expectedGitHubAccounts := 0
 	expectedTradingViewCookies := 0
@@ -888,6 +893,14 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 			return nil, fmt.Errorf("archive Starship preset: %w", err)
 		}
 	}
+	if sources.WorktreeDirectory != "" {
+		if !strings.EqualFold(filepath.Clean(sources.WorktreeDirectory), guestWorktreeDirectory) {
+			return nil, fmt.Errorf("archive worktree directory: unsupported value %q", sources.WorktreeDirectory)
+		}
+		if err := addData([]byte(guestWorktreeDirectory+"\n"), configurationWorktreeDirectoryArchivePath, "guest worktree directory"); err != nil {
+			return nil, fmt.Errorf("archive worktree directory: %w", err)
+		}
+	}
 
 	if sources.GitConfig != "" {
 		if err := add(sources.GitConfig, filepath.Join("git", ".gitconfig")); err != nil {
@@ -959,7 +972,7 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	if err := archiveCodingAgentConfiguration(ctx, sources.CodingAgents, add, addData); err != nil {
 		return nil, err
 	}
-	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig)
+	herdrConfig, err := buildGuestHerdrConfigWithWorktreeDirectory(sources.HerdrConfig, sources.WorktreeDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -994,9 +1007,13 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 }
 
 func buildGuestHerdrConfig(path string) ([]byte, error) {
+	return buildGuestHerdrConfigWithWorktreeDirectory(path, "")
+}
+
+func buildGuestHerdrConfigWithWorktreeDirectory(path, worktreeDirectory string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return patchGuestHerdrConfig(nil)
+		return patchGuestHerdrConfigWithWorktreeDirectory(nil, worktreeDirectory)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect Herdr config: %w", err)
@@ -1008,60 +1025,173 @@ func buildGuestHerdrConfig(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Herdr config: %w", err)
 	}
-	return patchGuestHerdrConfig(contents)
+	return patchGuestHerdrConfigWithWorktreeDirectory(contents, worktreeDirectory)
 }
 
 func patchGuestHerdrConfig(contents []byte) ([]byte, error) {
+	return patchGuestHerdrConfigWithWorktreeDirectory(contents, "")
+}
+
+func patchGuestHerdrConfigWithWorktreeDirectory(contents []byte, worktreeDirectory string) ([]byte, error) {
 	if bytes.IndexByte(contents, 0) >= 0 {
 		return nil, errors.New("Herdr config contains a NUL byte")
 	}
 	text := strings.ReplaceAll(string(contents), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
-	terminalSection := -1
-	terminalEnd := len(lines)
-	defaultShellLine := -1
+	if worktreeDirectory != "" {
+		if err := rejectAmbiguousHerdrWorktreeDefinitions(lines); err != nil {
+			return nil, err
+		}
+	}
+	var err error
+	lines, err = upsertHerdrConfigValue(lines, "terminal", "default_shell", `default_shell = "pwsh.exe"`)
+	if err != nil {
+		return nil, err
+	}
+	if worktreeDirectory != "" {
+		if !strings.EqualFold(filepath.Clean(worktreeDirectory), guestWorktreeDirectory) {
+			return nil, fmt.Errorf("guest Herdr worktree directory = %q, want %q", worktreeDirectory, guestWorktreeDirectory)
+		}
+		lines, err = upsertHerdrConfigValue(lines, "worktrees", "directory", `directory = "C:/Worktrees"`)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"), nil
+}
+
+func rejectAmbiguousHerdrWorktreeDefinitions(lines []string) error {
+	inWorktreeSection := false
+	atRoot := true
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") {
+			header, exact := herdrConfigHeader(trimmed)
+			if !exact && herdrConfigHeaderTargetsWorktrees(header) {
+				return errors.New("Herdr config has an ambiguous worktrees definition")
+			}
+			if !exact {
+				inWorktreeSection = false
+				atRoot = false
+				continue
+			}
+			atRoot = false
+			inWorktreeSection = herdrConfigSectionName(header) == "worktrees"
+			if !inWorktreeSection && herdrConfigHeaderTargetsWorktrees(header) {
+				return errors.New("Herdr config has an ambiguous worktrees definition")
+			}
+			continue
+		}
+		if inWorktreeSection {
+			continue
+		}
+		if atRoot && herdrConfigAssignmentTargetsWorktrees(trimmed) {
+			return errors.New("Herdr config has an ambiguous worktrees definition")
+		}
+	}
+	return nil
+}
+
+func herdrConfigHeader(line string) (string, bool) {
+	closing := strings.Index(line, "]")
+	if closing < 0 {
+		return line, false
+	}
+	if strings.HasPrefix(line, "[[") {
+		second := strings.Index(line[closing+1:], "]")
+		if second < 0 {
+			return line, false
+		}
+		closing += second + 1
+	}
+	header := line[:closing+1]
+	remainder := strings.TrimSpace(line[closing+1:])
+	return header, remainder == "" || strings.HasPrefix(remainder, "#")
+}
+
+func herdrConfigSectionName(header string) string {
+	if strings.HasPrefix(header, "[[") || !strings.HasPrefix(header, "[") || !strings.HasSuffix(header, "]") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(header, "["), "]"))
+}
+
+func herdrConfigHeaderTargetsWorktrees(header string) bool {
+	header = strings.TrimSpace(header)
+	header = strings.TrimLeft(header, "[")
+	header = strings.TrimSpace(strings.TrimRight(header, "]"))
+	for _, key := range []string{"worktrees", `"worktrees"`, "'worktrees'"} {
+		if !strings.HasPrefix(header, key) {
+			continue
+		}
+		remainder := strings.TrimSpace(header[len(key):])
+		return remainder == "" || strings.HasPrefix(remainder, ".")
+	}
+	return false
+}
+
+func herdrConfigAssignmentTargetsWorktrees(line string) bool {
+	for _, key := range []string{"worktrees", `"worktrees"`, "'worktrees'"} {
+		if !strings.HasPrefix(line, key) {
+			continue
+		}
+		remainder := strings.TrimSpace(line[len(key):])
+		return strings.HasPrefix(remainder, "=") || strings.HasPrefix(remainder, ".")
+	}
+	return false
+}
+
+func upsertHerdrConfigValue(lines []string, sectionName, key, replacement string) ([]string, error) {
+	sectionStart := -1
+	sectionEnd := len(lines)
+	keyLine := -1
+	inSection := false
 	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") && !strings.HasPrefix(trimmed, "[[") {
 			section := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]"))
-			if terminalSection >= 0 && terminalEnd == len(lines) {
-				terminalEnd = index
+			if inSection {
+				sectionEnd = index
+				inSection = false
 			}
-			if section == "terminal" {
-				if terminalSection >= 0 {
-					return nil, errors.New("Herdr config contains duplicate [terminal] sections")
+			if section == sectionName {
+				if sectionStart >= 0 {
+					return nil, fmt.Errorf("Herdr config contains duplicate [%s] sections", sectionName)
 				}
-				terminalSection = index
-				terminalEnd = len(lines)
+				sectionStart = index
+				sectionEnd = len(lines)
+				inSection = true
 			}
 			continue
 		}
-		if terminalSection >= 0 && terminalEnd == len(lines) {
+		if inSection {
 			withoutLeadingSpace := strings.TrimLeft(line, " \t")
-			if strings.HasPrefix(withoutLeadingSpace, "default_shell") {
+			if strings.HasPrefix(withoutLeadingSpace, key) {
 				separator := strings.Index(withoutLeadingSpace, "=")
-				if separator < 0 || strings.TrimSpace(withoutLeadingSpace[:separator]) != "default_shell" || defaultShellLine >= 0 {
-					return nil, errors.New("Herdr config has an ambiguous terminal.default_shell")
+				if separator < 0 || strings.TrimSpace(withoutLeadingSpace[:separator]) != key || keyLine >= 0 {
+					return nil, fmt.Errorf("Herdr config has an ambiguous %s.%s", sectionName, key)
 				}
-				defaultShellLine = index
+				keyLine = index
 			}
 		}
 	}
-	const guestShell = `default_shell = "pwsh.exe"`
-	if terminalSection < 0 {
+	if sectionStart < 0 {
 		if len(lines) == 1 && lines[0] == "" {
 			lines = nil
 		} else if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 			lines = append(lines, "")
 		}
-		lines = append(lines, "[terminal]", guestShell)
-	} else if defaultShellLine >= 0 {
-		indent := lines[defaultShellLine][:len(lines[defaultShellLine])-len(strings.TrimLeft(lines[defaultShellLine], " \t"))]
-		lines[defaultShellLine] = indent + guestShell
+		lines = append(lines, "["+sectionName+"]", replacement)
+	} else if keyLine >= 0 {
+		indent := lines[keyLine][:len(lines[keyLine])-len(strings.TrimLeft(lines[keyLine], " \t"))]
+		lines[keyLine] = indent + replacement
 	} else {
-		lines = append(lines[:terminalEnd], append([]string{guestShell}, lines[terminalEnd:]...)...)
+		lines = append(lines[:sectionEnd], append([]string{replacement}, lines[sectionEnd:]...)...)
 	}
-	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"), nil
+	return lines, nil
 }
 
 func buildGuestWindowsTerminalSettings(path, startingDirectory string) ([]byte, error) {

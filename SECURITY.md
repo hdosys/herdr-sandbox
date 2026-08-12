@@ -65,8 +65,9 @@ The product protects these boundaries:
 These are deliberate non-guarantees:
 
 - A guest process can read every selected read-only mount and can modify every
-  selected read/write workspace, mount, and cache. Do not map data the agent must
-  not access.
+  selected read/write workspace, mount, cache, and worktree directory. Do not map
+  data the agent must not access. The optional worktree root is trusted only at
+  `C:/Worktrees/*` in guest Git, but that trust does not restrict guest file access.
 - Networking is enabled. A credential deliberately copied into the guest can be
   used or exfiltrated by a compromised agent or project. Herdr Sandbox currently
   has no offline mode.

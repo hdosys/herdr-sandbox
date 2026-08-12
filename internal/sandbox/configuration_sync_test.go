@@ -89,6 +89,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		WindowsTerminalSettings: settings,
 		WindowsTerminalEdition:  windowsTerminalPreviewEdition,
 		StarshipPreset:          starshipCatppuccinLattePreset,
+		WorktreeDirectory:       guestWorktreeDirectory,
 		WorkspaceManifest:       workspaceManifest,
 		PackagePlan:             packagePlan,
 	}, []byte("Write-Output 'apply fixture'\n"))
@@ -139,7 +140,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 			}
 		}
 	}
-	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
+	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, configurationWorktreeDirectoryArchivePath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
 		if !entries[required] {
 			t.Fatalf("archive is missing %s: %#v", required, entries)
 		}
@@ -175,6 +176,9 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		}
 	}
 	if !strings.Contains(string(archivedHerdrConfig), `default_shell = "pwsh.exe"`) {
+		t.Fatalf("archived Herdr config = %q", archivedHerdrConfig)
+	}
+	if !strings.Contains(string(archivedHerdrConfig), "[worktrees]\ndirectory = \"C:/Worktrees\"") {
 		t.Fatalf("archived Herdr config = %q", archivedHerdrConfig)
 	}
 	if string(archivedStarshipPreset) != starshipCatppuccinLattePreset+"\n" {
@@ -385,6 +389,37 @@ func TestPatchGuestHerdrConfigUsesPowerShell7(t *testing.T) {
 	}
 	if _, err := patchGuestHerdrConfig([]byte("[terminal]\n[terminal]\n")); err == nil {
 		t.Fatal("duplicate terminal sections unexpectedly succeeded")
+	}
+}
+
+func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
+	input := []byte("onboarding = false\n\n[worktrees]\ndirectory = \"D:/old\"\ninclude_repo_name = true\n")
+	patched, err := patchGuestHerdrConfigWithWorktreeDirectory(input, guestWorktreeDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(patched)
+	if !strings.Contains(text, "[worktrees]\ndirectory = \"C:/Worktrees\"\ninclude_repo_name = true") ||
+		!strings.Contains(text, "[terminal]\ndefault_shell = \"pwsh.exe\"") {
+		t.Fatalf("patched config:\n%s", text)
+	}
+	if _, err := patchGuestHerdrConfigWithWorktreeDirectory([]byte("[worktrees]\n[worktrees]\n"), guestWorktreeDirectory); err == nil {
+		t.Fatal("duplicate worktrees sections unexpectedly succeeded")
+	}
+	for name, contents := range map[string]string{
+		"inline table":        `worktrees = { directory = "D:/old" }`,
+		"dotted key":          `worktrees.directory = "D:/old"`,
+		"quoted root key":     `"worktrees" = { directory = "D:/old" }`,
+		"quoted table":        `["worktrees"]`,
+		"nested table":        `[worktrees.cleanup]`,
+		"array table":         `[[worktrees]]`,
+		"quoted nested table": `["worktrees".cleanup]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := patchGuestHerdrConfigWithWorktreeDirectory([]byte(contents+"\n"), guestWorktreeDirectory); err == nil || !strings.Contains(err.Error(), "ambiguous worktrees") {
+				t.Fatalf("ambiguous definition error = %v", err)
+			}
+		})
 	}
 }
 
@@ -751,7 +786,7 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	if err := packages.validate(terminal); err != nil {
 		t.Fatalf("validate native run package plan: %v", err)
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), false, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 }
@@ -840,6 +875,8 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 	remoteScript := configurationSyncScript
 	for _, required := range [][]byte{
 		[]byte("herdr-sandbox\\workspaces.json"),
+		[]byte("herdr-sandbox\\worktree-directory.txt"),
+		[]byte("C:/Worktrees/*"),
 		[]byte("--replace-all' 'safe.directory"),
 		[]byte("Git safe-directory verification failed"),
 		[]byte("Get-Command -Name 'herdr.exe' -CommandType Application"),

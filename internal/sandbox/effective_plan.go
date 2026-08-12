@@ -44,6 +44,7 @@ type EffectivePlan struct {
 	UserScriptPath              string
 	UserScriptExists            bool
 	CacheDirectory              string
+	WorktreeDirectory           string
 	MemoryMB                    int
 	AudioOutput                 bool
 	AudioInput                  bool
@@ -95,6 +96,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		UserScriptPath:              provisioning.UserScript,
 		UserScriptExists:            userScriptExists,
 		CacheDirectory:              cacheDirectory,
+		WorktreeDirectory:           provisioning.WorktreeDirectory,
 		MemoryMB:                    provisioning.MemoryMB,
 		AudioOutput:                 provisioning.AudioOutput,
 		AudioInput:                  provisioning.AudioInput,

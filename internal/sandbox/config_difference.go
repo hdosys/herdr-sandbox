@@ -21,7 +21,7 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if err != nil {
 		return nil, fmt.Errorf("decode expected Sandbox launch contract: %w", err)
 	}
-	differences := make([]string, 0, 7)
+	differences := make([]string, 0, 8)
 	if actual.MemoryInMB != expected.MemoryInMB {
 		differences = append(differences, "memory")
 	}
@@ -40,6 +40,9 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	expectedMappings := indexWSBMappings(expected.MappedFolders.Folders)
 	if !sameWSBMapping(actualMappings[strings.ToLower(guestCacheDirectory)], expectedMappings[strings.ToLower(guestCacheDirectory)]) {
 		differences = append(differences, "cache")
+	}
+	if !sameWSBMapping(actualMappings[strings.ToLower(guestWorktreeDirectory)], expectedMappings[strings.ToLower(guestWorktreeDirectory)]) {
+		differences = append(differences, "worktree directory")
 	}
 	if !sameWSBMountMappings(actualMappings, expectedMappings) {
 		differences = append(differences, "folder mounts")
@@ -183,7 +186,7 @@ func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool 
 }
 
 func isKnownWSBMapping(identity string) bool {
-	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory} {
+	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory, guestWorktreeDirectory} {
 		if identity == strings.ToLower(exact) {
 			return true
 		}

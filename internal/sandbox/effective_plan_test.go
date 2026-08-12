@@ -34,13 +34,14 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	plan, err := buildEffectivePlan(context.Background(), provisioningPlan{
-		BaseScript:      filepath.Join("..", "..", "provisioning", baseProvisioningName),
-		StackScript:     filepath.Join("..", "..", "provisioning", stackProvisioningName),
-		UserScript:      filepath.Join(root, "missing-user.ps1"),
-		MemoryMB:        4096,
-		CodingAgentSync: defaultCodingAgentSyncConfiguration(),
-		Packages:        packages,
-		WindowsTerminal: terminal,
+		BaseScript:        filepath.Join("..", "..", "provisioning", baseProvisioningName),
+		StackScript:       filepath.Join("..", "..", "provisioning", stackProvisioningName),
+		UserScript:        filepath.Join(root, "missing-user.ps1"),
+		WorktreeDirectory: filepath.Join(root, "worktrees"),
+		MemoryMB:          4096,
+		CodingAgentSync:   defaultCodingAgentSyncConfiguration(),
+		Packages:          packages,
+		WindowsTerminal:   terminal,
 		Mounts: []mountPlan{{
 			Name: "reference", HostDirectory: filepath.Join(root, "reference"), GuestDirectory: guestMountDirectory("reference"), ReadOnly: true,
 		}},
@@ -54,7 +55,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
+	if plan.WorktreeDirectory != filepath.Join(root, "worktrees") || len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
 		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "android|bun|cpp|dotnet|go|handy|java|nsis|python|rust-msvc|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
 		len(plan.StackPackages) != 12 || plan.StackPackages[0].PackageOwner != "Android SDK Command-line Tools + Platform Tools + Microsoft OpenJDK 17" ||
 		plan.StackPackages[1].PackageOwner != "Oven-sh.Bun" ||

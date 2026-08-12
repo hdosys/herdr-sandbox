@@ -144,7 +144,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	}
 	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.TradingViewEnabled, snapshot.Directory)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err
@@ -213,6 +213,13 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err != nil {
 		return runPlan{}, nil, err
 	}
+	worktreeDirectory := provisioning.WorktreeDirectory
+	if worktreeDirectory != "" {
+		worktreeDirectory, err = canonicalMappedDirectory(worktreeDirectory)
+		if err != nil {
+			return runPlan{}, nil, err
+		}
+	}
 	mounts, err := canonicalMountPlans(provisioning.Mounts)
 	if err != nil {
 		return runPlan{}, nil, err
@@ -228,10 +235,10 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if !sameMobileSSHAuthorizedKeys(runningMobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
 		differences = append(differences, "mobile SSH authorized keys")
 	}
-	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, mounts, workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, mounts, workspaces); err != nil {
 		return runPlan{}, nil, err
 	}
-	expectedConfig, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	expectedConfig, err := renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
@@ -253,6 +260,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		InputDirectory:          inputDirectory,
 		StatusDirectory:         statusDirectory,
 		CacheDirectory:          cacheDirectory,
+		WorktreeDirectory:       worktreeDirectory,
 		Tailscale:               active.Tailscale,
 		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
 		Packages:                provisioning.Packages,

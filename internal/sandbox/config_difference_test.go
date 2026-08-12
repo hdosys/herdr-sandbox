@@ -80,6 +80,25 @@ func TestDescribeWSBLaunchDifferencesNamesFolderMountChanges(t *testing.T) {
 	}
 }
 
+func TestDescribeWSBLaunchDifferencesNamesWorktreeDirectoryChanges(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	status := filepath.Join(root, "status")
+	cache := filepath.Join(root, "cache")
+	baseline, err := renderConfig(input, status, cache, nil, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := renderConfigWithWorktreeDirectory(input, status, cache, filepath.Join(root, "worktrees"), nil, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differences, err := describeWSBLaunchDifferences(baseline, changed)
+	if err != nil || strings.Join(differences, ",") != "worktree directory" {
+		t.Fatalf("differences = %v, error = %v", differences, err)
+	}
+}
+
 func TestDescribeWSBLaunchDifferencesAllowsEquivalentMappingCaseAndOrder(t *testing.T) {
 	root := t.TempDir()
 	workspaces := []workspacePlan{

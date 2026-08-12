@@ -581,6 +581,15 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         if ($activeWorkspaceMatches -ne 1) {
             throw 'Workspace manifest active workspace is invalid during configuration sync.'
         }
+        $worktreeDirectoryPath = Join-Path $expanded 'herdr-sandbox\worktree-directory.txt'
+        if (Test-Path -LiteralPath $worktreeDirectoryPath -PathType Leaf) {
+            $worktreeDirectory = [IO.File]::ReadAllText($worktreeDirectoryPath).Trim()
+            if ($worktreeDirectory -cne 'C:\Worktrees' -or
+                -not (Test-Path -LiteralPath $worktreeDirectory -PathType Container)) {
+                throw 'Herdr worktree directory metadata is invalid during configuration sync.'
+            }
+            $safeDirectories += 'C:/Worktrees/*'
+        }
         $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $null = & $gitCommand 'config' '--global' '--replace-all' 'safe.directory' $safeDirectories[0]
         if ($LASTEXITCODE -ne 0) { throw "Git safe-directory reset failed with exit code $LASTEXITCODE." }

@@ -2263,6 +2263,74 @@ func TestResolveProvisioningIncludesNamedFolderMountsOutsideWorkspaces(t *testin
 	}
 }
 
+func TestResolveProvisioningIncludesDedicatedWorktreeDirectory(t *testing.T) {
+	root := t.TempDir()
+	defaults := filepath.Join(root, "defaults")
+	global := filepath.Join(root, "global")
+	active := createWorkspaceFixture(t, root, "active")
+	worktrees := filepath.Join(root, "worktrees")
+	for _, directory := range []string{defaults, global, worktrees} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contents, err := json.Marshal(map[string]any{
+		"worktreeDirectory": worktrees,
+		"workspaces":        map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(global, globalConfigurationName), string(contents))
+
+	plan, err := resolveProvisioningAt(filepath.Join(active, "src"), global, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.WorktreeDirectory != worktrees || len(plan.Workspaces) != 1 || !plan.Workspaces[0].Active {
+		t.Fatalf("provisioning plan = %#v", plan)
+	}
+}
+
+func TestResolveProvisioningRejectsUnsafeWorktreeDirectory(t *testing.T) {
+	root := t.TempDir()
+	worktrees := filepath.Join(root, "worktrees")
+	cache := filepath.Join(worktrees, "cache")
+	workspace := filepath.Join(root, "workspace")
+	linked := filepath.Join(workspace, "linked")
+	for _, directory := range []string{worktrees, cache, workspace, linked} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, configuration := range map[string]map[string]any{
+		"relative": {"worktreeDirectory": "worktrees"},
+		"cache": {
+			"worktreeDirectory": worktrees,
+			"cacheDirectory":    cache,
+		},
+		"workspace": {
+			"worktreeDirectory": linked,
+			"workspaces":        map[string]string{"project": workspace},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			global := filepath.Join(root, "global-"+name)
+			if err := os.MkdirAll(global, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(global, globalConfigurationName), string(data))
+			if _, err := resolveProvisioningAt(root, global, root); err == nil {
+				t.Fatal("unsafe worktreeDirectory unexpectedly succeeded")
+			}
+		})
+	}
+}
+
 func TestResolveProvisioningRejectsFolderMountOverlaps(t *testing.T) {
 	root := t.TempDir()
 	shared := filepath.Join(root, "shared")
@@ -2613,32 +2681,34 @@ func TestResolveProvisioningRejectsInvalidConfiguredMemory(t *testing.T) {
 
 func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 	tests := map[string]string{
-		"null cache":               `{"cacheDirectory":null,"workspaces":{}}`,
-		"null audio":               `{"audio":null,"workspaces":{}}`,
-		"nonboolean audio":         `{"audio":"true","workspaces":{}}`,
-		"duplicate audio":          `{"audio":true,"audio":false,"workspaces":{}}`,
-		"null audio input":         `{"audioInput":null,"workspaces":{}}`,
-		"nonboolean audio input":   `{"audioInput":"true","workspaces":{}}`,
-		"duplicate audio input":    `{"audioInput":true,"audioInput":false,"workspaces":{}}`,
-		"null tailscale":           `{"tailscale":null,"workspaces":{}}`,
-		"nonboolean tailscale":     `{"tailscale":"true","workspaces":{}}`,
-		"duplicate tailscale":      `{"tailscale":true,"tailscale":false,"workspaces":{}}`,
-		"null mounts":              `{"mounts":null}`,
-		"nonobject mounts":         `{"mounts":[]}`,
-		"case duplicate mount":     `{"mounts":{"Shared":{"path":"C:\\one","readOnly":true},"shared":{"path":"C:\\two","readOnly":false}}}`,
-		"nonobject mount":          `{"mounts":{"shared":"C:\\shared"}}`,
-		"missing mount path":       `{"mounts":{"shared":{"readOnly":true}}}`,
-		"missing mount access":     `{"mounts":{"shared":{"path":"C:\\shared"}}}`,
-		"nonboolean mount access":  `{"mounts":{"shared":{"path":"C:\\shared","readOnly":"true"}}}`,
-		"unknown mount field":      `{"mounts":{"shared":{"path":"C:\\shared","readOnly":true,"guest":"C:\\Shared"}}}`,
-		"null workspaces":          `{"workspaces":null}`,
-		"case variant field":       `{"MemoryMB":32768,"workspaces":{}}`,
-		"duplicate field":          `{"memoryMB":32768,"memoryMB":16384,"workspaces":{}}`,
-		"duplicate workspace":      `{"workspaces":{"alpha":"C:\\one","alpha":"C:\\two"}}`,
-		"case duplicate workspace": `{"workspaces":{"Alpha":"C:\\one","alpha":"C:\\two"}}`,
-		"null workspace path":      `{"workspaces":{"alpha":null}}`,
-		"null package delta":       `{"wingetPackages":null,"workspaces":{}}`,
-		"unknown package field":    `{"wingetPackages":{"remove":[],"add":[],"versions":{},"extra":true},"workspaces":{}}`,
+		"null cache":                   `{"cacheDirectory":null,"workspaces":{}}`,
+		"null worktree directory":      `{"worktreeDirectory":null,"workspaces":{}}`,
+		"nonstring worktree directory": `{"worktreeDirectory":42,"workspaces":{}}`,
+		"null audio":                   `{"audio":null,"workspaces":{}}`,
+		"nonboolean audio":             `{"audio":"true","workspaces":{}}`,
+		"duplicate audio":              `{"audio":true,"audio":false,"workspaces":{}}`,
+		"null audio input":             `{"audioInput":null,"workspaces":{}}`,
+		"nonboolean audio input":       `{"audioInput":"true","workspaces":{}}`,
+		"duplicate audio input":        `{"audioInput":true,"audioInput":false,"workspaces":{}}`,
+		"null tailscale":               `{"tailscale":null,"workspaces":{}}`,
+		"nonboolean tailscale":         `{"tailscale":"true","workspaces":{}}`,
+		"duplicate tailscale":          `{"tailscale":true,"tailscale":false,"workspaces":{}}`,
+		"null mounts":                  `{"mounts":null}`,
+		"nonobject mounts":             `{"mounts":[]}`,
+		"case duplicate mount":         `{"mounts":{"Shared":{"path":"C:\\one","readOnly":true},"shared":{"path":"C:\\two","readOnly":false}}}`,
+		"nonobject mount":              `{"mounts":{"shared":"C:\\shared"}}`,
+		"missing mount path":           `{"mounts":{"shared":{"readOnly":true}}}`,
+		"missing mount access":         `{"mounts":{"shared":{"path":"C:\\shared"}}}`,
+		"nonboolean mount access":      `{"mounts":{"shared":{"path":"C:\\shared","readOnly":"true"}}}`,
+		"unknown mount field":          `{"mounts":{"shared":{"path":"C:\\shared","readOnly":true,"guest":"C:\\Shared"}}}`,
+		"null workspaces":              `{"workspaces":null}`,
+		"case variant field":           `{"MemoryMB":32768,"workspaces":{}}`,
+		"duplicate field":              `{"memoryMB":32768,"memoryMB":16384,"workspaces":{}}`,
+		"duplicate workspace":          `{"workspaces":{"alpha":"C:\\one","alpha":"C:\\two"}}`,
+		"case duplicate workspace":     `{"workspaces":{"Alpha":"C:\\one","alpha":"C:\\two"}}`,
+		"null workspace path":          `{"workspaces":{"alpha":null}}`,
+		"null package delta":           `{"wingetPackages":null,"workspaces":{}}`,
+		"unknown package field":        `{"wingetPackages":{"remove":[],"add":[],"versions":{},"extra":true},"workspaces":{}}`,
 	}
 	for name, contents := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -2662,7 +2732,7 @@ func TestLoadGlobalConfigurationDefaultsMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale || config.WorkspaceDiscovery != nil ||
+	if config.CacheDirectory != "" || config.WorktreeDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale || config.WorkspaceDiscovery != nil ||
 		len(config.WingetPackages.Remove) != 0 || !slices.Equal(config.WingetPackages.Add, defaultCodingAgentPackageIDs()) ||
 		len(config.WingetPackages.Versions) != 0 || len(config.Mounts) != 0 || len(config.Workspaces) != 0 {
 		t.Fatalf("configuration = %#v", config)
@@ -2728,6 +2798,26 @@ func TestValidateTailscalePackageSelectionRequiresInstalledClient(t *testing.T) 
 	}
 	if err := validateTailscalePackageSelection(false, packages); err != nil {
 		t.Fatalf("disabled integration: %v", err)
+	}
+}
+
+func TestValidateWorktreePackageSelectionRequiresGit(t *testing.T) {
+	terminal := testStableWindowsTerminalConfiguration()
+	packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorktreePackageSelection(t.TempDir(), packages); err != nil {
+		t.Fatalf("enabled default package: %v", err)
+	}
+	packages.Defaults = slices.DeleteFunc(packages.Defaults, func(entry wingetPackagePlanEntry) bool {
+		return strings.EqualFold(entry.ID, packageGit)
+	})
+	if err := validateWorktreePackageSelection(t.TempDir(), packages); err == nil || !strings.Contains(err.Error(), packageGit) {
+		t.Fatalf("missing package error = %v", err)
+	}
+	if err := validateWorktreePackageSelection("", packages); err != nil {
+		t.Fatalf("disabled worktrees = %v", err)
 	}
 }
 
@@ -2844,7 +2934,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load seeded config: %v", err)
 	}
-	if config.CacheDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
+	if config.CacheDirectory != "" || config.WorktreeDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
 		config.MobileSSHAuthorizedKeys == nil || len(config.MobileSSHAuthorizedKeys) != 0 ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
 		!slices.Equal(config.WingetPackages.Add, defaultCodingAgentPackageIDs()) ||
@@ -2861,6 +2951,9 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"audioInput": false`)) {
 		t.Fatalf("seeded config does not expose the default-disabled microphone setting: %s", seededContents)
 	}
+	if !bytes.Contains(seededContents, []byte(`"worktreeDirectory": ""`)) {
+		t.Fatalf("seeded config does not expose the optional worktree directory: %s", seededContents)
+	}
 	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
 		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
 	}
@@ -2873,7 +2966,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		}
 	}
 	remaining := seededContents
-	for _, field := range []string{`"cacheDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)

@@ -14,6 +14,7 @@ type installerCleanPaths struct {
 	DataDirectory          string
 	ConfigurationDirectory string
 	CacheDirectory         string
+	WorktreeDirectory      string
 	DefaultCacheParent     string
 	InstallDirectory       string
 	UserHome               string
@@ -94,6 +95,10 @@ func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 		return installerCleanPaths{}, err
 	}
 	cacheConfigured := configuredCache != ""
+	worktreeDirectory, err := validateConfiguredWorktreeDirectory(configuration.WorktreeDirectory)
+	if err != nil {
+		return installerCleanPaths{}, err
+	}
 	defaultCacheParent := ""
 	if !cacheConfigured {
 		if filepath.Base(cacheDirectory) != "cache" || filepath.Base(filepath.Dir(cacheDirectory)) != applicationName {
@@ -119,6 +124,7 @@ func resolveInstallerCleanPaths() (installerCleanPaths, error) {
 		DataDirectory:          filepath.Clean(dataDirectory),
 		ConfigurationDirectory: configurationDirectory,
 		CacheDirectory:         filepath.Clean(cacheDirectory),
+		WorktreeDirectory:      worktreeDirectory,
 		DefaultCacheParent:     defaultCacheParent,
 		InstallDirectory:       filepath.Dir(filepath.Clean(executable)),
 		UserHome:               filepath.Clean(userHome),
@@ -173,6 +179,17 @@ func validateInstallerRemovalSafety(paths installerCleanPaths, deleteConfigurati
 		}
 	}
 	removalRoots := installerRemovalRoots(paths, deleteConfiguration)
+	if paths.WorktreeDirectory != "" {
+		for _, root := range removalRoots {
+			overlap, err := installerPathsOverlap(paths.WorktreeDirectory, root.path)
+			if err != nil {
+				return fmt.Errorf("validate worktreeDirectory against %s removal: %w", root.role, err)
+			}
+			if overlap {
+				return fmt.Errorf("worktreeDirectory overlaps the %s and cannot be preserved during uninstall: %s", root.role, paths.WorktreeDirectory)
+			}
+		}
+	}
 	for name, mount := range paths.Configuration.Mounts {
 		directory := strings.TrimSpace(mount.Path)
 		if directory == "" || !filepath.IsAbs(directory) {

@@ -265,6 +265,31 @@ func TestValidateInstallerRemovalSafetyAllowsWorkspaceBesideDefaultCache(t *test
 	}
 }
 
+func TestValidateInstallerRemovalSafetyPreservesWorktreeDirectory(t *testing.T) {
+	root := t.TempDir()
+	paths := installerCleanPaths{
+		DataDirectory:          filepath.Join(root, "local", applicationName),
+		ConfigurationDirectory: filepath.Join(root, "roaming", applicationName),
+		CacheDirectory:         filepath.Join(root, "cache"),
+		WorktreeDirectory:      filepath.Join(root, "worktrees"),
+		InstallDirectory:       filepath.Join(root, "install"),
+		UserHome:               filepath.Join(root, "home"),
+		Configuration:          globalConfiguration{Workspaces: map[string]string{}},
+	}
+	for _, directory := range []string{paths.DataDirectory, paths.ConfigurationDirectory, paths.CacheDirectory, paths.WorktreeDirectory, paths.InstallDirectory, paths.UserHome} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateInstallerRemovalSafety(paths, true); err != nil {
+		t.Fatalf("dedicated worktreeDirectory was not preserved: %v", err)
+	}
+	paths.WorktreeDirectory = filepath.Join(paths.CacheDirectory, "worktrees")
+	if err := validateInstallerRemovalSafety(paths, false); err == nil || !strings.Contains(err.Error(), "worktreeDirectory") {
+		t.Fatalf("unsafe worktreeDirectory error = %v", err)
+	}
+}
+
 func TestValidateInstallerRemovalSafetyPreservesFolderMounts(t *testing.T) {
 	root := t.TempDir()
 	base := installerCleanPaths{

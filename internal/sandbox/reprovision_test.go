@@ -17,8 +17,9 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	inputDirectory := filepath.Join(runDirectory, "input")
 	statusDirectory := filepath.Join(runDirectory, "status")
 	cacheDirectory := filepath.Join(root, "cache")
+	worktreeDirectory := filepath.Join(root, "worktrees")
 	workspaceDirectory := filepath.Join(root, "workspace")
-	for _, directory := range []string{inputDirectory, statusDirectory, filepath.Join(dataDirectory, "identity"), cacheDirectory, workspaceDirectory} {
+	for _, directory := range []string{inputDirectory, statusDirectory, filepath.Join(dataDirectory, "identity"), cacheDirectory, worktreeDirectory, workspaceDirectory} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -42,6 +43,10 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	worktreeDirectory, err = canonicalMappedDirectory(worktreeDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspaceDirectory, err = canonicalMappedDirectory(workspaceDirectory)
 	if err != nil {
 		t.Fatal(err)
@@ -52,10 +57,11 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	provisioning := provisioningPlan{
-		CacheDirectory:  cacheDirectory,
-		MemoryMB:        4096,
-		Packages:        packages,
-		WindowsTerminal: terminal,
+		CacheDirectory:    cacheDirectory,
+		WorktreeDirectory: worktreeDirectory,
+		MemoryMB:          4096,
+		Packages:          packages,
+		WindowsTerminal:   terminal,
 		Workspaces: []workspacePlan{{
 			Name:             "project",
 			HostDirectory:    workspaceDirectory,
@@ -64,7 +70,7 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 			Active:           true,
 		}},
 	}
-	config, err := renderConfig(inputDirectory, statusDirectory, cacheDirectory, provisioning.Mounts, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, provisioning.Mounts, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +83,7 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retainedRunPlan: %v", err)
 	}
-	if plan.ID != runID || plan.DataDirectory != dataDirectory || len(plan.Workspaces) != 1 {
+	if plan.ID != runID || plan.DataDirectory != dataDirectory || plan.WorktreeDirectory != worktreeDirectory || len(plan.Workspaces) != 1 {
 		t.Fatalf("retained plan = %#v", plan)
 	}
 	withOpenCode, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
@@ -105,6 +111,11 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	if _, err := retainedRunPlan(active, provisioning, 8192); err == nil || !strings.Contains(err.Error(), "memory") || !strings.Contains(err.Error(), "differ from the ready Sandbox") {
 		t.Fatalf("changed retained plan error = %v", err)
 	}
+	provisioning.WorktreeDirectory = ""
+	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "worktree directory") {
+		t.Fatalf("changed retained worktree directory error = %v", err)
+	}
+	provisioning.WorktreeDirectory = worktreeDirectory
 	provisioning.AudioOutput = true
 	if _, err := retainedRunPlan(active, provisioning, 4096); err == nil || !strings.Contains(err.Error(), "audio output") {
 		t.Fatalf("changed retained audio output selection error = %v", err)

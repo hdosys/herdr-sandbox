@@ -364,6 +364,7 @@ The command creates `config.json` only when absent and never replaces existing s
 ```json
 {
   "cacheDirectory": "",
+  "worktreeDirectory": "",
   "memoryMB": 32768,
   "audio": false,
   "audioInput": false,
@@ -408,6 +409,7 @@ The command creates `config.json` only when absent and never replaces existing s
 | Field | Meaning |
 | --- | --- |
 | `cacheDirectory` | Absolute dedicated Herdr Sandbox package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state; every uninstall recursively removes the entire selected cache, so never point it at a shared directory. |
+| `worktreeDirectory` | Optional absolute dedicated host root for Herdr-created Git worktrees. Empty disables it. A selected root maps read/write to `C:\Worktrees`, remains preserved by `sandbox clean` and uninstall, and requires `Git.Git`. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
 | `audioInput` | Exact boolean microphone-input opt-in. Omitted or `false` blocks host microphone sharing; only `true` enables Windows Sandbox audio input. |
@@ -480,6 +482,14 @@ The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilo
 Use optional `mounts` for host folders that should be available without becoming project workspaces. The key is arbitrary: a mount named `worktrees` appears at `C:\Mounts\worktrees`, while `shared` appears at `C:\Mounts\shared`. No `reference` key is required. Generic mounts do not become active, run `.herdr-sandbox\provision.ps1`, or create Herdr workspaces. Set `readOnly` to `true` for reference/shared material and to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
 
 Mapped folders expose host data across the isolation boundary. Ordinary explicitly selected descendants of the user profile remain valid, but Herdr Sandbox rejects volume roots, reparse-bearing paths, whole protected roots, and known credential locations such as `.ssh`, `.gnupg`, cloud/container config, coding-agent authentication roots, GitHub CLI state, and Windows credential stores. A parent containing one of those locations and a descendant inside one are both rejected. Mounts also may not overlap another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. Every guest destination remains fixed below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `sandbox down` before the next `up`.
+
+#### Persistent Herdr worktrees
+
+Set `worktreeDirectory` when Herdr should create linked Git checkouts that survive disposal of the guest. Herdr Sandbox maps that one dedicated host root read/write at `C:\Worktrees`, sets guest Herdr's native `[worktrees].directory` to it, and trusts only `C:/Worktrees/*` in guest Git. Herdr and Git remain the create, list, and remove owners. Automatic worktree paths follow Herdr's `<root>\<repository>\<branch>` layout.
+
+The directory must already exist, be absolute and non-reparse, and must not overlap a workspace, generic mount, cache, configuration, private run state, protected root, or sensitive credential location. Changing or disabling it requires `sandbox down` before the next `up`. `sandbox clean` and uninstall preserve the entire directory, including when configuration deletion is selected.
+
+These are guest-native linked worktrees, not portable host-side checkouts. Git stores their linked metadata in the mapped main repository, and the linked checkout records guest paths. Keep the same main workspace mapped at the same `C:\Workspaces\<name>` path on later launches, perform worktree lifecycle operations through guest Herdr or guest Git, and remove linked worktrees before removing their main workspace. Herdr Sandbox does not add leases, pruning, or automatic worktree deletion.
 
 #### Agent packages
 
