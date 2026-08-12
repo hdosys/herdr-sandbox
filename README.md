@@ -55,12 +55,13 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every standalone built-in: Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `all` | Every standalone built-in: Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
 | `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
 | `go` | Go |
 | `java` | Microsoft OpenJDK 25 LTS |
 | `node` | Node.js LTS, Playwright, and Chromium |
+| `nsis` | NSIS compiler for building Windows installers |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
 | `rust` | Rust with MSVC Build Tools |
@@ -268,6 +269,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 | Java 25 LTS with Microsoft OpenJDK | `Install-JavaStack` |
 | Just | `Install-Just` |
 | Node.js LTS with Playwright and Chromium | `Install-NodeStack` |
+| NSIS installer compiler | `Install-NSISStack` |
 | Playwright CLI without a bundled browser | `Install-PlaywrightCLIStack` |
 | Python | `Install-PythonStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
@@ -287,6 +289,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - Shortcut functions are the temporary convenience compositions described under [Project shortcuts](#project-shortcuts). Prefer project-owned direct calls once a repository carries its own setup.
 - Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
 - The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
+- The `nsis` stack installs the latest stable `NSIS.NSIS` compiler by default and proves a real installer compile. Use it alone with `sandbox init --stack nsis` for installer-only projects. This repository pins NSIS 3.12 in its own project profile because the release package task requires that exact compiler.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
 #### Playwright CLI integration
@@ -648,7 +651,7 @@ go run ./cmd/task package v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 

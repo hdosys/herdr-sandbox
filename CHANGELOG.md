@@ -8,6 +8,9 @@ release notes remain available on the
 
 ### Added
 
+- A separate `nsis` stack installs and verifies the NSIS compiler, including a
+  real installer compile, so installer-only projects can select it with
+  `sandbox init --stack nsis`.
 - New `cpp` and `java` project stacks provide verified x64 C/C++ Build Tools and
   Microsoft OpenJDK 25 LTS compile/run environments. Select them with
   `sandbox init --stack cpp` and `sandbox init --stack java`.

@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 49
+# herdr-sandbox-base-contract: 50
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -779,14 +779,18 @@ function Get-ProvisioningWinGetMetadata {
         [Parameter(Mandatory = $true)]
         [string]$Id,
         [string]$Version = '',
+        [ValidateSet('x64', 'x86')]
+        [string]$Architecture = 'x64',
         [Parameter(Mandatory = $true)]
         [string]$InstallerType,
-        [string]$Scope = ''
+        [string]$Scope = '',
+        [ValidateSet('', '.exe', '.msi', '.zip', '.msix', '.msixbundle', '.appx', '.appxbundle')]
+        [string]$PayloadExtension = ''
     )
 
     $arguments = @(
         'show', '--id', $Id, '--exact', '--source', 'winget',
-        '--architecture', 'x64', '--installer-type', $InstallerType,
+        '--architecture', $Architecture, '--installer-type', $InstallerType,
         '--accept-source-agreements', '--disable-interactivity'
     )
     if (-not [string]::IsNullOrWhiteSpace($Version)) {
@@ -816,13 +820,19 @@ function Get-ProvisioningWinGetMetadata {
         throw "$Role installer URL is not a valid HTTPS URL: $installerURL"
     }
     $extension = [IO.Path]::GetExtension($uri.AbsolutePath).ToLowerInvariant()
-    if ($extension -notin @('.exe', '.msi', '.zip', '.msix', '.msixbundle', '.appx', '.appxbundle')) {
+    $supportedExtensions = @('.exe', '.msi', '.zip', '.msix', '.msixbundle', '.appx', '.appxbundle')
+    if ([string]::IsNullOrWhiteSpace($extension) -and -not [string]::IsNullOrWhiteSpace($PayloadExtension)) {
+        $extension = $PayloadExtension
+    } elseif (-not [string]::IsNullOrWhiteSpace($PayloadExtension) -and $extension -cne $PayloadExtension) {
+        throw "$Role installer URL extension $extension does not match expected extension $PayloadExtension."
+    }
+    if ($extension -notin $supportedExtensions) {
         throw "$Role installer URL has an unsupported extension: $extension"
     }
     return [pscustomobject]@{
         Id = $resolvedID
         Version = $resolvedVersion
-        Architecture = 'x64'
+        Architecture = $Architecture
         InstallerType = $InstallerType
         Scope = $Scope
         Url = $installerURL
@@ -1454,7 +1464,7 @@ function Test-ProvisioningPackageInstalled {
         'Rustup' {
             return Test-ProvisioningRustupInstalled -Metadata $Metadata
         }
-        { $_ -in @('Exe', 'Inno', 'MSI', 'Burn', 'MSIX') } {
+        { $_ -in @('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX') } {
             return Test-ProvisioningWinGetPackageInstalled -Metadata $Metadata
         }
         default {
@@ -1542,7 +1552,7 @@ function Install-ProvisioningPackagePayload {
         [Parameter(Mandatory = $true)]
         [string]$PayloadPath,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1572,6 +1582,10 @@ function Install-ProvisioningPackagePayload {
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
                 -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') `
                 -WaitForProcessTree | Out-Null
+        }
+        'NSIS' {
+            Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
+                -ArgumentList @('/S') -WaitForProcessTree | Out-Null
         }
         'MSI' {
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath "$env:SystemRoot\System32\msiexec.exe" `
@@ -1678,7 +1692,7 @@ function Install-ProvisioningCachedPackage {
         [ValidateSet('WinGet', 'Direct')]
         [string]$DownloadSource,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1808,11 +1822,13 @@ function Install-ProvisioningWinGetPackage {
         [Parameter(Mandatory = $true)]
         [string]$Id,
         [string]$Version = '',
+        [ValidateSet('x64', 'x86')]
+        [string]$Architecture = 'x64',
         [Parameter(Mandatory = $true)]
         [string]$InstallerType,
         [string]$Scope = '',
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1823,7 +1839,7 @@ function Install-ProvisioningWinGetPackage {
     )
 
     $metadata = Get-ProvisioningWinGetMetadata -Role $Role -Id $Id -Version $Version `
-        -InstallerType $InstallerType -Scope $Scope
+        -Architecture $Architecture -InstallerType $InstallerType -Scope $Scope
     Install-ProvisioningCachedPackage -Role $Role -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
         -CommandSourceExclusion $CommandSourceExclusion `

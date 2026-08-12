@@ -131,6 +131,9 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass Java stack case-insensitively": {
 			Add: []string{"mIcRoSoFt.OpEnJdK.25"}, Versions: map[string]string{},
 		},
+		"bypass NSIS stack case-insensitively": {
+			Add: []string{"nSiS.nSiS"}, Versions: map[string]string{},
+		},
 		"bypass Handy CMake stack": {
 			Add: []string{packageCMake}, Versions: map[string]string{},
 		},

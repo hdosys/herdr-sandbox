@@ -34,6 +34,7 @@ const (
 	packageTradingView     = "TradingView.TradingViewDesktop"
 	packageUV              = "astral-sh.uv"
 	packageOpenJDK25       = "Microsoft.OpenJDK.25"
+	packageNSIS            = "NSIS.NSIS"
 	packageCMake           = "Kitware.CMake"
 	packageVulkanSDK       = "KhronosGroup.VulkanSDK"
 	packageWebView2        = "Microsoft.EdgeWebView2Runtime"
@@ -60,6 +61,7 @@ var projectStackPackageIDs = []string{
 	packageOpenJDK25,
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
+	packageNSIS,
 	"Oven-sh.Bun",
 	"zig.zig",
 	"Rustlang.Rustup",

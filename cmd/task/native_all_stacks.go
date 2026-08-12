@@ -82,7 +82,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, C/C++, Java, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -232,6 +232,7 @@ Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-CppStack
 Install-JavaStack
+Install-NSISStack
 Install-Uv
 Install-NodeStack
 Install-PlaywrightCLIStack
@@ -570,6 +571,7 @@ if (-not $readOnlyWriteBlocked) { throw 'Read-only folder mount accepted a guest
 $dotnet = (Get-Command 'dotnet.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$makensis = (Get-Command 'makensis.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python = (Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python3 = (Get-Command 'python3.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $uv = (Get-Command 'uv.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -591,6 +593,24 @@ $link = (Get-Command 'link.exe' -CommandType Application -ErrorAction Stop | Sel
 $msbuild = (Get-Command 'msbuild.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $java = (Get-Command 'java.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $javac = (Get-Command 'javac.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+
+$nsisRoot = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+if ([IO.Path]::GetFullPath($makensis) -ine [IO.Path]::GetFullPath((Join-Path $nsisRoot 'makensis.exe'))) {
+    throw 'NSIS compiler resolved from an unexpected path.'
+}
+$nsisVersion = Invoke-SmokeTool 'nsis-version' $makensis @('/VERSION')
+if ($nsisVersion -notmatch '^v\d+\.\d+(?:\.\d+)?$') { throw "NSIS version is unexpected: $nsisVersion" }
+$nsisRootProbe = Join-Path $root 'nsis'
+$null = New-Item -ItemType Directory -Path $nsisRootProbe -Force
+$nsisScript = Join-Path $nsisRootProbe 'smoke.nsi'
+$nsisInstaller = Join-Path $nsisRootProbe 'smoke.exe'
+Write-SmokeFile $nsisScript @('Unicode true','Name "Native NSIS Smoke"','OutFile "smoke.exe"','RequestExecutionLevel user','SilentInstall silent','Section "Smoke"','  SetOutPath "$TEMP"','SectionEnd')
+$null = Invoke-SmokeTool 'nsis-compile' $makensis @('/WX','/V2','/NOCONFIG',$nsisScript)
+$nsisBytes = [IO.File]::ReadAllBytes($nsisInstaller)
+if ($nsisBytes.Length -lt 1024 -or $nsisBytes[0] -ne 0x4d -or $nsisBytes[1] -ne 0x5a) {
+    throw 'NSIS smoke compiler output is not a Windows executable.'
+}
+[Console]::Out.WriteLine('[all-stacks] nsis: installer compile OK')
 
 $pythonAliasRoot = 'C:\HerdrSandbox\tools\python\bin'
 if ([IO.Path]::GetFullPath($python) -ine (Join-Path $pythonAliasRoot 'python.exe') -or

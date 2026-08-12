@@ -9,11 +9,11 @@ import (
 
 func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 	project := t.TempDir()
-	result, err := InitializeProject(project, []string{"zig", "dotnet", "rust", "go", "node", "playwright-cli", "python", "tradingview", "cpp", "java"})
+	result, err := InitializeProject(project, []string{"zig", "dotnet", "rust", "go", "node", "nsis", "playwright-cli", "python", "tradingview", "cpp", "java"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLabels := "cpp|dotnet|go|java|node|playwright-cli|python|rust|tradingview|zig"
+	wantLabels := "cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig"
 	if strings.Join(result.Stacks, "|") != wantLabels {
 		t.Fatalf("stacks = %v, want %s", result.Stacks, wantLabels)
 	}
@@ -27,6 +27,7 @@ func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 		"Install-GoStack -ProjectDirectory $ProjectDirectory",
 		"Install-JavaStack",
 		"Install-NodeStack",
+		"Install-NSISStack",
 		"Install-PlaywrightCLIStack",
 		"Install-PythonStack",
 		"Install-RustMSVCStack -ProjectDirectory $ProjectDirectory",
@@ -72,6 +73,7 @@ func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
 		"Install-JavaStack",
 		"Install-Just",
 		"Install-NodeStack",
+		"Install-NSISStack",
 		"Install-PlaywrightCLIStack",
 		"Install-PythonStack",
 		"Install-RustMSVCStack -ProjectDirectory $ProjectDirectory",

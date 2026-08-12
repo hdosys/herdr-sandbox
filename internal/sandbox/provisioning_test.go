@@ -1046,6 +1046,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-NodeRuntime",
 		"function Install-PlaywrightChromium",
 		"function Install-NodeStack",
+		"function Install-NSISStack",
 		"function Install-PlaywrightCLIStack",
 		"function Install-PythonStack",
 		"function Install-Uv",

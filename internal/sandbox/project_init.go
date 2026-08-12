@@ -24,6 +24,7 @@ var allProjectInitStacks = []projectStack{
 	stackJava,
 	stackJust,
 	stackNode,
+	stackNSIS,
 	stackPlaywrightCLI,
 	stackPython,
 	stackRustMSVC,
@@ -131,7 +132,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig")
+		return nil, nil, errors.New("select at least one stack: all, cpp, dotnet, go, handy, herdr, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, or zig")
 	}
 	for _, value := range requested {
 		if strings.EqualFold(strings.TrimSpace(value), "all") {
@@ -149,6 +150,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		"herdr":          stackHerdrPreset,
 		"java":           stackJava,
 		"node":           stackNode,
+		"nsis":           stackNSIS,
 		"playwright-cli": stackPlaywrightCLI,
 		"python":         stackPython,
 		"python-ai":      stackPythonAIPreset,
@@ -163,7 +165,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose all, cpp, dotnet, go, handy, herdr, java, node, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose all, cpp, dotnet, go, handy, herdr, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, or zig", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -243,6 +245,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-Just"
 		case stackNode:
 			call = "Install-NodeStack"
+		case stackNSIS:
+			call = "Install-NSISStack"
 		case stackPlaywrightCLI:
 			call = "Install-PlaywrightCLIStack"
 		case stackPython:

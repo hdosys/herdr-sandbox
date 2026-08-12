@@ -34,6 +34,7 @@ Install-CppStack
 Install-DotNetStack
 Install-HandyStack -ProjectDirectory 'C:\Workspaces\handy'
 Install-JavaStack
+Install-NSISStack
 Install-PlaywrightCLIStack
 Install-PythonAIStack
 Install-TradingViewStack
@@ -49,7 +50,7 @@ throw 'the AST adapter must not execute project code'
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
 	}
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "bun|cpp|dotnet|go|handy|java|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "bun|cpp|dotnet|go|handy|java|nsis|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {

@@ -24,6 +24,7 @@ $knownStacks = @{
     'Install-JavaStack' = 'java'
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
+    'Install-NSISStack' = 'nsis'
     'Install-PlaywrightCLIStack' = 'playwright-cli'
     'Install-PythonAIStack' = @('python', 'uv')
     'Install-PythonStack' = 'python'

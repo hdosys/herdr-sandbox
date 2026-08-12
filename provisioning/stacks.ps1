@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 13
+# herdr-sandbox-stacks-contract: 14
 
 function Get-StackWebResponseText {
     param(
@@ -1354,6 +1354,89 @@ public final class HerdrJavaStackProbe {
         }
     }
     Write-Output "Java ready: Microsoft OpenJDK $Version"
+}
+
+function Install-NSISStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$')]
+        [string]$Version = ''
+    )
+
+    $packageID = 'NSIS.NSIS'
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'NSIS' -Id $packageID -Version $Version `
+        -Architecture 'x86' -InstallerType 'nullsoft' -Scope 'machine' -PayloadExtension '.exe'
+    if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Architecture -cne 'x86' -or
+        [string]$metadata.InstallerType -cne 'nullsoft' -or [string]$metadata.Scope -cne 'machine' -or
+        [string]$metadata.Version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$') {
+        throw "NSIS metadata is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Architecture)"
+    }
+    $Version = [string]$metadata.Version
+
+    Write-Output "Installing NSIS $Version..."
+    Install-ProvisioningCachedPackage -Role 'NSIS' -Metadata $metadata -DownloadSource 'WinGet' `
+        -Adapter 'NSIS'
+
+    $installRoot = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+    $compiler = Join-Path $installRoot 'makensis.exe'
+    foreach ($path in @($installRoot, $compiler)) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "NSIS installed path is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            ($path -ieq $installRoot -and -not $item.PSIsContainer) -or
+            ($path -ieq $compiler -and $item.PSIsContainer)) {
+            throw "NSIS installed path is unsafe: $path"
+        }
+    }
+    Add-ProvisioningMachinePath -Directory $installRoot
+    $resolvedCompiler = Get-Command 'makensis.exe' -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    if ([IO.Path]::GetFullPath([string]$resolvedCompiler.Source) -ine [IO.Path]::GetFullPath($compiler)) {
+        throw "NSIS compiler PATH read-back failed: $($resolvedCompiler.Source)"
+    }
+    $compilerVersion = ((Invoke-ProvisioningNative -Role 'NSIS compiler version verification' `
+            -FilePath $compiler -ArgumentList @('/VERSION') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    if ($compilerVersion -cne "v$Version") {
+        throw "NSIS compiler version is unexpected: $compilerVersion"
+    }
+
+    $stage = Join-Path 'C:\HerdrSandbox\staging' ('nsis-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    try {
+        $scriptPath = Join-Path $stage 'probe.nsi'
+        $outputPath = Join-Path $stage 'probe.exe'
+        $script = @'
+Unicode true
+Name "Herdr NSIS Stack Probe"
+OutFile "probe.exe"
+RequestExecutionLevel user
+SilentInstall silent
+Section "Probe"
+  SetOutPath "$TEMP"
+SectionEnd
+'@
+        [IO.File]::WriteAllText($scriptPath, $script + "`n", (New-Object Text.UTF8Encoding($false)))
+        Invoke-ProvisioningNative -Role 'NSIS compiler probe' -FilePath $compiler `
+            -ArgumentList @('/WX', '/V2', '/NOCONFIG', $scriptPath) -WorkingDirectory $stage `
+            -TimeoutSeconds 120 | Out-Null
+        if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+            throw 'NSIS compiler probe did not create an installer.'
+        }
+        $output = Get-Item -LiteralPath $outputPath -Force
+        $bytes = [IO.File]::ReadAllBytes($outputPath)
+        if (($output.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $output.Length -lt 1024 -or $bytes.Length -lt 2 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+            throw 'NSIS compiler probe produced an invalid Windows executable.'
+        }
+    } finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+    }
+    Write-Output "NSIS ready: $compilerVersion"
 }
 
 function Install-GoStack {

@@ -199,6 +199,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "Casey.Just"
 	case stackNode:
 		return "OpenJS.NodeJS.LTS"
+	case stackNSIS:
+		return packageNSIS
 	case stackPlaywrightCLI:
 		return "OpenJS.NodeJS.LTS + @playwright/cli@0.1.17"
 	case stackPython:
