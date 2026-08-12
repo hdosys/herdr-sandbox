@@ -55,7 +55,8 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every standalone built-in: Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
 | `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
 | `go` | Go |
@@ -261,6 +262,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 
 | Guest tooling | Direct profile call |
 | --- | --- |
+| Android SDK command-line tools and wireless ADB | `Install-AndroidStack` |
 | Bun | `Install-BunStack` |
 | Cargo Nextest | `Install-CargoNextest` |
 | C and C++ with MSVC Build Tools | `Install-CppStack` |
@@ -289,8 +291,28 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - Shortcut functions are the temporary convenience compositions described under [Project shortcuts](#project-shortcuts). Prefer project-owned direct calls once a repository carries its own setup.
 - Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
 - The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
+- The `android` stack installs Google's signed command-line tools and latest stable Platform Tools under `C:\HerdrSandbox\tools\android-sdk`, sets `ANDROID_HOME`, and provides an isolated Microsoft OpenJDK 17 at `ANDROID_JAVA_HOME`. An Android-only profile also activates that JDK for terminal Gradle builds when no machine `JAVA_HOME` exists. It never replaces an existing `JAVA_HOME`, and a selected standalone Java stack remains the final Java 25 owner. Android SDK platforms, build-tools versions, Gradle wrappers, application dependencies, and project files remain project-owned.
 - The `nsis` stack installs the latest stable `NSIS.NSIS` compiler by default and proves a real installer compile. Use it alone with `sandbox init --stack nsis` for installer-only projects. This repository pins NSIS 3.12 in its own project profile because the release package task requires that exact compiler.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
+
+#### Android device connection
+
+Select the Android stack and provision the guest:
+
+```powershell
+sandbox init --stack android
+sandbox up
+```
+
+Android 11 and newer support wireless debugging. Put the phone and Sandbox on the same reachable network, enable **Developer options > Wireless debugging** on the phone, choose **Pair device with pairing code**, then run the displayed endpoints inside the guest:
+
+```powershell
+adb pair <phone-ip>:<pairing-port>
+adb connect <phone-ip>:<debugging-port>
+adb devices -l
+```
+
+The pairing and debugging ports can differ. Use the exact values shown by the phone. Pairing keys remain disposable guest state. Windows Sandbox does not expose a supported arbitrary USB passthrough contract, so this stack does not run a host ADB proxy or map device credentials into the guest. Use a normal host toolchain when a workflow specifically requires USB, `fastboot`, recovery, or restricted-network reliability.
 
 #### Playwright CLI integration
 

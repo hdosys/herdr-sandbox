@@ -82,7 +82,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, Android CLI and wireless ADB tooling, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -228,6 +228,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 Install-DotNetStack
+Install-AndroidStack
 Install-GoStack -ProjectDirectory $ProjectDirectory
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-CppStack
@@ -593,6 +594,33 @@ $link = (Get-Command 'link.exe' -CommandType Application -ErrorAction Stop | Sel
 $msbuild = (Get-Command 'msbuild.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $java = (Get-Command 'java.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $javac = (Get-Command 'javac.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$androidCLI = (Get-Command 'android.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$adb = (Get-Command 'adb.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+
+$androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
+$androidJDK = 'C:\HerdrSandbox\toolchains\android-jdk-17'
+if ($env:ANDROID_HOME -cne $androidSDK -or $env:ANDROID_JAVA_HOME -cne $androidJDK -or
+    $env:ANDROID_USER_HOME -cne 'C:\HerdrSandbox\build\android-user' -or
+    [IO.Path]::GetFullPath($androidCLI) -ine (Join-Path $androidSDK 'cmdline-tools\latest\bin\android.exe') -or
+    [IO.Path]::GetFullPath($adb) -ine (Join-Path $androidSDK 'platform-tools\adb.exe')) {
+    throw 'Android SDK, JDK, or command environment is unavailable in the SSH session.'
+}
+$androidVersion = Invoke-SmokeTool 'android-cli-version' $androidCLI @('--no-metrics','--version')
+if ($androidVersion -notmatch '^1\.0\.\d+$') { throw "Android CLI version is unexpected: $androidVersion" }
+$androidJDKVersion = Invoke-SmokeTool 'android-jdk-version' (Join-Path $androidJDK 'bin\java.exe') @('-version')
+Assert-SmokeOutput 'android-jdk-version' $androidJDKVersion 'openjdk version "17.0.20"'
+$reportedAndroidSDK = Invoke-SmokeTool 'android-sdk-location' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'info','sdk')
+if ([IO.Path]::GetFullPath($reportedAndroidSDK).TrimEnd('\') -ine $androidSDK) {
+    throw "Android SDK location is unexpected: $reportedAndroidSDK"
+}
+$platformTools = Invoke-SmokeTool 'android-platform-tools' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'sdk','list','platform-tools')
+Assert-SmokeOutput 'android-platform-tools' $platformTools 'Android SDK Platform-Tools'
+$adbVersion = Invoke-SmokeTool 'adb-version' $adb @('version')
+Assert-SmokeOutput 'adb-version' $adbVersion 'Android Debug Bridge version 1.0.41'
+$adbHelp = Invoke-SmokeTool 'adb-wireless-help' $adb @('help')
+Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'pair HOST[:PORT]'
+Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'connect HOST[:PORT]'
+[Console]::Out.WriteLine('[all-stacks] android: command-line SDK, isolated JDK 17, and wireless ADB commands OK')
 
 $nsisRoot = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
 if ([IO.Path]::GetFullPath($makensis) -ine [IO.Path]::GetFullPath((Join-Path $nsisRoot 'makensis.exe'))) {
@@ -865,6 +893,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: C/C++, Java, dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: Android, C/C++, Java, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

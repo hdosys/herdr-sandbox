@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 14
+# herdr-sandbox-stacks-contract: 15
 
 function Get-StackWebResponseText {
     param(
@@ -1150,6 +1150,365 @@ function Publish-StackRustMirrorCacheEntry {
     if ($null -ne $cleanupFailure) {
         throw $cleanupFailure
     }
+}
+
+function Test-StackAndroidArchiveEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Entry,
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Entry) -or $Entry.Contains('\') -or
+        -not $Entry.StartsWith($Root + '/', [StringComparison]::Ordinal) -or
+        $Entry.StartsWith('/', [StringComparison]::Ordinal) -or $Entry -match '^[A-Za-z]:' -or
+        @($Entry.TrimEnd('/') -split '/' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) {
+        throw "Android archive entry is unsafe: $Entry"
+    }
+}
+
+function Assert-StackAndroidTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+        [Parameter(Mandatory = $true)]
+        [string[]]$RequiredRelativePaths
+    )
+
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "Android tool root is missing: $Root"
+    }
+    $rootInfo = Get-Item -LiteralPath $Root -Force
+    if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Android tool root is a reparse point: $Root"
+    }
+    foreach ($item in @(Get-ChildItem -LiteralPath $Root -Recurse -Force)) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Android tool tree contains a reparse point: $($item.FullName)"
+        }
+    }
+    foreach ($relativePath in $RequiredRelativePaths) {
+        $path = Join-Path $Root $relativePath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Android tool file is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Android tool file is a reparse point: $path"
+        }
+    }
+}
+
+function Assert-StackAndroidGoogleSignature {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.GetNameInfo(
+            [Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Google LLC' -or
+        $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Google LLC(,|$)') {
+        throw "Android CLI Authenticode signature is invalid: $($signature.Status)"
+    }
+}
+
+function Assert-StackAndroidMicrosoftSignature {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $signature = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $signature.SignerCertificate -or
+        $signature.SignerCertificate.GetNameInfo(
+            [Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Microsoft Corporation' -or
+        $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+        throw "Android JDK Authenticode signature is invalid: $($signature.Status)"
+    }
+}
+
+function Install-StackAndroidDirectArchive {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+        [Parameter(Mandatory = $true)]
+        [object]$Metadata,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination,
+        [Parameter(Mandatory = $true)]
+        [string]$ArchiveRoot,
+        [Parameter(Mandatory = $true)]
+        [int]$ExpectedEntryCount,
+        [Parameter(Mandatory = $true)]
+        [string[]]$RequiredRelativePaths,
+        [string]$SignedRelativePath = ''
+    )
+
+    $cacheRoot = 'C:\HerdrSandbox\cache\packages'
+    if (-not (Test-Path -LiteralPath 'C:\HerdrSandbox\cache' -PathType Container)) {
+        throw 'The writable guest package cache mapping is missing: C:\HerdrSandbox\cache'
+    }
+    Assert-ProvisioningCachePath -Path 'C:\HerdrSandbox\cache'
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    Assert-ProvisioningCachePath -Path $cacheRoot
+    $packageRoot = Join-Path $cacheRoot (Get-ProvisioningSafeCacheName -Value ([string]$Metadata.Id))
+    New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+    Assert-ProvisioningCachePath -Path $packageRoot
+    $entryName = (Get-ProvisioningSafeCacheName -Value ([string]$Metadata.Version)) + '-' +
+        ([string]$Metadata.Sha256).Substring(0, 16).ToLowerInvariant()
+    $entryDirectory = Join-Path $packageRoot $entryName
+    $lockPath = Join-Path $packageRoot '.lock'
+    Assert-ProvisioningCachePath -Path $lockPath
+    $lock = $null
+    $guestStage = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $guestStage -Force | Out-Null
+    $guestPayload = Join-Path $guestStage $Metadata.PayloadName
+    $extracted = Join-Path $guestStage 'extracted'
+    $primaryFailure = $null
+    $cleanupFailure = $null
+    try {
+        $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        if (Test-Path -LiteralPath $entryDirectory) {
+            Assert-ProvisioningCachePath -Path $entryDirectory
+        }
+        $cacheHit = Test-ProvisioningPackageCacheEntry -Directory $entryDirectory -Metadata $Metadata
+        if ($cacheHit) {
+            Write-Output "$Role package cache hit: $($Metadata.Version)"
+            Copy-ProvisioningPackageToGuest -Source (Join-Path $entryDirectory $Metadata.PayloadName) `
+                -Destination $guestPayload -ExpectedSHA256 $Metadata.Sha256
+        } else {
+            Write-Output "$Role package cache miss: $($Metadata.Version)"
+            Get-ProvisioningDirectPackage -Role $Role -Metadata $Metadata -GuestPayloadPath $guestPayload
+        }
+
+        $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+        $archiveEntries = @(Invoke-ProvisioningNative -Role "$Role archive inspection" -FilePath $tar `
+            -ArgumentList @('-tf', $guestPayload) -TimeoutSeconds 120 | ForEach-Object { [string]$_ })
+        if ($archiveEntries.Count -ne $ExpectedEntryCount) {
+            throw "$Role archive contains $($archiveEntries.Count) entries; expected $ExpectedEntryCount."
+        }
+        foreach ($archiveEntry in $archiveEntries) {
+            Test-StackAndroidArchiveEntry -Entry $archiveEntry -Root $ArchiveRoot
+        }
+        New-Item -ItemType Directory -Path $extracted | Out-Null
+        Invoke-ProvisioningNative -Role "$Role cached extraction" -FilePath $tar `
+            -ArgumentList @('-xf', $guestPayload, '-C', $extracted) -TimeoutSeconds 180 | Out-Null
+        $sourceRoot = Join-Path $extracted $ArchiveRoot
+        Assert-StackAndroidTree -Root $sourceRoot -RequiredRelativePaths $RequiredRelativePaths
+        if (-not [string]::IsNullOrWhiteSpace($SignedRelativePath)) {
+            Assert-StackAndroidGoogleSignature -Path (Join-Path $sourceRoot $SignedRelativePath)
+        }
+        if (Test-Path -LiteralPath $Destination) {
+            Remove-Item -LiteralPath $Destination -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+        Move-Item -LiteralPath $sourceRoot -Destination $Destination
+        Assert-StackAndroidTree -Root $Destination -RequiredRelativePaths $RequiredRelativePaths
+        if (-not [string]::IsNullOrWhiteSpace($SignedRelativePath)) {
+            Assert-StackAndroidGoogleSignature -Path (Join-Path $Destination $SignedRelativePath)
+        }
+        if (-not $cacheHit) {
+            Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
+                -GuestPayloadPath $guestPayload -Metadata $Metadata
+        }
+        foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
+            if ($directory.Name -ine $entryName) {
+                Assert-ProvisioningCacheTree -Path $directory.FullName
+                Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+            }
+        }
+    } catch {
+        $primaryFailure = $_
+    } finally {
+        if ($null -ne $lock) {
+            try { $lock.Dispose() } catch { $cleanupFailure = $_ }
+        }
+        try {
+            if (Test-Path -LiteralPath $guestStage) {
+                Remove-ProvisioningGuestPackageStage -Path $guestStage -Attempts 1 `
+                    -DelayMilliseconds 0 -BestEffort | Out-Null
+            }
+        } catch {
+            if ($null -eq $cleanupFailure) { $cleanupFailure = $_ }
+        }
+    }
+    if ($null -ne $primaryFailure) {
+        if ($null -ne $cleanupFailure) {
+            Write-Warning "$Role package cleanup also failed: $($cleanupFailure.Exception.Message)"
+        }
+        throw $primaryFailure
+    }
+    if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+}
+
+function Install-AndroidStack {
+    [CmdletBinding()]
+    param()
+
+    $androidCLIRevision = '22.0'
+    $androidCLIVersion = '1.0.15985488'
+    $androidCLIMetadata = [pscustomobject]@{
+        Id = 'Google.AndroidCommandLineTools'
+        Version = $androidCLIRevision
+        Architecture = 'x64'
+        InstallerType = 'zip'
+        Scope = ''
+        Url = 'https://dl.google.com/android/repository/commandlinetools-win-15859902_latest.zip'
+        Sha256 = '90AE805D20434428BFFCB699C290860F19BB5F66A67E6B330067E3DE801FB04A'
+        PayloadName = 'payload.zip'
+    }
+    $jdkVersion = '17.0.20'
+    $jdkBuild = '8'
+    $jdkMetadata = [pscustomobject]@{
+        Id = 'Microsoft.OpenJDK.17.Android'
+        Version = "$jdkVersion.$jdkBuild"
+        Architecture = 'x64'
+        InstallerType = 'zip'
+        Scope = ''
+        Url = 'https://aka.ms/download-jdk/microsoft-jdk-17.0.20-windows-x64.zip'
+        Sha256 = 'E46FD292317C6BB0A8FE9DC63115021329F3A63CAEBA791C185F89F3666A68E5'
+        PayloadName = 'payload.zip'
+    }
+    foreach ($metadata in @($androidCLIMetadata, $jdkMetadata)) {
+        $uri = [Uri][string]$metadata.Url
+        if ($uri.Scheme -cne 'https' -or [string]$metadata.Sha256 -cnotmatch '^[A-F0-9]{64}$' -or
+            [string]$metadata.Architecture -cne 'x64' -or [string]$metadata.InstallerType -cne 'zip') {
+            throw "Android stack package metadata is invalid: $($metadata.Id)"
+        }
+    }
+    $androidCLIURI = [Uri][string]$androidCLIMetadata.Url
+    $jdkURI = [Uri][string]$jdkMetadata.Url
+    if ($androidCLIURI.Host -cne 'dl.google.com' -or $jdkURI.Host -cne 'aka.ms') {
+        throw 'Android stack package host is invalid.'
+    }
+
+    $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
+    $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
+    $androidCLIBin = Join-Path $androidCLIRoot 'bin'
+    $androidCLI = Join-Path $androidCLIBin 'android.exe'
+    $jdkRoot = 'C:\HerdrSandbox\toolchains\android-jdk-17'
+    $androidUserHome = 'C:\HerdrSandbox\build\android-user'
+    Write-Output "Installing Android SDK Command-line Tools $androidCLIRevision and Microsoft OpenJDK $jdkVersion..."
+    Install-StackAndroidDirectArchive -Role 'Android SDK Command-line Tools' -Metadata $androidCLIMetadata `
+        -Destination $androidCLIRoot -ArchiveRoot 'cmdline-tools' -ExpectedEntryCount 330 `
+        -RequiredRelativePaths @('source.properties', 'bin\android.exe', 'bin\sdkmanager.bat',
+            'lib\sdk-common\tools.sdk-common.jar') -SignedRelativePath 'bin\android.exe'
+    Install-StackAndroidDirectArchive -Role 'Android Microsoft OpenJDK 17' -Metadata $jdkMetadata `
+        -Destination $jdkRoot -ArchiveRoot "jdk-$jdkVersion+$jdkBuild" -ExpectedEntryCount 576 `
+        -RequiredRelativePaths @('release', 'bin\java.exe', 'bin\javac.exe', 'lib\modules')
+
+    $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
+    if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
+        $sourceProperties -notmatch ('(?m)^Pkg\.Path=cmdline-tools;' + [regex]::Escape($androidCLIRevision) + '\r?$')) {
+        throw 'Android SDK Command-line Tools source identity is unexpected.'
+    }
+    $jdkRelease = [IO.File]::ReadAllText((Join-Path $jdkRoot 'release'))
+    if ($jdkRelease -notmatch ('(?m)^JAVA_VERSION="' + [regex]::Escape($jdkVersion) + '"\r?$') -or
+        $jdkRelease -notmatch '(?m)^IMPLEMENTOR="Microsoft"\r?$' -or
+        $jdkRelease -notmatch '(?m)^OS_ARCH="x86_64"\r?$') {
+        throw 'Android Microsoft OpenJDK release identity is unexpected.'
+    }
+    Assert-StackAndroidMicrosoftSignature -Path (Join-Path $jdkRoot 'bin\java.exe')
+    Assert-StackAndroidMicrosoftSignature -Path (Join-Path $jdkRoot 'bin\javac.exe')
+
+    $androidJava = Join-Path $jdkRoot 'bin\java.exe'
+    $androidJavac = Join-Path $jdkRoot 'bin\javac.exe'
+    $androidJavaVersion = ((Invoke-ProvisioningNative -Role 'Android JDK runtime version verification' `
+            -FilePath $androidJava -ArgumentList @('-version') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    $androidJavacVersion = ((Invoke-ProvisioningNative -Role 'Android JDK compiler version verification' `
+            -FilePath $androidJavac -ArgumentList @('-version') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    if ($androidJavaVersion -notmatch ('(?m)^openjdk version "' + [regex]::Escape($jdkVersion) + '"(?:\s|$)') -or
+        $androidJavaVersion -notmatch '(?i)Microsoft' -or $androidJavacVersion -cne "javac $jdkVersion") {
+        throw "Android Microsoft OpenJDK version verification failed: java=$androidJavaVersion javac=$androidJavacVersion"
+    }
+
+    $env:ANDROID_HOME = $androidSDK
+    $env:ANDROID_USER_HOME = $androidUserHome
+    $env:ANDROID_JAVA_HOME = $jdkRoot
+    foreach ($directory in @($androidSDK, $androidUserHome)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+    $androidEnvironment = [ordered]@{
+        ANDROID_HOME = $androidSDK
+        ANDROID_USER_HOME = $androidUserHome
+        ANDROID_JAVA_HOME = $jdkRoot
+    }
+    foreach ($entry in $androidEnvironment.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
+        if ([Environment]::GetEnvironmentVariable([string]$entry.Key, 'Machine') -cne [string]$entry.Value) {
+            throw "Android environment read-back failed: $($entry.Key)"
+        }
+    }
+
+    $machineJavaHome = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($machineJavaHome)) {
+        $env:JAVA_HOME = $jdkRoot
+        [Environment]::SetEnvironmentVariable('JAVA_HOME', $jdkRoot, 'Machine')
+        if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine') -cne $jdkRoot) {
+            throw 'Android JAVA_HOME activation read-back failed.'
+        }
+        Add-ProvisioningMachinePath -Directory (Join-Path $jdkRoot 'bin')
+    }
+
+    $previousJavaHome = [string]$env:JAVA_HOME
+    try {
+        $env:JAVA_HOME = $jdkRoot
+        Invoke-ProvisioningNative -Role 'Android Platform Tools installation' -FilePath $androidCLI `
+            -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
+            -TimeoutSeconds 600 | Out-Null
+        $androidVersion = ((Invoke-ProvisioningNative -Role 'Android CLI version verification' `
+                -FilePath $androidCLI -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30) `
+            -join [Environment]::NewLine).Trim()
+        $reportedSDK = ((Invoke-ProvisioningNative -Role 'Android SDK location verification' `
+                -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
+                -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        $platformToolsListing = ((Invoke-ProvisioningNative -Role 'Android Platform Tools package verification' `
+                -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'list', 'platform-tools') `
+                -TimeoutSeconds 120) -join [Environment]::NewLine)
+    } finally {
+        $env:JAVA_HOME = $previousJavaHome
+    }
+    if ($androidVersion -cne $androidCLIVersion -or
+        [IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\') -or
+        $platformToolsListing -notmatch '(?m)^\s*platform-tools\s+(?<version>\d+\.\d+\.\d+)\s+Android SDK Platform-Tools\s*$') {
+        throw "Android SDK verification failed: cli=$androidVersion sdk=$reportedSDK"
+    }
+    $platformToolsVersion = [string]$Matches['version']
+    $platformTools = Join-Path $androidSDK 'platform-tools'
+    $adb = Join-Path $platformTools 'adb.exe'
+    Assert-StackAndroidTree -Root $platformTools `
+        -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties')
+    $platformProperties = [IO.File]::ReadAllText((Join-Path $platformTools 'source.properties'))
+    if ($platformProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($platformToolsVersion) + '\r?$')) {
+        throw 'Android Platform Tools source identity is unexpected.'
+    }
+    $adbVersion = ((Invoke-ProvisioningNative -Role 'Android ADB version verification' -FilePath $adb `
+            -ArgumentList @('version') -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+    $adbHelp = ((Invoke-ProvisioningNative -Role 'Android wireless ADB command verification' -FilePath $adb `
+            -ArgumentList @('help') -TimeoutSeconds 30) -join [Environment]::NewLine)
+    if ($adbVersion -notmatch ('(?m)^Version ' + [regex]::Escape($platformToolsVersion) + '-') -or
+        $adbHelp -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
+        $adbHelp -notmatch '(?m)^\s*connect HOST\[:PORT\]') {
+        throw 'Android wireless ADB verification failed.'
+    }
+    Add-ProvisioningMachinePath -Directory $androidCLIBin
+    Add-ProvisioningMachinePath -Directory $platformTools
+    $androidCommands = [ordered]@{'android.exe' = $androidCLI; 'adb.exe' = $adb}
+    foreach ($entry in $androidCommands.GetEnumerator()) {
+        $resolved = Get-Command $entry.Key -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        if ([IO.Path]::GetFullPath([string]$resolved.Source) -ine [IO.Path]::GetFullPath([string]$entry.Value)) {
+            throw "Android command PATH read-back failed: $($entry.Key)"
+        }
+    }
+    Write-Output "Android ready: CLI $androidVersion, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
 }
 
 function Install-DotNetStack {

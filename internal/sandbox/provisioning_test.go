@@ -1038,6 +1038,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 	text := readDefaultStackProvisioning(t)
 	for _, required := range []string{
 		stackProvisioningContract,
+		"function Install-AndroidStack",
 		"function Resolve-StackPythonPackage",
 		"function Resolve-StackRustDistribution",
 		"function Install-CppStack",

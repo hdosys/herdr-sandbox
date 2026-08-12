@@ -8,6 +8,9 @@ release notes remain available on the
 
 ### Added
 
+- A new `android` stack provisions verified Android command-line build tooling,
+  latest stable Platform Tools, an isolated OpenJDK 17, and wireless ADB
+  `pair`/`connect` support without adding a host USB bridge.
 - A separate `nsis` stack installs and verifies the NSIS compiler, including a
   real installer compile, so installer-only projects can select it with
   `sandbox init --stack nsis`.

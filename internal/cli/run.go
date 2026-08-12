@@ -20,7 +20,7 @@ const usage = `Usage:
   sandbox config
   sandbox version
   sandbox plan
-  sandbox init [--stack all|cpp|dotnet|go|handy|herdr|java|node|nsis|playwright-cli|python|python-ai|rust|tradingview|zig]...
+  sandbox init [--stack android|cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig|all|handy|herdr|python-ai]...
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   sandbox attach
   sandbox status
@@ -56,6 +56,8 @@ Behavior:
 `
 
 const installerCleanUninstallTimeout = 15 * time.Minute
+
+const stackSelectionHelp = "android, cpp, dotnet, go, java, node, nsis, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, python-ai"
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	release, err := acquireInstallerLifecycleGate(args)
@@ -394,7 +396,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	flags := flag.NewFlagSet("sandbox init", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var selected stackSelections
-	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: all, cpp, dotnet, go, handy, herdr, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, zig")
+	flags.Var(&selected, "stack", "stack to add; repeat for multiple stacks: "+stackSelectionHelp)
 	flags.Usage = func() {}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -432,7 +434,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 }
 
 func promptForStacks(input io.Reader, output io.Writer) ([]string, error) {
-	fmt.Fprintln(output, "Available stacks: all, cpp, dotnet, go, handy, herdr, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, zig")
+	fmt.Fprintln(output, "Available stacks: "+stackSelectionHelp)
 	fmt.Fprint(output, "Select one or more stacks (comma or space separated): ")
 	reader := bufio.NewReader(io.LimitReader(input, 4097))
 	line, err := reader.ReadString('\n')

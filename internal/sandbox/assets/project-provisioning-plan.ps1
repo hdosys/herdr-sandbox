@@ -14,6 +14,7 @@ if (-not (Test-Path -LiteralPath $ProjectsDirectory -PathType Container)) {
 }
 
 $knownStacks = @{
+    'Install-AndroidStack' = 'android'
     'Install-BunStack' = 'bun'
     'Install-CargoNextest' = 'cargo-nextest'
     'Install-CppStack' = 'cpp'

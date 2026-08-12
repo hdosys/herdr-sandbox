@@ -179,6 +179,8 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 
 func effectiveStackPackageOwner(stack projectStack) string {
 	switch stack {
+	case stackAndroid:
+		return "Android SDK Command-line Tools + Platform Tools + Microsoft OpenJDK 17"
 	case stackBun:
 		return "Oven-sh.Bun"
 	case stackCargoNextest:

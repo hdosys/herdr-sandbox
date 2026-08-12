@@ -19,6 +19,7 @@ $dynamic = 'Install-ZigStack'
 & $dynamic
 Install-RustMSVCStack -ProjectDirectory 'C:\Workspaces\global'
 Install-Uv
+Install-AndroidStack
 Install-CppStack
 `)
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, `$dynamic = 'Install-RustMSVCStack'
@@ -30,6 +31,7 @@ Invoke-Expression 'Install-RustMSVCStack'
 . '.\hidden.ps1'
 Install-GoStack
 Install-GoStack -Version '1.26.5'
+Install-AndroidStack
 Install-CppStack
 Install-DotNetStack
 Install-HandyStack -ProjectDirectory 'C:\Workspaces\handy'
@@ -50,13 +52,13 @@ throw 'the AST adapter must not execute project code'
 	if err != nil {
 		t.Fatalf("inspectProjectProvisioningPlan: %v", err)
 	}
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "bun|cpp|dotnet|go|handy|java|nsis|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|java|nsis|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
-	if strings.Join(projectStackStrings(userStacks), "|") != "cpp|rust-msvc|uv" {
+	if strings.Join(projectStackStrings(userStacks), "|") != "android|cpp|rust-msvc|uv" {
 		t.Fatalf("user stacks = %v", userStacks)
 	}
 }

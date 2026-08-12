@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"sandbox version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "all", "cpp", "handy", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -37,6 +37,24 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "__installer-") {
 		t.Fatalf("installer-only commands leaked into help: %q", stdout.String())
+	}
+}
+
+func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.T) {
+	standalone := "android|cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig"
+	trailing := "all|handy|herdr|python-ai"
+	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
+		previous := -1
+		for _, stack := range strings.Split(standalone+"|"+trailing, "|") {
+			index := strings.Index(text, stack)
+			if name == "usage" {
+				index = strings.Index(strings.Split(text, "\n")[4], stack)
+			}
+			if index <= previous {
+				t.Fatalf("%s stack order is invalid at %q: %q", name, stack, text)
+			}
+			previous = index
+		}
 	}
 }
 
@@ -592,6 +610,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		{name: "flags", args: []string{"init", "--stack", "go", "--stack", "dotnet"}, want: "go|dotnet"},
 		{name: "all", args: []string{"init", "--stack", "all"}, want: "all"},
 		{name: "C and C++", args: []string{"init", "--stack", "cpp"}, want: "cpp"},
+		{name: "android", args: []string{"init", "--stack", "android"}, want: "android"},
 		{name: "handy virtual", args: []string{"init", "--stack", "handy"}, want: "handy"},
 		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "java", args: []string{"init", "--stack", "java"}, want: "java"},
