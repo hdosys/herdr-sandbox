@@ -35,6 +35,7 @@ const (
 	packageUV              = "astral-sh.uv"
 	packageOpenJDK25       = "Microsoft.OpenJDK.25"
 	packageNSIS            = "NSIS.NSIS"
+	packageNushell         = "Nushell.Nushell"
 	packageCMake           = "Kitware.CMake"
 	packageVulkanSDK       = "KhronosGroup.VulkanSDK"
 	packageWebView2        = "Microsoft.EdgeWebView2Runtime"
@@ -62,6 +63,7 @@ var projectStackPackageIDs = []string{
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
 	packageNSIS,
+	packageNushell,
 	"Oven-sh.Bun",
 	"zig.zig",
 	"Rustlang.Rustup",

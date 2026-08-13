@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"sandbox version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -41,7 +41,7 @@ func TestRunPrintsHelp(t *testing.T) {
 }
 
 func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.T) {
-	standalone := "android|cpp|dotnet|go|java|node|nsis|playwright-cli|python|rust|tradingview|zig"
+	standalone := "android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig"
 	trailing := "all|handy|herdr|python-ai"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
@@ -723,6 +723,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "java", args: []string{"init", "--stack", "java"}, want: "java"},
 		{name: "NSIS", args: []string{"init", "--stack", "nsis"}, want: "nsis"},
+		{name: "Nushell", args: []string{"init", "--stack", "nushell"}, want: "nushell"},
 		{name: "playwright cli", args: []string{"init", "--stack", "playwright-cli"}, want: "playwright-cli"},
 		{name: "python ai", args: []string{"init", "--stack", "python-ai"}, want: "python-ai"},
 		{name: "tradingview", args: []string{"init", "--stack", "tradingview"}, want: "tradingview"},

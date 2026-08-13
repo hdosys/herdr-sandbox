@@ -26,6 +26,7 @@ $knownStacks = @{
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
     'Install-NSISStack' = 'nsis'
+    'Install-NushellStack' = 'nushell'
     'Install-PlaywrightCLIStack' = 'playwright-cli'
     'Install-PythonAIStack' = @('python', 'uv')
     'Install-PythonStack' = 'python'
@@ -198,6 +199,10 @@ function Get-CommandToolRequirements {
         'Install-NSISStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'NSIS.NSIS' $version '' 'nsis')
+        }
+        'Install-NushellStack' {
+            $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
+            return @(New-ToolRequirement 'Nushell.Nushell' $version '' 'nushell')
         }
         'Install-PlaywrightCLIStack' {
             $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'NodeVersion' $Role

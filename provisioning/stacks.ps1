@@ -1801,6 +1801,47 @@ SectionEnd
     Write-Output "NSIS ready: $compilerVersion"
 }
 
+function Install-NushellStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
+    )
+
+    $packageID = 'Nushell.Nushell'
+    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'Nushell' -Id $packageID -Version $Version `
+        -Architecture 'x64' -InstallerType 'wix' -Scope 'machine'
+    if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Architecture -cne 'x64' -or
+        [string]$metadata.InstallerType -cne 'wix' -or [string]$metadata.Scope -cne 'machine' -or
+        [string]$metadata.Version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+        throw "Nushell metadata is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Architecture)"
+    }
+    $Version = [string]$metadata.Version
+
+    Write-Output "Installing Nushell $Version..."
+    Install-ProvisioningCachedPackage -Role 'Nushell' -Metadata $metadata -DownloadSource 'WinGet' `
+        -Adapter 'MSI' -ExecutableName 'nu.exe' -InstallerArguments @('ALLUSERS=1')
+
+    $expectedCommand = Join-Path $env:ProgramFiles 'nu\bin\nu.exe'
+    if (-not (Test-Path -LiteralPath $expectedCommand -PathType Leaf) -or
+        ((Get-Item -LiteralPath $expectedCommand -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Nushell command is missing or unsafe: $expectedCommand"
+    }
+    $resolvedCommand = Get-Command 'nu.exe' -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    if ([IO.Path]::GetFullPath([string]$resolvedCommand.Source) -ine [IO.Path]::GetFullPath($expectedCommand)) {
+        throw "Nushell command resolved from an unexpected path: $($resolvedCommand.Source)"
+    }
+    $nuVersion = ((Invoke-ProvisioningNative -Role 'Nushell version verification' `
+            -FilePath $expectedCommand -ArgumentList @('--version') -TimeoutSeconds 30) `
+        -join [Environment]::NewLine).Trim()
+    if ($nuVersion -cne $Version) {
+        throw "Nushell version output is unexpected: $nuVersion"
+    }
+    Write-Output "Nushell ready: $nuVersion"
+}
+
 function Install-GoStack {
     [CmdletBinding()]
     param(

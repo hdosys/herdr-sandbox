@@ -321,31 +321,40 @@ func TestDefaultBaseInstallsWinDirStatAndFilePilot(t *testing.T) {
 	}
 }
 
-func TestConfigurationSyncForcesManagedOpenCodeAllowAllAfterTransfer(t *testing.T) {
+func TestConfigurationSyncForcesManagedOpenCodeConfigurationAfterTransfer(t *testing.T) {
 	text := string(configurationSyncScript)
 	for _, required := range []string{
 		"function Get-OpenCodeAllowAllPermissions",
-		"function Install-OpenCodeAllowAllPolicy",
-		"function Enable-OpenCodeAllowAllPolicy",
+		"function Get-OpenCodeTVControlMCPConfiguration",
+		"function Install-OpenCodeSandboxConfiguration",
+		"function Enable-OpenCodeSandboxConfiguration",
 		"$openCodeInstalled = $null -ne (Get-Command 'opencode.exe'",
 		"if ([bool]$agentSync.opencode -or $openCodeEnabled -or $openCodeInstalled)",
 		"[config-sync] enforce-opencode-allow-all",
 		"-RequireExecutable ($openCodeEnabled -or $openCodeInstalled)",
+		"-TradingViewEnabled $tradingViewStackEnabled",
+		"C:\\HerdrSandbox\\tools\\tvcontrol\\node_modules\\@ferroxlabs\\tvcontrol",
+		"TV_CDP_HOST = '127.0.0.1'",
+		"TV_CDP_PORT = '9222'",
+		"TV_MCP_ADVANCED = '0'",
+		"TV_MCP_TELEMETRY = '0'",
 		"Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue",
 		"sandbox-allow-all.js",
 		"$allowAllJSON = $permissions | ConvertTo-Json -Compress",
 		"const permissions = $allowAllJSON",
+		"const tvcontrol = $tvControlMCPJSON",
 		"const allowAll = () => ({ ...permissions })",
 		"config.permission = allowAll()",
 		"for (const agent of Object.values(config.agent ?? {}))",
 		"agent.permission = allowAll()",
+		"config.mcp = { ...(config.mcp ?? {}), tvcontrol:",
 		"external_directory = 'allow'",
 		"task = 'allow'",
 		"todowrite = 'allow'",
 		"doom_loop = 'allow'",
 		"[IO.File]::ReadAllText($managedFile.Path) -cne $managedFile.Contents",
 		"OpenCode effective permissions were not replaced by the Sandbox allow-all policy",
-		"Assert-OpenCodeAllowAll",
+		"Assert-OpenCodeSandboxConfiguration",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("configuration sync is missing OpenCode allow-all contract %q", required)
@@ -353,7 +362,7 @@ func TestConfigurationSyncForcesManagedOpenCodeAllowAllAfterTransfer(t *testing.
 	}
 	apply := strings.Index(text, "[config-sync] apply-opencode")
 	enforce := strings.Index(text, "[config-sync] enforce-opencode-allow-all")
-	verify := strings.LastIndex(text, "$openCodePermissionVerified = [bool](Enable-OpenCodeAllowAllPolicy")
+	verify := strings.LastIndex(text, "$openCodePermissionVerified = [bool](Enable-OpenCodeSandboxConfiguration")
 	if apply < 0 || enforce <= apply || verify <= enforce {
 		t.Fatalf("OpenCode transfer/policy/verification order = %d/%d/%d", apply, enforce, verify)
 	}
@@ -368,14 +377,14 @@ func TestConfigurationSyncForcesManagedOpenCodeAllowAllAfterTransfer(t *testing.
 	}
 }
 
-func installOpenCodeAllowAllPolicyForTest(t *testing.T, programData string) string {
+func installOpenCodeSandboxConfigurationForTest(t *testing.T, programData string) string {
 	t.Helper()
 	start := bytes.Index(configurationSyncScript, []byte("$script:CopiedConfigurationFiles = 0"))
 	end := bytes.Index(configurationSyncScript, []byte("function Invoke-GuestGitHubCLI {"))
 	if start < 0 || end <= start {
 		t.Fatal("configuration-sync OpenCode policy helper block was not found")
 	}
-	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeAllowAllPolicy\n"
+	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeSandboxConfiguration\n"
 	scriptPath := filepath.Join(t.TempDir(), "install-opencode-allow-all.ps1")
 	writeTestFile(t, scriptPath, script)
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
@@ -390,7 +399,7 @@ func TestConfigurationSyncWritesManagedOpenCodeAllowAllPolicy(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 OpenCode policy regression")
 	}
-	managed := installOpenCodeAllowAllPolicyForTest(t, filepath.Join(t.TempDir(), "program-data"))
+	managed := installOpenCodeSandboxConfigurationForTest(t, filepath.Join(t.TempDir(), "program-data"))
 	configData, err := os.ReadFile(filepath.Join(managed, "opencode.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -414,7 +423,7 @@ func TestConfigurationSyncWritesManagedOpenCodeAllowAllPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"config.permission = allowAll()", "agent.permission = allowAll()"} {
+	for _, required := range []string{"config.permission = allowAll()", "agent.permission = allowAll()", "const tvcontrol = null"} {
 		if !bytes.Contains(plugin, []byte(required)) {
 			t.Fatalf("managed OpenCode plugin is missing %q", required)
 		}
@@ -448,7 +457,7 @@ func TestCurrentOpenCodeManagedPluginReplacesTransferredPermissions(t *testing.T
 	if start < 0 || end <= start {
 		t.Fatal("configuration-sync OpenCode verification helper block was not found")
 	}
-	applyScript := string(configurationSyncScript[start:end]) + "\nif (-not (Enable-OpenCodeAllowAllPolicy -RequireExecutable $false)) { throw 'Installed OpenCode was not verified.' }\n"
+	applyScript := string(configurationSyncScript[start:end]) + "\nif (-not (Enable-OpenCodeSandboxConfiguration -RequireExecutable $false)) { throw 'Installed OpenCode was not verified.' }\n"
 	applyPath := filepath.Join(root, "apply-opencode-policy.ps1")
 	writeTestFile(t, applyPath, applyScript)
 	apply := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", applyPath)
@@ -1050,6 +1059,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-PlaywrightChromium",
 		"function Install-NodeStack",
 		"function Install-NSISStack",
+		"function Install-NushellStack",
 		"function Install-PlaywrightCLIStack",
 		"function Install-PythonStack",
 		"function Install-Uv",

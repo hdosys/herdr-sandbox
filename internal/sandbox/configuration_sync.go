@@ -303,6 +303,7 @@ type developmentConfigurationSyncResult struct {
 	ArchiveSHA256                     string `json:"archiveSha256"`
 	CopiedFiles                       int    `json:"copiedFiles"`
 	OpenCodePermissionVerified        bool   `json:"openCodePermissionVerified"`
+	OpenCodeTVControlMCPConfigured    bool   `json:"openCodeTVControlMCPConfigured"`
 	WindowsTerminalEdition            string `json:"windowsTerminalEdition"`
 	StarshipPreset                    string `json:"starshipPreset"`
 	StarshipConfigured                bool   `json:"starshipConfigured"`
@@ -358,7 +359,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 func decodeDevelopmentConfigurationSyncResult(output []byte) (developmentConfigurationSyncResult, error) {
 	trimmed := bytes.TrimSpace(output)
 	if err := validateExactJSONObjectShape(trimmed, "guest development configuration result", []string{
-		"schemaVersion", "archiveSha256", "copiedFiles", "openCodePermissionVerified",
+		"schemaVersion", "archiveSha256", "copiedFiles", "openCodePermissionVerified", "openCodeTVControlMCPConfigured",
 		"windowsTerminalEdition", "starshipPreset", "starshipConfigured",
 		"githubAuthenticatedAccounts", "githubAuthenticationVerified", "herdrConfigurationPublished",
 		"tradingViewAuthenticatedCookies", "tradingViewAuthenticationVerified",
@@ -675,7 +676,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 8 {
+	if result.SchemaVersion != 9 {
 		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
 	}
 	if result.ArchiveSHA256 != expectedDigest {
@@ -696,6 +697,10 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	if packages.enabled(packageOpenCode) && !result.OpenCodePermissionVerified {
 		return errors.New("verify guest OpenCode permissions: selected OpenCode was not verified")
+	}
+	expectedOpenCodeTVControlMCP := tradingViewEnabled && result.OpenCodePermissionVerified
+	if result.OpenCodeTVControlMCPConfigured != expectedOpenCodeTVControlMCP {
+		return fmt.Errorf("verify guest OpenCode TVControl MCP configuration: configured %t, expected %t", result.OpenCodeTVControlMCPConfigured, expectedOpenCodeTVControlMCP)
 	}
 	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
 		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)

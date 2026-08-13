@@ -264,12 +264,56 @@ function Get-OpenCodeAllowAllPermissions {
         plan_exit = 'allow'
     }
 }
-function Install-OpenCodeAllowAllPolicy {
+function Get-OpenCodeTVControlMCPConfiguration {
+    $nodeCommand = Get-Command 'node.exe' -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -eq $nodeCommand -or -not [IO.Path]::IsPathRooted([string]$nodeCommand.Source)) {
+        throw 'OpenCode TVControl MCP requires an absolute node.exe command.'
+    }
+    $nodePath = [IO.Path]::GetFullPath([string]$nodeCommand.Source)
+    $packageDirectory = 'C:\HerdrSandbox\tools\tvcontrol\node_modules\@ferroxlabs\tvcontrol'
+    $packagePath = Join-Path $packageDirectory 'package.json'
+    $serverPath = Join-Path $packageDirectory 'src\server.js'
+    foreach ($path in @($nodePath, $packagePath, $serverPath)) {
+        Assert-ConfigurationDestinationPath -Path $path
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "OpenCode TVControl MCP command input is missing or unsafe: $path"
+        }
+    }
+    try {
+        $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+    } catch {
+        throw 'OpenCode TVControl MCP package identity is unreadable.'
+    }
+    if ([string]$package.name -cne '@ferroxlabs/tvcontrol' -or
+        [string]$package.version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
+        [string]$package.main -cne 'src/server.js') {
+        throw 'OpenCode TVControl MCP package identity is unexpected.'
+    }
+    return [ordered]@{
+        type = 'local'
+        command = @($nodePath, [IO.Path]::GetFullPath($serverPath))
+        enabled = $true
+        environment = [ordered]@{
+            TV_CDP_HOST = '127.0.0.1'
+            TV_CDP_PORT = '9222'
+            TV_MCP_ADVANCED = '0'
+            TV_MCP_TELEMETRY = '0'
+        }
+    }
+}
+function Install-OpenCodeSandboxConfiguration {
+    param([bool]$TradingViewEnabled = $false)
     $programData = [string]$env:ProgramData
     if ([string]::IsNullOrWhiteSpace($programData) -or -not [IO.Path]::IsPathRooted($programData)) {
         throw 'OpenCode managed policy requires an absolute ProgramData path.'
     }
     $permissions = Get-OpenCodeAllowAllPermissions
+    $expectedTVControlMCP = $null
+    if ($TradingViewEnabled) {
+        $expectedTVControlMCP = Get-OpenCodeTVControlMCPConfiguration
+    }
     $managedDirectory = Join-Path $programData 'opencode'
     $managedPluginPath = Join-Path $managedDirectory 'sandbox-allow-all.js'
     $managedConfigPath = Join-Path $managedDirectory 'opencode.json'
@@ -280,8 +324,13 @@ function Install-OpenCodeAllowAllPolicy {
 
     $managedPluginURI = 'file:///' + $managedPluginPath.Replace('\', '/')
     $allowAllJSON = $permissions | ConvertTo-Json -Compress
+    $tvControlMCPJSON = 'null'
+    if ($null -ne $expectedTVControlMCP) {
+        $tvControlMCPJSON = $expectedTVControlMCP | ConvertTo-Json -Depth 8 -Compress
+    }
     $managedPlugin = @"
 const permissions = $allowAllJSON
+const tvcontrol = $tvControlMCPJSON
 const allowAll = () => ({ ...permissions })
 
 export default async () => ({
@@ -290,14 +339,21 @@ export default async () => ({
     for (const agent of Object.values(config.agent ?? {})) {
       agent.permission = allowAll()
     }
+    if (tvcontrol) {
+      config.mcp = { ...(config.mcp ?? {}), tvcontrol: { ...tvcontrol, command: [...tvcontrol.command], environment: { ...tvcontrol.environment } } }
+    }
   },
 })
 "@
-    $managedConfig = ([ordered]@{
+    $managedConfigState = [ordered]@{
         '$schema' = 'https://opencode.ai/config.json'
         permission = $permissions
         plugin = @($managedPluginURI)
-    } | ConvertTo-Json -Depth 6) + [Environment]::NewLine
+    }
+    if ($TradingViewEnabled) {
+        $managedConfigState['mcp'] = [ordered]@{ tvcontrol = $expectedTVControlMCP }
+    }
+    $managedConfig = ($managedConfigState | ConvertTo-Json -Depth 8) + [Environment]::NewLine
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     foreach ($managedFile in @(
         [pscustomobject]@{ Path = $managedPluginPath; Contents = $managedPlugin },
@@ -315,6 +371,16 @@ export default async () => ({
     $verified = [IO.File]::ReadAllText($managedConfigPath) | ConvertFrom-Json
     if (@($verified.plugin).Count -ne 1 -or [string]$verified.plugin[0] -cne $managedPluginURI) {
         throw 'OpenCode managed plugin configuration was not written correctly.'
+    }
+    $verifiedMCP = $verified.PSObject.Properties['mcp']
+    if ($TradingViewEnabled) {
+        if ($null -eq $verifiedMCP -or $null -eq $verified.mcp.PSObject.Properties['tvcontrol'] -or
+            ($verified.mcp.tvcontrol | ConvertTo-Json -Depth 8 -Compress) -cne
+            ($expectedTVControlMCP | ConvertTo-Json -Depth 8 -Compress)) {
+            throw 'OpenCode managed TVControl MCP configuration was not written correctly.'
+        }
+    } elseif ($null -ne $verifiedMCP) {
+        throw 'OpenCode managed configuration unexpectedly contains an MCP server.'
     }
     foreach ($permissionName in $permissions.Keys) {
         $property = $verified.permission.PSObject.Properties[$permissionName]
@@ -369,7 +435,8 @@ function Invoke-OpenCodeJSON {
         throw "$Role returned invalid JSON."
     }
 }
-function Assert-OpenCodeAllowAll {
+function Assert-OpenCodeSandboxConfiguration {
+    param([bool]$TradingViewEnabled = $false)
     $allowAllPermissions = Get-OpenCodeAllowAllPermissions
     $requiredPermissions = @($allowAllPermissions.Keys | Where-Object { $_ -cne '*' })
     $resolvedConfig = Invoke-OpenCodeJSON -Role 'OpenCode effective configuration inspection' -Arguments @('debug', 'config')
@@ -382,6 +449,15 @@ function Assert-OpenCodeAllowAll {
         $property = $resolvedConfig.permission.PSObject.Properties[$permissionName]
         if ($null -eq $property -or [string]$property.Value -cne 'allow') {
             throw "OpenCode effective permission is not allow: $permissionName"
+        }
+    }
+    if ($TradingViewEnabled) {
+        $expectedTVControlMCP = Get-OpenCodeTVControlMCPConfiguration
+        if ($null -eq $resolvedConfig.mcp -or
+            $null -eq $resolvedConfig.mcp.PSObject.Properties['tvcontrol'] -or
+            ($resolvedConfig.mcp.tvcontrol | ConvertTo-Json -Depth 8 -Compress) -cne
+            ($expectedTVControlMCP | ConvertTo-Json -Depth 8 -Compress)) {
+            throw 'OpenCode effective TVControl MCP configuration is invalid.'
         }
     }
     $agentNames = @('build', 'plan', 'general', 'explore', 'compaction', 'title', 'summary')
@@ -418,9 +494,12 @@ function Assert-OpenCodeAllowAll {
         }
     }
 }
-function Enable-OpenCodeAllowAllPolicy {
-    param([Parameter(Mandatory = $true)][bool]$RequireExecutable)
-    Install-OpenCodeAllowAllPolicy
+function Enable-OpenCodeSandboxConfiguration {
+    param(
+        [Parameter(Mandatory = $true)][bool]$RequireExecutable,
+        [bool]$TradingViewEnabled = $false
+    )
+    Install-OpenCodeSandboxConfiguration -TradingViewEnabled $TradingViewEnabled
     $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $openCodeCommand) {
         if ($RequireExecutable) {
@@ -429,7 +508,7 @@ function Enable-OpenCodeAllowAllPolicy {
         return $false
     }
     $script:OpenCodeCommand = [string]$openCodeCommand.Source
-    Assert-OpenCodeAllowAll
+    Assert-OpenCodeSandboxConfiguration -TradingViewEnabled $TradingViewEnabled
     return $true
 }
 function Test-TradingViewJSONInteger {
@@ -542,11 +621,13 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $githubAccounts = @()
     $githubAuthenticationVerified = $false
     $openCodePermissionVerified = $false
+    $openCodeTVControlMCPConfigured = $false
     $starshipPreset = ''
     $starshipConfigured = $false
     $terminalEdition = ''
     $tradingViewAuthenticatedCookies = 0
     $tradingViewAuthenticationVerified = $false
+    $tradingViewStackEnabled = Test-Path -LiteralPath (Join-Path $expanded 'tradingview\authentication.json') -PathType Leaf
 
     if ([bool]$agentSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode')
@@ -561,8 +642,10 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         Select-Object -First 1)
     if ([bool]$agentSync.opencode -or $openCodeEnabled -or $openCodeInstalled) {
         [Console]::Error.WriteLine('[config-sync] enforce-opencode-allow-all')
-        $openCodePermissionVerified = [bool](Enable-OpenCodeAllowAllPolicy `
-            -RequireExecutable ($openCodeEnabled -or $openCodeInstalled))
+        $openCodePermissionVerified = [bool](Enable-OpenCodeSandboxConfiguration `
+            -RequireExecutable ($openCodeEnabled -or $openCodeInstalled) `
+            -TradingViewEnabled $tradingViewStackEnabled)
+        $openCodeTVControlMCPConfigured = $openCodePermissionVerified -and $tradingViewStackEnabled
     }
 
     if ([bool]$agentSync.claudeCode) {
@@ -1067,10 +1150,11 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     }
 Write-Output ([ordered]@{
-    schemaVersion = 8
+    schemaVersion = 9
     archiveSha256 = $digest
     copiedFiles = $script:CopiedConfigurationFiles
     openCodePermissionVerified = $openCodePermissionVerified
+    openCodeTVControlMCPConfigured = $openCodeTVControlMCPConfigured
     windowsTerminalEdition = $terminalEdition
     starshipPreset = $starshipPreset
     starshipConfigured = $starshipConfigured

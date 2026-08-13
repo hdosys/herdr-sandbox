@@ -101,9 +101,11 @@ These are deliberate non-guarantees:
   is discarded.
 - Explicitly running TVControl against TradingView Desktop opens a local Chrome
   DevTools Protocol endpoint with powerful chart/UI access and exposes signed-in
-  TradingView content to guest processes. The stack installs and verifies the
-  official signed MSIX payload but never opens that endpoint or performs an
-  interactive authentication flow.
+  TradingView content to guest processes. Selecting the stack also exposes
+  TVControl to guest OpenCode through the managed local MCP definition. The stack
+  installs and verifies the official signed MSIX payload, but provisioning and
+  configuration sync never open the endpoint or perform an interactive
+  authentication flow.
   Desktop is already guest-local, so TVControl does not need its protected-MSIX
   copy fallback; launch is non-destructive unless the user explicitly supplies
   `--kill-existing`. TradingView terms and market-data licenses

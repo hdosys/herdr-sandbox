@@ -18,6 +18,8 @@ release notes remain available on the
 - A new `android` stack provisions verified Android command-line build tooling,
   latest stable Platform Tools, an isolated OpenJDK 17, and wireless ADB
   `pair`/`connect` support without adding a host USB bridge.
+- A new `nushell` stack installs and verifies the latest stable x64 Nushell MSI
+  and exposes `nu.exe` without adding shell configuration or scripts.
 - A separate `nsis` stack installs and verifies the NSIS compiler, including a
   real installer compile, so installer-only projects can select it with
   `sandbox init --stack nsis`.
@@ -31,6 +33,8 @@ release notes remain available on the
 
 - TradingView login transfer now reads the installed Desktop MSIX package profile
   and carries its complete signed session cookie pair into the portable guest app.
+- Selecting TradingView now also registers the verified TVControl server as an
+  enabled guest-managed OpenCode MCP integration with fixed loopback CDP settings.
 - Built-in stack versions are now preflighted across `user.ps1` and every selected
   project profile before fresh or retained guest mutation. Exact requests converge,
   conflicts name all owners and stop, all-omitted tools resolve latest stable once,

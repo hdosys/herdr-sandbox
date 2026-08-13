@@ -238,6 +238,7 @@ Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-CppStack
 Install-JavaStack
 Install-NSISStack
+Install-NushellStack
 Install-Uv
 Install-NodeStack
 Install-PlaywrightCLIStack
@@ -577,6 +578,7 @@ $dotnet = (Get-Command 'dotnet.exe' -CommandType Application -ErrorAction Stop |
 $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $makensis = (Get-Command 'makensis.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$nu = (Get-Command 'nu.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python = (Get-Command 'python.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $python3 = (Get-Command 'python3.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $uv = (Get-Command 'uv.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -643,6 +645,14 @@ if ($nsisBytes.Length -lt 1024 -or $nsisBytes[0] -ne 0x4d -or $nsisBytes[1] -ne 
     throw 'NSIS smoke compiler output is not a Windows executable.'
 }
 [Console]::Out.WriteLine('[all-stacks] nsis: installer compile OK')
+
+$expectedNu = Join-Path $env:ProgramFiles 'nu\bin\nu.exe'
+if ([IO.Path]::GetFullPath($nu) -ine [IO.Path]::GetFullPath($expectedNu)) {
+    throw "Nushell command resolved from an unexpected path: $nu"
+}
+$nuVersion = Invoke-SmokeTool 'nushell-version' $nu @('--version')
+if ($nuVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Nushell version is unexpected: $nuVersion" }
+[Console]::Out.WriteLine('[all-stacks] nushell: machine MSI command and version OK')
 
 $pythonAliasRoot = 'C:\HerdrSandbox\tools\python\bin'
 if ([IO.Path]::GetFullPath($python) -ine (Join-Path $pythonAliasRoot 'python.exe') -or
@@ -897,6 +907,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: Android, C/C++, Java, dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: Android, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

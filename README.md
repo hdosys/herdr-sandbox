@@ -63,7 +63,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
 | `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
 | `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
@@ -71,6 +71,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 | `java` | Microsoft OpenJDK 25 LTS |
 | `node` | Node.js LTS, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
+| `nushell` | Latest stable Nushell command-line shell |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
 | `rust` | Rust with MSVC Build Tools |
@@ -299,6 +300,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 | Just | `Install-Just` |
 | Node.js LTS with Playwright and Chromium | `Install-NodeStack` |
 | NSIS installer compiler | `Install-NSISStack` |
+| Nushell | `Install-NushellStack` |
 | Playwright CLI without a bundled browser | `Install-PlaywrightCLIStack` |
 | Python | `Install-PythonStack` |
 | Rust with MSVC Build Tools | `Install-RustMSVCStack -ProjectDirectory $ProjectDirectory` |
@@ -320,7 +322,8 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
 - The `android` stack installs Google's signed command-line tools and latest stable Platform Tools under `C:\HerdrSandbox\tools\android-sdk`, sets `ANDROID_HOME`, and provides an isolated Microsoft OpenJDK 17 at `ANDROID_JAVA_HOME`. An Android-only profile also activates that JDK for terminal Gradle builds when no machine `JAVA_HOME` exists. It never replaces an existing `JAVA_HOME`, and a selected standalone Java stack remains the final Java 25 owner. Android SDK platforms, build-tools versions, Gradle wrappers, application dependencies, and project files remain project-owned.
 - The `nsis` stack installs the latest stable `NSIS.NSIS` compiler by default and proves a real installer compile. Use it alone with `sandbox init --stack nsis` for installer-only projects. This repository pins NSIS 3.12 in its own project profile because the release package task requires that exact compiler.
-- When the `tradingview` stack is selected, configuration sync makes an available login from the installed host TradingView Desktop MSIX package usable in the guest. It transfers only the signed `sessionid` and `sessionid_sign` cookie pair over the verified SSH path, not the host profile or unrelated site and broker cookies. A missing host profile or login is a clean no-op. Close guest TradingView Desktop before retained reprovisioning needs to refresh that session.
+- The `nushell` stack resolves latest stable `Nushell.Nushell`, installs its x64 machine-scope MSI through the shared verified package cache, and exposes the exact `nu.exe` command. It adds no configuration or `.nu` scripts.
+- When the `tradingview` stack is selected, configuration sync makes an available login from the installed host TradingView Desktop MSIX package usable in the guest. It transfers only the signed `sessionid` and `sessionid_sign` cookie pair over the verified SSH path, not the host profile or unrelated site and broker cookies. A missing host profile or login is a clean no-op. When OpenCode is available, the same managed guest configuration registers TVControl as the enabled `tvcontrol` local MCP server with fixed loopback CDP settings. OpenCode may start that server on demand, but neither provisioning nor configuration sync launches TradingView Desktop or enables CDP. Close guest TradingView Desktop before retained reprovisioning needs to refresh its session.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
 </details>
@@ -629,7 +632,7 @@ use.
 - TradingView stack sync can transfer the authenticated `sessionid` and `sessionid_sign` cookies into the disposable guest, where guest administrators can read them. Disable that stack or close the host session when this trust is not acceptable.
 - Tailscale auth-key and state bytes never enter mappings, status, diagnostics, command lines, or package cache.
 - The mobile endpoint binds only the guest's Tailscale IPv4 on TCP 2222 with key-only authentication and forwarding disabled. Guest firewall policy separately blocks tailnet access to management TCP 22.
-- Every OpenCode configuration sync reapplies a guest-managed policy that replaces host top-level and per-agent permissions with `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.
+- Every OpenCode configuration sync reapplies a guest-managed policy that replaces host top-level and per-agent permissions with `allow`; host OpenCode policy is unchanged. A selected TradingView stack also supplies the enabled local `tvcontrol` MCP definition from the verified guest Node.js and TVControl paths. Treat guest agents as fully authorized inside the Sandbox and mapped projects, including TradingView access after Desktop is explicitly launched with CDP.
 - The reviewed disposable-guest privacy profile intentionally restricts Defender cloud/security features, SmartScreen, automatic updates, telemetry, and related services. It is not a hardened production workstation profile.
 - Downloads and cache hits are validated against strict versions, metadata, hashes, signatures, or package identity as applicable.
 - Host Rust tooling is forbidden. Rust installation, builds, and tests belong only in the verified guest or GitHub Actions.
@@ -770,7 +773,7 @@ go run ./cmd/task release-notes v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.
+- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile and Nushell command check, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - `release-notes` renders the public changelog section for one release version.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.

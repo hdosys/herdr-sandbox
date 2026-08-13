@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -889,17 +890,204 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	}
 }
 
+func TestNativeOpenCodeTVControlMCP(t *testing.T) {
+	if os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL") != "1" {
+		t.Skip("set HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL=1 for the ready guest OpenCode and TVControl boundary")
+	}
+	runDirectory := strings.TrimSpace(os.Getenv("HERDR_SANDBOX_NATIVE_RUN_DIRECTORY"))
+	if !filepath.IsAbs(runDirectory) {
+		t.Fatalf("native run directory is not absolute: %q", runDirectory)
+	}
+	start := bytes.Index(configurationSyncScript, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(configurationSyncScript, []byte("$digest = (Get-FileHash"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync OpenCode helper block was not found")
+	}
+	listOnlyLiteral := "$false"
+	if os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL_LIST_ONLY") == "1" {
+		listOnlyLiteral = "$true"
+	}
+	script := string(configurationSyncScript[start:end]) + "\n$testListOnly = " + listOnlyLiteral + "\n" + `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$serverPath = 'C:\HerdrSandbox\tools\tvcontrol\node_modules\@ferroxlabs\tvcontrol\src\server.js'
+$openCode = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$tradingViewBefore = @(Get-Process -Name 'TradingView' -ErrorAction Stop | ForEach-Object { [int]$_.Id } | Sort-Object)
+if ($tradingViewBefore.Count -eq 0) { throw 'TradingView Desktop is not running.' }
+
+function Get-OwnedTVControlNodeProcessIDs {
+    return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.CommandLine) -and
+            ([string]$_.CommandLine).IndexOf($serverPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+        ForEach-Object { [int]$_.ProcessId })
+}
+function Stop-OwnedProcessTree {
+    param([Parameter(Mandatory = $true)][int]$ProcessID)
+    $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    $output = @(& $taskkill '/PID' ([string]$ProcessID) '/T' '/F' 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Failed to stop owned process tree $ProcessID." }
+}
+function Invoke-BoundedOpenCode {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][int]$TimeoutMilliseconds,
+        [AllowEmptyString()][string]$InputText = ''
+    )
+    $token = [Guid]::NewGuid().ToString('N')
+    $inputPath = Join-Path $env:TEMP ("opencode-tvcontrol-$token.in")
+    $stdoutPath = Join-Path $env:TEMP ("opencode-tvcontrol-$token.out")
+    $stderrPath = Join-Path $env:TEMP ("opencode-tvcontrol-$token.err")
+    $beforeNodes = @(Get-OwnedTVControlNodeProcessIDs)
+    try {
+        [IO.File]::WriteAllText($inputPath, $InputText, (New-Object Text.UTF8Encoding($false)))
+        $startArguments = @{
+            FilePath = [string]$openCode.Source
+            ArgumentList = $Arguments
+            WindowStyle = 'Hidden'
+            RedirectStandardInput = $inputPath
+            RedirectStandardOutput = $stdoutPath
+            RedirectStandardError = $stderrPath
+            PassThru = $true
+        }
+        $process = Start-Process @startArguments
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            Stop-OwnedProcessTree -ProcessID $process.Id
+            if (-not $process.WaitForExit(15000)) { throw 'OpenCode process-tree cleanup exceeded 15 seconds.' }
+            throw "OpenCode exceeded $TimeoutMilliseconds milliseconds."
+        }
+        $process.WaitForExit()
+        $process.Refresh()
+        if (-not $process.HasExited) { throw 'OpenCode process did not reach a terminal state.' }
+        $exitCode = [int]$process.ExitCode
+        foreach ($path in @($stdoutPath, $stderrPath)) {
+            $item = Get-Item -LiteralPath $path -Force
+            if ($item.Length -gt 4194304) { throw 'OpenCode verification output exceeded 4 MiB.' }
+        }
+        $stdout = [IO.File]::ReadAllText($stdoutPath)
+        if ($exitCode -ne 0) { throw "OpenCode exited with code $exitCode." }
+        return $stdout
+    } finally {
+        $afterNodes = @(Get-OwnedTVControlNodeProcessIDs)
+        $leakedNodes = @($afterNodes | Where-Object { $beforeNodes -notcontains $_ })
+        foreach ($processID in $leakedNodes) { Stop-OwnedProcessTree -ProcessID $processID }
+        foreach ($path in @($inputPath, $stdoutPath, $stderrPath)) {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        }
+        if ($leakedNodes.Count -ne 0) { throw 'OpenCode left an owned TVControl MCP process running.' }
+    }
+}
+
+if (-not (Enable-OpenCodeSandboxConfiguration -RequireExecutable $true -TradingViewEnabled $true)) {
+    throw 'OpenCode TVControl MCP configuration was not enabled.'
+}
+$mcpList = Invoke-BoundedOpenCode -Arguments @('mcp', 'list') -TimeoutMilliseconds 60000
+if ($mcpList -notmatch '(?is)tvcontrol.*connected') {
+    throw 'OpenCode did not connect the TVControl MCP server.'
+}
+
+if ($testListOnly) {
+    [ordered]@{
+        schemaVersion = 1
+        mcpConnected = $true
+        healthVerified = $false
+        tradingViewProcessesPreserved = $true
+    } | ConvertTo-Json -Compress
+    exit 0
+}
+
+$cdpAvailable = $false
+try {
+    $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:9222/json/version')
+    $request.Timeout = 5000
+    $request.ReadWriteTimeout = 5000
+    $response = $request.GetResponse()
+    try { $cdpAvailable = [int]$response.StatusCode -eq 200 } finally { $response.Dispose() }
+} catch {
+    $cdpAvailable = $false
+}
+if (-not $cdpAvailable) { throw 'TradingView Desktop is running without CDP on 127.0.0.1:9222.' }
+
+$prompt = 'Use the TVControl MCP server health tool exactly once. Do not call tv_launch or any mutating tool. Return exactly MCP_TVCONTROL_HEALTH_OK only when the tool reports healthy=true and cdp_connected=true.'
+$events = Invoke-BoundedOpenCode -Arguments @('run', '--format', 'json', '--agent', 'direct-builder') -TimeoutMilliseconds 180000 -InputText $prompt
+$healthToolObserved = $false
+$successMarkerObserved = $false
+foreach ($line in @($events -split '[\r\n]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+    try { $event = $line | ConvertFrom-Json } catch { throw 'OpenCode MCP verification returned invalid JSONL.' }
+    if ([string]$event.type -ceq 'tool_use' -and [string]$event.part.state.status -ceq 'completed') {
+        $toolOutput = [string]$event.part.state.output
+        if ($toolOutput -match '"healthy"\s*:\s*true' -and $toolOutput -match '"cdp_connected"\s*:\s*true') {
+            $healthToolObserved = $true
+        }
+    }
+    if ([string]$event.type -ceq 'text' -and [string]$event.part.text -ceq 'MCP_TVCONTROL_HEALTH_OK') {
+        $successMarkerObserved = $true
+    }
+}
+if (-not $healthToolObserved -or -not $successMarkerObserved) {
+    throw 'OpenCode did not complete the TVControl health tool contract.'
+}
+$tradingViewAfter = @(Get-Process -Name 'TradingView' -ErrorAction Stop | ForEach-Object { [int]$_.Id } | Sort-Object)
+if (($tradingViewBefore -join ',') -cne ($tradingViewAfter -join ',')) {
+    throw 'OpenCode TVControl verification changed the running TradingView process set.'
+}
+[ordered]@{
+    schemaVersion = 1
+    mcpConnected = $true
+    healthVerified = $true
+    tradingViewProcessesPreserved = $true
+} | ConvertTo-Json -Compress
+`
+	var archive bytes.Buffer
+	archiveWriter := zip.NewWriter(&archive)
+	apply, err := archiveWriter.Create(configurationApplyScriptArchivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apply.Write([]byte(script)); err != nil {
+		t.Fatal(err)
+	}
+	if err := archiveWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	connection := Connection{
+		RunDirectory:  runDirectory,
+		SSHConfigPath: filepath.Join(runDirectory, ".ssh", "config"),
+		SSHTarget:     sshTargetName,
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(archive.Bytes()))
+	launcher := buildDevelopmentConfigurationLauncher(digest, archive.Len())
+	output, err := runSSHArchivePowerShell(ctx, connection, archive.Bytes(), launcher, "verify guest OpenCode TVControl MCP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		SchemaVersion                 int  `json:"schemaVersion"`
+		MCPConnected                  bool `json:"mcpConnected"`
+		HealthVerified                bool `json:"healthVerified"`
+		TradingViewProcessesPreserved bool `json:"tradingViewProcessesPreserved"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode OpenCode TVControl result: %v", err)
+	}
+	listOnly := os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL_LIST_ONLY") == "1"
+	if result.SchemaVersion != 1 || !result.MCPConnected || result.HealthVerified == listOnly || !result.TradingViewProcessesPreserved {
+		t.Fatalf("OpenCode TVControl result = %#v", result)
+	}
+}
+
 func TestDecodeDevelopmentConfigurationSyncResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`)
+	valid := []byte(`{"schemaVersion":9,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"openCodeTVControlMCPConfigured":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`)
 	result, err := decodeDevelopmentConfigurationSyncResult(valid)
 	if err != nil || result.CopiedFiles != 4 || result.TradingViewAuthenticatedCookies != 1 || !result.TradingViewAuthenticationVerified {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
-		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true,"extra":true}`),
-		[]byte(`{"schemaVersion":8,"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`),
-		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1}`),
-		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true} {}`),
+		[]byte(`{"schemaVersion":9,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"openCodeTVControlMCPConfigured":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true,"extra":true}`),
+		[]byte(`{"schemaVersion":9,"schemaVersion":9,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"openCodeTVControlMCPConfigured":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`),
+		[]byte(`{"schemaVersion":9,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"openCodeTVControlMCPConfigured":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1}`),
+		[]byte(`{"schemaVersion":9,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"openCodeTVControlMCPConfigured":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true} {}`),
 	} {
 		if _, err := decodeDevelopmentConfigurationSyncResult(invalid); err == nil {
 			t.Fatalf("invalid result unexpectedly succeeded: %s", invalid)
@@ -1001,6 +1189,8 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("TradingView Desktop is running in the guest"),
 		[]byte("HerdrSandbox.TradingViewCookieSync"),
 		[]byte("tradingViewAuthenticationVerified = $tradingViewAuthenticationVerified"),
+		[]byte("Get-OpenCodeTVControlMCPConfiguration"),
+		[]byte("TV_MCP_TELEMETRY = '0'"),
 	} {
 		if !bytes.Contains(remoteScript, required) {
 			t.Fatalf("remote configuration script is missing %q", required)
