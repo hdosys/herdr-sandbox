@@ -54,6 +54,38 @@ function Copy-VerifiedConfigurationFile {
     }
     $script:CopiedConfigurationFiles += 1
 }
+function Set-AtomicConfigurationFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "Configuration source file is missing: $Source"
+    }
+    Assert-ConfigurationDestinationPath -Path $Destination
+    $destinationDirectory = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    $temporary = Join-Path $destinationDirectory ('.herdr-sandbox-config-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $backup = $null
+    try {
+        [IO.File]::Copy($Source, $temporary, $false)
+        if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+            $backup = Join-Path $destinationDirectory ('.herdr-sandbox-config-' + [Guid]::NewGuid().ToString('N') + '.bak')
+            [IO.File]::Replace($temporary, $Destination, $backup, $true)
+        } else {
+            [IO.File]::Move($temporary, $Destination)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) }
+        if ($null -ne $backup -and (Test-Path -LiteralPath $backup)) { [IO.File]::Delete($backup) }
+    }
+    $expected = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+    $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+    if ($actual -ne $expected) {
+        throw "Atomic configuration destination hash mismatch: $Destination"
+    }
+    $script:CopiedConfigurationFiles += 1
+}
 function Copy-VerifiedConfigurationTree {
     param(
         [Parameter(Mandatory = $true)]
@@ -908,25 +940,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     [Console]::Error.WriteLine('[config-sync] apply-herdr')
     $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
     $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
-    Copy-VerifiedConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination
-    $guestHerdrCommand = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $guestHerdr = [string]$guestHerdrCommand.Source
-    if ([string]::IsNullOrWhiteSpace($guestHerdr) -or -not (Test-Path -LiteralPath $guestHerdr -PathType Leaf)) {
-        throw "Guest PATH did not resolve a Herdr executable: $guestHerdr"
-    }
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $reloadOutput = @(& $guestHerdr 'server' 'reload-config' 2>&1)
-        $reloadExitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
-    if ($reloadExitCode -ne 0) {
-        $reloadDetail = ($reloadOutput -join [Environment]::NewLine).Trim()
-        if ($reloadDetail.Length -gt 1600) { $reloadDetail = $reloadDetail.Substring($reloadDetail.Length - 1600) }
-        throw "Guest Herdr configuration reload failed with exit code $reloadExitCode. $reloadDetail"
-    }
+    Set-AtomicConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination
 
     if ($starshipEnabled) {
     [Console]::Error.WriteLine('[config-sync] apply-starship')
@@ -1040,7 +1054,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     }
 Write-Output ([ordered]@{
-    schemaVersion = 7
+    schemaVersion = 8
     archiveSha256 = $digest
     copiedFiles = $script:CopiedConfigurationFiles
     openCodePermissionVerified = $openCodePermissionVerified
@@ -1049,7 +1063,7 @@ Write-Output ([ordered]@{
     starshipConfigured = $starshipConfigured
     githubAuthenticatedAccounts = $githubAccounts.Count
     githubAuthenticationVerified = $githubAuthenticationVerified
-    herdrConfigurationReloaded = $true
+    herdrConfigurationPublished = $true
     tradingViewAuthenticatedCookies = $tradingViewAuthenticatedCookies
     tradingViewAuthenticationVerified = $tradingViewAuthenticationVerified
 } | ConvertTo-Json -Compress)

@@ -16,13 +16,19 @@ import (
 )
 
 const (
-	hostHerdrCompatibilityAction    = "ensure the `herdr-win` Windows `herdr.exe` with working `--remote` support is on PATH, then retry"
+	hostHerdrCompatibilityAction    = "ensure the `herdr-win` Windows `herdr.exe` with working unattended remote provisioning is on PATH, then retry"
 	hostHerdrInspectionTimeout      = 30 * time.Second
+	hostHerdrProvisionTimeout       = 5 * time.Minute
+	maximumRemoteProvisionOutput    = 64 * 1024
 	maximumHostHerdrRuntimeFileSize = 256 * 1024 * 1024
 	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
-	hostHerdrManifestSchemaVersion  = 3
-	hostHerdrChangedAction          = "run `sandbox down` and then `sandbox up` to provision the current host runtime"
+	hostHerdrChangedAction          = "retry `sandbox up` with the stable host Herdr command and runtime"
 	hostHerdrVersionMarker          = "herdr-win"
+	remoteProvisionBinaryInstalled  = "installed"
+	remoteProvisionBinaryMatching   = "already_matching"
+	remoteProvisionServerStarted    = "started"
+	remoteProvisionServerReloaded   = "reloaded"
+	remoteProvisionServerRestarted  = "restarted"
 )
 
 var hostHerdrRuntimeLayout = []string{
@@ -42,6 +48,7 @@ type HostHerdr struct {
 	commandSize       int64
 	runtimeExecutable string
 	version           string
+	runtimeVersion    string
 	protocol          int
 	files             []hostHerdrRuntimeFile
 }
@@ -54,23 +61,22 @@ type hostHerdrRuntimeFile struct {
 }
 
 type hostHerdrClientStatus struct {
-	Version  string          `json:"version"`
-	Protocol int             `json:"protocol"`
-	Binary   string          `json:"binary"`
-	Session  json.RawMessage `json:"session"`
+	Version      string  `json:"version"`
+	HerdrVersion string  `json:"herdr_version"`
+	BuildID      *string `json:"build_id"`
+	Protocol     int     `json:"protocol"`
+	Binary       string  `json:"binary"`
+	Session      *string `json:"session"`
 }
 
-type hostHerdrManifest struct {
-	SchemaVersion int                     `json:"schemaVersion"`
-	Version       string                  `json:"version"`
-	Protocol      int                     `json:"protocol"`
-	Files         []hostHerdrManifestFile `json:"files"`
-}
-
-type hostHerdrManifestFile struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+type remoteProvisionResult struct {
+	Target        string `json:"target"`
+	Platform      string `json:"platform"`
+	Binary        string `json:"binary"`
+	BinaryOutcome string `json:"binary_outcome"`
+	ServerOutcome string `json:"server_outcome"`
+	Version       string `json:"version"`
+	Protocol      int    `json:"protocol"`
 }
 
 // ResolveHostHerdr verifies the installed command without changing it. Host
@@ -91,14 +97,16 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr command is unsafe: %v", err)
 	}
-	version, err := inspectHostHerdrVersion(operationContext, commandPath)
+	cliVersion, err := inspectHostHerdrVersion(operationContext, commandPath)
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr version could not be verified: %v", err)
 	}
 	if err := verifyHostHerdrRemoteCapability(operationContext, commandPath); err != nil {
 		return HostHerdr{}, err
 	}
-	statusOutput, err := hiddenCommandContext(operationContext, commandPath, "status", "client", "--json").CombinedOutput()
+	statusCommand := hiddenCommandContext(operationContext, commandPath, "status", "client", "--json")
+	statusCommand.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
+	statusOutput, err := statusCommand.CombinedOutput()
 	if err != nil {
 		if remoteUnsupportedDiagnostic(statusOutput) {
 			return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(statusOutput))
@@ -129,7 +137,8 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 		commandSHA256:     commandSHA256,
 		commandSize:       commandSize,
 		runtimeExecutable: runtimeExecutable,
-		version:           version,
+		version:           cliVersion,
+		runtimeVersion:    status.Version,
 		protocol:          status.Protocol,
 		files:             runtimeFiles,
 	}
@@ -182,7 +191,9 @@ func canonicalHostHerdrExecutable(path, role string) (string, error) {
 }
 
 func inspectHostHerdrVersion(ctx context.Context, path string) (string, error) {
-	output, err := hiddenCommandContext(ctx, path, "--version").CombinedOutput()
+	command := hiddenCommandContext(ctx, path, "--version")
+	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
+	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("run --version: %w: %s", err, boundedText(output))
 	}
@@ -194,7 +205,9 @@ func inspectHostHerdrVersion(ctx context.Context, path string) (string, error) {
 }
 
 func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
-	output, err := hiddenCommandContext(ctx, path, "--remote").CombinedOutput()
+	remoteCommand := hiddenCommandContext(ctx, path, "--remote")
+	remoteCommand.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
+	output, err := remoteCommand.CombinedOutput()
 	if remoteUnsupportedDiagnostic(output) {
 		return hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(output))
 	}
@@ -212,20 +225,20 @@ func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
 	// A target is required to reach the platform capability owner. Remove PATH so
 	// a compatible build can cross that boundary only as far as its first local
 	// ssh.exe lookup; no SSH process or network connection can be started.
-	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid")
+	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid", "--provision", "--yes", "--json")
 	command.Env = hostHerdrCapabilityEnvironment(os.Environ())
 	output, err = command.CombinedOutput()
 	if remoteUnsupportedDiagnostic(output) {
 		return hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(output))
 	}
 	if err == nil {
-		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe unexpectedly succeeded")
+		return hostHerdrCompatibilityError("the installed host Herdr unattended remote provisioning probe unexpectedly succeeded")
 	}
 	if ctx.Err() != nil {
-		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe did not terminate: %v", ctx.Err())
+		return hostHerdrCompatibilityError("the installed host Herdr unattended remote provisioning probe did not terminate: %v", ctx.Err())
 	}
 	if !expectedSSHLookupFailure(output) {
-		return hostHerdrCompatibilityError("the installed host Herdr remote capability probe failed before the expected ssh.exe lookup: %v: %s", err, boundedText(output))
+		return hostHerdrCompatibilityError("the installed host Herdr command did not expose unattended remote provisioning before the expected ssh.exe lookup: %v: %s", err, boundedText(output))
 	}
 	return nil
 }
@@ -254,8 +267,15 @@ func expectedSSHLookupFailure(output []byte) bool {
 }
 
 func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
+	trimmed := bytes.TrimSpace(output)
+	if err := validateExactJSONObjectShape(trimmed, "host Herdr client status", []string{
+		"version", "herdr_version", "build_id", "protocol", "binary", "session",
+	}); err != nil {
+		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
+	}
 	var status hostHerdrClientStatus
-	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&status); err != nil {
 		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
 	}
@@ -263,8 +283,17 @@ func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return hostHerdrClientStatus{}, errors.New("`herdr status client --json` contains trailing data")
 	}
-	if status.Version == "" || strings.HasPrefix(status.Version, "herdr ") || strings.ContainsAny(status.Version, "\r\n") || len(status.Version) > 250 {
+	if err := validateTerminalText("host Herdr client version", status.Version, 250); err != nil || strings.HasPrefix(status.Version, "herdr ") {
 		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr client version %q", status.Version)
+	}
+	if err := validateTerminalText("host Herdr compatibility version", status.HerdrVersion, 64); err != nil {
+		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr compatibility version %q", status.HerdrVersion)
+	}
+	if status.BuildID != nil {
+		if !validHostHerdrBuildID(*status.BuildID) ||
+			(!strings.HasSuffix(status.Version, "+"+*status.BuildID) && !strings.HasSuffix(status.Version, "."+*status.BuildID)) {
+			return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr build identity %q for runtime %q", *status.BuildID, status.Version)
+		}
 	}
 	if status.Protocol < 1 {
 		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr client protocol %d", status.Protocol)
@@ -272,7 +301,27 @@ func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
 	if !filepath.IsAbs(status.Binary) {
 		return hostHerdrClientStatus{}, fmt.Errorf("host Herdr client binary is not absolute: %q", status.Binary)
 	}
+	if status.Session != nil {
+		if err := validateTerminalText("host Herdr session", *status.Session, 128); err != nil {
+			return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr session %q", *status.Session)
+		}
+	}
 	return status, nil
+}
+
+func validHostHerdrBuildID(value string) bool {
+	parts := strings.Split(value, ".")
+	if len(parts) != 2 || len(parts[0]) != 12 || len(parts[1]) != 12 {
+		return false
+	}
+	for _, part := range parts {
+		for _, character := range part {
+			if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func inspectHostHerdrRuntimeFiles(runtimeExecutable string) ([]hostHerdrRuntimeFile, error) {
@@ -359,7 +408,9 @@ func (host HostHerdr) validate() error {
 	if host.commandSize <= 0 || len(host.commandSHA256) != 64 {
 		return errors.New("host Herdr command fingerprint is invalid")
 	}
-	if !strings.Contains(host.version, hostHerdrVersionMarker) || strings.ContainsAny(host.version, "\r\n") || host.protocol < 1 {
+	if !strings.Contains(host.version, hostHerdrVersionMarker) || strings.ContainsAny(host.version, "\r\n") ||
+		host.runtimeVersion == "" || strings.ContainsAny(host.runtimeVersion, "\r\n") ||
+		len(host.runtimeVersion) > 250 || host.protocol < 1 {
 		return errors.New("host Herdr version or protocol is invalid")
 	}
 	if len(host.files) != 1 && len(host.files) != len(hostHerdrRuntimeLayout) {
@@ -406,7 +457,8 @@ func (host HostHerdr) sameIdentity(other HostHerdr) bool {
 	if !strings.EqualFold(host.commandPath, other.commandPath) ||
 		host.commandSHA256 != other.commandSHA256 || host.commandSize != other.commandSize ||
 		!strings.EqualFold(host.runtimeExecutable, other.runtimeExecutable) ||
-		host.version != other.version || host.protocol != other.protocol || len(host.files) != len(other.files) {
+		host.version != other.version || host.runtimeVersion != other.runtimeVersion ||
+		host.protocol != other.protocol || len(host.files) != len(other.files) {
 		return false
 	}
 	for index, file := range host.files {
@@ -420,75 +472,96 @@ func (host HostHerdr) sameIdentity(other HostHerdr) bool {
 	return true
 }
 
-func (host HostHerdr) manifest() hostHerdrManifest {
-	files := make([]hostHerdrManifestFile, 0, len(host.files))
-	for _, file := range host.files {
-		files = append(files, hostHerdrManifestFile{Path: file.RelativePath, SHA256: file.SHA256, Size: file.Size})
+func (host HostHerdr) provisionRemote(ctx context.Context, connection Connection) (remoteProvisionResult, error) {
+	if err := host.validate(); err != nil {
+		return remoteProvisionResult{}, err
 	}
-	return hostHerdrManifest{
-		SchemaVersion: hostHerdrManifestSchemaVersion,
-		Version:       host.version,
-		Protocol:      host.protocol,
-		Files:         files,
+	if connection.SSHTarget != sshTargetName {
+		return remoteProvisionResult{}, fmt.Errorf("remote provision target = %q, want %q", connection.SSHTarget, sshTargetName)
 	}
+	provisionContext, cancel := context.WithTimeout(ctx, hostHerdrProvisionTimeout)
+	defer cancel()
+	command := hiddenCommandContext(provisionContext, host.commandPath,
+		"--remote", connection.SSHTarget, "--provision", "--yes", "--json")
+	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
+	output, err := command.CombinedOutput()
+	defer clear(output)
+	if err != nil {
+		if provisionContext.Err() != nil {
+			return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, provisionContext.Err(), boundedText(output))
+		}
+		return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, err, boundedText(output))
+	}
+	if len(output) > maximumRemoteProvisionOutput {
+		return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s exceeded the %d-byte output limit", connection.SSHTarget, maximumRemoteProvisionOutput)
+	}
+	result, err := decodeRemoteProvisionResult(output)
+	if err != nil {
+		return remoteProvisionResult{}, err
+	}
+	if err := result.validate(host, connection.SSHTarget); err != nil {
+		return remoteProvisionResult{}, fmt.Errorf("validate guest Herdr provision result: %w", err)
+	}
+	return result, nil
 }
 
-func writeHostHerdrRunInput(ctx context.Context, host HostHerdr, inputDirectory string) error {
-	if err := host.validate(); err != nil {
-		return err
+func decodeRemoteProvisionResult(data []byte) (remoteProvisionResult, error) {
+	trimmed := bytes.TrimSpace(data)
+	if err := validateExactJSONObjectShape(trimmed, "remote provision result", []string{
+		"target", "platform", "binary", "binary_outcome", "server_outcome", "version", "protocol",
+	}); err != nil {
+		return remoteProvisionResult{}, err
 	}
-	runtimeDirectory := filepath.Join(inputDirectory, "herdr-runtime")
-	if err := os.Mkdir(runtimeDirectory, 0o700); err != nil {
-		return fmt.Errorf("create host Herdr runtime snapshot: %w", err)
+	var result remoteProvisionResult
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return remoteProvisionResult{}, fmt.Errorf("decode remote provision result: %w: %s", err, boundedText(trimmed))
 	}
-	for _, file := range host.files {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		destination := filepath.Join(runtimeDirectory, filepath.FromSlash(file.RelativePath))
-		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-			return fmt.Errorf("create host Herdr runtime snapshot directory: %w", err)
-		}
-		if err := copyVerifiedHostHerdrFile(file, destination); err != nil {
-			return err
-		}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return remoteProvisionResult{}, errors.New("decode remote provision result: trailing JSON data")
 	}
-	manifest, err := json.MarshalIndent(host.manifest(), "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode host Herdr runtime manifest: %w", err)
+	return result, nil
+}
+
+func (result remoteProvisionResult) validate(host HostHerdr, target string) error {
+	if result.Target != target {
+		return fmt.Errorf("target = %q, want %q", result.Target, target)
 	}
-	manifest = append(manifest, '\n')
-	if err := os.WriteFile(filepath.Join(inputDirectory, "host-herdr.json"), manifest, 0o600); err != nil {
-		return fmt.Errorf("write host Herdr runtime manifest: %w", err)
+	if result.Platform != "windows-x86_64" && result.Platform != "windows-aarch64" {
+		return fmt.Errorf("platform = %q, want a supported Windows target", result.Platform)
+	}
+	if err := validateGuestHerdrBinary(result.Binary); err != nil {
+		return fmt.Errorf("binary = %q: %w", result.Binary, err)
+	}
+	if result.BinaryOutcome != remoteProvisionBinaryInstalled && result.BinaryOutcome != remoteProvisionBinaryMatching {
+		return fmt.Errorf("binary_outcome = %q", result.BinaryOutcome)
+	}
+	if result.ServerOutcome != remoteProvisionServerStarted && result.ServerOutcome != remoteProvisionServerReloaded &&
+		result.ServerOutcome != remoteProvisionServerRestarted {
+		return fmt.Errorf("server_outcome = %q", result.ServerOutcome)
+	}
+	if result.BinaryOutcome == remoteProvisionBinaryInstalled && result.ServerOutcome == remoteProvisionServerReloaded {
+		return errors.New("an installed binary cannot report an unchanged-server reload")
+	}
+	if result.Version != host.version || result.Protocol != host.protocol {
+		return fmt.Errorf("version/protocol = %q/%d, want %q/%d", result.Version, result.Protocol, host.version, host.protocol)
 	}
 	return nil
 }
 
-func copyVerifiedHostHerdrFile(file hostHerdrRuntimeFile, destination string) (resultErr error) {
-	source, err := os.Open(file.SourcePath)
+func validateGuestHerdrBinary(path string) error {
+	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Base(path), "herdr.exe") ||
+		strings.TrimSpace(path) != path || strings.ContainsAny(path, "\x00\r\n") || len(path) > 32767 {
+		return errors.New("want one absolute Windows herdr.exe path")
+	}
+	relative, err := filepath.Rel(guestHerdrRemoteRoot, filepath.Clean(path))
 	if err != nil {
-		return fmt.Errorf("open host Herdr runtime file %s: %w", file.RelativePath, err)
+		return fmt.Errorf("resolve below the guest Herdr remote root: %w", err)
 	}
-	defer source.Close()
-	destinationFile, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("create host Herdr runtime snapshot file %s: %w", file.RelativePath, err)
-	}
-	defer func() {
-		if closeErr := destinationFile.Close(); resultErr == nil && closeErr != nil {
-			resultErr = fmt.Errorf("close host Herdr runtime snapshot file %s: %w", file.RelativePath, closeErr)
-		}
-	}()
-	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(destinationFile, hash), io.LimitReader(source, maximumHostHerdrRuntimeFileSize+1))
-	if err != nil {
-		return fmt.Errorf("copy host Herdr runtime file %s: %w", file.RelativePath, err)
-	}
-	if written != file.Size || fmt.Sprintf("%x", hash.Sum(nil)) != file.SHA256 {
-		return fmt.Errorf("host Herdr runtime file %s changed during snapshot", file.RelativePath)
-	}
-	if err := destinationFile.Sync(); err != nil {
-		return fmt.Errorf("flush host Herdr runtime snapshot file %s: %w", file.RelativePath, err)
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[0] == "." || parts[0] == ".." || !strings.EqualFold(parts[1], "herdr.exe") {
+		return fmt.Errorf("want one versioned sidecar below %s", guestHerdrRemoteRoot)
 	}
 	return nil
 }

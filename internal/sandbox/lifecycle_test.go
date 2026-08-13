@@ -104,12 +104,12 @@ func TestActiveSessionMatchesExactProcessIdentity(t *testing.T) {
 }
 
 func TestTailscaleFailurePhaseIdentifiesPreIdentityFailures(t *testing.T) {
-	for _, phase := range []string{"guest-identity", "ssh-material", "ssh-verification", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled"} {
+	for _, phase := range []string{"guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled"} {
 		if !tailscaleFailurePrecedesIdentity(phase) {
 			t.Fatalf("phase %q should precede Tailscale identity setup", phase)
 		}
 	}
-	for _, phase := range []string{"tailscale-identity", "configuration-sync", "ssh-alias", "configuration-timeout"} {
+	for _, phase := range []string{"tailscale-identity", "configuration-sync", "configuration-timeout"} {
 		if tailscaleFailurePrecedesIdentity(phase) {
 			t.Fatalf("phase %q can follow or overlap Tailscale identity setup", phase)
 		}
@@ -584,16 +584,17 @@ func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	if err != nil || status.State != SessionStarting || status.Phase != "base" || status.Message != "Installing" {
 		t.Fatalf("progress status = %#v, %v", status, err)
 	}
-	connectable := connectableStatus{SchemaVersion: statusSchemaVersion, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZha2VwdWJsaWNrZXlieXRlcw==", WinGetVersion: "v1", HerdrVersion: "herdr 1.0.0", HerdrProtocol: 18}
+	connectable := connectableStatus{SchemaVersion: statusSchemaVersion, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZha2VwdWJsaWNrZXlieXRlcw==", WinGetVersion: "v1"}
 	writeJSON(t, filepath.Join(statusDirectory, connectableFileName), connectable)
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionStarting || status.Phase != "connectable" || status.GuestIP != connectable.IP ||
-		status.WinGetVersion != connectable.WinGetVersion || status.HerdrVersion != connectable.HerdrVersion ||
-		status.HerdrProtocol != connectable.HerdrProtocol {
+		status.WinGetVersion != connectable.WinGetVersion || status.HerdrVersion != "" || status.HerdrProtocol != 0 {
 		t.Fatalf("connectable status = %#v, %v", status, err)
 	}
-	ready := readyStatus(connectionStatus(connectable))
-	ready.SchemaVersion = readyStatusSchemaVersion
+	ready := readyStatus{SchemaVersion: readyStatusSchemaVersion, IP: connectable.IP, SSHUser: connectable.SSHUser,
+		SSHHostKey: connectable.SSHHostKey, WinGetVersion: connectable.WinGetVersion, HerdrVersion: "herdr 1.0.0",
+		HerdrRuntimeVersion: "1.0.0+build", HerdrProtocol: 18,
+		HerdrBinary: `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`}
 	writeJSON(t, filepath.Join(statusDirectory, readyFileName), ready)
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionReady || status.GuestIP != ready.IP ||

@@ -875,16 +875,16 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 }
 
 func TestDecodeDevelopmentConfigurationSyncResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`)
+	valid := []byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`)
 	result, err := decodeDevelopmentConfigurationSyncResult(valid)
 	if err != nil || result.CopiedFiles != 4 || result.TradingViewAuthenticatedCookies != 1 || !result.TradingViewAuthenticationVerified {
 		t.Fatalf("result = %#v, err = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
-		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true,"extra":true}`),
-		[]byte(`{"schemaVersion":7,"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`),
-		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1}`),
-		[]byte(`{"schemaVersion":7,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationReloaded":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true} {}`),
+		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true,"extra":true}`),
+		[]byte(`{"schemaVersion":8,"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true}`),
+		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1}`),
+		[]byte(`{"schemaVersion":8,"archiveSha256":"abc","copiedFiles":4,"openCodePermissionVerified":true,"windowsTerminalEdition":"preview","starshipPreset":"catppuccin-powerline-latte","starshipConfigured":true,"githubAuthenticatedAccounts":1,"githubAuthenticationVerified":true,"herdrConfigurationPublished":true,"tradingViewAuthenticatedCookies":1,"tradingViewAuthenticationVerified":true} {}`),
 	} {
 		if _, err := decodeDevelopmentConfigurationSyncResult(invalid); err == nil {
 			t.Fatalf("invalid result unexpectedly succeeded: %s", invalid)
@@ -970,7 +970,8 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("Agent worktree instructions do not match the worktree-directory contract"),
 		[]byte("--replace-all' 'safe.directory"),
 		[]byte("Git safe-directory verification failed"),
-		[]byte("Get-Command -Name 'herdr.exe' -CommandType Application"),
+		[]byte("Set-AtomicConfigurationFile"),
+		[]byte("[IO.File]::Replace($temporary, $Destination"),
 		[]byte("starship\\preset.txt"),
 		[]byte("catppuccin_latte"),
 		[]byte("starshipConfigured = $starshipConfigured"),
@@ -992,6 +993,15 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 	}
 	if bytes.Contains(remoteScript, []byte("Remove-Item -LiteralPath $archive")) || bytes.Contains(remoteScript, []byte("Remove-Item -LiteralPath $expanded")) {
 		t.Fatal("remote apply script duplicates the launcher's staging cleanup owner")
+	}
+	for _, forbidden := range [][]byte{
+		[]byte("server' 'reload-config"),
+		[]byte("server reload-config"),
+		[]byte("Get-Command -Name 'herdr.exe'"),
+	} {
+		if bytes.Contains(remoteScript, forbidden) {
+			t.Fatalf("remote configuration script retains replaced Herdr lifecycle path %q", forbidden)
+		}
 	}
 	remotePath := filepath.Join(t.TempDir(), "configuration-sync.ps1")
 	if err := os.WriteFile(remotePath, remoteScript, 0o600); err != nil {

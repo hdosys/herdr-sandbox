@@ -18,7 +18,7 @@ import (
 
 const (
 	statusSchemaVersion          = 1
-	readyStatusSchemaVersion     = 2
+	readyStatusSchemaVersion     = 3
 	progressFileName             = "progress.json"
 	connectableFileName          = "connectable.json"
 	configurationHandoffFileName = "configuration-handoff.json"
@@ -37,13 +37,15 @@ type progressStatus struct {
 }
 
 type connectionStatus struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	IP            string `json:"ip"`
-	SSHUser       string `json:"sshUser"`
-	SSHHostKey    string `json:"sshHostKey"`
-	WinGetVersion string `json:"wingetVersion"`
-	HerdrVersion  string `json:"herdrVersion"`
-	HerdrProtocol int    `json:"herdrProtocol"`
+	SchemaVersion       int    `json:"schemaVersion"`
+	IP                  string `json:"ip"`
+	SSHUser             string `json:"sshUser"`
+	SSHHostKey          string `json:"sshHostKey"`
+	WinGetVersion       string `json:"wingetVersion"`
+	HerdrVersion        string `json:"herdrVersion"`
+	HerdrRuntimeVersion string `json:"herdrRuntimeVersion,omitempty"`
+	HerdrProtocol       int    `json:"herdrProtocol"`
+	HerdrBinary         string `json:"herdrBinary,omitempty"`
 }
 
 type connectableStatus connectionStatus
@@ -178,6 +180,31 @@ func writeConfigurationHandoff(statusDirectory string, status configurationHando
 	return nil
 }
 
+func writeReadyStatus(statusDirectory string, status readyStatus) error {
+	if err := status.validate(); err != nil {
+		return fmt.Errorf("validate ready status: %w", err)
+	}
+	if !filepath.IsAbs(statusDirectory) {
+		return fmt.Errorf("ready status directory is not absolute: %q", statusDirectory)
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("encode ready status: %w", err)
+	}
+	path := filepath.Join(statusDirectory, readyFileName)
+	if err := writeFileAtomically(path, data, 0o600); err != nil {
+		return fmt.Errorf("publish ready status: %w", err)
+	}
+	verified, found, err := readOptionalStatus[readyStatus](path)
+	if err != nil {
+		return fmt.Errorf("read back ready status: %w", err)
+	}
+	if !found || verified != status {
+		return errors.New("ready status read-back mismatch")
+	}
+	return nil
+}
+
 func readOptionalStatus[T any](path string) (T, bool, error) {
 	var value T
 	info, err := os.Lstat(path)
@@ -239,7 +266,7 @@ func statusFields(value any) ([]string, error) {
 	case progressStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case connectableStatus, readyStatus:
-		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrProtocol"}, nil
+		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrRuntimeVersion", "herdrProtocol", "herdrBinary"}, nil
 	case configurationHandoffStatus:
 		return []string{"schemaVersion", "outcome", "phase", "message", "mobileAccess"}, nil
 	case failureStatus:
@@ -371,11 +398,21 @@ func validateConnectionStatus(status connectionStatus, expectedSchemaVersion int
 	if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); err != nil {
 		return err
 	}
-	if err := validateTerminalText("herdrVersion", status.HerdrVersion, 256); err != nil {
-		return err
-	}
-	if status.HerdrProtocol < 1 {
-		return fmt.Errorf("herdrProtocol = %d, want a positive value", status.HerdrProtocol)
+	if expectedSchemaVersion == readyStatusSchemaVersion {
+		if err := validateTerminalText("herdrVersion", status.HerdrVersion, 256); err != nil {
+			return err
+		}
+		if err := validateTerminalText("herdrRuntimeVersion", status.HerdrRuntimeVersion, 256); err != nil {
+			return err
+		}
+		if status.HerdrProtocol < 1 {
+			return fmt.Errorf("herdrProtocol = %d, want a positive value", status.HerdrProtocol)
+		}
+		if err := validateGuestHerdrBinary(status.HerdrBinary); err != nil {
+			return fmt.Errorf("herdrBinary = %q: %w", status.HerdrBinary, err)
+		}
+	} else if status.HerdrVersion != "" || status.HerdrRuntimeVersion != "" || status.HerdrProtocol != 0 || status.HerdrBinary != "" {
+		return errors.New("connectable status must not publish Herdr identity before host provisioning")
 	}
 	return nil
 }
@@ -436,6 +473,8 @@ func sameConnectionIdentity(connectable connectableStatus, ready readyStatus) bo
 		left.SSHUser == right.SSHUser &&
 		left.SSHHostKey == right.SSHHostKey &&
 		left.WinGetVersion == right.WinGetVersion &&
-		left.HerdrVersion == right.HerdrVersion &&
-		left.HerdrProtocol == right.HerdrProtocol
+		right.HerdrVersion != "" &&
+		right.HerdrRuntimeVersion != "" &&
+		right.HerdrProtocol > 0 &&
+		right.HerdrBinary != ""
 }

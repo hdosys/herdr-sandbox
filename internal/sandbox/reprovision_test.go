@@ -219,6 +219,31 @@ func TestDecodeReprovisionResultIsStrict(t *testing.T) {
 	}
 }
 
+func TestRetainedHerdrReadyIdentityPublishesBeforeLaterFallibleChecks(t *testing.T) {
+	source, err := os.ReadFile("reprovision.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func reprovisionReadySession(")
+	if start < 0 {
+		t.Fatal("retained reprovision owner is missing")
+	}
+	body := text[start:]
+	initialProvisioning := strings.Index(body, `runRetainedProvisioning(progressContext, connection, snapshot)`)
+	if initialProvisioning < 0 {
+		t.Fatal("retained provisioning invocation is missing")
+	}
+	initialHerdrVerification := strings.Index(body[:initialProvisioning], `verifyGuestHerdr(ctx, connection)`)
+	finalVerification := strings.Index(body, `verifyGuestHerdr(ctx, connection)`)
+	readyPublication := strings.LastIndex(body, `writeReadyStatus(plan.StatusDirectory, ready)`)
+	mobileVerification := strings.Index(body, `verifyMobileSSH(ctx, connection`)
+	hostVerification := strings.Index(body, `hostHerdr.verifyUnchanged(ctx)`)
+	if initialProvisioning < 0 || initialHerdrVerification >= 0 || finalVerification <= initialProvisioning || readyPublication <= finalVerification || mobileVerification <= readyPublication || hostVerification <= readyPublication {
+		t.Fatalf("retained recovery order is invalid: provision=%d initialVerify=%d finalVerify=%d ready=%d mobile=%d host=%d", initialProvisioning, initialHerdrVerification, finalVerification, readyPublication, mobileVerification, hostVerification)
+	}
+}
+
 func TestExplorerRestartStatusContract(t *testing.T) {
 	restartID := "20260801-080000-1234abcd"
 	taskName := "HerdrSandbox-ExplorerRestart-" + restartID

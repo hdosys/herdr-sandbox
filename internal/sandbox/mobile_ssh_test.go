@@ -56,7 +56,9 @@ func TestBaseProfileRoutesOnlyMobileSSHPortDirectlyIntoHerdr(t *testing.T) {
 		`$env:SSH_CONNECTION -split '\s+'`,
 		"$herdrSSHConnection.Count -eq 4",
 		"[string]$herdrSSHConnection[3] -ceq '2222'",
-		`& 'C:\HerdrSandbox\bin\herdr.exe'`,
+		"HERDR_SANDBOX_HERDR_EXE",
+		"GetEnvironmentVariable",
+		"& $herdrExecutable",
 		"exit $LASTEXITCODE",
 		"$expectedPowerShellProfile = $mobileSSHInitialization + $starshipInitialization",
 		"mobile SSH and Starship profile verification failed",
@@ -64,6 +66,9 @@ func TestBaseProfileRoutesOnlyMobileSSHPortDirectlyIntoHerdr(t *testing.T) {
 		if !strings.Contains(base, required) {
 			t.Fatalf("Base mobile SSH profile is missing %q", required)
 		}
+	}
+	if strings.Contains(base, `C:\HerdrSandbox\bin\herdr.exe`) {
+		t.Fatal("Base mobile SSH profile retains the replaced Sandbox-owned Herdr path")
 	}
 	if strings.Index(base, "$mobileSSHInitialization = @'") > strings.Index(base, "$expectedPowerShellProfile =") {
 		t.Fatal("Base assembles the PowerShell profile before defining mobile SSH initialization")

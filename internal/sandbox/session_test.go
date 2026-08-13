@@ -140,6 +140,7 @@ func TestAttachEnvironmentIsolatesParentHerdrRuntime(t *testing.T) {
 		`HERDR_ENV=1`,
 		`Herdr_Session=host-session`,
 		`HERDR_SOCKET_PATH=C:\host.sock`,
+		`HERDR_CLIENT_SOCKET_PATH=C:\host-client.sock`,
 		`HOME=C:\Users\host`,
 		`USERPROFILE=C:\Users\host`,
 		`KEEP_ME=yes`,
@@ -149,6 +150,7 @@ func TestAttachEnvironmentIsolatesParentHerdrRuntime(t *testing.T) {
 		`HERDR_ENV=1`,
 		`Herdr_Session=host-session`,
 		`HERDR_SOCKET_PATH=C:\host.sock`,
+		`HERDR_CLIENT_SOCKET_PATH=C:\host-client.sock`,
 	} {
 		if slices.Contains(environment, forbidden) {
 			t.Fatalf("environment retained %q: %#v", forbidden, environment)

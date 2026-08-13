@@ -896,7 +896,9 @@ foreach ($destination in $destinations) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	scriptPath := filepath.Join(root, "managed-worktree-instructions.ps1")
+	writeTestFile(t, scriptPath, script)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	command.Env = append(os.Environ(), "SYNC_SOURCE="+source, "SYNC_DESTINATIONS="+string(encodedDestinations))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("managed worktree instruction projection: %v: %s", err, output)
@@ -914,7 +916,9 @@ try {
 }
 if (-not $rejected) { throw 'Malformed ownership markers were accepted.' }
 `
-	command = hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(rejectionScript))
+	rejectionScriptPath := filepath.Join(root, "managed-worktree-instructions-rejection.ps1")
+	writeTestFile(t, rejectionScriptPath, rejectionScript)
+	command = hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", rejectionScriptPath)
 	command.Env = append(os.Environ(), "SYNC_SOURCE="+source, "SYNC_DESTINATION="+malformed)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("malformed managed worktree instruction rejection: %v: %s", err, output)

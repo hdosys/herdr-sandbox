@@ -51,8 +51,6 @@ func TestWriteRunConnectionDoesNotPublishStableAlias(t *testing.T) {
 		SSHUser:       "WDAGUtilityAccount",
 		SSHHostKey:    testHostKey,
 		WinGetVersion: "v1",
-		HerdrVersion:  "herdr 1.0.0",
-		HerdrProtocol: 18,
 	}
 	connection, err := writeRunConnection(plan, connectable, `C:\Herdr\herdr.exe`)
 	if err != nil {
@@ -66,19 +64,36 @@ func TestWriteRunConnectionDoesNotPublishStableAlias(t *testing.T) {
 	}
 }
 
-func TestGuestHerdrStatusScriptResolvesVerifiedApplicationFromPath(t *testing.T) {
+func TestGuestHerdrStatusScriptUsesPublishedProvisionedBinary(t *testing.T) {
 	script := guestHerdrStatusScript()
 	for _, required := range []string{
-		"Get-Command -Name 'herdr.exe' -CommandType Application",
-		guestHerdrPath,
-		"& $resolvedPath status server",
+		"HERDR_SANDBOX_HERDR_EXE",
+		"GetEnvironmentVariable",
+		"& $herdr status server --json",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("guest Herdr status script is missing %q: %s", required, script)
 		}
 	}
-	if strings.Contains(script, "& '"+guestHerdrPath+"'") {
-		t.Fatalf("guest Herdr status script bypasses PATH: %s", script)
+	if strings.Contains(script, "Get-Command -Name 'herdr.exe'") || strings.Contains(script, `C:\HerdrSandbox\bin`) {
+		t.Fatalf("guest Herdr status script retains the replaced Sandbox install path: %s", script)
+	}
+}
+
+func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
+	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
+	status, err := decodeGuestHerdrStatus(valid)
+	if err != nil || !status.Running || status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon {
+		t.Fatalf("guest status = %#v, err = %v", status, err)
+	}
+	for _, invalid := range [][]byte{
+		append(append([]byte{}, valid...), []byte(` {}`)...),
+		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":"42"`, 1)),
+		[]byte(strings.Replace(string(valid), `"restart_needed":false`, `"extra":true,"restart_needed":false`, 1)),
+	} {
+		if _, err := decodeGuestHerdrStatus(invalid); err == nil {
+			t.Fatalf("invalid guest status passed: %s", invalid)
+		}
 	}
 }
 

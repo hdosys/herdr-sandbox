@@ -103,7 +103,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 		}
 	}
 
-	if err := updateOperation("connection-verification", "Verifying the retained SSH and Herdr connection."); err != nil {
+	if err := updateOperation("connection-verification", "Verifying the retained SSH connection."); err != nil {
 		return Connection{}, err
 	}
 	connection, err = writeRunConnection(plan, connectableStatus(connectionStatus(ready)), hostHerdr.commandPath)
@@ -114,7 +114,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := verifySSH(ctx, connection); err != nil {
 		return Connection{}, err
 	}
-	if err := verifyGuestHerdr(ctx, connection); err != nil {
+	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
 		return Connection{}, err
 	}
 	if err := updateOperation("development-provisioning", "Running the current Base, user, and project provisioning."); err != nil {
@@ -149,6 +149,36 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err != nil {
 		return Connection{}, err
 	}
+	if err := updateOperation("herdr-provision", "Provisioning and activating the matching guest Herdr runtime."); err != nil {
+		return Connection{}, err
+	}
+	provision, err := hostHerdr.provisionRemote(ctx, connection)
+	if err != nil {
+		return Connection{}, err
+	}
+	connection.guestHerdrPath = provision.Binary
+	connection.HerdrVersion = hostHerdr.version
+	connection.HerdrProtocol = hostHerdr.protocol
+	connection.herdrRuntimeVersion = hostHerdr.runtimeVersion
+	if provision.ServerOutcome != remoteProvisionServerReloaded && provision.ServerOutcome != remoteProvisionServerRestarted {
+		return Connection{}, fmt.Errorf("retained guest Herdr server outcome = %q, want reload or restart", provision.ServerOutcome)
+	}
+	if err := publishGuestHerdrExecutable(ctx, connection, provision.Binary); err != nil {
+		return Connection{}, err
+	}
+	if err := updateOperation("verification", "Verifying the retained Herdr server after provisioning."); err != nil {
+		return Connection{}, err
+	}
+	if err := verifyGuestHerdr(ctx, connection); err != nil {
+		return Connection{}, fmt.Errorf("verify guest Herdr after retained provisioning: %w", err)
+	}
+	ready.HerdrVersion = hostHerdr.version
+	ready.HerdrRuntimeVersion = hostHerdr.runtimeVersion
+	ready.HerdrProtocol = hostHerdr.protocol
+	ready.HerdrBinary = provision.Binary
+	if err := writeReadyStatus(plan.StatusDirectory, ready); err != nil {
+		return Connection{}, err
+	}
 	if len(plan.MobileSSHAuthorizedKeys) > 0 {
 		if err := updateOperation("mobile-ssh-verification", "Verifying the retained private mobile Herdr endpoint."); err != nil {
 			return Connection{}, err
@@ -160,17 +190,8 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 		connection.MobileAccess = &access
 		fmt.Fprintf(options.Output, "Mobile Herdr endpoint verified: %s\n", access.URI)
 	}
-	if err := updateOperation("ssh-alias", "Publishing the verified reusable SSH target."); err != nil {
+	if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 		return Connection{}, err
-	}
-	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
-		return Connection{}, err
-	}
-	if err := updateOperation("verification", "Verifying the retained Herdr server after provisioning."); err != nil {
-		return Connection{}, err
-	}
-	if err := verifyGuestHerdr(ctx, connection); err != nil {
-		return Connection{}, fmt.Errorf("verify guest Herdr after retained provisioning: %w", err)
 	}
 	return connection, nil
 }

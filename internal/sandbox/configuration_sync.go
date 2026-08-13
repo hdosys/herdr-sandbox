@@ -308,7 +308,7 @@ type developmentConfigurationSyncResult struct {
 	StarshipConfigured                bool   `json:"starshipConfigured"`
 	GitHubAuthenticatedAccounts       int    `json:"githubAuthenticatedAccounts"`
 	GitHubAuthenticationVerified      bool   `json:"githubAuthenticationVerified"`
-	HerdrConfigurationReloaded        bool   `json:"herdrConfigurationReloaded"`
+	HerdrConfigurationPublished       bool   `json:"herdrConfigurationPublished"`
 	TradingViewAuthenticatedCookies   int    `json:"tradingViewAuthenticatedCookies"`
 	TradingViewAuthenticationVerified bool   `json:"tradingViewAuthenticationVerified"`
 }
@@ -360,7 +360,7 @@ func decodeDevelopmentConfigurationSyncResult(output []byte) (developmentConfigu
 	if err := validateExactJSONObjectShape(trimmed, "guest development configuration result", []string{
 		"schemaVersion", "archiveSha256", "copiedFiles", "openCodePermissionVerified",
 		"windowsTerminalEdition", "starshipPreset", "starshipConfigured",
-		"githubAuthenticatedAccounts", "githubAuthenticationVerified", "herdrConfigurationReloaded",
+		"githubAuthenticatedAccounts", "githubAuthenticationVerified", "herdrConfigurationPublished",
 		"tradingViewAuthenticatedCookies", "tradingViewAuthenticationVerified",
 	}); err != nil {
 		return developmentConfigurationSyncResult{}, fmt.Errorf("decode guest development configuration result: %w", err)
@@ -675,7 +675,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 7 {
+	if result.SchemaVersion != 8 {
 		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
 	}
 	if result.ArchiveSHA256 != expectedDigest {
@@ -700,8 +700,8 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
 		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)
 	}
-	if !result.HerdrConfigurationReloaded {
-		return errors.New("verify guest Herdr configuration: server did not report a successful reload")
+	if !result.HerdrConfigurationPublished {
+		return errors.New("verify guest Herdr configuration: final config was not published atomically")
 	}
 	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != tradingViewEnabled {
 		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies)

@@ -47,36 +47,24 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"Join-Path ([string]$package.InstallLocation) 'pwsh.exe'",
 		"$file.VersionInfo.ProductVersion",
 		"Get-AuthenticodeSignature -LiteralPath $executable",
-		"default_shell = `\"pwsh.exe`\"",
 		"-Value $powerShell7Executable",
 		"OpenSSH default shell verification failed",
 		"bootstrap-release.json",
-		"host-herdr.json",
-		"herdr-runtime",
-		"function Read-HostHerdrRuntimeInput",
-		"Host Herdr runtime layout is unsupported",
 		"download.visualstudio.microsoft.com/download/pr/",
 		"VC_redist.x64.exe",
 		"@('/install', '/quiet', '/norestart')",
 		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
-		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
-		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
-		"$standaloneLayout = 'herdr.exe'",
-		"'conpty/arm64/OpenConsole.exe'",
-		"'conpty/x64/OpenConsole.exe'",
-		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
-		"[Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')",
-		"Get-Command -Name 'herdr.exe' -CommandType Application",
-		"Guest PATH resolved an unexpected Herdr executable",
 		"OpenSSH-Win64-v10.0.0.0.msi",
 		"'ADDLOCAL=Server'",
 		"administrators_authorized_keys",
-		"Start-Process -FilePath $herdrExecutable -ArgumentList @('server')",
 		"'connectable.json'",
 		"'configuration-handoff.json'",
 		"[int]$ConfigurationHandoffTimeoutMinutes",
 		"AddMinutes($ConfigurationHandoffTimeoutMinutes)",
 		"Verified host configuration did not arrive within $ConfigurationHandoffTimeoutMinutes minutes.",
+		"HERDR_SANDBOX_HERDR_EXE",
+		"Host provisioning did not publish the guest Herdr executable identity.",
+		"'status', 'client', '--json'",
 		"$workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName)",
 		"$workspaceArguments += '--focus'",
 		"Creating $($workspaceEntries.Count) mounted-project workspaces",
@@ -102,6 +90,18 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 			t.Fatalf("bootstrap executes PowerShell 7 during provisioning with %q", forbidden)
 		}
 	}
+	for _, forbidden := range []string{
+		"host-herdr.json",
+		"herdr-runtime",
+		"Read-HostHerdrRuntimeInput",
+		`C:\HerdrSandbox\bin`,
+		"server'",
+		"reload-config",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("bootstrap retains replaced Herdr lifecycle path %q", forbidden)
+		}
+	}
 	if count := strings.Count(script, "Invoke-WebRequest -Uri"); count != 1 {
 		t.Fatalf("bootstrap has %d direct web download owners; want one cached asset owner", count)
 	}
@@ -117,19 +117,17 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	script := string(bootstrapScript)
 	needles := []string{
-		"$hostHerdrInput = Read-HostHerdrRuntimeInput",
 		"-Phase 'Registry'",
 		"Get-PinnedBootstrapAsset -Role 'WinGet bundle'",
 		"Add-AppxPackage -Path $wingetBundle",
 		"$vcRuntimeProcess = Start-Process",
 		"-Phase 'Development'",
 		"$powerShell7 = Get-PowerShell7Installation",
-		"[IO.File]::Copy($sourcePath, $destinationPath, $false)",
-		"$initialHerdrConfig =",
 		"$openSSHInstallProcess = Start-Process",
-		"Start-Process -FilePath $herdrExecutable",
 		"'connectable.json'",
 		"'configuration-handoff.json'",
+		"HERDR_SANDBOX_HERDR_EXE",
+		"'status', 'client', '--json'",
 		"$workspaceArguments = @('workspace', 'create'",
 		"'ready.json'",
 	}
@@ -145,7 +143,7 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 		previous = index
 	}
 	connectableIndex := strings.Index(script, "schemaVersion = 1\n        ip = $ipAddress")
-	readyIndex := strings.LastIndex(script, "schemaVersion = 2\n        ip = $ipAddress")
+	readyIndex := strings.LastIndex(script, "schemaVersion = 3\n        ip = $ipAddress")
 	if connectableIndex < 0 || readyIndex <= connectableIndex {
 		t.Fatalf("bootstrap connection/ready schemas are not ordered: connectable=%d ready=%d", connectableIndex, readyIndex)
 	}
@@ -301,105 +299,80 @@ func TestBootstrapBoundsWinGetRegistrationRaceRetries(t *testing.T) {
 	}
 }
 
-func TestBootstrapInstallsVerifiedPhysicalHerdrRuntime(t *testing.T) {
+func TestBootstrapDefersHerdrDeploymentAndLifecycleToHostProvisioning(t *testing.T) {
 	script := string(bootstrapScript)
 	for _, required := range []string{
-		"$metadata.schemaVersion -isnot [int]",
-		"[int]$metadata.schemaVersion -ne 3",
-		"$metadata.files -isnot [System.Array]",
-		"$sourceDirectory = Join-Path $InputDirectory 'herdr-runtime'",
-		"$hostHerdrInput = Read-HostHerdrRuntimeInput -InputDirectory $InputDirectory",
-		"$herdrInstallRoot = 'C:\\HerdrSandbox'",
-		"$herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'",
-		"$destinationPath = Join-Path $herdrBinDirectory $windowsRelativePath",
-		"$standaloneLayout = 'herdr.exe'",
-		"$actualLayout -cne $bundledLayout",
-		"Guest-local Herdr runtime copy failed verification",
+		"HERDR_SANDBOX_HERDR_EXE",
+		"Host provisioning did not publish the guest Herdr executable identity.",
+		"Provisioned Herdr client status",
+		"function Invoke-HerdrBoundary",
+		"[HerdrSandbox.ProvisioningProcess]::Run($spec)",
+		"$result.OutputTruncated",
+		"$result.OutputBytes -gt 65536",
+		"'version|herdr_version|build_id|protocol|binary|session'",
+		"Provisioned guest Herdr client identity is invalid.",
+		"herdrRuntimeVersion = $herdrRuntimeVersion",
+		"herdrBinary = $herdrExecutable",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("bootstrap physical Herdr runtime contract is missing %q", required)
+			t.Fatalf("bootstrap provisioned Herdr handoff is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"$ExpectedHerdrBuildID", "herdr-managed-bin-v1", "herdr-runtime-v1", "herdr-pointer-v1", "herdr-launcher.exe"} {
+	for _, forbidden := range []string{"host-herdr.json", "herdr-runtime", "Read-HostHerdrRuntimeInput", `C:\HerdrSandbox\bin`, "Start-Process -FilePath $herdrExecutable", "reload-config"} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("bootstrap retains managed Herdr install contract %q", forbidden)
+			t.Fatalf("bootstrap retains replaced Herdr deployment or lifecycle contract %q", forbidden)
 		}
 	}
 }
 
-func TestReadHostHerdrRuntimeInputRejectsJSONTypeCoercionInWindowsPowerShell51(t *testing.T) {
+func TestBootstrapHerdrBoundaryRejectsTimeoutAndOverflowInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell 5.1 regression")
+		t.Skip("Windows Job Object guest boundary regression")
 	}
 	directory := t.TempDir()
 	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	processPath := filepath.Join(directory, provisioningProcessName)
 	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("x")
-	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
-	entry := func(size string) string {
-		return fmt.Sprintf(`{"path":"herdr.exe","sha256":"%s","size":%s}`, digest, size)
-	}
-	manifest := func(schema, protocol, files string) string {
-		return fmt.Sprintf(`{"schemaVersion":%s,"version":"herdr-win local (Herdr 0.8.0, build 0123456789ab.cdef01234567)","protocol":%s,"files":%s}`, schema, protocol, files)
-	}
-	writeInput := func(name, metadata string) string {
-		t.Helper()
-		root := filepath.Join(directory, name)
-		runtimeDirectory := filepath.Join(root, "herdr-runtime")
-		if err := os.MkdirAll(runtimeDirectory, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(runtimeDirectory, "herdr.exe"), payload, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "host-herdr.json"), []byte(metadata), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return root
-	}
-	valid := writeInput("valid", manifest("3", "17", "["+entry("1")+"]"))
-	invalid := []string{
-		writeInput("schema-string", manifest(`"3"`, "17", "["+entry("1")+"]")),
-		writeInput("version-marker", strings.Replace(manifest("3", "17", "["+entry("1")+"]"), "herdr-win", "herdr", 1)),
-		writeInput("protocol-string", manifest("3", `"17"`, "["+entry("1")+"]")),
-		writeInput("protocol-boolean", manifest("3", "true", "["+entry("1")+"]")),
-		writeInput("size-string", manifest("3", "17", "["+entry(`"1"`)+"]")),
-		writeInput("size-boolean", manifest("3", "17", "["+entry("true")+"]")),
-		writeInput("files-object", manifest("3", "17", entry("1"))),
+	if err := os.WriteFile(processPath, provisioningProcessSource, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	invalidLiterals := make([]string, 0, len(invalid))
-	for _, path := range invalid {
-		invalidLiterals = append(invalidLiterals, "'"+quote(path)+"'")
-	}
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Add-Type -Path '%s'
 $tokens = $null
 $errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-if ($errors.Count -ne 0) { throw 'Bootstrap script has parse errors.' }
-foreach ($name in @('Get-BootstrapFileSHA256', 'Read-HostHerdrRuntimeInput')) {
-    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
-    if ($null -eq $definition) { throw "Bootstrap function is missing: $name" }
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+foreach ($name in @('Get-BoundedDiagnosticText', 'Invoke-HerdrBoundary')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    if ($null -eq $definition) { throw "Missing function: $name" }
     Invoke-Expression $definition.Extent.Text
 }
-$valid = Read-HostHerdrRuntimeInput -InputDirectory '%s'
-if ($valid.Version -cne 'herdr-win local (Herdr 0.8.0, build 0123456789ab.cdef01234567)' -or $valid.Protocol -isnot [int] -or
-    [int]$valid.Protocol -ne 17 -or @($valid.Files).Count -ne 1) {
-    throw 'Valid host Herdr runtime metadata was rejected.'
+$powerShell = '%s'
+$timedOut = $false
+try {
+    $null = Invoke-HerdrBoundary -Role 'timeout fixture' -FilePath $powerShell -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -TimeoutSeconds 1
+} catch {
+    $timedOut = $_.Exception.Message -like '*exceeded 1 seconds*'
 }
-foreach ($invalid in @(%s)) {
-    $accepted = $true
-    try { [void](Read-HostHerdrRuntimeInput -InputDirectory $invalid) } catch { $accepted = $false }
-    if ($accepted) { throw "Invalid host Herdr runtime metadata was accepted: $invalid" }
+if (-not $timedOut) { throw 'Hung Herdr boundary was not terminated.' }
+$overflow = $false
+try {
+    $null = Invoke-HerdrBoundary -Role 'overflow fixture' -FilePath $powerShell -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-Command','[Console]::Out.Write((''x'' * 70000))')
+} catch {
+    $overflow = $_.Exception.Message -like '*exceeded the 65536-byte output limit*'
 }
+if (-not $overflow) { throw 'Noisy Herdr boundary was not rejected.' }
 exit 0
-`, quote(bootstrapPath), quote(valid), strings.Join(invalidLiterals, ", "))
-	powerShell := mustWindowsPowerShellPath(t)
-	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+`, quote(processPath), quote(bootstrapPath), quote(mustWindowsPowerShellPath(t)))
+	harnessPath := filepath.Join(directory, "herdr-boundary-regression.ps1")
+	if err := os.WriteFile(harnessPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("host Herdr runtime metadata PS5.1 regression: %v: %s", err, output)
+		t.Fatalf("bounded guest Herdr boundary regression: %v: %s", err, output)
 	}
 }
 

@@ -3,8 +3,10 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,16 +41,18 @@ func writeRunConnection(plan runPlan, connectable connectableStatus, herdrExecut
 		return Connection{}, fmt.Errorf("write run SSH config: %w", err)
 	}
 	return Connection{
-		RunDirectory:    plan.RunDirectory,
-		StatusDirectory: plan.StatusDirectory,
-		SSHConfigPath:   configPath,
-		SSHTarget:       sshTargetName,
-		GuestIP:         status.IP,
-		WinGetVersion:   status.WinGetVersion,
-		HerdrVersion:    status.HerdrVersion,
-		HerdrProtocol:   status.HerdrProtocol,
-		privateKeyPath:  plan.PrivateKeyPath,
-		herdrExecutable: herdrExecutable,
+		RunDirectory:        plan.RunDirectory,
+		StatusDirectory:     plan.StatusDirectory,
+		SSHConfigPath:       configPath,
+		SSHTarget:           sshTargetName,
+		GuestIP:             status.IP,
+		WinGetVersion:       status.WinGetVersion,
+		HerdrVersion:        status.HerdrVersion,
+		HerdrProtocol:       status.HerdrProtocol,
+		privateKeyPath:      plan.PrivateKeyPath,
+		herdrExecutable:     herdrExecutable,
+		guestHerdrPath:      status.HerdrBinary,
+		herdrRuntimeVersion: status.HerdrRuntimeVersion,
 	}, nil
 }
 
@@ -348,29 +352,108 @@ func verifySSH(ctx context.Context, connection Connection) error {
 }
 
 func verifyGuestHerdr(ctx context.Context, connection Connection) error {
+	status, err := readGuestHerdrStatus(ctx, connection)
+	if err != nil {
+		return err
+	}
+	if err := validateGuestHerdrStatus(status, connection); err != nil {
+		return fmt.Errorf("verify guest Herdr server: %w", err)
+	}
+	return nil
+}
+
+func readGuestHerdrStatus(ctx context.Context, connection Connection) (guestHerdrStatus, error) {
 	ssh, err := exec.LookPath("ssh.exe")
 	if err != nil {
-		return errors.New("OpenSSH ssh.exe is not on PATH")
+		return guestHerdrStatus{}, errors.New("OpenSSH ssh.exe is not on PATH")
 	}
 	verifyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	remoteCommand := `powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ` + encodePowerShell(guestHerdrStatusScript())
 	output, err := hiddenCommandContext(verifyContext, ssh, "-F", connection.SSHConfigPath, connection.SSHTarget, remoteCommand).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("verify guest Herdr server over SSH: %w: %s", err, boundedText(output))
+		return guestHerdrStatus{}, fmt.Errorf("verify guest Herdr server over SSH: %w: %s", err, boundedText(output))
 	}
-	text := strings.ReplaceAll(string(output), "\r\n", "\n")
-	if !strings.Contains(text, "status: running\n") || !strings.Contains(text, fmt.Sprintf("protocol: %d", connection.HerdrProtocol)) {
-		return fmt.Errorf("verify guest Herdr server: unexpected status %q", boundedText(output))
+	status, err := decodeGuestHerdrStatus(output)
+	if err != nil {
+		return guestHerdrStatus{}, err
+	}
+	return status, nil
+}
+
+func validateGuestHerdrStatus(status guestHerdrStatus, connection Connection) error {
+	if !status.Running || status.Status != "running" || status.Version != connection.herdrRuntimeVersion ||
+		status.Protocol != connection.HerdrProtocol || !status.Compatible ||
+		status.Binary == "" || !strings.EqualFold(filepath.Clean(status.Binary), filepath.Clean(connection.guestHerdrPath)) ||
+		status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon || status.RestartNeeded {
+		return fmt.Errorf("unexpected identity or state: status=%q running=%t version=%q protocol=%d binary=%q compatible=%t restart_needed=%t",
+			status.Status, status.Running, status.Version, status.Protocol, status.Binary, status.Compatible, status.RestartNeeded)
+	}
+	return nil
+}
+
+func publishGuestHerdrExecutable(ctx context.Context, connection Connection, executable string) error {
+	if err := validateGuestHerdrBinary(executable); err != nil {
+		return fmt.Errorf("publish guest Herdr executable: invalid path %q", executable)
+	}
+	quoted := strings.ReplaceAll(executable, "'", "''")
+	script := "$path = '" + quoted + "'; " +
+		"if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Provisioned guest Herdr executable is missing.' }; " +
+		"[Environment]::SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine'); " +
+		"if ([Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine') -cne $path) { throw 'Guest Herdr executable publication failed.' }; " +
+		"Write-Output 'published'"
+	operationContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	output, err := runSSHPowerShell(operationContext, connection, nil, script, "publish provisioned guest Herdr executable", 1024)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(output)) != "published" {
+		return fmt.Errorf("publish provisioned guest Herdr executable returned %q", boundedText(output))
 	}
 	return nil
 }
 
 func guestHerdrStatusScript() string {
-	expected := strings.ReplaceAll(guestHerdrPath, "'", "''")
-	return "$herdr = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1; " +
-		"$resolvedPath = [string]$herdr.Source; " +
-		"if ([string]::IsNullOrWhiteSpace($resolvedPath) -or $resolvedPath -ine '" + expected + "') { " +
-		"throw \"Guest PATH resolved an unexpected Herdr executable: $resolvedPath\" }; " +
-		"& $resolvedPath status server"
+	return "$herdr = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine'); " +
+		"if ([string]::IsNullOrWhiteSpace($herdr) -or -not [IO.Path]::IsPathRooted($herdr) -or " +
+		"-not (Test-Path -LiteralPath $herdr -PathType Leaf)) { throw 'Provisioned guest Herdr executable is unavailable.' }; " +
+		"& $herdr status server --json"
+}
+
+type guestHerdrStatus struct {
+	Status        string                  `json:"status"`
+	Running       bool                    `json:"running"`
+	Version       string                  `json:"version"`
+	Protocol      int                     `json:"protocol"`
+	Binary        string                  `json:"binary"`
+	Capabilities  *guestHerdrCapabilities `json:"capabilities"`
+	Compatible    bool                    `json:"compatible"`
+	Socket        string                  `json:"socket"`
+	Session       json.RawMessage         `json:"session"`
+	RestartNeeded bool                    `json:"restart_needed"`
+}
+
+type guestHerdrCapabilities struct {
+	LiveHandoff          bool `json:"live_handoff"`
+	DetachedServerDaemon bool `json:"detached_server_daemon"`
+}
+
+func decodeGuestHerdrStatus(output []byte) (guestHerdrStatus, error) {
+	trimmed := bytes.TrimSpace(output)
+	if err := validateExactJSONObjectShape(trimmed, "guest Herdr server status", []string{
+		"status", "running", "version", "protocol", "binary", "capabilities", "compatible", "socket", "session", "restart_needed",
+	}); err != nil {
+		return guestHerdrStatus{}, err
+	}
+	var status guestHerdrStatus
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&status); err != nil {
+		return guestHerdrStatus{}, fmt.Errorf("decode guest Herdr server status: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return guestHerdrStatus{}, errors.New("decode guest Herdr server status: trailing JSON data")
+	}
+	return status, nil
 }

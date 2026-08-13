@@ -75,8 +75,8 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 	if err := ready.validate(); err != nil {
 		return Connection{}, fmt.Errorf("validate ready Sandbox identity: %w", err)
 	}
-	if ready.HerdrVersion != hostHerdr.version || ready.HerdrProtocol != hostHerdr.protocol {
-		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox down` and then `sandbox up` to provision the current host runtime",
+	if ready.HerdrVersion != hostHerdr.version || ready.HerdrRuntimeVersion != hostHerdr.runtimeVersion || ready.HerdrProtocol != hostHerdr.protocol {
+		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox up` to reprovision the ready guest with the current host runtime",
 			ready.HerdrVersion, ready.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 	}
 	plan := runPlan{
@@ -124,19 +124,23 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 
 func (connection Connection) validate() error {
 	for role, path := range map[string]string{
-		"run directory":    connection.RunDirectory,
-		"status directory": connection.StatusDirectory,
-		"SSH config":       connection.SSHConfigPath,
-		"private key":      connection.privateKeyPath,
-		"Herdr executable": connection.herdrExecutable,
+		"run directory":          connection.RunDirectory,
+		"status directory":       connection.StatusDirectory,
+		"SSH config":             connection.SSHConfigPath,
+		"private key":            connection.privateKeyPath,
+		"Herdr executable":       connection.herdrExecutable,
+		"guest Herdr executable": connection.guestHerdrPath,
 	} {
 		if !filepath.IsAbs(path) {
 			return fmt.Errorf("Herdr connection %s is not absolute: %q", role, path)
 		}
 	}
 	if connection.SSHTarget != sshTargetName || connection.GuestIP == "" || connection.WinGetVersion == "" ||
-		connection.HerdrVersion == "" || connection.HerdrProtocol < 1 {
+		connection.HerdrVersion == "" || connection.herdrRuntimeVersion == "" || connection.HerdrProtocol < 1 {
 		return errors.New("Herdr connection identity is incomplete")
+	}
+	if err := validateGuestHerdrBinary(connection.guestHerdrPath); err != nil {
+		return fmt.Errorf("Herdr connection guest executable is invalid: %w", err)
 	}
 	return nil
 }

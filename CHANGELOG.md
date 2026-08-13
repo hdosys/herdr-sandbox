@@ -29,6 +29,12 @@ release notes remain available on the
 
 ### Changed
 
+- Fresh and retained `sandbox up` now use Herdr's exact unattended remote
+  provisioning command as the single guest runtime, configuration validation, and
+  server lifecycle owner. Sandbox no longer snapshots or copies a Herdr runtime,
+  starts a duplicate server, or reloads configuration separately, and readiness
+  now verifies the exact versioned sidecar, runtime version, protocol, and detached
+  server reported by Herdr.
 - Every explicitly registered transferred configuration root that is itself a Git
   repository now fast-forwards from its configured upstream on the host before
   `up` and after a terminal `down` by default. Both lifecycle hooks can be disabled

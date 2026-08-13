@@ -14,6 +14,8 @@ import (
 
 const (
 	hostHerdrFixtureEnvironment        = "HERDR_SANDBOX_TEST_HOST_HERDR"
+	hostHerdrBaseVersionEnvironment    = "HERDR_SANDBOX_TEST_HOST_HERDR_BASE_VERSION"
+	hostHerdrBuildIDEnvironment        = "HERDR_SANDBOX_TEST_HOST_HERDR_BUILD_ID"
 	hostHerdrRemoteExitCodeEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE_EXIT_CODE"
 	hostHerdrVersionOutputEnvironment  = "HERDR_SANDBOX_TEST_HOST_HERDR_VERSION_OUTPUT"
 )
@@ -36,11 +38,12 @@ func runHostHerdrFixtureProcess() {
 		protocol := 0
 		_, _ = fmt.Sscanf(os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL"), "%d", &protocol)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"version":  os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
-			"channel":  "preview",
-			"protocol": protocol,
-			"binary":   os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
-			"session":  nil,
+			"version":       os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
+			"herdr_version": os.Getenv(hostHerdrBaseVersionEnvironment),
+			"build_id":      os.Getenv(hostHerdrBuildIDEnvironment),
+			"protocol":      protocol,
+			"binary":        os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
+			"session":       nil,
 		})
 		os.Exit(0)
 	case len(arguments) == 1 && arguments[0] == "--remote":
@@ -55,13 +58,22 @@ func runHostHerdrFixtureProcess() {
 			_, _ = fmt.Sscanf(configured, "%d", &exitCode)
 		}
 		os.Exit(exitCode)
+	case len(arguments) == 5 && arguments[0] == "--remote" && arguments[2] == "--provision" && arguments[3] == "--yes" && arguments[4] == "--json":
+		if diagnostic := os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE"); diagnostic != "" {
+			fmt.Fprintln(os.Stderr, diagnostic)
+		}
+		exitCode := 1
+		if configured := os.Getenv(hostHerdrRemoteExitCodeEnvironment); configured != "" {
+			_, _ = fmt.Sscanf(configured, "%d", &exitCode)
+		}
+		os.Exit(exitCode)
 	default:
 		fmt.Fprintf(os.Stderr, "unexpected fixture arguments: %q\n", arguments)
 		os.Exit(2)
 	}
 }
 
-func TestResolveHostHerdrUsesReportedPhysicalRuntimeAndSnapshotsIt(t *testing.T) {
+func TestResolveHostHerdrUsesReportedPhysicalRuntime(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
@@ -90,29 +102,8 @@ func TestResolveHostHerdrUsesReportedPhysicalRuntimeAndSnapshotsIt(t *testing.T)
 			t.Fatalf("host Herdr %s paths identify different files: expected %q, got %q", expected.role, expected.want, expected.got)
 		}
 	}
-	if host.version != "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
+	if host.version != "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.runtimeVersion != "0.8.0-preview.346411fa21af.f32339bad77e" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
 		t.Fatalf("host identity = %#v", host)
-	}
-
-	inputDirectory := t.TempDir()
-	if err := writeHostHerdrRunInput(context.Background(), host, inputDirectory); err != nil {
-		t.Fatalf("writeHostHerdrRunInput: %v", err)
-	}
-	manifestData, err := os.ReadFile(filepath.Join(inputDirectory, "host-herdr.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest hostHerdrManifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	if manifest.SchemaVersion != 3 || manifest.Version != host.version || manifest.Protocol != host.protocol || len(manifest.Files) != len(hostHerdrRuntimeLayout) {
-		t.Fatalf("manifest = %#v", manifest)
-	}
-	for _, file := range manifest.Files {
-		if _, err := os.Stat(filepath.Join(inputDirectory, "herdr-runtime", filepath.FromSlash(file.Path))); err != nil {
-			t.Fatalf("snapshotted %s: %v", file.Path, err)
-		}
 	}
 }
 
@@ -238,18 +229,6 @@ func TestResolveHostHerdrAgainstInstalledRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr installed boundary: %v", err)
 	}
-	inputDirectory := t.TempDir()
-	if err := writeHostHerdrRunInput(context.Background(), host, inputDirectory); err != nil {
-		t.Fatalf("snapshot installed host Herdr: %v", err)
-	}
-	snapshotCommand := filepath.Join(inputDirectory, "herdr-runtime", "herdr.exe")
-	output, err := hiddenCommand(snapshotCommand, "--version").CombinedOutput()
-	if err != nil {
-		t.Fatalf("run snapshotted host Herdr: %v: %s", err, output)
-	}
-	if actual := strings.TrimSpace(string(output)); actual != host.version {
-		t.Fatalf("snapshotted host Herdr version = %q, want %q", actual, host.version)
-	}
 	t.Logf("resolved %s protocol %d from %s", host.version, host.protocol, host.runtimeExecutable)
 }
 
@@ -296,19 +275,59 @@ func TestExpectedSSHLookupFailureAcceptsOnlyTheLookupBoundary(t *testing.T) {
 }
 
 func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *testing.T) {
-	valid := []byte(`{"version":"1.2.3","channel":"preview","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null}`)
+	valid := []byte(`{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null}`)
 	status, err := parseHostHerdrClientStatus(valid)
-	if err != nil || status.Version != "1.2.3" || status.Protocol != 42 {
+	if err != nil || status.Version != "local+346411fa21af.f32339bad77e" || status.HerdrVersion != "0.8.0" || status.Protocol != 42 {
 		t.Fatalf("valid status = %#v, %v", status, err)
 	}
 	for _, invalid := range [][]byte{
 		append(append([]byte{}, valid...), []byte(` {}`)...),
-		[]byte(`{"version":"herdr 1.2.3","protocol":42,"binary":"C:\\Herdr\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":0,"binary":"C:\\Herdr\\herdr.exe"}`),
-		[]byte(`{"version":"1.2.3","protocol":42,"binary":"relative\\herdr.exe"}`),
+		[]byte(strings.Replace(string(valid), `"session":null`, `"session":null,"extra":true`, 1)),
+		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"protocol":42`, 1)),
+		[]byte(strings.Replace(string(valid), `,"herdr_version":"0.8.0"`, "", 1)),
+		[]byte(strings.Replace(string(valid), `"herdr_version":"0.8.0"`, `"channel":"preview"`, 1)),
+		[]byte(strings.Replace(string(valid), `"version":"local+346411fa21af.f32339bad77e"`, `"version":"herdr 1.2.3"`, 1)),
+		[]byte(strings.Replace(string(valid), `"build_id":"346411fa21af.f32339bad77e"`, `"build_id":"aaaaaaaaaaaa.bbbbbbbbbbbb"`, 1)),
+		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":0`, 1)),
+		[]byte(strings.Replace(string(valid), `"binary":"C:\\Herdr\\herdr.exe"`, `"binary":"relative\\herdr.exe"`, 1)),
 	} {
 		if _, err := parseHostHerdrClientStatus(invalid); err == nil {
 			t.Fatalf("invalid status was accepted: %s", invalid)
+		}
+	}
+}
+
+func TestRemoteProvisionResultIsStrictAndRequiresMatchingWindowsSidecar(t *testing.T) {
+	host := HostHerdr{version: "herdr-win local (Herdr 0.8.0, build build-id)", protocol: 42}
+	valid := []byte(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build-id\\herdr.exe","binary_outcome":"installed","server_outcome":"started","version":"herdr-win local (Herdr 0.8.0, build build-id)","protocol":42}`)
+	result, err := decodeRemoteProvisionResult(valid)
+	if err != nil {
+		t.Fatalf("decode valid remote provision result: %v", err)
+	}
+	if err := result.validate(host, sshTargetName); err != nil {
+		t.Fatalf("validate remote provision result: %v", err)
+	}
+
+	invalid := []remoteProvisionResult{
+		{Target: "other", Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "linux-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `C:\HerdrSandbox\bin\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: "copied", ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerReloaded, Version: host.version, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: "other", Protocol: host.protocol},
+	}
+	for _, candidate := range invalid {
+		if err := candidate.validate(host, sshTargetName); err == nil {
+			t.Fatalf("invalid remote provision result passed: %#v", candidate)
+		}
+	}
+	for _, data := range [][]byte{
+		append(append([]byte{}, valid...), []byte(` {}`)...),
+		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":"42"`, 1)),
+		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"extra":true`, 1)),
+	} {
+		if _, err := decodeRemoteProvisionResult(data); err == nil {
+			t.Fatalf("invalid remote provision JSON passed: %s", data)
 		}
 	}
 }
@@ -385,6 +404,8 @@ func prepareHostHerdrFixture(t *testing.T) (string, string) {
 	}
 	t.Setenv(hostHerdrFixtureEnvironment, "1")
 	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)")
+	t.Setenv(hostHerdrBaseVersionEnvironment, "0.8.0")
+	t.Setenv(hostHerdrBuildIDEnvironment, "346411fa21af.f32339bad77e")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "0.8.0-preview.346411fa21af.f32339bad77e")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL", "42")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME", runtimePath)

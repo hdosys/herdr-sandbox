@@ -247,6 +247,43 @@ function Invoke-Native {
     return $output
 }
 
+function Invoke-HerdrBoundary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Role,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+
+        [ValidateRange(1, 60)]
+        [int]$TimeoutSeconds = 30
+    )
+
+    if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
+        throw 'The bounded provisioning process owner is unavailable.'
+    }
+    $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
+    $spec.Role = $Role
+    $spec.FilePath = $FilePath
+    $spec.Arguments = [string[]]@($ArgumentList)
+    $spec.WorkingDirectory = [IO.Path]::GetFullPath($env:USERPROFILE)
+    $spec.TimeoutMilliseconds = $TimeoutSeconds * 1000
+    $spec.SuccessExitCodes = [int[]]@(0)
+    $spec.TerminateDescendantsAfterRootExit = $true
+    $result = [HerdrSandbox.ProvisioningProcess]::Run($spec)
+    if (-not $result.Succeeded -or $result.OutputTruncated -or $result.OutputBytes -gt 65536) {
+        $detail = Get-BoundedDiagnosticText -Text ([string]$result.Output) -MaximumBytes 1600
+        if ($result.TimedOut) { throw "$Role exceeded $TimeoutSeconds seconds. $detail" }
+        if ($result.Stopped) { throw "$Role was stopped before completion. $detail" }
+        if ($result.OutputTruncated -or $result.OutputBytes -gt 65536) { throw "$Role exceeded the 65536-byte output limit. $detail" }
+        throw "$Role exited with code $($result.ExitCode). $detail"
+    }
+    return [string]$result.Output
+}
+
 function Assert-BootstrapCachePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -476,103 +513,6 @@ function Get-PowerShell7Installation {
     }
 }
 
-function Read-HostHerdrRuntimeInput {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$InputDirectory
-    )
-
-    $metadataPath = Join-Path $InputDirectory 'host-herdr.json'
-    $sourceDirectory = Join-Path $InputDirectory 'herdr-runtime'
-    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf) -or
-        -not (Test-Path -LiteralPath $sourceDirectory -PathType Container)) {
-        throw 'Verified host Herdr runtime input is missing.'
-    }
-    try {
-        $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-    } catch {
-        throw "Host Herdr runtime metadata is not valid JSON: $($_.Exception.Message)"
-    }
-    if ($metadata -isnot [pscustomobject]) {
-        throw 'Host Herdr runtime metadata must be one object.'
-    }
-    $metadataProperties = @($metadata.PSObject.Properties.Name | Sort-Object)
-    if (($metadataProperties -join '|') -cne 'files|protocol|schemaVersion|version' -or
-        $metadata.schemaVersion -isnot [int] -or
-        [int]$metadata.schemaVersion -ne 3) {
-        throw 'Host Herdr runtime metadata has an unsupported contract.'
-    }
-    if ($metadata.version -isnot [string] -or
-        -not ([string]$metadata.version).Contains('herdr-win') -or
-        ([string]$metadata.version).Length -gt 256 -or
-        ([string]$metadata.version).IndexOf("`r") -ge 0 -or
-        ([string]$metadata.version).IndexOf("`n") -ge 0 -or
-        $metadata.protocol -isnot [int] -or
-        [int]$metadata.protocol -lt 1) {
-        throw 'Host Herdr runtime identity is invalid.'
-    }
-    if ($metadata.files -isnot [System.Array]) {
-        throw 'Host Herdr runtime files must be an array.'
-    }
-    $files = [object[]]$metadata.files
-    if ($files.Count -notin @(1, 5)) {
-        throw "Host Herdr runtime file count is invalid: $($files.Count)"
-    }
-    $paths = New-Object System.Collections.Generic.List[string]
-    $seenPaths = @{}
-    foreach ($file in $files) {
-        if ($file -isnot [pscustomobject]) {
-            throw 'Host Herdr runtime file metadata must be an object.'
-        }
-        $entryProperties = @($file.PSObject.Properties.Name | Sort-Object)
-        if (($entryProperties -join '|') -cne 'path|sha256|size' -or
-            $file.path -isnot [string] -or
-            $file.sha256 -isnot [string] -or
-            ($file.size -isnot [int] -and $file.size -isnot [long])) {
-            throw 'Host Herdr runtime file metadata has invalid types.'
-        }
-        $relativePath = [string]$file.path
-        $expectedSHA256 = [string]$file.sha256
-        $expectedSize = [long]$file.size
-        if ($relativePath -notmatch '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$' -or
-            $expectedSHA256 -notmatch '^[0-9a-f]{64}$' -or
-            $expectedSize -lt 1 -or $expectedSize -gt 268435456 -or
-            $seenPaths.ContainsKey($relativePath)) {
-            throw "Host Herdr runtime file metadata is invalid: $relativePath"
-        }
-        $seenPaths[$relativePath] = $true
-        $paths.Add($relativePath)
-        $sourcePath = Join-Path $sourceDirectory $relativePath.Replace('/', '\')
-        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-            throw "Host Herdr runtime input is missing: $relativePath"
-        }
-        $sourceFile = Get-Item -LiteralPath $sourcePath -Force
-        if (($sourceFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            [long]$sourceFile.Length -ne $expectedSize -or
-            (Get-BootstrapFileSHA256 -Path $sourcePath) -cne $expectedSHA256) {
-            throw "Host Herdr runtime input failed verification: $relativePath"
-        }
-    }
-    $actualLayout = (@($paths) | Sort-Object) -join '|'
-    $standaloneLayout = 'herdr.exe'
-    $bundledLayout = (@(
-        'herdr.exe',
-        'conpty/arm64/OpenConsole.exe',
-        'conpty/conpty.dll',
-        'conpty/herdr-conpty.json',
-        'conpty/x64/OpenConsole.exe'
-    ) | Sort-Object) -join '|'
-    if ($actualLayout -cne $standaloneLayout -and $actualLayout -cne $bundledLayout) {
-        throw "Host Herdr runtime layout is unsupported: $actualLayout"
-    }
-    return [pscustomobject]@{
-        Version = [string]$metadata.version
-        Protocol = [int]$metadata.protocol
-        Files = $files
-        SourceDirectory = $sourceDirectory
-    }
-}
-
 try {
     if (-not (Test-Path -LiteralPath $InputDirectory -PathType Container)) {
         throw "Sandbox input directory does not exist: $InputDirectory"
@@ -629,12 +569,6 @@ try {
         throw 'OpenSSH MSI SHA-256 is malformed.'
     }
 
-    $hostHerdrInput = Read-HostHerdrRuntimeInput -InputDirectory $InputDirectory
-    $ExpectedHerdrVersion = [string]$hostHerdrInput.Version
-    $ExpectedHerdrProtocol = [int]$hostHerdrInput.Protocol
-    $hostHerdrFiles = [object[]]$hostHerdrInput.Files
-    $hostHerdrSourceDirectory = [string]$hostHerdrInput.SourceDirectory
-
     $provisioningDirectory = Join-Path $InputDirectory 'provisioning'
     $baseProvisioning = Join-Path $provisioningDirectory 'base.ps1'
     $userProvisioning = Join-Path $provisioningDirectory 'user.ps1'
@@ -646,6 +580,12 @@ try {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Development provisioning input is missing: $requiredPath"
         }
+    }
+    if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
+        Add-Type -Path $processOwner
+    }
+    if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 3) {
+        throw 'Provisioning process owner contract is invalid.'
     }
     $workspaceManifest = [IO.File]::ReadAllText($workspaceManifestPath) | ConvertFrom-Json
     $manifestProperties = @($workspaceManifest.PSObject.Properties.Name | Sort-Object)
@@ -774,59 +714,6 @@ try {
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
 
-    Write-ProgressStatus -Phase 'herdr-install' -Message 'Provisioning the verified host Herdr runtime'
-    $herdrInstallRoot = 'C:\HerdrSandbox'
-    $herdrBinDirectory = Join-Path $herdrInstallRoot 'bin'
-    foreach ($hostHerdrFile in $hostHerdrFiles) {
-        $relativePath = [string]$hostHerdrFile.path
-        $expectedSHA256 = [string]$hostHerdrFile.sha256
-        $expectedSize = [long]$hostHerdrFile.size
-        $windowsRelativePath = $relativePath.Replace('/', '\')
-        $sourcePath = Join-Path $hostHerdrSourceDirectory $windowsRelativePath
-        $destinationPath = Join-Path $herdrBinDirectory $windowsRelativePath
-        if (Test-Path -LiteralPath $destinationPath) {
-            throw "Refusing to replace existing Herdr installation file: $destinationPath"
-        }
-        $destinationParent = Split-Path -Parent $destinationPath
-        if (-not (Test-Path -LiteralPath $destinationParent -PathType Container)) {
-            New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
-        }
-        [IO.File]::Copy($sourcePath, $destinationPath, $false)
-        $destinationFile = Get-Item -LiteralPath $destinationPath -Force
-        if (($destinationFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            [long]$destinationFile.Length -ne $expectedSize -or
-            (Get-FileHash -LiteralPath $destinationPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedSHA256) {
-            throw "Guest-local Herdr runtime copy failed verification: $relativePath"
-        }
-    }
-    $herdrExecutable = Join-Path $herdrBinDirectory 'herdr.exe'
-    $herdrVersionOutput = Invoke-Native -Role 'Herdr version check' -FilePath $herdrExecutable -ArgumentList @('--version')
-    $herdrVersion = ($herdrVersionOutput -join ' ').Trim()
-    if ($herdrVersion -ne $ExpectedHerdrVersion) {
-        throw "Herdr version mismatch. Expected $ExpectedHerdrVersion but got $herdrVersion."
-    }
-    $initialHerdrConfigDirectory = Join-Path $env:APPDATA 'herdr'
-    New-Item -ItemType Directory -Path $initialHerdrConfigDirectory -Force | Out-Null
-    $initialHerdrConfig = "[terminal]`ndefault_shell = `"pwsh.exe`"`n"
-    [IO.File]::WriteAllText((Join-Path $initialHerdrConfigDirectory 'config.toml'), $initialHerdrConfig, $script:Utf8NoBom)
-    Invoke-Native -Role 'Herdr initial PowerShell 7 configuration check' -FilePath $herdrExecutable `
-        -ArgumentList @('config', 'check') | Out-Null
-
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $pathSegments = @($herdrBinDirectory)
-    if (-not [string]::IsNullOrWhiteSpace($machinePath)) {
-        $pathSegments += $machinePath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
-            Where-Object { $_.TrimEnd('\') -ine $herdrBinDirectory.TrimEnd('\') }
-    }
-    $updatedMachinePath = $pathSegments -join ';'
-    [Environment]::SetEnvironmentVariable('Path', $updatedMachinePath, 'Machine')
-    $env:Path = $herdrBinDirectory + ';' + $env:Path
-    $pathHerdr = Get-Command -Name 'herdr.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    if ($null -eq $pathHerdr -or
-        -not [string]::Equals([string]$pathHerdr.Source, $herdrExecutable, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Guest PATH resolved an unexpected Herdr executable: $([string]$pathHerdr.Source)"
-    }
-
     Write-ProgressStatus -Phase 'openssh-install' -Message 'Installing the pinned Microsoft OpenSSH Server'
     $openSSHInstaller = Join-Path $env:TEMP 'OpenSSH-Win64-v10.0.0.0.msi'
     $openSSHInstaller = Get-PinnedBootstrapAsset -Role 'OpenSSH MSI' -CacheKey 'openssh-msi' `
@@ -908,34 +795,6 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     }
     $sshHostKey = $hostKeyFields[0] + ' ' + $hostKeyFields[1]
 
-    Write-ProgressStatus -Phase 'herdr-server' -Message 'Starting the persistent guest Herdr server'
-    $herdrProcess = Start-Process -FilePath $herdrExecutable -ArgumentList @('server') -WindowStyle Hidden -PassThru
-    $herdrProtocol = 0
-    $serverReady = $false
-    for ($attempt = 0; $attempt -lt 60; $attempt += 1) {
-        if ($herdrProcess.HasExited) {
-            throw "Herdr server exited with code $($herdrProcess.ExitCode)."
-        }
-        $serverStatusExitCode = 0
-        $serverStatus = @(Invoke-NativeCapture -Role 'Herdr server status probe' -FilePath $herdrExecutable `
-            -ArgumentList @('status', 'server') -ExitCode ([ref]$serverStatusExitCode))
-        if ($serverStatusExitCode -eq 0 -and ($serverStatus -match '^status:\s+running$')) {
-            $protocolLine = $serverStatus | Where-Object { $_ -match '^protocol:\s+(\d+)$' } | Select-Object -First 1
-            if ($null -ne $protocolLine -and $protocolLine -match '^protocol:\s+(\d+)$') {
-                $herdrProtocol = [int]$Matches[1]
-                $serverReady = $true
-                break
-            }
-        }
-        Start-Sleep -Milliseconds 500
-    }
-    if (-not $serverReady) {
-        throw 'Herdr server did not report a running protocol within 30 seconds.'
-    }
-    if ($herdrProtocol -ne $ExpectedHerdrProtocol) {
-        throw "Herdr protocol mismatch. Expected $ExpectedHerdrProtocol but got $herdrProtocol."
-    }
-
     $network = Get-NetIPConfiguration |
         Where-Object { $null -ne $_.IPv4DefaultGateway -and $null -ne $_.IPv4Address } |
         Select-Object -First 1
@@ -953,17 +812,12 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         sshUser = 'WDAGUtilityAccount'
         sshHostKey = $sshHostKey
         wingetVersion = $wingetVersion
-        herdrVersion = $herdrVersion
-        herdrProtocol = $herdrProtocol
     })
     Write-ProgressStatus -Phase 'configuration-handoff' `
         -Message 'Waiting for verified host configuration before workspace creation'
     $configurationHandoffPath = Join-Path $StatusDirectory 'configuration-handoff.json'
     $configurationDeadline = [DateTime]::UtcNow.AddMinutes($ConfigurationHandoffTimeoutMinutes)
     while (-not (Test-Path -LiteralPath $configurationHandoffPath -PathType Leaf)) {
-        if ($herdrProcess.HasExited) {
-            throw "Herdr server exited with code $($herdrProcess.ExitCode) while waiting for host configuration."
-        }
         if ([DateTime]::UtcNow -ge $configurationDeadline) {
             throw "Verified host configuration did not arrive within $ConfigurationHandoffTimeoutMinutes minutes."
         }
@@ -972,6 +826,37 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     $configurationHandoff = Read-ConfigurationHandoff -Path $configurationHandoffPath
     if ([string]$configurationHandoff.outcome -ceq 'failed') {
         throw "Host configuration phase '$($configurationHandoff.phase)' failed: $($configurationHandoff.message)"
+    }
+
+    $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or
+        -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
+        throw 'Host provisioning did not publish the guest Herdr executable identity.'
+    }
+    $herdrClientStatusText = (Invoke-HerdrBoundary -Role 'Provisioned Herdr client status' -FilePath $herdrExecutable `
+        -ArgumentList @('status', 'client', '--json')).Trim()
+    if ([Text.Encoding]::UTF8.GetByteCount($herdrClientStatusText) -gt 65536 -or
+        $herdrClientStatusText -notmatch '^\{"version":"(?:[^"\\]|\\.)+","herdr_version":"(?:[^"\\]|\\.)+","build_id":(?:null|"[0-9a-f]{12}\.[0-9a-f]{12}"),"protocol":[1-9][0-9]*,"binary":"(?:[^"\\]|\\.)+","session":(?:null|"(?:[^"\\]|\\.)+")\}$') {
+        throw 'Provisioned guest Herdr client status is not canonical.'
+    }
+    $herdrClientStatus = $herdrClientStatusText | ConvertFrom-Json
+    $herdrClientStatusProperties = @($herdrClientStatus.PSObject.Properties.Name)
+    if (($herdrClientStatusProperties -join '|') -cne 'version|herdr_version|build_id|protocol|binary|session' -or
+        $herdrClientStatus.version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$herdrClientStatus.version) -or
+        $herdrClientStatus.herdr_version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$herdrClientStatus.herdr_version) -or
+        ($null -ne $herdrClientStatus.build_id -and $herdrClientStatus.build_id -isnot [string]) -or
+        $herdrClientStatus.protocol -isnot [int] -or [int]$herdrClientStatus.protocol -lt 1 -or
+        $herdrClientStatus.binary -isnot [string] -or
+        -not [string]::Equals([string]$herdrClientStatus.binary, $herdrExecutable, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Provisioned guest Herdr client identity is invalid.'
+    }
+    $herdrRuntimeVersion = [string]$herdrClientStatus.version
+    $herdrProtocol = [int]$herdrClientStatus.protocol
+    $herdrVersion = (Invoke-HerdrBoundary -Role 'Provisioned Herdr version' -FilePath $herdrExecutable `
+        -ArgumentList @('--version')).Trim()
+    if ([string]::IsNullOrWhiteSpace($herdrVersion) -or $herdrVersion.Length -gt 256 -or
+        $herdrVersion.IndexOf("`r") -ge 0 -or $herdrVersion.IndexOf("`n") -ge 0) {
+        throw 'Provisioned guest Herdr version identity is invalid.'
     }
 
     Write-ProgressStatus -Phase 'herdr-workspace' -Message "Creating $($workspaceEntries.Count) mounted-project workspaces and terminal panes"
@@ -985,9 +870,9 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         $workspaceDirectory = [string]$workspace.directory
         $workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName)
         if ($workspaceDirectory -ceq $activeWorkspace) { $workspaceArguments += '--focus' }
-        $workspaceOutput = Invoke-Native -Role "Herdr workspace creation for $workspaceName" `
+        $workspaceOutput = Invoke-HerdrBoundary -Role "Herdr workspace creation for $workspaceName" `
             -FilePath $herdrExecutable -ArgumentList $workspaceArguments
-        $workspaceResponse = ($workspaceOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        $workspaceResponse = $workspaceOutput | ConvertFrom-Json
         $workspaceId = [string]$workspaceResponse.result.workspace.workspace_id
         $rootPaneId = [string]$workspaceResponse.result.root_pane.pane_id
         if ([string]::IsNullOrWhiteSpace($workspaceId) -or [string]::IsNullOrWhiteSpace($rootPaneId) -or
@@ -1031,13 +916,15 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     }
 
     Write-AtomicJson -Path (Join-Path $StatusDirectory 'ready.json') -Value ([ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         ip = $ipAddress
         sshUser = 'WDAGUtilityAccount'
         sshHostKey = $sshHostKey
         wingetVersion = $wingetVersion
         herdrVersion = $herdrVersion
+        herdrRuntimeVersion = $herdrRuntimeVersion
         herdrProtocol = $herdrProtocol
+        herdrBinary = $herdrExecutable
     })
     Write-Host '[ready] Sandbox provisioning completed; this window may remain open.' -ForegroundColor Green
 } catch {

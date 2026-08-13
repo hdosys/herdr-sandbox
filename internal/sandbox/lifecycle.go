@@ -346,11 +346,9 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 			return SessionStatus{}, fmt.Errorf("validate active Sandbox connectable status: %w", err)
 		}
 		status.Phase = "connectable"
-		status.Message = "SSH and Herdr server are ready; applying verified host configuration"
+		status.Message = "SSH is ready; applying verified host configuration and provisioning Herdr"
 		status.GuestIP = connectable.IP
 		status.WinGetVersion = connectable.WinGetVersion
-		status.HerdrVersion = connectable.HerdrVersion
-		status.HerdrProtocol = connectable.HerdrProtocol
 		return status, nil
 	}
 	if progress, ok, err := readOptionalStatus[progressStatus](filepath.Join(statusDirectory, progressFileName)); err != nil {
@@ -480,7 +478,7 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 
 func tailscaleFailurePrecedesIdentity(phase string) bool {
 	switch phase {
-	case "guest-identity", "ssh-material", "ssh-verification", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled":
+	case "guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled":
 		return true
 	default:
 		return false
