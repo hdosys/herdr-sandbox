@@ -254,7 +254,7 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !define MUI_FINISHPAGE_TEXT_LARGE
 !define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
-!define MUI_FINISHPAGE_TEXT "Setup completed successfully.$\r$\n$\r$\nOpen a new terminal in a project directory. Run ${APP_NAME} init for a new project or ${APP_NAME} up for an existing profile."
+!define MUI_FINISHPAGE_TEXT "Setup is complete. No app window opens. Open a new terminal:$\r$\n$\r$\n${APP_NAME} init: Create a project profile$\r$\n${APP_NAME} up: Start or reconnect$\r$\n${APP_NAME} config: Open the configuration file$\r$\n${APP_NAME} status: Inspect Sandbox state"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open ${APP_DISPLAY_NAME} configuration"
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenInstalledConfiguration
