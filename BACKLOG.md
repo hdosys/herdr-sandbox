@@ -11,10 +11,27 @@ Open, planned, blocked, or deferred product work only. User-visible rules belong
 
 ## Items
 
+- Resolve every built-in stack's concrete package/tool version across `user.ps1`
+  and all selected project profiles before provisioning mutates the guest. Reject
+  conflicting exact requests with both owners named; when one owner requests an
+  exact version and another omits it, use the exact request as the shared version.
+  Preserve latest-stable resolution only when every owner omits a version. Add
+  plan output plus focused Windows PowerShell 5.1 and retained-reprovision tests
+  proving order cannot silently replace, coexist with, or downgrade a shared tool.
 - Run one fresh native `python-ai` acceptance gate when `Containers-DisposableClientVM` is available: initialize the profile through the stable CLI, require `plan` to expand it to only the Python 3.13 and `astral-sh.uv` owners, provision with `up --no-attach`, and verify `python`, `python3`, uv version/cache readback, `UV_NO_MANAGED_PYTHON=1`, an offline `uv sync`, a locked `uv run`, and retained reprovisioning against the same ready guest. Keep framework packages project-owned and leave CUDA outside this CPU/API gate.
 - Automate the official Playwright Extension token handoff after the manual-first stack passes natively. Keep the unmodified Chrome Web Store extension, existing headed main-user Edge profile, and `playwright-cli.cmd -s=edge-main attach --extension=msedge` contract; investigate a bounded way to extract the extension-generated profile-local token and publish it only to disposable guest environment state without UI automation, logging, project persistence, remote debugging, another profile, or a custom extension. Native verification must prove fresh-guest install/enable, token extraction, prompt-free attach, tab control, `detach` without closing Edge, and no token in host mappings, run evidence, cache, or source.
 - Run one fresh native acceptance gate for the new current-path UX and modern .NET owner when `Containers-DisposableClientVM` is available: use the stable built CLI to confirm `plan` remains nonmutating, initialize a disposable `dotnet` profile, provision with `up --no-attach`, observe retained progress and prompt `status` snapshots, verify a bounded terminal operation outcome independently of ready health, attach from a real console, and build/run a minimal `net10.0` project after exact `dotnet --version`/`--list-sdks` readback. Require the resolved package plan to contain only `Microsoft.DotNet.SDK.10` for .NET—no prior/preview SDK package, Framework, Visual Studio/MSBuild, or alternate installer path.
-- Run the fresh native Herdr dependency gate against both a direct PATH executable and a launcher-backed installation when those distributions are available: require pre-cleanup remote capability, a digest-identical host-to-guest physical executable plus optional complete ConPTY bundle with no Herdr network/cache request, Application lookup of the copied `herdr.exe` through the real SSH user's guest `PATH`, final host identity revalidation, matching version/protocol, SSH remote attach, detach, and persistent server reuse. Also prove that a Windows build reporting `unsupported` fails before cleanup with package-neutral capability guidance.
+- Run the fresh native Herdr remote-provision gate against both a direct PATH
+  executable and a launcher-backed installation when those distributions are
+  available: require pre-cleanup unattended remote capability, exact fresh
+  `started` and retained `reloaded|restarted` results, matching versioned sidecar,
+  distribution/runtime/protocol/server identity, machine
+  `HERDR_SANDBOX_HERDR_EXE` publication, initial workspaces, SSH remote attach,
+  detach, persistent reuse, final host identity revalidation, and retry after a
+  post-provision failure. Prove no bootstrap runtime copy, guest HTTP/WinGet
+  download, direct server start, duplicate reload, or alternate executable route
+  remains. Also prove that a Windows build reporting `unsupported` fails before
+  cleanup with package-neutral capability guidance.
 - Run one fresh native Sandbox configuration-sync gate with real, disposable test accounts/configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi. Verify each standard guest destination, portable login behavior, GitHub CLI fallback for Copilot, retained-run additive updates, excluded runtime state, no credential content in output/run files, and the documented one-time reauthentication for machine-bound Codex/Copilot stores; then remove the README preview-validation note.
 - Complete the sacrificial native acceptance gate before declaring automatic Tailscale identity restoration complete: enroll once, then launch two fresh Sandboxes sequentially from the DPAPI-protected state and require the same node key, control-plane device ID, IP, DNS name, fixed hostname, tags, and Windows user SID; verify local CLI access, independent peer connectivity, no concurrent clone, and no credential in mappings, logs, status, cache, or command lines. If exact state portability fails, remove the cloning path and separately scope ephemeral narrow-tag OAuth enrollment plus a Tailscale Service for stable TCP addressing rather than shipping two runtime paths.
 - Land [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501) with the prepared schema-1.12 `hdosys.herdr-sandbox` v0.0.9 manifests and verified public installer URL/hash. Prepare `hdosys.herdr-win` as the next independent package, then verify `winget install hdosys.herdr-sandbox hdosys.herdr-win` against the community source with no package dependency or shared payload.

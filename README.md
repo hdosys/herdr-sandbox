@@ -4,32 +4,37 @@
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Its `sandbox` command launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, starts Herdr in the guest, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
+Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Its `sandbox` command launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, delegates the matching guest runtime and persistent server to Herdr's remote provision command, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
 
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Stacks](#supported-stacks) · [Get started](#get-started) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Worktrees](#persistent-herdr-worktrees) · [Configuration](#configuration) · [Engineering](#engineering-approach) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
 ```mermaid
 flowchart LR
     Host["Host terminal<br/>sandbox (Go)"]
+    HostHerdr["Host Herdr<br/>remote provision + attach"]
     Projects[("Selected projects")]
+    Worktrees[("Optional persistent<br/>Herdr worktrees")]
     Config["Approved agent config"]
 
     subgraph Guest["Disposable Windows Sandbox"]
         Provision["PowerShell 5.1<br/>provisioning"]
         Agents["Agents + native<br/>toolchains"]
-        Herdr["Herdr server"]
+        Herdr["Versioned Herdr<br/>sidecar + server"]
     end
 
     Host -->|launch + lifecycle| Provision
+    Host -->|final config + verified SSH target| HostHerdr
     Projects <-->|narrow writable mappings| Agents
+    Worktrees <-->|dedicated writable mapping| Agents
     Config -->|verified SSH only| Agents
-    Provision --> Agents --> Herdr
-    Host <-->|console-backed attach| Herdr
+    Provision --> Agents
+    HostHerdr -->|provision + validate| Herdr
+    HostHerdr <-->|console-backed attach| Herdr
 ```
 
 The host owns source, identity, configuration, cache, and bounded run evidence. The guest owns compilation, agent execution, and disposable runtime state. Go owns host lifecycle decisions and strict boundary contracts; PowerShell is the narrow Windows provisioning adapter.
@@ -41,15 +46,18 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 
 - **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
+- **One Herdr lifecycle owner:** exact `herdr --remote sandbox --provision --yes --json` deploys the matching versioned guest sidecar, validates final configuration, and starts, reloads, or restarts the persistent server for both fresh and retained runs.
 - **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
+- **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
+- **Persistent agent worktrees:** an optional dedicated host root keeps Herdr-created linked checkouts available across fresh Sandboxes without broadening the mapped home or project set.
 - **QR-assisted mobile Herdr over Tailscale (experimental):** preserve one tagged guest identity and connect from an authorized phone, tablet, or computer through a key-only private endpoint without publishing a service to the internet.
 
 ## Supported stacks
 
-`sandbox init --stack` offers reusable technology and tool stacks plus separate project shortcuts. Use `--stack all` for every standalone technology and tool stack, or repeat the flag to combine compatible individual selections.
+`sandbox init --stack` exposes the individually selectable aliases below plus separate project shortcuts. Use `--stack all` to include every standalone alias together with the direct Bun, Cargo Nextest, Just, and uv helper owners, or repeat the flag to combine compatible individual selections. Project profiles may also call those helper functions directly.
 
 ### Technology and tool stacks
 
@@ -81,7 +89,7 @@ Project shortcuts do not represent additional technologies. They package complex
 
 ## Deployment time
 
-There is no separate VM to set up or maintain, and only selected stacks are provisioned. With downloads cached, a fresh Sandbox is usually ready in **2 to 4 minutes** without Rust/MSVC and **4 to 6 minutes** with it. First runs can take longer when browser, Vulkan SDK, or Visual Studio payloads must be downloaded. Attaching to an already ready Sandbox skips provisioning.
+There is no separate VM to set up or maintain, and only selected stacks are provisioned. Deployment time depends on the selected plan and cache state rather than one universal target: a small cached plan can finish in a few minutes, while first runs with browsers, Android, Vulkan, or Visual Studio payloads take materially longer. `sandbox status` exposes current progress and recent phase timings. Attaching to an already ready Sandbox skips provisioning.
 
 ## Engineering approach
 
@@ -98,9 +106,10 @@ There is no separate VM to set up or maintain, and only selected stacks are prov
 ### Prerequisites
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
-- Windows Terminal and internet access for cache misses.
-- The `herdr-win` Windows `herdr.exe` on host `PATH`; `herdr --version` must begin
-  with `herdr-win ` and its `--remote` interface must pass the capability probe.
+- Windows Terminal, the Windows OpenSSH Client (`ssh.exe` on host `PATH`), and internet access for cache misses.
+- The `herdr-win` Windows `herdr.exe` on host `PATH`; `herdr --version` must contain
+  the case-sensitive `herdr-win` marker, and the unattended
+  `--remote <target> --provision --yes --json` interface must pass the capability probe.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -109,7 +118,7 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-[`herdr-win`](https://github.com/hdosys/herdr-win) is the required Windows remote distribution. Herdr Sandbox checks that the existing `herdr.exe` on `PATH` reports a `herdr-win ` identity, separately probes its remote interface, copies the status-reported physical executable and optional complete ConPTY bundle into each fresh guest, and never installs, updates, or replaces host Herdr.
+[`herdr-win`](https://github.com/hdosys/herdr-win) is the required Windows remote distribution. Herdr Sandbox validates the existing `herdr.exe` command and active client identity, then uses that command's unattended remote provision owner to transfer its matching complete Windows payload over verified SSH. Sandbox never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
 
 ### Install Herdr Sandbox
 
@@ -117,7 +126,7 @@ Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) 
 
 #### Installer (recommended)
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds the application to Windows Installed Apps and user `PATH`. A fresh interactive install shows a checked **Open Herdr Sandbox configuration** option on the Finish page. Leave it selected to open `%APPDATA%\herdr-sandbox\config.json` with the application registered for `.json` files. Standard WinGet and other silent installs, plus repairs and upgrades, do not show the option or open the file.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds the application to Windows Installed Apps and user `PATH`. The Finish page explains that no app window opens, lists the first `sandbox init`, `up`, `config`, and `status` commands, and links to this guide. A fresh interactive install also shows a checked **Open Herdr Sandbox configuration** option. Leave it selected to open `%APPDATA%\herdr-sandbox\config.json` with the application registered for `.json` files. Standard WinGet and other silent installs, plus repairs and upgrades, do not show the option or open the file.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches GitHub's digest for the same release asset.
@@ -199,7 +208,9 @@ sandbox plan
 sandbox up
 ```
 
-The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. A successful run creates a usable guest workspace and attaches the host Herdr client, not merely SSH or an installed toolchain.
+The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. After project provisioning and final configuration publication, the host invokes exact `herdr --remote sandbox --provision --yes --json`. Success requires the returned versioned sidecar, runtime/protocol identity, and detached server state to match independently verified guest evidence. Sandbox publishes that exact executable as machine-owned `HERDR_SANDBOX_HERDR_EXE` for initial workspaces and optional mobile routing. A successful run then attaches the host Herdr client; plain SSH or an installed toolchain alone is insufficient.
+
+Retained `sandbox up` uses the same owner to reload or restart the server as required. If a later post-provision phase fails, another retained `up` can verify SSH, reprovision, and republish current ready identity instead of requiring a fresh Sandbox.
 
 > [!NOTE]
 > Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
@@ -224,6 +235,18 @@ Plain SSH is available for noninteractive diagnostics:
 ssh sandbox
 ```
 
+### Optional: keep Herdr worktrees across Sandboxes
+
+Set `worktreeDirectory` to one existing dedicated host folder when agent-created linked checkouts should survive disposal of the guest. The folder maps read/write only at `C:\Worktrees`; Herdr remains the create, list, reopen, and remove owner.
+
+```json
+{
+  "worktreeDirectory": "D:\\HerdrWorktrees"
+}
+```
+
+If a guest is already running, use `sandbox down` before applying a new or changed worktree root, then start again with `sandbox up`. See [Persistent Herdr worktrees](#persistent-herdr-worktrees) for the lifecycle commands and safety contract.
+
 ## Commands
 
 Command output is plain and redirect-safe: summaries use descriptive headings, indented fields, deterministic ordering, and one item per line instead of packed comma-separated lists. Results go to stdout, errors go to stderr, and no color or terminal UI framework is required.
@@ -245,11 +268,11 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 <details>
 <summary><strong>Lifecycle and automatic cleanup</strong></summary>
 
-- After valid command syntax, `up`, `status`, and `down` run the same bounded cleanup; `clean` invokes that owner directly. Help, `plan`, and invalid command lines remain nonmutating.
+- After valid command syntax, `up`, `attach`, `status`, and `down` run the same bounded cleanup; `clean` invokes that owner directly. Help, `plan`, and invalid command lines remain nonmutating.
 - Cleanup clears stale run and SSH state only when process evidence proves no Sandbox launcher or client remains. Changed, unmanaged, reparse-bearing, or uncertain state is preserved and reported.
 - A freely acquired lifecycle lock records an abandoned retained operation as interrupted before another mutation can begin.
 - `up` reuses only an exact ready app-owned instance. Inspect refused state with `status`, then use `down` only when the CLI identifies the app-owned guest.
-- Changing Tailscale, mobile SSH authorized keys, audio, memory, cache, folder mounts, or workspace mappings requires `down` before the next `up`.
+- Changing Tailscale, mobile SSH authorized keys, audio, memory, cache, worktree directory, folder mounts, or workspace mappings requires `down` before the next `up`.
 
 </details>
 
@@ -258,6 +281,9 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 ### Project profiles
 
 Profiles call built-in functions directly so `sandbox plan` can inspect requirements without executing project code.
+
+<details>
+<summary><strong>Built-in profile function reference</strong></summary>
 
 **Reusable stack functions**
 
@@ -297,7 +323,10 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 - When the `tradingview` stack is selected, configuration sync makes an available standard host TradingView Desktop login usable in the guest. It transfers only the authenticated TradingView `sessionid` cookies over the verified SSH path, not the host profile, broker/site cookies, or encryption key. A missing host profile or login is a clean no-op. Close guest TradingView Desktop before retained reprovisioning needs to refresh that session.
 - Built-ins install guest toolchains, not project dependencies. Keep application packages and lockfiles in the project's `package.json`, `pyproject.toml`, `uv.lock`, or equivalent owner.
 
-#### Android device connection
+</details>
+
+<details>
+<summary><strong>Android wireless-device connection</strong></summary>
 
 Select the Android stack and provision the guest:
 
@@ -316,7 +345,10 @@ adb devices -l
 
 The pairing and debugging ports can differ. Use the exact values shown by the phone. Pairing keys remain disposable guest state. Windows Sandbox does not expose a supported arbitrary USB passthrough contract, so this stack does not run a host ADB proxy or map device credentials into the guest. Use a normal host toolchain when a workflow specifically requires USB, `fastboot`, recovery, or restricted-network reliability.
 
-#### Playwright CLI integration
+</details>
+
+<details>
+<summary><strong>Playwright CLI and Edge extension integration</strong></summary>
 
 [Playwright CLI](https://github.com/microsoft/playwright-cli) supports both Chrome and Edge extension channels. This built-in stack installs the exact approved CLI without a browser, then prepares the official extension specifically for the Edge profile already available in Windows Sandbox. The Edge-specific steps below are this stack's current integration choice, not a Playwright CLI limitation.
 
@@ -341,9 +373,11 @@ playwright-cli.cmd -s=edge-main detach
 
 Without the token, the official extension asks the user to approve and select a tab. The token bypasses that dialog. A fresh Sandbox has a fresh Edge profile, so the manual extension/token step must currently be repeated. Do not use `playwright-cli open`, `install-browser`, `--persistent`, `--profile`, or another browser/profile with this stack.
 
+</details>
+
 For a project-specific tool, add idempotent Windows PowerShell 5.1 to its profile. For a package needed in every guest, use [`wingetPackages.add`](#global-configuration). There is no plugin registry or second profile format.
 
-**Rust/MSVC note:** the first Rust-stack run may show Microsoft Visual Studio Installer on the host. The signed bootstrapper creates a verified Build Tools layout in the app-owned cache; it does not install Visual Studio or Rust on the host. The guest copies and installs from that layout.
+**Visual Studio layout note:** the first C/C++, Rust/MSVC, or Handy run may show Microsoft Visual Studio Installer on the host. The signed bootstrapper creates a verified Build Tools layout in the app-owned cache; it does not install Visual Studio, Rust, or project toolchains on the host. The guest copies and installs from that layout.
 
 ### Global configuration
 
@@ -361,6 +395,9 @@ The command creates `config.json` only when absent and never replaces existing s
 ```
 
 `config.json` is strict JSON, so comments are not allowed. Replace the example paths with existing folders. Object keys such as `external` and `shared` are user-chosen names; they become the final guest-folder name rather than a fixed keyword. Optional sections can stay empty.
+
+<details>
+<summary><strong>Complete configuration example and field reference</strong></summary>
 
 ```json
 {
@@ -413,7 +450,7 @@ The command creates `config.json` only when absent and never replaces existing s
 
 | Field | Meaning |
 | --- | --- |
-| `cacheDirectory` | Absolute dedicated Herdr Sandbox package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state; every uninstall recursively removes the entire selected cache, so never point it at a shared directory. |
+| `cacheDirectory` | Absolute dedicated Herdr Sandbox package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. It must not overlap a workspace or app run state. Uninstall attempts to remove the entire selected cache, although locked residuals may remain, so never point it at a shared directory. |
 | `worktreeDirectory` | Optional absolute dedicated host root for Herdr-created Git worktrees. Empty disables it. A selected root maps read/write to `C:\Worktrees`, remains preserved by `sandbox clean` and uninstall, and requires `Git.Git`. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `audio` | Exact boolean audio-output opt-in. Omitted or `false` suppresses playback; only `true` leaves playback enabled. |
@@ -429,9 +466,15 @@ The command creates `config.json` only when absent and never replaces existing s
 | `wingetPackages.add` | Exact additional WinGet package IDs installed in every guest. Fresh configs list every coding agent with a verified WinGet package; remove any entries you do not want. |
 | `wingetPackages.versions` | Exact versions for retained or added packages. Omitted versions resolve latest; unavailable exact versions fail. After a successful install, an inconclusive WinGet read-back warns and continues. |
 
+</details>
+
 Package additions, removals, and version changes apply through `sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
 
-#### Experimental Vulkan
+> [!WARNING]
+> `wingetPackages.versions` has one case-insensitive version owner per effective Base package. Project stack calls are different: `user.ps1` runs first, then project profiles run by workspace name, and their parameterized version requests are not currently merged before mutation. If two selected profiles request different exact versions of the same tool, the later call attempts its version. If one omits the version, that call resolves latest when it runs. Installer behavior can then replace, coexist, or fail. Until preflight conflict detection is added, keep each shared tool and version in one canonical profile across the selected workspaces.
+
+<details>
+<summary><strong>Experimental Vulkan runtime</strong></summary>
 
 Vulkan remains disabled by default. To install only the LunarG runtime and require a real vGPU-backed device, retain any other desired additions and add `KhronosGroup.VulkanRT`:
 
@@ -453,7 +496,10 @@ Provisioning runs `vulkaninfo --summary` and fails when no physical device is ex
 
 The `handy` project shortcut is separate from this global runtime opt-in. Handy installs its required Vulkan SDK and compiler tools, but real GPU acceleration still depends on the vGPU exposed by Windows Sandbox and the host graphics stack.
 
-#### Audio policy
+</details>
+
+<details>
+<summary><strong>Audio and microphone policy</strong></summary>
 
 Both audio toggles default off. With both off, provisioning selects Windows **No Sounds**, mutes the default render endpoint, and disables the guest audio services with read-back verification. Ordinary applications therefore cannot restore playback by changing only their own volume.
 
@@ -461,7 +507,10 @@ Set `"audioInput": true` to share the host microphone and retain the shared audi
 
 No CPU-priority option is exposed because Windows Sandbox provides no supported per-instance control; changing the launcher priority would not reliably control guest vCPU scheduling.
 
-#### Coding-agent sync
+</details>
+
+<details>
+<summary><strong>Coding-agent and host Git synchronization</strong></summary>
 
 Configuration sync is default-on when these host surfaces exist:
 
@@ -483,17 +532,24 @@ Git hooks, reflogs, linked-worktree pointers, active-operation state, external o
 
 The shared `%USERPROFILE%\.agents\skills` tree is copied once when Codex, Copilot, or Pi is enabled. Conversations, runtime history, logs, caches, generated plugin/package state, project trust, private SSH/GPG keys, and unrelated home content are excluded. Missing host configuration is a clean no-op; this includes an absent global Git config, host `gh.exe`, or authenticated GitHub CLI account. Guest Git still receives only the required mapped-workspace trust entries. This feature copies setup only; coding-agent installation remains an explicit `wingetPackages.add` or project-profile choice.
 
-#### Workspace discovery
+</details>
+
+<details>
+<summary><strong>Workspace discovery and additional folder mounts</strong></summary>
+
+**Workspace discovery**
 
 - Discovery checks only direct child directories and never maps the root itself. Each Go/RE2 `exclude` expression is case-sensitive unless it uses `(?i)`; any match excludes that child.
 - Every selected child becomes a workspace even without `.herdr-sandbox\provision.ps1`. When that optional script exists it is validated and run; the folder name becomes the workspace name. Use `workspaces` for external projects or explicit names, which win when both select the same path.
 - The active project is added and deduplicated automatically. At most 16 physical, existing, nonoverlapping, non-reparse workspaces are allowed; a changed set requires `down` before the next `up`.
 
-#### Folder mounts
+**Folder mounts**
 
 Use optional `mounts` for host folders that should be available without becoming project workspaces. The key is arbitrary: a mount named `worktrees` appears at `C:\Mounts\worktrees`, while `shared` appears at `C:\Mounts\shared`. No `reference` key is required. Generic mounts do not become active, run `.herdr-sandbox\provision.ps1`, or create Herdr workspaces. Set `readOnly` to `true` for reference/shared material and to `false` only when guest tools should persist changes to the host folder, such as creating or updating worktrees.
 
 Mapped folders expose host data across the isolation boundary. Ordinary explicitly selected descendants of the user profile remain valid, but Herdr Sandbox rejects volume roots, reparse-bearing paths, whole protected roots, and known credential locations such as `.ssh`, `.gnupg`, cloud/container config, coding-agent authentication roots, GitHub CLI state, and Windows credential stores. A parent containing one of those locations and a descendant inside one are both rejected. Mounts also may not overlap another mount, workspace, cache, private run state, or app-owned root selected for recursive uninstall removal. Every guest destination remains fixed below `C:\Mounts`; arbitrary guest system paths cannot be selected. Changing a mount path or access mode requires `sandbox down` before the next `up`.
+
+</details>
 
 #### Persistent Herdr worktrees
 
@@ -514,7 +570,10 @@ The directory must already exist, be absolute and non-reparse, and must not over
 
 These are guest-native linked worktrees, not portable host-side checkouts. Git stores their linked metadata in the mapped main repository, and the linked checkout records guest paths. Keep the same main workspace mapped at the same `C:\Workspaces\<name>` path on later launches, perform worktree lifecycle operations through guest Herdr, and remove linked worktrees before removing their main workspace. Herdr Sandbox does not add leases, pruning, or automatic worktree deletion.
 
-#### Agent packages
+<details>
+<summary><strong>Agent packages, global extensions, and persistent host state</strong></summary>
+
+**Agent packages**
 
 Coding agents are removable additions rather than protected Base packages. Fresh configs list every agent with a verified WinGet package, so remove the entries you do not want or use an empty `add` array to install no coding agent globally. No separate disable entry is required.
 
@@ -535,7 +594,7 @@ The seeded coding-agent package list is:
 
 Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
 
-#### Global extension ownership
+**Global extension ownership**
 
 - `base.ps1` and `stacks.ps1` are release-owned and update with the application.
 - `user.ps1` is seeded once for idempotent global PowerShell additions and runs before project profiles.
@@ -544,7 +603,7 @@ Pi does not currently have a verified WinGet package; install it explicitly in t
 
 Older releases seeded a user-owned `%APPDATA%\herdr-sandbox\base.ps1`. The new ownership model never overwrites or executes that file: `up` stops with migration instructions. Review it, move only deliberate global extension commands into `user.ps1`, move package choices into `config.json`, keep project tools in project profiles, archive the complete legacy Base under a non-reserved name, and retry.
 
-#### Persistent host state
+**Persistent host state**
 
 Persistent host state is split intentionally:
 
@@ -556,17 +615,21 @@ Persistent host state is split intentionally:
 | `%LOCALAPPDATA%\herdr-sandbox\ssh\config` | App-owned `Host sandbox` target for the current guest; removed automatically only when no Sandbox is proven to remain. |
 | `<system-temp>\herdr-sandbox\cache` | Default persistent package/tool cache. |
 
+</details>
+
 ## Security boundaries
 
 See [`SECURITY.md`](SECURITY.md) for vulnerability reporting, the complete threat
 model, and practical guidance for credential-free or externally network-restricted
 use.
 
-- Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
+- Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the optional dedicated worktree root, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
 - The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
 - Mobile device private keys never leave those devices. Only their Ed25519 public keys enter config/run input, and the QR contains only the SSH URI.
 - Approved GitHub CLI and coding-agent credentials travel only over verified SSH and never enter persistent run input or logs. Machine-bound credentials require a guest login.
 - GitHub CLI tokens use disposable guest-only file storage, and HTTPS Git is wired to `gh auth git-credential` so Git Credential Manager cannot open an account prompt.
+- Default-on host configuration pulls contact each selected repository upstream using the host's existing Git credentials. Disable the applicable `configurationSync` hook when that network or repository mutation is not wanted.
+- TradingView stack sync can transfer the authenticated `sessionid` cookies into the disposable guest, where guest administrators can read them. Disable that stack or close the host session when this trust is not acceptable.
 - Tailscale auth-key and state bytes never enter mappings, status, diagnostics, command lines, or package cache.
 - The mobile endpoint binds only the guest's Tailscale IPv4 on TCP 2222 with key-only authentication and forwarding disabled. Guest firewall policy separately blocks tailnet access to management TCP 22.
 - Every OpenCode configuration sync reapplies a guest-managed policy that replaces host top-level and per-agent permissions with `allow`; host OpenCode policy is unchanged. Treat guest agents as fully authorized inside the Sandbox and mapped projects.
@@ -587,7 +650,7 @@ Tailscale supplies only the private network path. Tailscale SSH server mode is u
 <details>
 <summary><strong>First-time tailnet and enrollment setup</strong></summary>
 
-### 1. Prepare the tailnet
+**1. Prepare the tailnet**
 
 In the [Tailscale admin console](https://login.tailscale.com/admin):
 
@@ -612,11 +675,11 @@ In the [Tailscale admin console](https://login.tailscale.com/admin):
 
 Replace the source with the exact users or groups that may control Herdr, merge the rule into existing policy, and do not grant mobile peers TCP 22. See Tailscale's [tag](https://tailscale.com/docs/features/tags) and [access-control](https://tailscale.com/docs/features/access-control) documentation.
 
-### 2. Create a mobile device key
+**2. Create a mobile device key**
 
 In each mobile SSH app, generate a new Ed25519 key on that device and copy only its OpenSSH-format public key. The private key must remain device-owned. Up to eight unique public keys are accepted; optional comments must be one token.
 
-### 3. Create the one-time Tailscale key
+**3. Create the one-time Tailscale key**
 
 Create one auth key on the admin console's Keys page:
 
@@ -627,7 +690,7 @@ Create one auth key on the admin console's Keys page:
 
 If Tailnet Lock is enabled, sign the key from an existing trusted node first. Never put it in `config.json`, provisioning, shell history, or an argument to `sandbox up` or `tailscale up`.
 
-### 4. Enable and enroll
+**4. Enable and enroll**
 
 Set `"tailscale": true` and add the copied public keys in `%APPDATA%\herdr-sandbox\config.json`. Keep `Tailscale.Tailscale` in the Base package plan:
 
@@ -665,7 +728,7 @@ When provisioning reaches ready, the visible Sandbox console shows a secret-free
 sandbox mobile
 ```
 
-### 5. Later Sandboxes
+**5. Later Sandboxes**
 
 Do not supply the auth key again. `down` captures and verifies current state before closing; the next fresh `up` restores it over verified SSH. Device ID, node key, IPv4, MagicDNS, hostname, tags, and Windows Sandbox user SID must remain exact or the workflow fails closed.
 
@@ -689,9 +752,11 @@ Start with `sandbox status`; it preserves a running guest, removes only proven s
 | The phone cannot reach mobile Herdr | Confirm Tailscale is connected on the phone, policy grants that principal `tag:herdr-sandbox:2222`, and the URI/fingerprint match `sandbox mobile`. Do not substitute management port 22. |
 | The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
-| Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs such as modern .NET or Rust, and the Visual Studio layout required only by Rust/MSVC. Herdr is copied from the host and does not use the download cache. Confirm that the cache is writable and does not overlap a workspace or run state. |
+| Host configuration pull fails | Resolve the named repository's divergence, overlapping edit, detached branch, missing upstream, authentication, network, or timeout problem, then retry. Alternatively disable the applicable automatic `configurationSync` hook; `sandbox pull-host-config` remains available explicitly. A post-stop pull failure does not undo the completed shutdown. |
+| Guest Herdr provisioning fails | Confirm the host `herdr.exe` is the current `herdr-win` distribution, `ssh.exe` is on host `PATH`, `ssh sandbox` reaches the verified guest, and `herdr --remote sandbox --provision --yes --json` is supported. Run `sandbox status` for the failed phase; do not copy a binary into the guest or start a second server manually. |
+| Initial provisioning is slow | The first run may download WinGet, OpenSSH, selected SDKs, and the Visual Studio layout required by C/C++, Rust/MSVC, and Handy. Herdr transfers its matching payload through its remote SSH provision path and does not use the Sandbox package cache. Confirm that the cache is writable and does not overlap a workspace or run state. |
 | Stable Tailscale enrollment is refused | Confirm exact `true`, the retained Tailscale package, and a current one-time non-ephemeral pre-approved tagged key. Restoration refuses missing, corrupt, differently DPAPI-bound, untagged, or identity-mismatched state. |
-| Old diagnostics consume space | `up`, `status`, and `down` remove validated inactive run workspaces automatically; `clean` invokes the same cleanup explicitly once. Active/uncertain evidence and the persistent cache remain preserved. |
+| Old diagnostics consume space | `up`, `attach`, `status`, and `down` remove validated inactive run workspaces automatically; `clean` invokes the same cleanup explicitly once. Active/uncertain evidence and the persistent cache remain preserved. |
 
 ## Development
 
@@ -704,11 +769,13 @@ go run ./cmd/task build
 go run ./cmd/task check
 go run ./cmd/task native-all-stacks
 go run ./cmd/task package v0.0.0
+go run ./cmd/task release-notes v0.0.0
 ```
 
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
-- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and GitHub CLI.
+- `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
+- `release-notes` renders the public changelog section for one release version.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
 ## License
@@ -719,5 +786,7 @@ go run ./cmd/task package v0.0.0
 
 - Stable user-visible behavior: [`PRODUCT.md`](PRODUCT.md)
 - Technical boundaries: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Security policy and threat model: [`SECURITY.md`](SECURITY.md)
+- User-visible release history: [`CHANGELOG.md`](CHANGELOG.md)
 - Open work: [`BACKLOG.md`](BACKLOG.md)
 - Project-specific agent/repository rules: [`AGENTS.md`](AGENTS.md)
