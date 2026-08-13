@@ -65,9 +65,9 @@ release notes remain available on the
   machinery, verifies every ownership-marker write, bounds quiet uninstall to 30
   seconds, and keeps destructive cleanup race-free under the existing app lock.
 - Installer builds now validate identity, payload, helper syntax, version/output
-  agreement, and artwork before NSIS compilation. PATH cleanup removes only the
-  last raw ordinal-exact installer-appended literal and preserves differently
-  represented or duplicate entries that may belong to another actor.
+  agreement, and artwork before NSIS compilation. PATH cleanup removes every
+  normalized literal spelling of the fixed install directory while preserving
+  environment-expression and unrelated entries.
 
 ## v0.0.12 - 2026-08-07
 

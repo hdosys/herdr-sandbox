@@ -66,10 +66,23 @@ function Test-OwnedPathEntry {
         [Parameter(Mandatory = $true)][string]$Expected
     )
 
-    # Installation appends the canonical literal text in Expected. Quoted,
-    # differently cased, slash-varied, or environment-variable equivalents remain
-    # foreign even when Windows would resolve them to the same directory.
-    return [string]::Equals($Entry, $Expected, [StringComparison]::Ordinal)
+    $candidate = $Entry.Trim().Trim([char[]]@('"'))
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        return $false
+    }
+    try {
+        # Compare normalized literal paths without expanding environment variables.
+        # This converges duplicate spelling variants of the fixed install directory
+        # while expressions such as %LOCALAPPDATA% remain foreign.
+        return [string]::Equals(
+            (Get-NormalizedPath -Path $candidate),
+            $Expected,
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    catch {
+        return $false
+    }
 }
 
 function Resolve-UserPathUpdate {
@@ -101,24 +114,21 @@ function Resolve-UserPathUpdate {
         return [pscustomobject]@{ Changed = $true; Present = $true; Value = $updated }
     }
 
-    # Remove one exact literal entry only. Installation appends one entry, so the
-    # last literal match is the installer-owned candidate if duplicates exist.
-    # Other identical entries may belong to the user or another tool and remain.
-    $removeIndex = -1
-    for ($index = $entries.Count - 1; $index -ge 0; $index -= 1) {
-        if (Test-OwnedPathEntry -Entry ([string]$entries[$index]) -Expected $Expected) {
-            $removeIndex = $index
-            break
-        }
-    }
-    if ($removeIndex -lt 0) {
-        return [pscustomobject]@{ Changed = $false; Present = $present; Value = $Current }
-    }
+    # The product owns complete literal convergence for its fixed install path.
+    # Remove every normalized literal spelling so uninstall leaves no dead alias.
+    # Environment expressions and unrelated entries remain untouched.
     $kept = New-Object 'Collections.Generic.List[string]'
-    for ($index = 0; $index -lt $entries.Count; $index += 1) {
-        if ($index -ne $removeIndex) {
-            [void]$kept.Add([string]$entries[$index])
+    $removed = $false
+    foreach ($entry in $entries) {
+        if (Test-OwnedPathEntry -Entry ([string]$entry) -Expected $Expected) {
+            $removed = $true
         }
+        else {
+            [void]$kept.Add([string]$entry)
+        }
+    }
+    if (-not $removed) {
+        return [pscustomobject]@{ Changed = $false; Present = $present; Value = $Current }
     }
     $remaining = [string[]]$kept
     $remainingPresent = @($remaining | Where-Object {

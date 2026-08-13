@@ -798,7 +798,7 @@ func TestInstallerBuildValidatorOwnsPowerShell51InputChecks(t *testing.T) {
 	}
 }
 
-func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
+func TestInstallerPathHelperConvergesEquivalentLiteralPathTokens(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "path.ps1"))
 	if err != nil {
 		t.Fatal(err)
@@ -811,7 +811,7 @@ func TestInstallerPathHelperOwnsOnlyExactPathTokens(t *testing.T) {
 		`Test-FullyQualifiedWindowsPath`,
 		`Test-EffectivePathEntry`,
 		`Test-OwnedPathEntry`,
-		`[StringComparison]::Ordinal`,
+		`[StringComparison]::OrdinalIgnoreCase`,
 		`Resolve-UserPathUpdate`,
 		`Get-UserPathSnapshot`,
 		`Test-SnapshotEqual`,
@@ -867,13 +867,15 @@ $removed = Resolve-UserPathUpdate -Current $added.Value -Expected $target -Reque
 if (-not $removed.Changed -or $removed.Value -cne 'C:\Tools;') { throw 'Literal duplicate cleanup did not converge PATH.' }
 Assert-Update -Current $target -Action Add -Changed $false -Present $true -Value $target
 Assert-Update -Current ('"' + $target.ToUpperInvariant() + '"') -Action Add -Changed $false -Present $true -Value ('"' + $target.ToUpperInvariant() + '"')
-Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Present $true -Value $target
+Assert-Update -Current "$target;$target" -Action Remove -Changed $true -Present $false -Value ''
 $upperEquivalent = $target.ToUpperInvariant()
-Assert-Update -Current "$upperEquivalent;$target" -Action Remove -Changed $true -Present $true -Value $upperEquivalent
-Assert-Update -Current "$target;$upperEquivalent" -Action Remove -Changed $true -Present $true -Value $upperEquivalent
+Assert-Update -Current "$upperEquivalent;$target" -Action Remove -Changed $true -Present $false -Value ''
+Assert-Update -Current "$target;$upperEquivalent" -Action Remove -Changed $true -Present $false -Value ''
 $equivalent = '"' + $target.ToUpperInvariant() + '"'
-Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Present $true -Value $equivalent
-Assert-Update -Current "$target;$equivalent" -Action Remove -Changed $true -Present $true -Value $equivalent
+Assert-Update -Current "$equivalent;$target" -Action Remove -Changed $true -Present $false -Value ''
+Assert-Update -Current "$target;$equivalent" -Action Remove -Changed $true -Present $false -Value ''
+$slashEquivalent = $target.Replace('\', '/') + '/'
+Assert-Update -Current "$target;$slashEquivalent" -Action Remove -Changed $true -Present $false -Value ''
 Assert-Update -Current 'C:\Tools' -Action Remove -Changed $false -Present $false -Value 'C:\Tools'
 $expandedTarget = Join-Path $env:LOCALAPPDATA 'Programs\Herdr Sandbox'
 $target = $expandedTarget
@@ -884,10 +886,10 @@ $target = 'C:\Users\Example%%Profile\AppData\Local\Programs\Herdr Sandbox'
 Assert-Update -Current $target -Action Remove -Changed $true -Present $false -Value ''
 $composed = 'C:\Temp\Caf' + [char]0x00e9
 $decomposed = 'C:\Temp\Cafe' + [char]0x0301
-if (Test-OwnedPathEntry -Entry $decomposed -Expected $composed) { throw 'Unicode-normalized text was incorrectly treated as raw ordinal ownership.' }
+if (Test-OwnedPathEntry -Entry $decomposed -Expected $composed) { throw 'Unicode-normalized text was incorrectly treated as the same literal path.' }
 $unicodeRemoved = Resolve-UserPathUpdate -Current ($composed + ';' + $decomposed) -Expected $composed -RequestedAction Remove -ExpandVariables $false
 if (-not $unicodeRemoved.Changed -or -not [string]::Equals([string]$unicodeRemoved.Value, $decomposed, [StringComparison]::Ordinal)) {
-    throw 'Raw ordinal PATH removal did not preserve the differently represented Unicode entry.'
+    throw 'Literal PATH convergence did not preserve the differently represented Unicode entry.'
 }
 `, quote(pathHelper))
 	scriptPath := filepath.Join(t.TempDir(), "path-ownership.ps1")
