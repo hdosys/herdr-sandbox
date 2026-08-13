@@ -17,4 +17,10 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
-None.
+- **Status: proposed. Centralize extracted PowerShell function test setup.**
+  Evidence: adding the shared tool-version helper left two focused Windows
+  PowerShell 5.1 harnesses with incomplete manually listed dependencies; only the
+  first full repository gate exposed both omissions. Add one test helper that
+  extracts an explicit production function set and initializes shared provisioning
+  context consistently. Expected benefit: dependency drift fails in the focused
+  test that owns the changed function and avoids repeated harness repair.
