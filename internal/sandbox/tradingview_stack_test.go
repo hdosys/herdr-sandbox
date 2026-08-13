@@ -85,11 +85,14 @@ $tokens = $null
 $errors = $null
 $baseAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 $metadataValue = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-ProvisioningMetadataValue' }, $true)
+$toolVersion = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-ProvisioningToolVersion' }, $true)
 $stackAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 $resolver = $stackAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-TradingViewDesktopPortableMetadata' }, $true)
-if ($null -eq $metadataValue -or $null -eq $resolver) { throw 'TradingView metadata functions are missing.' }
+if ($null -eq $metadataValue -or $null -eq $toolVersion -or $null -eq $resolver) { throw 'TradingView metadata functions are missing.' }
 Invoke-Expression $metadataValue.Extent.Text
+Invoke-Expression $toolVersion.Extent.Text
 Invoke-Expression $resolver.Extent.Text
+$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
 $script:searchCount = 0
 $script:manifestContent = @'
 PackageIdentifier: TradingView.TradingViewDesktop

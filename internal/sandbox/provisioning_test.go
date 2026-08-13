@@ -1101,6 +1101,10 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 	if !strings.Contains(rust, "-Id 'Rustlang.Rustup'") || !strings.Contains(rust, "Install-StackVisualStudioBuildTools") {
 		t.Fatal("Rust stack lost rustup or Visual Studio ownership")
 	}
+	if !strings.Contains(rust, "Get-ProvisioningToolVersion -Tool 'rust-toolchain'") ||
+		strings.Contains(rust, "Get-ProvisioningToolVersion -Tool 'Rustlang.Rustup' -Requested $Toolchain") {
+		t.Fatal("Rust stack does not keep the Rust toolchain channel separate from the rustup package version")
+	}
 	base := readDefaultBaseProvisioning(t)
 	dotSource := strings.Index(base, ". $stackProvisioning")
 	userCall := strings.Index(base, "& $userProvisioning.FullName")
@@ -1455,11 +1459,12 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Confirm-ProvisioningWinGetReadback', 'Install-ProvisioningOnlineWinGetPackage')) {
+foreach ($name in @('Get-ProvisioningToolVersion', 'Confirm-ProvisioningWinGetReadback', 'Install-ProvisioningOnlineWinGetPackage')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing online WinGet function: $name" }
     Invoke-Expression $definition.Extent.Text
 }
+$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
 $script:searchCalls = 0
 $script:installArguments = @()
 $script:installCalls = 0
@@ -1603,6 +1608,9 @@ func TestDefaultBaseConsumesOneResolvedWinGetPackagePlan(t *testing.T) {
 		"function Complete-ProvisioningNativeGroup",
 		"function Stop-ProvisioningNativeGroup",
 		"function Read-ProvisioningPackagePlan",
+		"function Read-ProvisioningToolVersionPlan",
+		"function Get-ProvisioningToolVersion",
+		"function Get-ProvisioningToolSeries",
 		"function Test-ProvisioningPackageEnabled",
 		"function Get-ProvisioningPackageVersion",
 		"function Assert-ProvisioningVulkanDevice",
@@ -1705,6 +1713,55 @@ if ($accepted) { throw 'Package plan without Core PowerShell was accepted.' }
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("package-plan reader regression: %v: %s", err, output)
+	}
+}
+
+func TestBaseToolVersionPlanConvergesRequestsInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	root := t.TempDir()
+	basePath := filepath.Join(root, baseProvisioningName)
+	if err := os.WriteFile(basePath, []byte(readDefaultBaseProvisioning(t)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(root, toolVersionPlanFileName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('Read-ProvisioningToolVersionPlan','Get-ProvisioningToolVersion','Get-ProvisioningToolSeries')) {
+    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing tool-plan function: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$path = '%s'
+$utf8 = New-Object Text.UTF8Encoding($false)
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","owners":["project alpha (go)","project beta (go)"]},{"tool":"Python","version":"","series":"3.13","owners":["project alpha (python)"]},{"tool":"zig.zig","version":"","series":"","owners":["project alpha (zig)","project beta (zig)"]}]}', $utf8)
+$global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $path
+if ((Get-ProvisioningToolVersion -Tool 'GoLang.Go') -cne '1.26.5' -or
+    (Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested '1.26.5') -cne '1.26.5' -or
+    (Get-ProvisioningToolSeries -Tool 'Python') -cne '3.13') { throw 'Resolved exact tool version was not reused.' }
+if ((Get-ProvisioningToolVersion -Tool 'zig.zig') -cne '') { throw 'Latest tool was prematurely concretized.' }
+if ((Get-ProvisioningToolVersion -Tool 'zig.zig' -Requested '0.15.2') -cne '0.15.2' -or
+    (Get-ProvisioningToolVersion -Tool 'zig.zig') -cne '0.15.2') { throw 'Latest tool version was not concretized once.' }
+$accepted = $false
+try { $null = Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested '1.26.4'; $accepted = $true } catch { }
+if ($accepted) { throw 'Conflicting post-preflight tool version was accepted.' }
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","owners":["project alpha (go)"],"extra":true}]}', $utf8)
+$accepted = $false
+try { $null = Read-ProvisioningToolVersionPlan -Path $path; $accepted = $true } catch { }
+if ($accepted) { throw 'Tool version plan with an unknown nested field was accepted.' }
+`, quote(basePath), quote(planPath))
+	scriptPath := filepath.Join(root, "tool-version-plan-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("tool-version plan regression: %v: %s", err, output)
 	}
 }
 

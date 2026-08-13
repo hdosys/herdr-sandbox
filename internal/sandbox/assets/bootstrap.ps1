@@ -576,7 +576,8 @@ try {
     $projectProvisioningDirectory = Join-Path $provisioningDirectory 'projects'
     $workspaceManifestPath = Join-Path $provisioningDirectory 'workspaces.json'
     $packagePlanPath = Join-Path $provisioningDirectory 'winget-packages.json'
-    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $processOwner, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath)) {
+    $toolVersionPlanPath = Join-Path $provisioningDirectory 'tool-versions.json'
+    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $processOwner, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath, $toolVersionPlanPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Development provisioning input is missing: $requiredPath"
         }

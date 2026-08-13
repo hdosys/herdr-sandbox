@@ -704,6 +704,15 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 			fmt.Fprintf(output, "  - %s: %s\n", entry.Stack, entry.PackageOwner)
 		}
 	}
+	if len(plan.ToolVersions) > 0 {
+		fmt.Fprintln(output, "\nResolved stack tools")
+		for _, entry := range plan.ToolVersions {
+			fmt.Fprintf(output, "  - %s\n", entry.Tool)
+			fmt.Fprintf(output, "    Selection: %s\n", entry.Selection)
+			fmt.Fprintln(output, "    Owners:")
+			printBulletList(output, entry.Owners, "      ")
+		}
+	}
 
 	fmt.Fprintln(output, "\nFolder mounts")
 	if len(plan.Mounts) == 0 {

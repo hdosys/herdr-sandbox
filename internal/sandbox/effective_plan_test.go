@@ -64,7 +64,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		plan.StackPackages[6].PackageOwner != "Microsoft.OpenJDK.25" ||
 		plan.StackPackages[7].PackageOwner != packageNSIS ||
 		plan.StackPackages[10].PackageOwner != "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest" ||
-		plan.StackPackages[11].PackageOwner != packageUV || !plan.RequiresVisualStudio ||
+		plan.StackPackages[11].PackageOwner != packageUV || len(plan.ToolVersions) == 0 || !plan.RequiresVisualStudio ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
 	}
@@ -103,7 +103,8 @@ func TestBuildEffectivePlanInspectsGlobalStacksWithoutAWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(plan.GlobalStacks, "|") != "dotnet" || len(plan.StackPackages) != 1 ||
+	if strings.Join(plan.GlobalStacks, "|") != "dotnet" || len(plan.StackPackages) != 1 || len(plan.ToolVersions) != 1 ||
+		plan.ToolVersions[0].Tool != "Microsoft.DotNet.SDK.10" || plan.ToolVersions[0].Selection != "latest stable during provisioning" ||
 		plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" || !strings.Contains(plan.NextAction, "init") {
 		t.Fatalf("global effective plan = %#v", plan)
 	}

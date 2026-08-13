@@ -29,6 +29,11 @@ release notes remain available on the
 
 ### Changed
 
+- Built-in stack versions are now preflighted across `user.ps1` and every selected
+  project profile before fresh or retained guest mutation. Exact requests converge,
+  conflicts name all owners and stop, all-omitted tools resolve latest stable once,
+  Rust toolchain channels remain separate from the rustup package, and
+  `sandbox plan` shows the resulting selection and owners.
 - Fresh and retained `sandbox up` now use Herdr's exact unattended remote
   provisioning command as the single guest runtime, configuration validation, and
   server lifecycle owner. Sandbox no longer snapshots or copies a Herdr runtime,
@@ -145,8 +150,8 @@ release notes remain available on the
 - A disabled-by-default experimental `KhronosGroup.VulkanRT` package opt-in with
   strict physical-device verification through `vulkaninfo`.
 - An explicit virtual `herdr` project stack so official Herdr and Herdr-Win
-  checkouts can generate their maintained Windows toolchain profile—including
-  Bun, Git for Windows `sh`, and the repository-required `python3` command—with
+  checkouts can generate their maintained Windows toolchain profile, including
+  Bun, Git for Windows `sh`, and the repository-required `python3` command, with
   `herdr-sandbox init --stack herdr`.
 - Git-backed OpenCode, Claude Code, Codex, GitHub Copilot, Pi, and shared-skills
   configuration now retains tracked workflow files plus branch, remote, upstream,

@@ -36,6 +36,12 @@ type EffectiveStackPackage struct {
 	PackageOwner string
 }
 
+type EffectiveToolVersion struct {
+	Tool      string
+	Selection string
+	Owners    []string
+}
+
 // EffectivePlan is the read-only user-facing view of the configuration that a
 // later up command would consume.
 type EffectivePlan struct {
@@ -57,6 +63,7 @@ type EffectivePlan struct {
 	GlobalStacks                  []string
 	Packages                      []EffectivePackage
 	StackPackages                 []EffectiveStackPackage
+	ToolVersions                  []EffectiveToolVersion
 	Mounts                        []EffectiveMount
 	Workspaces                    []EffectiveWorkspace
 	RequiresVisualStudio          bool
@@ -73,14 +80,16 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 	}
 	workspaces := append([]workspacePlan(nil), provisioning.Workspaces...)
 	var userStacks []projectStack
+	var toolVersions []resolvedToolVersion
 	requiresVisualStudio := false
 	if userScriptExists || len(workspaces) > 0 {
-		inspected, inspectedUserStacks, err := inspectEffectivePlanScripts(ctx, provisioning, userScriptExists)
+		inspection, err := inspectEffectivePlanScripts(ctx, provisioning, userScriptExists)
 		if err != nil {
 			return EffectivePlan{}, err
 		}
-		workspaces = inspected
-		userStacks = inspectedUserStacks
+		workspaces = inspection.Workspaces
+		userStacks = inspection.UserStacks
+		toolVersions = inspection.ToolVersions
 		requirements := runPlan{Workspaces: workspaces}
 		applyWorkspaceRequirements(&requirements)
 		requiresVisualStudio = requirements.RequiresVisualStudioLayout || stacksRequireVisualStudioLayout(userStacks)
@@ -109,6 +118,17 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		PullHostGitRepositoriesOnDown: provisioning.ConfigurationSync.PullHostGitRepositoriesOnDown,
 		CodingAgents:                  codingAgentSyncNames(provisioning.CodingAgentSync),
 		RequiresVisualStudio:          requiresVisualStudio,
+	}
+	if len(toolVersions) > 0 {
+		for _, tool := range toolVersions {
+			selection := tool.Version
+			if selection == "" && tool.Series != "" {
+				selection = "latest stable in series " + tool.Series
+			} else if selection == "" {
+				selection = "latest stable during provisioning"
+			}
+			plan.ToolVersions = append(plan.ToolVersions, EffectiveToolVersion{Tool: tool.Tool, Selection: selection, Owners: append([]string(nil), tool.Owners...)})
+		}
 	}
 	for _, stack := range userStacks {
 		plan.GlobalStacks = append(plan.GlobalStacks, string(stack))
@@ -226,26 +246,26 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	}
 }
 
-func inspectEffectivePlanScripts(ctx context.Context, provisioning provisioningPlan, userScriptExists bool) ([]workspacePlan, []projectStack, error) {
+func inspectEffectivePlanScripts(ctx context.Context, provisioning provisioningPlan, userScriptExists bool) (projectProvisioningInspection, error) {
 	temporary, err := os.MkdirTemp("", "herdr-sandbox-plan-")
 	if err != nil {
-		return nil, nil, fmt.Errorf("create temporary plan inspection directory: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("create temporary plan inspection directory: %w", err)
 	}
 	defer os.RemoveAll(temporary)
 	projectsDirectory := filepath.Join(temporary, "projects")
 	if err := os.Mkdir(projectsDirectory, 0o700); err != nil {
-		return nil, nil, fmt.Errorf("create temporary project inspection directory: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("create temporary project inspection directory: %w", err)
 	}
 	userData := append([]byte(nil), defaultUserProvisioningScript...)
 	if userScriptExists {
 		userData, err = readProvisioningScript(provisioning.UserScript, "user provisioning script", maximumUserScriptSize)
 		if err != nil {
-			return nil, nil, err
+			return projectProvisioningInspection{}, err
 		}
 	}
 	userPath := filepath.Join(temporary, userProvisioningName)
 	if err := os.WriteFile(userPath, userData, 0o600); err != nil {
-		return nil, nil, fmt.Errorf("write temporary user inspection input: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("write temporary user inspection input: %w", err)
 	}
 	for _, workspace := range provisioning.Workspaces {
 		if workspace.ProvisioningPath == "" {
@@ -253,20 +273,20 @@ func inspectEffectivePlanScripts(ctx context.Context, provisioning provisioningP
 		}
 		data, err := readProvisioningScript(workspace.ProvisioningPath, "project provisioning script", maximumProjectScriptSize)
 		if err != nil {
-			return nil, nil, err
+			return projectProvisioningInspection{}, err
 		}
 		if err := os.WriteFile(filepath.Join(projectsDirectory, workspace.Name+".ps1"), data, 0o600); err != nil {
-			return nil, nil, fmt.Errorf("write temporary project inspection input: %w", err)
+			return projectProvisioningInspection{}, fmt.Errorf("write temporary project inspection input: %w", err)
 		}
 	}
-	inspected, userStacks, err := inspectProjectProvisioningPlan(ctx, temporary, userPath, projectsDirectory, provisioning.Workspaces)
+	inspection, err := inspectProjectProvisioningPlan(ctx, temporary, userPath, projectsDirectory, provisioning.Workspaces)
 	if err != nil {
-		return nil, nil, err
+		return projectProvisioningInspection{}, err
 	}
 	if err := os.RemoveAll(temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, fmt.Errorf("remove temporary plan inspection directory: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("remove temporary plan inspection directory: %w", err)
 	}
-	return inspected, userStacks, nil
+	return inspection, nil
 }
 
 func inspectEffectiveReadyChanges(ctx context.Context, provisioning provisioningPlan) ([]string, error) {

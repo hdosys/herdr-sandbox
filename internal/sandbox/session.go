@@ -84,6 +84,7 @@ type provisioningSnapshot struct {
 	ProcessOwnerPath           string
 	ProjectScriptsDirectory    string
 	PackagePlanPath            string
+	ToolVersionPlanPath        string
 	WorkspaceManifestPath      string
 	Workspaces                 []workspacePlan
 	ActiveWorkspace            string
@@ -740,9 +741,19 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 			return provisioningSnapshot{}, fmt.Errorf("write project provisioning snapshot %s: %w", name, writeErr)
 		}
 	}
-	workspaces, userStacks, err := inspectProjectProvisioningPlan(ctx, inspectionDirectory, filepath.Join(snapshotDirectory, userProvisioningName), projectScriptsDirectory, provisioning.Workspaces)
+	inspection, err := inspectProjectProvisioningPlan(ctx, inspectionDirectory, filepath.Join(snapshotDirectory, userProvisioningName), projectScriptsDirectory, provisioning.Workspaces)
 	if err != nil {
 		return provisioningSnapshot{}, err
+	}
+	workspaces := inspection.Workspaces
+	userStacks := inspection.UserStacks
+	toolPlanData, err := encodeToolVersionPlan(inspection.ToolVersions)
+	if err != nil {
+		return provisioningSnapshot{}, err
+	}
+	toolVersionPlanPath := filepath.Join(snapshotDirectory, toolVersionPlanFileName)
+	if err := os.WriteFile(toolVersionPlanPath, toolPlanData, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write tool version plan: %w", err)
 	}
 	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
 		return provisioningSnapshot{}, err
@@ -765,6 +776,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		ProcessOwnerPath:           processOwnerPath,
 		ProjectScriptsDirectory:    projectScriptsDirectory,
 		PackagePlanPath:            packagePlanPath,
+		ToolVersionPlanPath:        toolVersionPlanPath,
 		WorkspaceManifestPath:      workspaceManifestPath,
 		Workspaces:                 workspaces,
 		ActiveWorkspace:            requirements.ActiveWorkspace,

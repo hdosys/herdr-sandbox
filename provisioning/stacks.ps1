@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 15
+# herdr-sandbox-stacks-contract: 16
 
 function Get-StackWebResponseText {
     param(
@@ -1519,6 +1519,7 @@ function Install-DotNetStack {
     )
 
     $packageID = 'Microsoft.DotNet.SDK.10'
+    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
     $metadata = Get-ProvisioningWinGetMetadata -Role '.NET 10 SDK' -Id $packageID -Version $Version `
         -InstallerType 'burn'
     if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Version -notmatch '^10\.0\.(?:0|[1-9][0-9]*)$') {
@@ -1610,6 +1611,7 @@ function Install-JavaStack {
     )
 
     $packageID = 'Microsoft.OpenJDK.25'
+    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
     $metadata = Get-ProvisioningWinGetMetadata -Role 'Microsoft OpenJDK 25' -Id $packageID `
         -Version $Version -InstallerType 'wix' -Scope 'machine'
     if ([string]$metadata.Id -cne $packageID -or
@@ -1723,6 +1725,7 @@ function Install-NSISStack {
     )
 
     $packageID = 'NSIS.NSIS'
+    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
     $metadata = Get-ProvisioningWinGetMetadata -Role 'NSIS' -Id $packageID -Version $Version `
         -Architecture 'x86' -InstallerType 'nullsoft' -Scope 'machine' -PayloadExtension '.exe'
     if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Architecture -cne 'x86' -or
@@ -1807,6 +1810,7 @@ function Install-GoStack {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested $Version
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectDirectory 'go.mod') -PathType Leaf)) {
         throw "Go project go.mod is missing from mapped project: $ProjectDirectory"
     }
@@ -1830,6 +1834,7 @@ function Install-NodeRuntime {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $Version
     Write-Output 'Installing Node.js LTS...'
     Install-ProvisioningWinGetPackage -Role 'Node.js LTS' -Id 'OpenJS.NodeJS.LTS' -Version $Version `
         -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
@@ -1865,6 +1870,7 @@ function Install-PlaywrightChromium {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'playwright' -Requested $Version
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
@@ -1900,6 +1906,7 @@ function Install-PlaywrightChromium {
             throw "Playwright latest version resolution returned an invalid stable version: $resolvedVersion"
         }
         $Version = [string]$resolvedVersion
+        $null = Get-ProvisioningToolVersion -Tool 'playwright' -Requested $Version
     }
 
     $toolRoot = Join-Path $playwrightRoot $Version
@@ -2021,6 +2028,7 @@ function Install-PlaywrightCLIStack {
         [string]$Version = '0.1.17'
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool '@playwright/cli' -Requested $Version
     Install-NodeRuntime -Version $NodeVersion
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
@@ -2161,6 +2169,7 @@ function Get-TradingViewDesktopPortableMetadata {
     )
 
     $packageID = 'TradingView.TradingViewDesktop'
+    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
     $resolvedVersion = $Version
     if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
         $packageMatches = @(Search-ProvisioningWinGetPackages -Role 'TradingView Desktop' `
@@ -2171,6 +2180,7 @@ function Get-TradingViewDesktopPortableMetadata {
         }
         $resolvedVersion = [string]$packageMatches[0].Version
     }
+    $null = Get-ProvisioningToolVersion -Tool $packageID -Requested $resolvedVersion
 
     $manifestName = 'TradingView.TradingViewDesktop.installer.yaml'
     $manifestURL = 'https://raw.githubusercontent.com/microsoft/winget-pkgs/master/' +
@@ -2241,6 +2251,9 @@ function Install-TradingViewStack {
         [string]$DesktopVersion = ''
     )
 
+    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $NodeVersion
+    $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
+    $DesktopVersion = Get-ProvisioningToolVersion -Tool 'TradingView.TradingViewDesktop' -Requested $DesktopVersion
     $desktopPackageID = 'TradingView.TradingViewDesktop'
     $desktopMetadata = Get-TradingViewDesktopPortableMetadata -Version $DesktopVersion
     if ([string]$desktopMetadata.Id -cne $desktopPackageID -or
@@ -2308,6 +2321,7 @@ function Install-TradingViewStack {
             throw "TVControl latest version resolution returned an invalid stable version: $resolvedVersion"
         }
         $TVControlVersion = [string]$resolvedVersion
+        $null = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
     }
 
     $toolRoot = $tvControlRoot
@@ -2473,9 +2487,13 @@ function Install-PythonStack {
         [string]$Version = ''
     )
 
+    $Series = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
+    $Version = Get-ProvisioningToolVersion -Tool 'Python' -Requested $Version
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
     $Series = [string]$pythonSelection.Series
     $Version = [string]$pythonSelection.Version
+    $null = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
+    $null = Get-ProvisioningToolVersion -Tool 'Python' -Requested $Version
     $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
     $pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'
     $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
@@ -2558,6 +2576,7 @@ function Install-Uv {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested $Version
     Write-Output 'Installing uv...'
     Install-ProvisioningWinGetPackage -Role 'uv' -Id 'astral-sh.uv' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'uv.exe'
@@ -2616,6 +2635,7 @@ function Install-ZigStack {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'zig.zig' -Requested $Version
     Write-Output 'Installing Zig...'
     Install-ProvisioningWinGetPackage -Role 'Zig' -Id 'zig.zig' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'zig.exe' `
@@ -2647,6 +2667,7 @@ function Install-RustMSVCStack {
         [string]$Toolchain = ''
     )
 
+    $Toolchain = Get-ProvisioningToolVersion -Tool 'rust-toolchain' -Requested $Toolchain
     if (-not (Test-Path -LiteralPath $ProjectDirectory -PathType Container)) {
         throw "Rust project directory is missing: $ProjectDirectory"
     }
@@ -2675,6 +2696,7 @@ function Install-RustMSVCStack {
 $rustTriple = 'x86_64-pc-windows-msvc'
 $rustDistribution = Resolve-StackRustDistribution -RequestedChannel $requestedChannel -Target $rustTriple
 $Toolchain = [string]$rustDistribution.Toolchain
+$null = Get-ProvisioningToolVersion -Tool 'rust-toolchain' -Requested $Toolchain
 $rustToolchain = "$Toolchain-$rustTriple"
 Write-Output "Installing Rust $Toolchain for MSVC..."
 $env:RUSTUP_HOME = 'C:\HerdrSandbox\toolchains\rustup'
@@ -2855,6 +2877,7 @@ function Install-CargoNextest {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'nextest.cargo-nextest' -Requested $Version
     Write-Output 'Installing Cargo Nextest...'
     Install-ProvisioningWinGetPackage -Role 'Cargo Nextest' -Id 'nextest.cargo-nextest' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'cargo-nextest.exe'
@@ -2875,6 +2898,7 @@ function Install-Just {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'Casey.Just' -Requested $Version
     Write-Output 'Installing Just...'
     Install-ProvisioningWinGetPackage -Role 'Just' -Id 'Casey.Just' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'just.exe'
@@ -2895,6 +2919,7 @@ function Install-BunStack {
         [string]$Version = ''
     )
 
+    $Version = Get-ProvisioningToolVersion -Tool 'Oven-sh.Bun' -Requested $Version
     Write-Output 'Installing Bun...'
     Install-ProvisioningWinGetPackage -Role 'Bun' -Id 'Oven-sh.Bun' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'bun.exe'
@@ -3140,7 +3165,8 @@ function Install-HandyStack {
         throw "Handy Cargo package identity is unexpected: $cargoPath"
     }
 
-    $cmakeMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy CMake' -Id 'Kitware.CMake' `
+    $cmakeVersionRequest = Get-ProvisioningToolVersion -Tool 'Kitware.CMake'
+    $cmakeMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy CMake' -Id 'Kitware.CMake' -Version $cmakeVersionRequest `
         -InstallerType 'wix' -Scope 'machine'
     if ([string]$cmakeMetadata.Id -cne 'Kitware.CMake' -or
         [string]$cmakeMetadata.Version -notmatch '^\d+\.\d+\.\d+$') {
@@ -3185,8 +3211,9 @@ function Install-HandyStack {
             -FilePath $command -ArgumentList @('--version') | Out-Null
     }
 
+    $webViewVersionRequest = Get-ProvisioningToolVersion -Tool 'Microsoft.EdgeWebView2Runtime'
     $webViewMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy WebView2 Runtime' `
-        -Id 'Microsoft.EdgeWebView2Runtime' -InstallerType 'exe' -Scope 'machine'
+        -Id 'Microsoft.EdgeWebView2Runtime' -Version $webViewVersionRequest -InstallerType 'exe' -Scope 'machine'
     try {
         $minimumWebViewVersion = [Version][string]$webViewMetadata.Version
     } catch {

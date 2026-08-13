@@ -10,15 +10,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
 const (
-	projectProvisioningPlanSchema        = 2
+	projectProvisioningPlanSchema        = 3
 	projectProvisioningPlanScriptName    = "inspect-project-provisioning.ps1"
 	projectProvisioningPlanTimeout       = 30 * time.Second
 	maximumProjectProvisioningPlanOutput = 64 * 1024
+	toolVersionPlanFileName              = "tool-versions.json"
 )
 
 //go:embed assets/project-provisioning-plan.ps1
@@ -50,13 +53,68 @@ const (
 type projectProvisioningPlan struct {
 	SchemaVersion int                            `json:"schemaVersion"`
 	UserStacks    []projectStack                 `json:"userStacks"`
+	UserTools     []projectToolRequirement       `json:"userTools"`
 	Projects      []projectProvisioningPlanEntry `json:"projects"`
 }
 
 type projectProvisioningPlanEntry struct {
-	Name   string         `json:"name"`
-	Stacks []projectStack `json:"stacks"`
+	Name   string                   `json:"name"`
+	Stacks []projectStack           `json:"stacks"`
+	Tools  []projectToolRequirement `json:"tools"`
 }
+
+type projectToolRequirement struct {
+	Tool             string `json:"tool"`
+	Version          string `json:"version"`
+	Series           string `json:"series"`
+	Source           string `json:"source"`
+	ProjectDirectory string `json:"projectDirectory"`
+}
+
+type resolvedToolVersion struct {
+	Tool    string   `json:"tool"`
+	Version string   `json:"version"`
+	Series  string   `json:"series"`
+	Owners  []string `json:"owners"`
+}
+
+type projectProvisioningInspection struct {
+	Workspaces   []workspacePlan
+	UserStacks   []projectStack
+	ToolVersions []resolvedToolVersion
+}
+
+type toolVersionPlan struct {
+	SchemaVersion int                   `json:"schemaVersion"`
+	Tools         []resolvedToolVersion `json:"tools"`
+}
+
+var (
+	projectToolTokenPattern = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9._+@/-]{0,127}$`)
+	projectToolValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+	projectToolNames        = map[string]string{
+		"@ferroxlabs/tvcontrol":          "@ferroxlabs/tvcontrol",
+		"@playwright/cli":                "@playwright/cli",
+		"astral-sh.uv":                   "astral-sh.uv",
+		"casey.just":                     "Casey.Just",
+		"golang.go":                      "GoLang.Go",
+		"khronosgroup.vulkansdk":         "KhronosGroup.VulkanSDK",
+		"kitware.cmake":                  "Kitware.CMake",
+		"microsoft.dotnet.sdk.10":        "Microsoft.DotNet.SDK.10",
+		"microsoft.edgewebview2runtime":  "Microsoft.EdgeWebView2Runtime",
+		"microsoft.openjdk.25":           "Microsoft.OpenJDK.25",
+		"nextest.cargo-nextest":          "nextest.cargo-nextest",
+		"nsis.nsis":                      "NSIS.NSIS",
+		"openjs.nodejs.lts":              "OpenJS.NodeJS.LTS",
+		"oven-sh.bun":                    "Oven-sh.Bun",
+		"playwright":                     "playwright",
+		"python":                         "Python",
+		"rustlang.rustup":                "Rustlang.Rustup",
+		"rust-toolchain":                 "rust-toolchain",
+		"tradingview.tradingviewdesktop": "TradingView.TradingViewDesktop",
+		"zig.zig":                        "zig.zig",
+	}
+)
 
 func (stack projectStack) valid() bool {
 	switch stack {
@@ -67,20 +125,20 @@ func (stack projectStack) valid() bool {
 	}
 }
 
-func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScript, projectsDirectory string, workspaces []workspacePlan) ([]workspacePlan, []projectStack, error) {
+func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScript, projectsDirectory string, workspaces []workspacePlan) (projectProvisioningInspection, error) {
 	if !filepath.IsAbs(runDirectory) || !filepath.IsAbs(userScript) || !filepath.IsAbs(projectsDirectory) {
-		return nil, nil, errors.New("provisioning inspection requires absolute paths")
+		return projectProvisioningInspection{}, errors.New("provisioning inspection requires absolute paths")
 	}
 	if len(workspaces) > 16 {
-		return nil, nil, fmt.Errorf("project provisioning inspection workspace count is invalid: %d", len(workspaces))
+		return projectProvisioningInspection{}, fmt.Errorf("project provisioning inspection workspace count is invalid: %d", len(workspaces))
 	}
 	powerShell, err := windowsPowerShellExecutable()
 	if err != nil {
-		return nil, nil, err
+		return projectProvisioningInspection{}, err
 	}
 	scriptPath := filepath.Join(runDirectory, projectProvisioningPlanScriptName)
 	if err := os.WriteFile(scriptPath, projectProvisioningPlanScript, 0o600); err != nil {
-		return nil, nil, fmt.Errorf("write provisioning inspection script: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("write provisioning inspection script: %w", err)
 	}
 
 	inspectionContext, cancel := context.WithTimeout(ctx, projectProvisioningPlanTimeout)
@@ -95,29 +153,64 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScrip
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
 		if inspectionContext.Err() != nil {
-			return nil, nil, fmt.Errorf("inspect provisioning scripts: %w", inspectionContext.Err())
+			return projectProvisioningInspection{}, fmt.Errorf("inspect provisioning scripts: %w", inspectionContext.Err())
 		}
-		return nil, nil, fmt.Errorf("inspect provisioning scripts: %w: %s", err, boundedText(stderr.Bytes()))
+		return projectProvisioningInspection{}, fmt.Errorf("inspect provisioning scripts: %w: %s", err, boundedText(stderr.Bytes()))
 	}
 	if stdout.Len() == 0 || stdout.Len() > maximumProjectProvisioningPlanOutput {
-		return nil, nil, fmt.Errorf("provisioning inspection output size is invalid: %d", stdout.Len())
+		return projectProvisioningInspection{}, fmt.Errorf("provisioning inspection output size is invalid: %d", stdout.Len())
 	}
 
 	return decodeProjectProvisioningPlan(stdout.Bytes(), workspaces)
 }
 
-func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]workspacePlan, []projectStack, error) {
-	if err := validateExactJSONObjectShape(data, "provisioning inspection", []string{"schemaVersion", "userStacks", "projects"}); err != nil {
-		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
+func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) (projectProvisioningInspection, error) {
+	if err := validateExactJSONObjectShape(data, "provisioning inspection", []string{"schemaVersion", "userStacks", "userTools", "projects"}); err != nil {
+		return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
+	}
+	var raw struct {
+		UserTools []json.RawMessage `json:"userTools"`
+		Projects  []struct {
+			Name   string            `json:"name"`
+			Stacks []json.RawMessage `json:"stacks"`
+			Tools  []json.RawMessage `json:"tools"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection raw fields: %w", err)
+	}
+	for index, tool := range raw.UserTools {
+		if err := validateExactJSONObjectShape(tool, fmt.Sprintf("userTools[%d]", index), []string{"tool", "version", "series", "source", "projectDirectory"}); err != nil {
+			return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
+		}
+	}
+	var rawTop struct {
+		Projects []json.RawMessage `json:"projects"`
+	}
+	if err := json.Unmarshal(data, &rawTop); err != nil {
+		return projectProvisioningInspection{}, err
+	}
+	if len(rawTop.Projects) != len(raw.Projects) {
+		return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: raw project count is invalid")
+	}
+	for projectIndex, project := range raw.Projects {
+		if err := validateExactJSONObjectShape(rawTop.Projects[projectIndex], fmt.Sprintf("project %q", project.Name), []string{"name", "stacks", "tools"}); err != nil {
+			return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
+		}
+		for index, tool := range project.Tools {
+			if err := validateExactJSONObjectShape(tool, fmt.Sprintf("project %q tools[%d]", project.Name, index), []string{"tool", "version", "series", "source", "projectDirectory"}); err != nil {
+				return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
+			}
+		}
 	}
 	var decoded projectProvisioningPlan
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
-		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return nil, nil, fmt.Errorf("decode provisioning inspection output: %w", err)
+		return projectProvisioningInspection{}, fmt.Errorf("decode provisioning inspection output: %w", err)
 	}
 	expectedProjects := 0
 	for _, workspace := range workspaces {
@@ -126,11 +219,11 @@ func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]w
 		}
 	}
 	if decoded.SchemaVersion != projectProvisioningPlanSchema || len(decoded.Projects) != expectedProjects {
-		return nil, nil, fmt.Errorf("provisioning inspection schema or project count is invalid")
+		return projectProvisioningInspection{}, fmt.Errorf("provisioning inspection schema or project count is invalid")
 	}
 	userStacks, err := validateInspectedStacks(decoded.UserStacks, "user provisioning")
 	if err != nil {
-		return nil, nil, err
+		return projectProvisioningInspection{}, err
 	}
 
 	result := append([]workspacePlan(nil), workspaces...)
@@ -143,20 +236,24 @@ func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) ([]w
 	for _, project := range decoded.Projects {
 		index, found := indexes[project.Name]
 		if !found || result[index].ProvisioningPath == "" || seenProjects[project.Name] {
-			return nil, nil, fmt.Errorf("project provisioning inspection returned unexpected or duplicate project %q", project.Name)
+			return projectProvisioningInspection{}, fmt.Errorf("project provisioning inspection returned unexpected or duplicate project %q", project.Name)
 		}
 		seenProjects[project.Name] = true
 		result[index].Stacks, err = validateInspectedStacks(project.Stacks, fmt.Sprintf("project %q", project.Name))
 		if err != nil {
-			return nil, nil, err
+			return projectProvisioningInspection{}, err
 		}
 	}
 	for _, workspace := range result {
 		if workspace.ProvisioningPath != "" && !seenProjects[workspace.Name] {
-			return nil, nil, fmt.Errorf("project provisioning inspection omitted project %q", workspace.Name)
+			return projectProvisioningInspection{}, fmt.Errorf("project provisioning inspection omitted project %q", workspace.Name)
 		}
 	}
-	return result, userStacks, nil
+	toolVersions, err := mergeProjectToolVersions(decoded.UserTools, decoded.Projects, result)
+	if err != nil {
+		return projectProvisioningInspection{}, err
+	}
+	return projectProvisioningInspection{Workspaces: result, UserStacks: userStacks, ToolVersions: toolVersions}, nil
 }
 
 func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack, error) {
@@ -170,6 +267,213 @@ func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	return result, nil
+}
+
+func mergeProjectToolVersions(userTools []projectToolRequirement, projects []projectProvisioningPlanEntry, workspaces []workspacePlan) ([]resolvedToolVersion, error) {
+	type ownedRequirement struct {
+		projectToolRequirement
+		owner string
+	}
+	owned := make([]ownedRequirement, 0, len(userTools)+len(projects)*2)
+	for _, requirement := range userTools {
+		if requirement.ProjectDirectory == "$ProjectDirectory" {
+			return nil, fmt.Errorf("user.ps1 (%s) cannot use $ProjectDirectory", requirement.Source)
+		}
+		owned = append(owned, ownedRequirement{projectToolRequirement: requirement, owner: "user.ps1 (" + requirement.Source + ")"})
+	}
+	workspaceByName := make(map[string]workspacePlan, len(workspaces))
+	for _, workspace := range workspaces {
+		workspaceByName[workspace.Name] = workspace
+	}
+	for _, project := range projects {
+		for _, requirement := range project.Tools {
+			owned = append(owned, ownedRequirement{projectToolRequirement: requirement, owner: fmt.Sprintf("project %q (%s)", project.Name, requirement.Source)})
+			if strings.EqualFold(requirement.Tool, "rust-toolchain") {
+				workspace := workspaceByName[project.Name]
+				root := requirement.ProjectDirectory
+				if root == "$ProjectDirectory" {
+					root = workspace.HostDirectory
+				} else if root != "" && !hostPathContains(workspace.HostDirectory, root) {
+					return nil, fmt.Errorf("Rust project directory for project %q must stay within its mapped workspace: %s", project.Name, root)
+				}
+				if requirement.Source == "handy" && root != "" {
+					root = filepath.Join(root, "src-tauri")
+				}
+				toolchain, found, err := readProjectRustToolchain(root)
+				if err != nil {
+					return nil, fmt.Errorf("resolve Rust toolchain for project %q: %w", project.Name, err)
+				}
+				if found {
+					owned = append(owned, ownedRequirement{projectToolRequirement: projectToolRequirement{Tool: "rust-toolchain", Version: toolchain, Source: "rust-toolchain.toml"}, owner: fmt.Sprintf("project %q (rust-toolchain.toml)", project.Name)})
+				}
+			}
+		}
+	}
+
+	type mergedTool struct {
+		name     string
+		versions map[string][]string
+		series   map[string][]string
+		owners   map[string]bool
+	}
+	merged := make(map[string]*mergedTool)
+	for _, requirement := range owned {
+		identity := strings.ToLower(requirement.Tool)
+		canonical, found := projectToolNames[identity]
+		if !found || requirement.Tool != canonical || !projectToolTokenPattern.MatchString(requirement.Tool) ||
+			(requirement.Version != "" && !projectToolValuePattern.MatchString(requirement.Version)) ||
+			(requirement.Series != "" && !projectToolValuePattern.MatchString(requirement.Series)) ||
+			requirement.Source == "" || len(requirement.Source) > 64 ||
+			(requirement.ProjectDirectory != "" && !strings.EqualFold(requirement.Tool, "rust-toolchain")) {
+			return nil, fmt.Errorf("provisioning inspection returned invalid tool requirement for %s", requirement.owner)
+		}
+		entry := merged[identity]
+		if entry == nil {
+			entry = &mergedTool{name: canonical, versions: map[string][]string{}, series: map[string][]string{}, owners: map[string]bool{}}
+			merged[identity] = entry
+		}
+		entry.owners[requirement.owner] = true
+		if requirement.Version != "" {
+			entry.versions[requirement.Version] = append(entry.versions[requirement.Version], requirement.owner)
+		}
+		if requirement.Series != "" {
+			entry.series[requirement.Series] = append(entry.series[requirement.Series], requirement.owner)
+		}
+		if identity == "python" && requirement.Version != "" {
+			parts := strings.Split(requirement.Version, ".")
+			if len(parts) < 3 {
+				return nil, fmt.Errorf("Python version %q from %s is invalid", requirement.Version, requirement.owner)
+			}
+			derived := parts[0] + "." + parts[1]
+			entry.series[derived] = append(entry.series[derived], requirement.owner)
+		}
+	}
+
+	identities := make([]string, 0, len(merged))
+	for identity := range merged {
+		identities = append(identities, identity)
+	}
+	sort.Strings(identities)
+	result := make([]resolvedToolVersion, 0, len(identities))
+	for _, identity := range identities {
+		entry := merged[identity]
+		if len(entry.versions) > 1 {
+			return nil, toolVersionConflict(entry.name, "versions", entry.versions)
+		}
+		if len(entry.series) > 1 {
+			return nil, toolVersionConflict(entry.name, "series", entry.series)
+		}
+		version := onlyRequirementValue(entry.versions)
+		series := onlyRequirementValue(entry.series)
+		owners := make([]string, 0, len(entry.owners))
+		for owner := range entry.owners {
+			owners = append(owners, owner)
+		}
+		sort.Strings(owners)
+		result = append(result, resolvedToolVersion{Tool: entry.name, Version: version, Series: series, Owners: owners})
+	}
+	return result, nil
+}
+
+func onlyRequirementValue(values map[string][]string) string {
+	for value := range values {
+		return value
+	}
+	return ""
+}
+
+func toolVersionConflict(tool, kind string, values map[string][]string) error {
+	keys := make([]string, 0, len(values))
+	for value := range values {
+		keys = append(keys, value)
+	}
+	sort.Strings(keys)
+	details := make([]string, 0, len(keys))
+	for _, value := range keys {
+		owners := append([]string(nil), values[value]...)
+		sort.Strings(owners)
+		details = append(details, fmt.Sprintf("%s by %s", value, strings.Join(owners, ", ")))
+	}
+	return fmt.Errorf("conflicting exact %s for tool %s: %s", kind, tool, strings.Join(details, "; "))
+}
+
+func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
+	if projectDirectory == "" {
+		return "", false, nil
+	}
+	if !filepath.IsAbs(projectDirectory) {
+		return "", false, fmt.Errorf("Rust project directory must be absolute: %s", projectDirectory)
+	}
+	if _, err := os.Stat(projectDirectory); errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	} else if err != nil {
+		return "", false, err
+	}
+	if err := rejectMappedPathReparsePoints(projectDirectory); err != nil {
+		return "", false, fmt.Errorf("Rust project directory is unsafe: %w", err)
+	}
+	path := filepath.Join(projectDirectory, "rust-toolchain.toml")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return "", false, err
+	}
+	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64*1024 {
+		return "", false, fmt.Errorf("Rust toolchain file must be one bounded regular non-reparse file: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err
+	}
+	matches := regexp.MustCompile(`(?m)^\s*channel\s*=\s*"([^"]+)"\s*$`).FindAllSubmatch(data, -1)
+	if len(matches) != 1 || !regexp.MustCompile(`^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`).Match(matches[0][1]) {
+		return "", false, fmt.Errorf("Rust toolchain file must declare exactly one literal x.y.z channel: %s", path)
+	}
+	return string(matches[0][1]), true, nil
+}
+
+func encodeToolVersionPlan(tools []resolvedToolVersion) ([]byte, error) {
+	if err := validateResolvedToolVersionPlan(tools); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(toolVersionPlan{SchemaVersion: 1, Tools: tools})
+	if err != nil {
+		return nil, fmt.Errorf("encode tool version plan: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+func validateResolvedToolVersionPlan(tools []resolvedToolVersion) error {
+	if len(tools) > 64 {
+		return fmt.Errorf("resolved tool version count is invalid: %d", len(tools))
+	}
+	seen := make(map[string]bool, len(tools))
+	previous := ""
+	for _, tool := range tools {
+		identity := strings.ToLower(tool.Tool)
+		canonical, found := projectToolNames[identity]
+		if !found || tool.Tool != canonical || seen[identity] || (previous != "" && previous >= identity) ||
+			(tool.Version != "" && !projectToolValuePattern.MatchString(tool.Version)) ||
+			(tool.Series != "" && !projectToolValuePattern.MatchString(tool.Series)) || len(tool.Owners) == 0 || len(tool.Owners) > 32 {
+			return fmt.Errorf("resolved tool version is invalid: %s", tool.Tool)
+		}
+		seen[identity] = true
+		previous = identity
+		lastOwner := ""
+		for _, owner := range tool.Owners {
+			if owner == "" || len(owner) > 256 || strings.ContainsAny(owner, "\r\n\x00") || (lastOwner != "" && lastOwner >= owner) {
+				return fmt.Errorf("resolved tool version owner is invalid for %s", tool.Tool)
+			}
+			lastOwner = owner
+		}
+	}
+	return nil
 }
 
 func validateGitShellPackageRequirement(workspaces []workspacePlan, userStacks []projectStack, packages wingetPackagePlan) error {

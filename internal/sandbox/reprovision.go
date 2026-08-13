@@ -580,6 +580,7 @@ func buildReprovisionArchive(snapshot provisioningSnapshot) ([]byte, error) {
 		{filepath.Join(snapshot.Directory, userProvisioningName), userProvisioningName},
 		{snapshot.ProcessOwnerPath, provisioningProcessName},
 		{snapshot.PackagePlanPath, wingetPackagePlanFileName},
+		{snapshot.ToolVersionPlanPath, toolVersionPlanFileName},
 		{snapshot.WorkspaceManifestPath, workspaceManifestName},
 	}
 	for _, workspace := range snapshot.Workspaces {
@@ -641,7 +642,7 @@ try {
     New-Item -ItemType Directory -Path $expanded -Force | Out-Null
     Expand-Archive -LiteralPath $archive -DestinationPath $expanded
     Assert-GuestArchiveTree
-    foreach ($name in @('base.ps1', 'stacks.ps1', 'user.ps1', 'provisioning-process.cs', 'winget-packages.json', 'workspaces.json')) {
+    foreach ($name in @('base.ps1', 'stacks.ps1', 'user.ps1', 'provisioning-process.cs', 'winget-packages.json', 'tool-versions.json', 'workspaces.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $expanded $name) -PathType Leaf)) {
             throw "Retained provisioning input is missing: $name"
         }

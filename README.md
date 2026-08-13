@@ -200,7 +200,7 @@ Repeat `--stack` to combine compatible individual selections from [Supported sta
 sandbox plan
 ```
 
-`plan` prints the validated configuration, workspaces, stacks, packages, agent-sync choices, fixed Sandbox settings, and differences from a ready guest. It does not create state, download packages, update tools, consume a Tailscale key, or execute project scripts.
+`plan` prints the validated configuration, workspaces, stacks, packages, resolved stack-tool selections and owners, agent-sync choices, fixed Sandbox settings, and differences from a ready guest. It does not create state, download packages, update tools, consume a Tailscale key, or execute project scripts.
 
 #### 2. Start from the project
 
@@ -316,7 +316,7 @@ Profiles call built-in functions directly so `sandbox plan` can inspect requirem
 
 - Keep calls direct, not behind aliases, dynamic invocation, or another dot-sourced file. Exact parameters and optional version selectors live in [`provisioning\stacks.ps1`](provisioning/stacks.ps1).
 - Shortcut functions are the temporary convenience compositions described under [Project shortcuts](#project-shortcuts). Prefer project-owned direct calls once a repository carries its own setup.
-- Unless a stack owns an explicit constraint, an omitted version resolves latest stable once for installation and verification. Node resolves `playwright@latest`; the separate Playwright CLI stack currently pins `@playwright/cli@0.1.17`. Exact requests never fall back silently.
+- Before either fresh or retained provisioning mutates the guest, `sandbox plan` and `sandbox up` inspect every direct built-in call in `user.ps1` and the selected project profiles. Equal exact requests are shared, one exact request overrides omitted requests for the same tool, and conflicting exact requests stop with every owner named. When every owner omits a version, the first existing resolver selects latest stable once and all later calls reuse that exact selection. Node resolves `playwright@latest`; the separate Playwright CLI stack pins `@playwright/cli@0.1.17`. Rust's `rust-toolchain.toml` channel participates separately from the `Rustlang.Rustup` package version. Version, series, and toolchain arguments involved in this preflight must be direct literals. Rust project-directory arguments may instead use the generated profile's exact `$ProjectDirectory` parameter and must remain inside that mapped workspace.
 - The `cpp` stack reuses the same host-prepared Visual Studio 2022 Build Tools and Windows 11 SDK as Rust, then exposes verified x64 C, C++, resource, linker, NMake, and MSBuild commands to every guest shell. The `java` stack installs the latest Microsoft OpenJDK 25 LTS update and exposes verified `JAVA_HOME`, `java`, and `javac` commands.
 - The `android` stack installs Google's signed command-line tools and latest stable Platform Tools under `C:\HerdrSandbox\tools\android-sdk`, sets `ANDROID_HOME`, and provides an isolated Microsoft OpenJDK 17 at `ANDROID_JAVA_HOME`. An Android-only profile also activates that JDK for terminal Gradle builds when no machine `JAVA_HOME` exists. It never replaces an existing `JAVA_HOME`, and a selected standalone Java stack remains the final Java 25 owner. Android SDK platforms, build-tools versions, Gradle wrappers, application dependencies, and project files remain project-owned.
 - The `nsis` stack installs the latest stable `NSIS.NSIS` compiler by default and proves a real installer compile. Use it alone with `sandbox init --stack nsis` for installer-only projects. This repository pins NSIS 3.12 in its own project profile because the release package task requires that exact compiler.
@@ -468,10 +468,7 @@ The command creates `config.json` only when absent and never replaces existing s
 
 </details>
 
-Package additions, removals, and version changes apply through `sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it.
-
-> [!WARNING]
-> `wingetPackages.versions` has one case-insensitive version owner per effective Base package. Project stack calls are different: `user.ps1` runs first, then project profiles run by workspace name, and their parameterized version requests are not currently merged before mutation. If two selected profiles request different exact versions of the same tool, the later call attempts its version. If one omits the version, that call resolves latest when it runs. Installer behavior can then replace, coexist, or fail. Until preflight conflict detection is added, keep each shared tool and version in one canonical profile across the selected workspaces.
+Package additions, removals, and version changes apply through `sandbox up` to an otherwise compatible ready guest; they do not require stopping and replacing it. Run `sandbox plan` first to review the Base package plan plus the resolved project-stack tools, selections, and owners without changing the host or guest.
 
 <details>
 <summary><strong>Experimental Vulkan runtime</strong></summary>

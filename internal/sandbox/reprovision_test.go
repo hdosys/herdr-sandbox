@@ -160,6 +160,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		userProvisioningName:                 "user",
 		provisioningProcessName:              "process",
 		wingetPackagePlanFileName:            "packages",
+		toolVersionPlanFileName:              "tools",
 		workspaceManifestName:                "workspaces",
 		filepath.Join("projects", "one.ps1"): "project",
 	}
@@ -173,6 +174,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		ProcessOwnerPath:        filepath.Join(directory, provisioningProcessName),
 		ProjectScriptsDirectory: projects,
 		PackagePlanPath:         filepath.Join(directory, wingetPackagePlanFileName),
+		ToolVersionPlanPath:     filepath.Join(directory, toolVersionPlanFileName),
 		WorkspaceManifestPath:   filepath.Join(directory, workspaceManifestName),
 		Workspaces: []workspacePlan{
 			{Name: "one", ProvisioningPath: filepath.Join(projects, "one.ps1")},

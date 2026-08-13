@@ -33,6 +33,7 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths",
 		"$env:HERDR_SANDBOX_STATUS_DIRECTORY = [IO.Path]::GetFullPath($StatusDirectory)",
 		"winget-packages.json",
+		"tool-versions.json",
 		"user.ps1",
 		"provisioning-process.cs",
 		"workspaces.json",

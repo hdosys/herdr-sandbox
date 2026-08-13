@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 50
+# herdr-sandbox-base-contract: 51
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -176,10 +176,107 @@ $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Provision mode requires an elevated Windows PowerShell process.'
 }
-foreach ($requiredPath in @($ProjectProvisioningDirectory, $WorkspacesDirectory, $PackagePlanPath)) {
+$ToolVersionPlanPath = Join-Path (Split-Path -Parent $PackagePlanPath) 'tool-versions.json'
+foreach ($requiredPath in @($ProjectProvisioningDirectory, $WorkspacesDirectory, $PackagePlanPath, $ToolVersionPlanPath)) {
     if ([string]::IsNullOrWhiteSpace($requiredPath)) {
         throw 'Provisioning requires ProjectProvisioningDirectory and WorkspacesDirectory.'
     }
+}
+
+function Read-ProvisioningToolVersionPlan {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [IO.Path]::IsPathRooted($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Tool version plan is missing: $Path"
+    }
+    $info = Get-Item -LiteralPath $Path -Force
+    if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $info.Length -le 0 -or $info.Length -gt 131072) {
+        throw "Tool version plan is not a bounded regular file: $Path"
+    }
+    $plan = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    $properties = @($plan.PSObject.Properties.Name | Sort-Object)
+    $tools = @($plan.tools)
+    if (($properties -join '|') -cne 'schemaVersion|tools' -or
+        $plan.schemaVersion -isnot [int] -or [int]$plan.schemaVersion -ne 1 -or $tools.Count -gt 64) {
+        throw 'Tool version plan has an unsupported contract.'
+    }
+    $versions = @{}
+    $series = @{}
+    $owners = @{}
+    $lastTool = ''
+    foreach ($entry in $tools) {
+        $entryProperties = @($entry.PSObject.Properties.Name | Sort-Object)
+        $tool = [string]$entry.tool
+        $version = [string]$entry.version
+        $family = [string]$entry.series
+        $entryOwners = @($entry.owners)
+        if (($entryProperties -join '|') -cne 'owners|series|tool|version' -or
+            $entry.tool -isnot [string] -or $entry.version -isnot [string] -or $entry.series -isnot [string] -or
+            $tool -notmatch '^[A-Za-z0-9@][A-Za-z0-9._+@/-]{0,127}$' -or
+            (-not [string]::IsNullOrEmpty($version) -and $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
+            (-not [string]::IsNullOrEmpty($family) -and $family -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
+            $entryOwners.Count -eq 0 -or $entryOwners.Count -gt 32 -or
+            (-not [string]::IsNullOrEmpty($lastTool) -and
+                [string]::Compare($lastTool, $tool, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
+            $versions.ContainsKey($tool)) {
+            throw "Tool version plan entry is invalid: $tool"
+        }
+        $lastOwner = ''
+        foreach ($owner in $entryOwners) {
+            if ($owner -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$owner) -or
+                [string]$owner -match '[\r\n\x00]' -or
+                (-not [string]::IsNullOrEmpty($lastOwner) -and
+                    [string]::Compare($lastOwner, [string]$owner, [StringComparison]::Ordinal) -ge 0)) {
+                throw "Tool version plan owner is invalid for $tool."
+            }
+            $lastOwner = [string]$owner
+        }
+        $versions[$tool] = $version
+        $series[$tool] = $family
+        $owners[$tool] = @($entryOwners)
+        $lastTool = $tool
+    }
+    return [pscustomobject]@{ Versions = $versions; Series = $series; Owners = $owners }
+}
+
+$global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
+
+function Get-ProvisioningToolVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tool,
+        [AllowEmptyString()][string]$Requested = ''
+    )
+    if (-not $global:HerdrSandboxToolVersionPlan.Versions.ContainsKey($Tool)) { return $Requested }
+    $resolved = [string]$global:HerdrSandboxToolVersionPlan.Versions[$Tool]
+    if (-not [string]::IsNullOrWhiteSpace($Requested) -and
+        -not [string]::IsNullOrWhiteSpace($resolved) -and
+        -not [string]::Equals($Requested, $resolved, [StringComparison]::Ordinal)) {
+        throw "Tool $Tool requested version $Requested after preflight resolved $resolved."
+    }
+    if ([string]::IsNullOrWhiteSpace($resolved) -and -not [string]::IsNullOrWhiteSpace($Requested)) {
+        $global:HerdrSandboxToolVersionPlan.Versions[$Tool] = $Requested
+        return $Requested
+    }
+    return $resolved
+}
+
+function Get-ProvisioningToolSeries {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tool,
+        [AllowEmptyString()][string]$Requested = ''
+    )
+    if (-not $global:HerdrSandboxToolVersionPlan.Series.ContainsKey($Tool)) { return $Requested }
+    $resolved = [string]$global:HerdrSandboxToolVersionPlan.Series[$Tool]
+    if (-not [string]::IsNullOrWhiteSpace($Requested) -and
+        -not [string]::IsNullOrWhiteSpace($resolved) -and
+        -not [string]::Equals($Requested, $resolved, [StringComparison]::Ordinal)) {
+        throw "Tool $Tool requested series $Requested after preflight resolved $resolved."
+    }
+    if ([string]::IsNullOrWhiteSpace($resolved) -and -not [string]::IsNullOrWhiteSpace($Requested)) {
+        $global:HerdrSandboxToolVersionPlan.Series[$Tool] = $Requested
+        return $Requested
+    }
+    return $resolved
 }
 
 function Read-ProvisioningPackagePlan {
@@ -829,6 +926,7 @@ function Get-ProvisioningWinGetMetadata {
     if ($extension -notin $supportedExtensions) {
         throw "$Role installer URL has an unsupported extension: $extension"
     }
+    $null = Get-ProvisioningToolVersion -Tool $Id -Requested $resolvedVersion
     return [pscustomobject]@{
         Id = $resolvedID
         Version = $resolvedVersion
@@ -1888,6 +1986,7 @@ function Install-ProvisioningOnlineWinGetPackage {
         }
         $resolvedVersion = [string]$matches[0].Version
     }
+    $null = Get-ProvisioningToolVersion -Tool $Id -Requested $resolvedVersion
     $metadata = [pscustomobject]@{ Id = $Id; Version = $resolvedVersion }
     if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata) {
         Write-Host "$Role online package already matches requested version: $resolvedVersion"

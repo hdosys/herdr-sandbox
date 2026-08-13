@@ -77,11 +77,12 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-ProvisioningMetadataValue', 'Get-ProvisioningWinGetMetadata')) {
+foreach ($name in @('Get-ProvisioningMetadataValue', 'Get-ProvisioningToolVersion', 'Get-ProvisioningWinGetMetadata')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing metadata function: $name" }
     Invoke-Expression $definition.Extent.Text
 }
+$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
 $script:arguments = @()
 function Invoke-ProvisioningNative {
     param($Role, $FilePath, [object[]]$ArgumentList)
