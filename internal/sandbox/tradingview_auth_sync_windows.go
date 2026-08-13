@@ -3,16 +3,9 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,7 +17,6 @@ import (
 
 const (
 	maximumTradingViewCookieDatabaseSize = 64 * 1024 * 1024
-	maximumTradingViewLocalStateSize     = 1024 * 1024
 	sqliteOK                             = 0
 	sqliteRow                            = 100
 	sqliteDone                           = 101
@@ -108,49 +100,23 @@ func exportTradingViewAuthentication(ctx context.Context, profile string) ([]byt
 	if err := database.validateCookieSchema(); err != nil {
 		return nil, 0, err
 	}
-	encryptedCookies, err := database.readSessionCookies(ctx)
+	cookies, err := database.readSessionCookies(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(encryptedCookies) == 0 {
+	if len(cookies) == 0 {
 		return emptyTradingViewAuthenticationPayload()
 	}
-
-	localStatePath := filepath.Join(profile, "Local State")
-	localState, err := readProvisioningScript(localStatePath, "host TradingView Local State", maximumTradingViewLocalStateSize)
-	if err != nil {
-		return nil, 0, err
-	}
-	key, err := decryptTradingViewProfileKey(localState)
-	clear(localState)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer clear(key)
-
-	authentication := tradingViewAuthentication{SchemaVersion: tradingViewAuthenticationSchema, Cookies: make([]tradingViewCookie, 0, len(encryptedCookies))}
-	for index := range encryptedCookies {
+	authentication := tradingViewAuthentication{SchemaVersion: tradingViewAuthenticationSchema, Cookies: cookies}
+	for index := range authentication.Cookies {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, err
 		}
-		cookie := encryptedCookies[index]
-		value, err := decryptTradingViewCookieValue(key, cookie.HostKey, cookie.Value, cookie.encryptedValue)
-		clear(cookie.encryptedValue)
-		if err != nil {
+		if err := validateTradingViewCookie(authentication.Cookies[index]); err != nil {
 			return nil, 0, err
 		}
-		cookie.Value = value
-		if err := validateTradingViewCookie(cookie.tradingViewCookie); err != nil {
-			return nil, 0, err
-		}
-		authentication.Cookies = append(authentication.Cookies, cookie.tradingViewCookie)
 	}
 	return encodeTradingViewAuthentication(authentication)
-}
-
-type encryptedTradingViewCookie struct {
-	tradingViewCookie
-	encryptedValue []byte
 }
 
 func boundedTradingViewSourceFile(path string, maximum int64) (os.FileInfo, error) {
@@ -169,65 +135,6 @@ func boundedTradingViewSourceFile(path string, maximum int64) (os.FileInfo, erro
 		return nil, err
 	}
 	return info, nil
-}
-
-func decryptTradingViewProfileKey(localState []byte) ([]byte, error) {
-	var state struct {
-		OSCrypt struct {
-			EncryptedKey string `json:"encrypted_key"`
-		} `json:"os_crypt"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(localState))
-	if err := decoder.Decode(&state); err != nil {
-		return nil, errors.New("decode host TradingView Local State")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, errors.New("decode host TradingView Local State: trailing JSON data")
-	}
-	protected, err := base64.StdEncoding.DecodeString(state.OSCrypt.EncryptedKey)
-	if err != nil || len(protected) <= len("DPAPI") || !bytes.Equal(protected[:len("DPAPI")], []byte("DPAPI")) {
-		clear(protected)
-		return nil, errors.New("host TradingView profile key has an unsupported format")
-	}
-	key, err := unprotectLocalData(protected[len("DPAPI"):])
-	clear(protected)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt host TradingView profile key: %w", err)
-	}
-	if len(key) != 32 {
-		clear(key)
-		return nil, errors.New("host TradingView profile key has an unsupported length")
-	}
-	return key, nil
-}
-
-func decryptTradingViewCookieValue(key []byte, hostKey, plaintext string, encrypted []byte) (string, error) {
-	if plaintext != "" {
-		return "", errors.New("host TradingView session cookie is not encrypted")
-	}
-	if len(encrypted) < len("v10")+12+16 || !bytes.Equal(encrypted[:len("v10")], []byte("v10")) {
-		return "", errors.New("host TradingView session cookie encryption is unsupported")
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", errors.New("initialize host TradingView session decryption")
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", errors.New("initialize host TradingView authenticated decryption")
-	}
-	nonceStart := len("v10")
-	nonceEnd := nonceStart + gcm.NonceSize()
-	decrypted, err := gcm.Open(nil, encrypted[nonceStart:nonceEnd], encrypted[nonceEnd:], nil)
-	if err != nil {
-		return "", errors.New("decrypt host TradingView session cookie")
-	}
-	defer clear(decrypted)
-	domainHash := sha256.Sum256([]byte(hostKey))
-	if len(decrypted) <= len(domainHash) || !bytes.Equal(decrypted[:len(domainHash)], domainHash[:]) {
-		return "", errors.New("host TradingView session cookie domain binding is invalid")
-	}
-	return string(decrypted[len(domainHash):]), nil
 }
 
 func openTradingViewSQLiteReadOnly(path string) (*tradingViewSQLiteDatabase, error) {
@@ -321,19 +228,19 @@ func (database *tradingViewSQLiteDatabase) readOneText(query string) (string, bo
 	return value, true, nil
 }
 
-func (database *tradingViewSQLiteDatabase) readSessionCookies(ctx context.Context) ([]encryptedTradingViewCookie, error) {
+func (database *tradingViewSQLiteDatabase) readSessionCookies(ctx context.Context) ([]tradingViewCookie, error) {
 	const query = `SELECT creation_utc, host_key, top_frame_site_key, name, value, encrypted_value, path,
 expires_utc, is_secure, is_httponly, last_access_utc, has_expires, is_persistent, priority,
 samesite, source_scheme, source_port, last_update_utc, source_type, has_cross_site_ancestor
-FROM cookies WHERE name='sessionid' AND top_frame_site_key='' AND has_cross_site_ancestor=0
+FROM cookies WHERE (name='sessionid' OR name='sessionid_sign') AND top_frame_site_key='' AND has_cross_site_ancestor=1
 AND (lower(host_key)='tradingview.com' OR lower(host_key)='.tradingview.com' OR lower(host_key) LIKE '%.tradingview.com')
-ORDER BY lower(host_key), path, source_scheme, source_port`
+ORDER BY lower(host_key), name, path, source_scheme, source_port`
 	statement, err := database.prepare(query)
 	if err != nil {
 		return nil, err
 	}
 	defer sqliteFinalize.Call(statement)
-	cookies := []encryptedTradingViewCookie{}
+	cookies := []tradingViewCookie{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -357,7 +264,7 @@ ORDER BY lower(host_key), path, source_scheme, source_port`
 	}
 }
 
-func readTradingViewCookieRow(statement uintptr) (encryptedTradingViewCookie, error) {
+func readTradingViewCookieRow(statement uintptr) (tradingViewCookie, error) {
 	expectedTypes := []int{
 		sqliteInteger, sqliteText, sqliteText, sqliteText, sqliteText, sqliteBlob, sqliteText,
 		sqliteInteger, sqliteInteger, sqliteInteger, sqliteInteger, sqliteInteger, sqliteInteger,
@@ -366,33 +273,38 @@ func readTradingViewCookieRow(statement uintptr) (encryptedTradingViewCookie, er
 	for column, expected := range expectedTypes {
 		actual, _, _ := sqliteColumnType.Call(statement, uintptr(column))
 		if int(actual) != expected {
-			return encryptedTradingViewCookie{}, errors.New("host TradingView cookie column storage type is invalid")
+			return tradingViewCookie{}, errors.New("host TradingView cookie column storage type is invalid")
 		}
 	}
 	hostKey, err := sqliteStatementText(statement, 1, 512)
 	if err != nil {
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	topFrame, err := sqliteStatementText(statement, 2, 4096)
 	if err != nil {
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	name, err := sqliteStatementText(statement, 3, 128)
 	if err != nil {
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	value, err := sqliteStatementText(statement, 4, maximumTradingViewCookieValueSize)
 	if err != nil {
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	encrypted, err := sqliteStatementBlob(statement, 5, maximumTradingViewCookieValueSize+128)
 	if err != nil {
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
+	if value == "" || len(encrypted) != 0 {
+		clear(encrypted)
+		return tradingViewCookie{}, errors.New("host TradingView account session is not portable plaintext")
+	}
+	clear(encrypted)
 	path, err := sqliteStatementText(statement, 6, 1024)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	intValue := func(column int) int {
 		value, _, _ := sqliteColumnInt.Call(statement, uintptr(column))
@@ -412,29 +324,29 @@ func readTradingViewCookieRow(statement uintptr) (encryptedTradingViewCookie, er
 	secure, err := boolValue(8)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	httpOnly, err := boolValue(9)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	hasExpires, err := boolValue(11)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	persistent, err := boolValue(12)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
 	crossSiteAncestor, err := boolValue(19)
 	if err != nil {
 		clear(encrypted)
-		return encryptedTradingViewCookie{}, err
+		return tradingViewCookie{}, err
 	}
-	return encryptedTradingViewCookie{tradingViewCookie: tradingViewCookie{
+	return tradingViewCookie{
 		CreationUTC:       int64Value(0),
 		HostKey:           hostKey,
 		TopFrameSiteKey:   topFrame,
@@ -454,7 +366,7 @@ func readTradingViewCookieRow(statement uintptr) (encryptedTradingViewCookie, er
 		LastUpdateUTC:     int64Value(17),
 		SourceType:        intValue(18),
 		CrossSiteAncestor: crossSiteAncestor,
-	}, encryptedValue: encrypted}, nil
+	}, nil
 }
 
 func (database *tradingViewSQLiteDatabase) prepare(query string) (uintptr, error) {

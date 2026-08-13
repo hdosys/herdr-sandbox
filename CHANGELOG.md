@@ -29,6 +29,8 @@ release notes remain available on the
 
 ### Changed
 
+- TradingView login transfer now reads the installed Desktop MSIX package profile
+  and carries its complete signed session cookie pair into the portable guest app.
 - Built-in stack versions are now preflighted across `user.ps1` and every selected
   project profile before fresh or retained guest mutation. Exact requests converge,
   conflicts name all owners and stop, all-omitted tools resolve latest stable once,

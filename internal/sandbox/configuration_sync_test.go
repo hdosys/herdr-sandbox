@@ -869,8 +869,23 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	if err := packages.validate(terminal); err != nil {
 		t.Fatalf("validate native run package plan: %v", err)
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), false, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	tradingViewEnabled := os.Getenv("HERDR_SANDBOX_NATIVE_TRADINGVIEW_AUTH") == "1"
+	if tradingViewEnabled {
+		state, err := runSSHPowerShell(ctx, connection, nil,
+			"if (@(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue).Count -eq 0) { Write-Output 'closed' } else { Write-Output 'running' }",
+			"check guest TradingView state before authentication sync", 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(string(state)) != "closed" {
+			t.Fatal("guest TradingView Desktop is running; close it before authentication sync")
+		}
+	}
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), tradingViewEnabled, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
+	}
+	if tradingViewEnabled {
+		t.Log("verified TradingView authentication sync against the ready guest")
 	}
 }
 

@@ -1,4 +1,4 @@
-// herdr-sandbox-tradingview-cookie-sync-contract: 1
+// herdr-sandbox-tradingview-cookie-sync-contract: 2
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -48,10 +48,12 @@ namespace HerdrSandbox
             "priority, samesite, source_scheme, source_port, last_update_utc, source_type, " +
             "has_cross_site_ancestor";
 
-        private const string AllowedRows =
-            "name='sessionid' AND top_frame_site_key='' AND has_cross_site_ancestor=0 AND " +
+        private const string OwnedRows =
+            "(name='sessionid' OR name='sessionid_sign') AND top_frame_site_key='' AND " +
             "(lower(host_key)='tradingview.com' OR lower(host_key)='.tradingview.com' OR " +
             "lower(host_key) LIKE '%.tradingview.com')";
+
+        private const string AllowedRows = OwnedRows + " AND has_cross_site_ancestor=1";
 
         public static int Import(string destination, TradingViewCookieRecord[] cookies)
         {
@@ -82,7 +84,7 @@ namespace HerdrSandbox
                 bool committed = false;
                 try
                 {
-                    Exec(database, "DELETE FROM cookies WHERE " + AllowedRows);
+                    Exec(database, "DELETE FROM cookies WHERE " + OwnedRows);
                     InsertCookies(database, cookies);
                     VerifyCookies(database, cookies);
                     Exec(database, "COMMIT");
@@ -237,7 +239,7 @@ namespace HerdrSandbox
         {
             List<TradingViewCookieRecord> actual = new List<TradingViewCookieRecord>();
             IntPtr statement = Prepare(database, "SELECT " + CookieColumns + " FROM cookies WHERE " + AllowedRows +
-                " ORDER BY lower(host_key), path, source_scheme, source_port");
+                " ORDER BY lower(host_key), name, path, source_scheme, source_port");
             try
             {
                 while (true)
@@ -311,10 +313,11 @@ namespace HerdrSandbox
         private static void ValidateCookies(TradingViewCookieRecord[] cookies)
         {
             HashSet<string> identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, int> pairs = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (TradingViewCookieRecord cookie in cookies)
             {
-                if (cookie == null || cookie.Name != "sessionid" || cookie.Name.Length > 128 || !AllowedHost(cookie.HostKey) ||
-                    cookie.TopFrameSiteKey != "" || cookie.CrossSiteAncestor || String.IsNullOrEmpty(cookie.Path) ||
+                if (cookie == null || (cookie.Name != "sessionid" && cookie.Name != "sessionid_sign") || !AllowedHost(cookie.HostKey) ||
+                    cookie.TopFrameSiteKey != "" || !cookie.CrossSiteAncestor || String.IsNullOrEmpty(cookie.Path) ||
                     cookie.Path[0] != '/' || Encoding.UTF8.GetByteCount(cookie.Path) > 1024 ||
                     cookie.Path.IndexOfAny(new char[] { '\0', '\r', '\n' }) >= 0 || !ValidValue(cookie.Value) ||
                     cookie.Priority < 0 || cookie.Priority > 2 || cookie.SameSite < -1 || cookie.SameSite > 2 ||
@@ -330,6 +333,18 @@ namespace HerdrSandbox
                 if (!identities.Add(identity))
                 {
                     throw new ArgumentException("TradingView session cookie input is duplicated.", "cookies");
+                }
+                string pair = cookie.HostKey + "\0" + cookie.TopFrameSiteKey + "\0" + cookie.Path + "\0" +
+                    cookie.SourceScheme + "\0" + cookie.SourcePort + "\0" + cookie.CrossSiteAncestor;
+                int mask;
+                pairs.TryGetValue(pair, out mask);
+                pairs[pair] = mask | (cookie.Name == "sessionid" ? 1 : 2);
+            }
+            foreach (int pair in pairs.Values)
+            {
+                if (pair != 3)
+                {
+                    throw new ArgumentException("TradingView signed session cookie input is incomplete.", "cookies");
                 }
             }
         }

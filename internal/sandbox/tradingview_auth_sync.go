@@ -17,13 +17,15 @@ import (
 var tradingViewCookieSyncSource []byte
 
 const (
-	tradingViewAuthenticationSchema        = 1
+	tradingViewAuthenticationSchema        = 2
 	tradingViewAuthenticationArchivePath   = "tradingview/authentication.json"
 	tradingViewCookieSyncSourceArchivePath = "herdr-sandbox/tradingview-cookie-sync.cs"
+	tradingViewDesktopPackageFamilyName    = "TradingView.Desktop_n534cwy3pjxzj"
 	maximumTradingViewAuthenticationSize   = 64 * 1024
 	maximumTradingViewCookies              = 4
 	maximumTradingViewCookieValueSize      = 16 * 1024
 	tradingViewSessionCookieName           = "sessionid"
+	tradingViewSessionSignatureCookieName  = "sessionid_sign"
 )
 
 var tradingViewCookieJSONFields = []string{
@@ -45,11 +47,12 @@ func provisioningStacksContain(userStacks []projectStack, workspaces []workspace
 }
 
 func defaultTradingViewProfilePath() (string, error) {
-	appData := strings.TrimSpace(os.Getenv("APPDATA"))
-	if !filepath.IsAbs(appData) {
-		return "", fmt.Errorf("APPDATA is not absolute: %q", appData)
+	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+	if !filepath.IsAbs(localAppData) {
+		return "", fmt.Errorf("LOCALAPPDATA is not absolute: %q", localAppData)
 	}
-	return filepath.Clean(filepath.Join(appData, "TradingView")), nil
+	return filepath.Clean(filepath.Join(localAppData, "Packages", tradingViewDesktopPackageFamilyName,
+		"LocalCache", "Roaming", "TradingView")), nil
 }
 
 type tradingViewAuthentication struct {
@@ -155,6 +158,7 @@ func validateTradingViewAuthentication(authentication tradingViewAuthentication)
 		return fmt.Errorf("TradingView authentication cookie count exceeds %d", maximumTradingViewCookies)
 	}
 	seen := make(map[string]bool, len(authentication.Cookies))
+	pairs := make(map[string]uint8, len(authentication.Cookies)/2)
 	for _, cookie := range authentication.Cookies {
 		if err := validateTradingViewCookie(cookie); err != nil {
 			return err
@@ -165,15 +169,27 @@ func validateTradingViewAuthentication(authentication tradingViewAuthentication)
 			return errors.New("TradingView authentication contains duplicate session cookies")
 		}
 		seen[identity] = true
+		pairIdentity := strings.ToLower(cookie.HostKey) + "\x00" + cookie.TopFrameSiteKey + "\x00" + cookie.Path +
+			fmt.Sprintf("\x00%d\x00%d\x00%t", cookie.SourceScheme, cookie.SourcePort, cookie.CrossSiteAncestor)
+		if cookie.Name == tradingViewSessionCookieName {
+			pairs[pairIdentity] |= 1
+		} else {
+			pairs[pairIdentity] |= 2
+		}
+	}
+	for _, pair := range pairs {
+		if pair != 3 {
+			return errors.New("TradingView authentication contains an incomplete signed session")
+		}
 	}
 	return nil
 }
 
 func validateTradingViewCookie(cookie tradingViewCookie) error {
-	if cookie.Name != tradingViewSessionCookieName || len(cookie.Name) > 128 || !tradingViewCookieHostAllowed(cookie.HostKey) {
+	if !tradingViewAuthenticationCookieNameAllowed(cookie.Name) || !tradingViewCookieHostAllowed(cookie.HostKey) {
 		return errors.New("TradingView authentication contains a cookie outside the session allowlist")
 	}
-	if cookie.TopFrameSiteKey != "" || cookie.CrossSiteAncestor {
+	if cookie.TopFrameSiteKey != "" || !cookie.CrossSiteAncestor {
 		return errors.New("TradingView authentication contains a partitioned session cookie")
 	}
 	if cookie.Path == "" || len(cookie.Path) > 1024 || cookie.Path[0] != '/' || strings.ContainsAny(cookie.Path, "\x00\r\n") {
@@ -192,6 +208,10 @@ func validateTradingViewCookie(cookie tradingViewCookie) error {
 		return errors.New("TradingView authentication cookie persistence is inconsistent")
 	}
 	return nil
+}
+
+func tradingViewAuthenticationCookieNameAllowed(name string) bool {
+	return name == tradingViewSessionCookieName || name == tradingViewSessionSignatureCookieName
 }
 
 func tradingViewCookieHostAllowed(host string) bool {

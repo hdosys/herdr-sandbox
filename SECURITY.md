@@ -43,11 +43,12 @@ The product protects these boundaries:
   fresh Sandbox without making the private key portable to another host user.
 - Approved portable agent and GitHub credentials are streamed only over the
   verified SSH channel and are not placed in host run mappings or logs.
-- When the TradingView stack is selected, only unpartitioned `sessionid` cookies
-  for `tradingview.com` subdomains are decrypted in bounded host memory and
-  streamed over that verified SSH channel. The host profile key, `Local State`,
-  complete cookie database, broker cookies, and unrelated site state never enter
-  run mappings or the transfer archive. Missing host login state is a no-op.
+- When the TradingView stack is selected, only the `sessionid` and
+  `sessionid_sign` cookie pair for `tradingview.com` subdomains is read from the
+  exact installed MSIX package profile into bounded host memory and streamed over
+  that verified SSH channel. The complete cookie database, broker cookies, and
+  unrelated site state never enter run mappings or the transfer archive. Missing
+  host login state is a no-op.
 - Whole home/AppData roots, app-owned private state, reparse-bearing paths, and
   known credential roots such as `.ssh`, `.gnupg`, cloud/Kubernetes/Docker auth
   directories, supported coding-agent auth roots, GitHub CLI state, and Windows

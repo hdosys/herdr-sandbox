@@ -24,7 +24,7 @@ cross-project workflow in the global OpenCode configuration repository.
   extracts an explicit production function set and initializes shared provisioning
   context consistently. Expected benefit: dependency drift fails in the focused
   test that owns the changed function and avoids repeated harness repair.
-- **Status: proposed. Compare canonical Windows paths with Windows semantics.**
+- **Status: done. Compare canonical Windows paths with Windows semantics.**
   Evidence: the complete repository gate is blocked by
   `TestResolveProvisioningIncludesDedicatedWorktreeDirectory` comparing a lowercase
   drive letter with its canonical uppercase form case-sensitively. Use one shared

@@ -831,7 +831,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $tradingViewAuthenticationProperties = @($tradingViewAuthentication.PSObject.Properties.Name | Sort-Object)
     if (($tradingViewAuthenticationProperties -join '|') -cne 'cookies|schemaVersion' -or
         $tradingViewAuthentication.schemaVersion -isnot [int] -or
-        [int]$tradingViewAuthentication.schemaVersion -ne 1 -or
+        [int]$tradingViewAuthentication.schemaVersion -ne 2 -or
         $tradingViewAuthentication.cookies -isnot [array]) {
         throw 'TradingView authentication input has an unsupported contract.'
     }
@@ -840,6 +840,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         throw 'TradingView authentication input contains too many cookies.'
     }
     $tradingViewCookieIdentities = @{}
+    $tradingViewCookiePairs = @{}
     $expectedTradingViewCookieProperties = @(
         'creationUtc', 'hostKey', 'topFrameSiteKey', 'name', 'value', 'path', 'expiresUtc',
         'secure', 'httpOnly', 'lastAccessUtc', 'hasExpires', 'persistent', 'priority', 'sameSite',
@@ -850,14 +851,14 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         if (($cookieProperties -join '|') -cne ($expectedTradingViewCookieProperties -join '|') -or
             $cookie.hostKey -isnot [string] -or -not (Test-TradingViewCookieHost -HostKey ([string]$cookie.hostKey)) -or
             $cookie.topFrameSiteKey -isnot [string] -or [string]$cookie.topFrameSiteKey -cne '' -or
-            $cookie.name -isnot [string] -or [string]$cookie.name -cne 'sessionid' -or
+            $cookie.name -isnot [string] -or @('sessionid', 'sessionid_sign') -cnotcontains [string]$cookie.name -or
             $cookie.value -isnot [string] -or -not (Test-TradingViewCookieValue -Value ([string]$cookie.value)) -or
             $cookie.path -isnot [string] -or [string]::IsNullOrEmpty([string]$cookie.path) -or
             -not ([string]$cookie.path).StartsWith('/', [StringComparison]::Ordinal) -or
             [Text.Encoding]::UTF8.GetByteCount([string]$cookie.path) -gt 1024 -or [string]$cookie.path -match '[\x00\r\n]' -or
             $cookie.secure -isnot [bool] -or $cookie.httpOnly -isnot [bool] -or
             $cookie.hasExpires -isnot [bool] -or $cookie.persistent -isnot [bool] -or
-            $cookie.crossSiteAncestor -isnot [bool] -or [bool]$cookie.crossSiteAncestor -or
+            $cookie.crossSiteAncestor -isnot [bool] -or -not [bool]$cookie.crossSiteAncestor -or
             -not (Test-TradingViewJSONInteger $cookie.creationUtc) -or [long]$cookie.creationUtc -lt 0 -or
             -not (Test-TradingViewJSONInteger $cookie.expiresUtc) -or [long]$cookie.expiresUtc -lt 0 -or
             -not (Test-TradingViewJSONInteger $cookie.lastAccessUtc) -or [long]$cookie.lastAccessUtc -lt 0 -or
@@ -878,6 +879,18 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             throw 'TradingView authentication input contains duplicate cookies.'
         }
         $tradingViewCookieIdentities[$identity] = $true
+        $pairIdentity = ([string]$cookie.hostKey).ToLowerInvariant() + "`0" + [string]$cookie.topFrameSiteKey + "`0" +
+            [string]$cookie.path + "`0" + [int]$cookie.sourceScheme + "`0" + [int]$cookie.sourcePort + "`0" +
+            [bool]$cookie.crossSiteAncestor
+        $pairMask = 0
+        if ($tradingViewCookiePairs.ContainsKey($pairIdentity)) { $pairMask = [int]$tradingViewCookiePairs[$pairIdentity] }
+        if ([string]$cookie.name -ceq 'sessionid') { $pairMask = $pairMask -bor 1 } else { $pairMask = $pairMask -bor 2 }
+        $tradingViewCookiePairs[$pairIdentity] = $pairMask
+    }
+    foreach ($pairMask in @($tradingViewCookiePairs.Values)) {
+        if ([int]$pairMask -ne 3) {
+            throw 'TradingView authentication input contains an incomplete signed session.'
+        }
     }
     if ($tradingViewCookies.Count -gt 0) {
         $runningTradingView = @(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)

@@ -9,40 +9,48 @@ import (
 	"testing"
 )
 
-func testTradingViewCookie(value string) tradingViewCookie {
+func testTradingViewCookie(name, value string) tradingViewCookie {
 	return tradingViewCookie{
-		CreationUTC:   13390000000000000,
-		HostKey:       ".tradingview.com",
-		Name:          tradingViewSessionCookieName,
-		Value:         value,
-		Path:          "/",
-		ExpiresUTC:    13400000000000000,
-		Secure:        true,
-		HTTPOnly:      true,
-		LastAccessUTC: 13390000000000001,
-		HasExpires:    true,
-		Persistent:    true,
-		Priority:      1,
-		SameSite:      -1,
-		SourceScheme:  2,
-		SourcePort:    443,
-		LastUpdateUTC: 13390000000000002,
-		SourceType:    1,
+		CreationUTC:       13390000000000000,
+		HostKey:           ".tradingview.com",
+		Name:              name,
+		Value:             value,
+		Path:              "/",
+		ExpiresUTC:        13400000000000000,
+		Secure:            true,
+		HTTPOnly:          true,
+		LastAccessUTC:     13390000000000001,
+		HasExpires:        true,
+		Persistent:        true,
+		Priority:          1,
+		SameSite:          -1,
+		SourceScheme:      2,
+		SourcePort:        443,
+		LastUpdateUTC:     13390000000000002,
+		SourceType:        1,
+		CrossSiteAncestor: true,
+	}
+}
+
+func testTradingViewAuthentication(value string) tradingViewAuthentication {
+	return tradingViewAuthentication{
+		SchemaVersion: tradingViewAuthenticationSchema,
+		Cookies: []tradingViewCookie{
+			testTradingViewCookie(tradingViewSessionCookieName, value),
+			testTradingViewCookie(tradingViewSessionSignatureCookieName, value+"-signature"),
+		},
 	}
 }
 
 func TestTradingViewAuthenticationContractIsStrictAndSecretSafe(t *testing.T) {
 	const secret = "signed-session-secret"
-	authentication := tradingViewAuthentication{
-		SchemaVersion: tradingViewAuthenticationSchema,
-		Cookies:       []tradingViewCookie{testTradingViewCookie(secret)},
-	}
+	authentication := testTradingViewAuthentication(secret)
 	payload, count, err := encodeTradingViewAuthentication(authentication)
-	if err != nil || count != 1 {
+	if err != nil || count != 2 {
 		t.Fatalf("encode TradingView authentication: count=%d err=%v", count, err)
 	}
 	decoded, err := decodeTradingViewAuthentication(payload)
-	if err != nil || len(decoded.Cookies) != 1 || decoded.Cookies[0].Value != secret {
+	if err != nil || len(decoded.Cookies) != 2 || decoded.Cookies[0].Value != secret || decoded.Cookies[1].Value != secret+"-signature" {
 		t.Fatalf("decoded TradingView authentication = %#v, err=%v", decoded, err)
 	}
 
@@ -51,12 +59,17 @@ func TestTradingViewAuthenticationContractIsStrictAndSecretSafe(t *testing.T) {
 	if _, _, encodeErr := encodeTradingViewAuthentication(duplicate); encodeErr == nil {
 		t.Fatal("duplicate TradingView authentication unexpectedly encoded")
 	}
+	incomplete := authentication
+	incomplete.Cookies = append([]tradingViewCookie(nil), authentication.Cookies[:1]...)
+	if _, _, encodeErr := encodeTradingViewAuthentication(incomplete); encodeErr == nil {
+		t.Fatal("incomplete signed TradingView session unexpectedly encoded")
+	}
 	invalid := [][]byte{
-		[]byte(`{"schemaVersion":1,"cookies":[],"extra":true}`),
-		[]byte(`{"schemaVersion":1,"schemaVersion":1,"cookies":[]}`),
-		[]byte(`{"schemaVersion":1,"cookies":[{"creationUtc":0,"hostKey":".tradingview.com","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1}]}`),
-		[]byte(`{"schemaVersion":1,"cookies":[{"creationUtc":0,"hostKey":".tradingview.com","hostKey":".tradingview.com","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1,"crossSiteAncestor":false}]}`),
-		[]byte(`{"schemaVersion":1,"cookies":[{"creationUtc":0,"hostKey":"evil.example","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1,"crossSiteAncestor":false}]}`),
+		[]byte(`{"schemaVersion":2,"cookies":[],"extra":true}`),
+		[]byte(`{"schemaVersion":2,"schemaVersion":2,"cookies":[]}`),
+		[]byte(`{"schemaVersion":2,"cookies":[{"creationUtc":0,"hostKey":".tradingview.com","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1}]}`),
+		[]byte(`{"schemaVersion":2,"cookies":[{"creationUtc":0,"hostKey":".tradingview.com","hostKey":".tradingview.com","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1,"crossSiteAncestor":true}]}`),
+		[]byte(`{"schemaVersion":2,"cookies":[{"creationUtc":0,"hostKey":"evil.example","topFrameSiteKey":"","name":"sessionid","value":"` + secret + `","path":"/","expiresUtc":0,"secure":true,"httpOnly":true,"lastAccessUtc":0,"hasExpires":false,"persistent":false,"priority":1,"sameSite":-1,"sourceScheme":2,"sourcePort":443,"lastUpdateUtc":0,"sourceType":1,"crossSiteAncestor":true}]}`),
 	}
 	for _, candidate := range invalid {
 		if _, decodeErr := decodeTradingViewAuthentication(candidate); decodeErr == nil {
@@ -97,10 +110,7 @@ func TestDevelopmentConfigurationArchiveIncludesOnlyFilteredTradingViewAuthentic
 	writeTestFile(t, packagePlan, `{}`)
 	herdrConfig := filepath.Join(root, "herdr-config.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
-	payload, _, err := encodeTradingViewAuthentication(tradingViewAuthentication{
-		SchemaVersion: tradingViewAuthenticationSchema,
-		Cookies:       []tradingViewCookie{testTradingViewCookie("archive-secret")},
-	})
+	payload, _, err := encodeTradingViewAuthentication(testTradingViewAuthentication("archive-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
