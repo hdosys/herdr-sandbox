@@ -64,6 +64,10 @@ release notes remain available on the
   direct model removes the application-wide installer gate and transaction
   machinery, verifies every ownership-marker write, bounds quiet uninstall to 30
   seconds, and keeps destructive cleanup race-free under the existing app lock.
+- Installer builds now validate identity, payload, helper syntax, version/output
+  agreement, and artwork before NSIS compilation. PATH cleanup removes only the
+  last raw ordinal-exact installer-appended literal and preserves differently
+  represented or duplicate entries that may belong to another actor.
 
 ## v0.0.12 - 2026-08-07
 

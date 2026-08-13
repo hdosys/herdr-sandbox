@@ -25,6 +25,8 @@ const installerEngineVersion = "3.12"
 
 const installerUninstallerName = "uninstall.exe"
 
+const installerBuildValidatorName = "validate-build.ps1"
+
 var releaseTagPattern = regexp.MustCompile(`^v0\.0\.(0|[1-9][0-9]*)$`)
 var installerProductGUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
@@ -462,12 +464,62 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if _, err := requireExecutable(quietUninstallHelper, "quiet uninstall helper"); err != nil {
 		return err
 	}
+	buildValidator, err := filepath.Abs(filepath.Join("packaging", "windows", installerBuildValidatorName))
+	if err != nil {
+		return fmt.Errorf("resolve installer build validator: %w", err)
+	}
+	if _, err := requireExecutable(buildValidator, "installer build validator"); err != nil {
+		return err
+	}
 	script, err := filepath.Abs(filepath.Join("packaging", "windows", "installer.nsi"))
 	if err != nil {
 		return fmt.Errorf("resolve installer source: %w", err)
 	}
 	if err := os.Remove(outputPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove previous installer output: %w", err)
+	}
+	assetsDirectory, err := filepath.Abs(filepath.Join("packaging", "windows", "assets"))
+	if err != nil {
+		return fmt.Errorf("resolve installer assets directory: %w", err)
+	}
+	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	validatorArgs := []string{
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass",
+		"-File", buildValidator,
+		"-Version", version.Display,
+		"-FixedVersion", version.Fixed,
+		"-AppName", productidentity.CommandName,
+		"-AppApplicationName", productidentity.ApplicationName,
+		"-AppDisplayName", productidentity.DisplayName,
+		"-AppPublisher", productidentity.Publisher,
+		"-AppProductUrl", productidentity.ProductURL,
+		"-AppCopyright", productidentity.Copyright,
+		"-AppConfigFile", productidentity.ConfigurationName,
+		"-AppUserScript", productidentity.UserScriptName,
+		"-AppProjectDirectory", productidentity.ProjectDirectoryName,
+		"-OutputFile", outputPath,
+		"-OutputFileName", filepath.Base(outputPath),
+		"-PackageDirectory", stageDirectory,
+		"-PathHelper", pathHelper,
+		"-QuietUninstallHelper", quietUninstallHelper,
+		"-AppProductGuid", productidentity.ProductGUID,
+		"-AppUninstallKey", productidentity.UninstallKeyName,
+		"-AppInstallDirectory", productidentity.InstallDirectoryName,
+		"-AppExecutable", productidentity.ExecutableName,
+		"-AppBaseScript", productidentity.BaseScriptName,
+		"-AppStackScript", productidentity.StackScriptName,
+		"-AppLicense", productidentity.LicenseName,
+		"-AppInstallerMarker", productidentity.InstallerMarkerName,
+		"-AppQuietUninstallHelper", productidentity.QuietUninstallHelperName,
+		"-AppReplacedExecutable", productidentity.ReplacedExecutableName,
+		"-AssetsDirectory", assetsDirectory,
+	}
+	if err := runCommand(ctx, stdout, stderr, powerShell, validatorArgs...); err != nil {
+		return fmt.Errorf("validate NSIS installer inputs: %w", err)
 	}
 	args := []string{
 		"/WX",

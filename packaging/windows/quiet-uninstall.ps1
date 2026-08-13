@@ -19,6 +19,22 @@ function Test-FullyQualifiedWindowsPath {
         ($Path -match '^[A-Za-z]:[\\/]' -or $Path -match '^[\\/]{2}[^\\/]+[\\/][^\\/]+(?:[\\/]|$)'))
 }
 
+function Get-FileSHA256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = $null
+    $hasher = $null
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        return [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        if ($null -ne $hasher) { $hasher.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Stop-OwnedProcessTree {
     param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
 
@@ -51,6 +67,7 @@ function Stop-OwnedProcessTree {
     }
 }
 
+# Never keep the install directory as this wrapper's current directory.
 $tempRoot = [IO.Path]::GetTempPath()
 [Environment]::CurrentDirectory = $tempRoot
 Set-Location -LiteralPath $tempRoot
@@ -97,9 +114,16 @@ try {
         $copiedItem.Length -ne $uninstallerItem.Length) {
         throw 'The temporary uninstaller copy did not validate.'
     }
+    $sourceHash = Get-FileSHA256 -Path $uninstallerPath
+    $copiedHash = Get-FileSHA256 -Path $tempUninstaller
+    if ([string]$sourceHash -cne [string]$copiedHash) {
+        throw 'The temporary uninstaller copy failed SHA-256 verification.'
+    }
 
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = $tempUninstaller
+    # NSIS requires _?= to be the final, unquoted argument. It consumes the
+    # remainder of the command line as the path, including embedded spaces.
     $startInfo.Arguments = '/S _?=' + $installPath
     $startInfo.WorkingDirectory = $tempRoot
     $startInfo.UseShellExecute = $false

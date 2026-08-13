@@ -186,13 +186,13 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	case "__installer-clean-uninstall":
 		deleteConfiguration := false
 		lockHeld := false
-		if len(args) == 4 && args[1] == "--installer-schema=1" && args[2] == "--installer-lock-held" && args[3] == "--delete-configuration" {
+		if len(args) == 4 && args[1] == "--installer-schema=1" && args[2] == "--installer-lifecycle-lock-held" && args[3] == "--delete-configuration" {
 			deleteConfiguration = true
 			lockHeld = true
-		} else if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--installer-lock-held" {
+		} else if len(args) == 3 && args[1] == "--installer-schema=1" && args[2] == "--installer-lifecycle-lock-held" {
 			lockHeld = true
 		} else {
-			fmt.Fprintln(stderr, "sandbox: installer clean uninstall requires --installer-schema=1 --installer-lock-held and accepts only --delete-configuration after it")
+			fmt.Fprintln(stderr, "sandbox: installer clean uninstall requires --installer-schema=1 --installer-lifecycle-lock-held and accepts only --delete-configuration after it")
 			return 2
 		}
 		cleanupContext, cancel := context.WithTimeout(ctx, installerCleanUninstallTimeout)
