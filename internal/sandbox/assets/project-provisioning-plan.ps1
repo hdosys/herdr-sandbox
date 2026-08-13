@@ -45,7 +45,8 @@ function Get-LiteralCommandParameter {
         [string]$ParameterName,
         [Parameter(Mandatory = $true)]
         [string]$Role,
-        [switch]$AllowProjectDirectoryVariable
+        [switch]$AllowProjectDirectoryVariable,
+        [switch]$AllowProjectPlaywrightLockVariable
     )
 
     $bound = @{}
@@ -102,6 +103,11 @@ function Get-LiteralCommandParameter {
         $value -is [System.Management.Automation.Language.VariableExpressionAst] -and
         [string]$value.VariablePath.UserPath -ceq 'ProjectDirectory') {
         return '$ProjectDirectory'
+    }
+    if ($AllowProjectPlaywrightLockVariable -and $Role -ceq 'Project provisioning' -and
+        $value -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        [string]$value.VariablePath.UserPath -ceq 'projectPlaywrightVersion') {
+        return '$projectPlaywrightVersion'
     }
     throw "$Role command $($Command.GetCommandName()) parameter -$ParameterName must be one literal string."
 }
@@ -178,10 +184,15 @@ function Get-CommandToolRequirements {
         }
         'Install-NodeStack' {
             $version = Get-LiteralCommandParameter $Command @('Version', 'PlaywrightVersion') 'Version' $Role
-            $playwright = Get-LiteralCommandParameter $Command @('Version', 'PlaywrightVersion') 'PlaywrightVersion' $Role
+            $playwright = Get-LiteralCommandParameter $Command @('Version', 'PlaywrightVersion') 'PlaywrightVersion' $Role -AllowProjectPlaywrightLockVariable
+            $playwrightSource = 'node'
+            if ($playwright -ceq '$projectPlaywrightVersion') {
+                $playwright = ''
+                $playwrightSource = 'node-project-lock'
+            }
             return @(
                 (New-ToolRequirement 'OpenJS.NodeJS.LTS' $version '' 'node'),
-                (New-ToolRequirement 'playwright' $playwright '' 'node')
+                (New-ToolRequirement 'playwright' $playwright '' $playwrightSource)
             )
         }
         'Install-NSISStack' {

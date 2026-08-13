@@ -21,6 +21,8 @@ const (
 	projectProvisioningPlanScriptName    = "inspect-project-provisioning.ps1"
 	projectProvisioningPlanTimeout       = 30 * time.Second
 	maximumProjectProvisioningPlanOutput = 64 * 1024
+	maximumProjectPackageLockSize        = 4 * 1024 * 1024
+	projectPlaywrightLockSource          = "node-project-lock"
 	toolVersionPlanFileName              = "tool-versions.json"
 )
 
@@ -90,9 +92,10 @@ type toolVersionPlan struct {
 }
 
 var (
-	projectToolTokenPattern = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9._+@/-]{0,127}$`)
-	projectToolValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
-	projectToolNames        = map[string]string{
+	projectToolTokenPattern      = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9._+@/-]{0,127}$`)
+	projectToolValuePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+	stableSemanticVersionPattern = regexp.MustCompile(`^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`)
+	projectToolNames             = map[string]string{
 		"@ferroxlabs/tvcontrol":          "@ferroxlabs/tvcontrol",
 		"@playwright/cli":                "@playwright/cli",
 		"astral-sh.uv":                   "astral-sh.uv",
@@ -287,6 +290,17 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 	}
 	for _, project := range projects {
 		for _, requirement := range project.Tools {
+			if requirement.Source == projectPlaywrightLockSource {
+				workspace, found := workspaceByName[project.Name]
+				if !found || requirement.Tool != "playwright" || requirement.Version != "" || requirement.Series != "" || requirement.ProjectDirectory != "" {
+					return nil, fmt.Errorf("project %q returned an invalid Playwright package-lock requirement", project.Name)
+				}
+				version, err := readProjectPlaywrightVersion(workspace.HostDirectory)
+				if err != nil {
+					return nil, fmt.Errorf("resolve Playwright package-lock version for project %q: %w", project.Name, err)
+				}
+				requirement.Version = version
+			}
 			owned = append(owned, ownedRequirement{projectToolRequirement: requirement, owner: fmt.Sprintf("project %q (%s)", project.Name, requirement.Source)})
 			if strings.EqualFold(requirement.Tool, "rust-toolchain") {
 				workspace := workspaceByName[project.Name]
@@ -436,6 +450,69 @@ func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
 		return "", false, fmt.Errorf("Rust toolchain file must declare exactly one literal x.y.z channel: %s", path)
 	}
 	return string(matches[0][1]), true, nil
+}
+
+func readProjectPlaywrightVersion(projectDirectory string) (string, error) {
+	if !filepath.IsAbs(projectDirectory) {
+		return "", fmt.Errorf("project directory must be absolute: %s", projectDirectory)
+	}
+	frontendDirectory := filepath.Join(projectDirectory, "frontend")
+	if err := rejectMappedPathReparsePoints(frontendDirectory); err != nil {
+		return "", fmt.Errorf("frontend directory is unsafe: %w", err)
+	}
+	path := filepath.Join(frontendDirectory, "package-lock.json")
+	data, err := readProvisioningScript(path, "project Playwright package lock", maximumProjectPackageLockSize)
+	if err != nil {
+		return "", err
+	}
+	var lock struct {
+		LockfileVersion int                        `json:"lockfileVersion"`
+		Packages        map[string]json.RawMessage `json:"packages"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&lock); err != nil {
+		return "", fmt.Errorf("decode package lock: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return "", fmt.Errorf("decode package lock: %w", err)
+	}
+	if lock.LockfileVersion != 3 || lock.Packages == nil {
+		return "", errors.New("package lock must use npm lockfile version 3")
+	}
+	type packageIdentity struct {
+		Version      string            `json:"version"`
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	readIdentity := func(name string) (packageIdentity, error) {
+		raw, found := lock.Packages[name]
+		if !found {
+			return packageIdentity{}, fmt.Errorf("package lock is missing %s", name)
+		}
+		var identity packageIdentity
+		if err := json.Unmarshal(raw, &identity); err != nil {
+			return packageIdentity{}, fmt.Errorf("decode %s identity: %w", name, err)
+		}
+		return identity, nil
+	}
+	testPackage, err := readIdentity("node_modules/@playwright/test")
+	if err != nil {
+		return "", err
+	}
+	playwrightPackage, err := readIdentity("node_modules/playwright")
+	if err != nil {
+		return "", err
+	}
+	corePackage, err := readIdentity("node_modules/playwright-core")
+	if err != nil {
+		return "", err
+	}
+	version := testPackage.Version
+	if !projectToolValuePattern.MatchString(version) || !stableSemanticVersionPattern.MatchString(version) ||
+		testPackage.Dependencies["playwright"] != version || playwrightPackage.Version != version ||
+		playwrightPackage.Dependencies["playwright-core"] != version || corePackage.Version != version {
+		return "", errors.New("Playwright package-lock versions are missing or inconsistent")
+	}
+	return version, nil
 }
 
 func encodeToolVersionPlan(tools []resolvedToolVersion) ([]byte, error) {

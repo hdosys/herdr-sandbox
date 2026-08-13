@@ -60,8 +60,10 @@ func TestBaseProfileRoutesOnlyMobileSSHPortDirectlyIntoHerdr(t *testing.T) {
 		"GetEnvironmentVariable",
 		"& $herdrExecutable",
 		"exit $LASTEXITCODE",
-		"$expectedPowerShellProfile = $mobileSSHInitialization + $starshipInitialization",
-		"mobile SSH and Starship profile verification failed",
+		"$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')",
+		"$env:Path = @($machinePath, $userPath) -join ';'",
+		"$expectedPowerShellProfile = $pathInitialization + $mobileSSHInitialization + $starshipInitialization",
+		"PATH, mobile SSH, and Starship profile verification failed",
 	} {
 		if !strings.Contains(base, required) {
 			t.Fatalf("Base mobile SSH profile is missing %q", required)

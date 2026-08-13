@@ -17,6 +17,7 @@ const (
 	hostHerdrBaseVersionEnvironment    = "HERDR_SANDBOX_TEST_HOST_HERDR_BASE_VERSION"
 	hostHerdrBuildIDEnvironment        = "HERDR_SANDBOX_TEST_HOST_HERDR_BUILD_ID"
 	hostHerdrRemoteExitCodeEnvironment = "HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE_EXIT_CODE"
+	hostHerdrRemoteOutputEnvironment   = "HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE_OUTPUT"
 	hostHerdrVersionOutputEnvironment  = "HERDR_SANDBOX_TEST_HOST_HERDR_VERSION_OUTPUT"
 )
 
@@ -59,6 +60,9 @@ func runHostHerdrFixtureProcess() {
 		}
 		os.Exit(exitCode)
 	case len(arguments) == 5 && arguments[0] == "--remote" && arguments[2] == "--provision" && arguments[3] == "--yes" && arguments[4] == "--json":
+		if output := os.Getenv(hostHerdrRemoteOutputEnvironment); output != "" {
+			fmt.Fprintln(os.Stdout, output)
+		}
 		if diagnostic := os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE"); diagnostic != "" {
 			fmt.Fprintln(os.Stderr, diagnostic)
 		}
@@ -329,6 +333,64 @@ func TestRemoteProvisionResultIsStrictAndRequiresMatchingWindowsSidecar(t *testi
 		if _, err := decodeRemoteProvisionResult(data); err == nil {
 			t.Fatalf("invalid remote provision JSON passed: %s", data)
 		}
+	}
+}
+
+func TestHostHerdrProvisionKeepsSuccessfulDiagnosticOutOfJSON(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable fixture")
+	}
+	prepareHostHerdrFixture(t)
+	host, err := ResolveHostHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build-id\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.version, host.protocol)
+	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
+	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "# independent successful diagnostic")
+	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
+	result, err := host.provisionRemote(context.Background(), Connection{SSHTarget: sshTargetName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BinaryOutcome != remoteProvisionBinaryMatching || result.ServerOutcome != remoteProvisionServerReloaded {
+		t.Fatalf("remote provision result = %#v", result)
+	}
+}
+
+func TestHostHerdrProvisionRejectsCombinedOutputOverLimit(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable fixture")
+	}
+	prepareHostHerdrFixture(t)
+	host, err := ResolveHostHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build-id\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.version, host.protocol)
+	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
+	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", strings.Repeat("x", maximumRemoteProvisionOutput-1))
+	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
+	_, err = host.provisionRemote(context.Background(), Connection{SSHTarget: sshTargetName})
+	if err == nil || !strings.Contains(err.Error(), "exceeded the 65536-byte output limit") {
+		t.Fatalf("oversized remote provision output error = %v", err)
+	}
+}
+
+func TestHostHerdrProvisionRejectsStdoutOverflow(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows executable fixture")
+	}
+	prepareHostHerdrFixture(t)
+	host, err := ResolveHostHerdr(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(hostHerdrRemoteOutputEnvironment, strings.Repeat("x", maximumRemoteProvisionOutput+1))
+	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
+	_, err = host.provisionRemote(context.Background(), Connection{SSHTarget: sshTargetName})
+	if err == nil || !strings.Contains(err.Error(), "exceeded the 65536-byte output limit") {
+		t.Fatalf("oversized stdout error = %v", err)
 	}
 }
 

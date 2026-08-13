@@ -484,18 +484,27 @@ func (host HostHerdr) provisionRemote(ctx context.Context, connection Connection
 	command := hiddenCommandContext(provisionContext, host.commandPath,
 		"--remote", connection.SSHTarget, "--provision", "--yes", "--json")
 	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
-	output, err := command.CombinedOutput()
-	defer clear(output)
+	stdout := boundedCommandOutput{maximum: maximumRemoteProvisionOutput}
+	stderr := boundedCommandOutput{maximum: maximumRemoteProvisionOutput}
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err := command.Run()
+	defer stdout.clear()
+	defer stderr.clear()
+	diagnostic := stderr.text()
+	if strings.TrimSpace(diagnostic) == "" {
+		diagnostic = stdout.text()
+	}
 	if err != nil {
 		if provisionContext.Err() != nil {
-			return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, provisionContext.Err(), boundedText(output))
+			return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, provisionContext.Err(), diagnostic)
 		}
-		return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, err, boundedText(output))
+		return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s: %w: %s", connection.SSHTarget, err, diagnostic)
 	}
-	if len(output) > maximumRemoteProvisionOutput {
+	if stdout.overflow || stderr.overflow || stdout.buffer.Len()+stderr.buffer.Len() > maximumRemoteProvisionOutput {
 		return remoteProvisionResult{}, fmt.Errorf("provision guest Herdr through %s exceeded the %d-byte output limit", connection.SSHTarget, maximumRemoteProvisionOutput)
 	}
-	result, err := decodeRemoteProvisionResult(output)
+	result, err := decodeRemoteProvisionResult(stdout.buffer.Bytes())
 	if err != nil {
 		return remoteProvisionResult{}, err
 	}

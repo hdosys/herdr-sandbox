@@ -3251,7 +3251,12 @@ if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '22
     exit $LASTEXITCODE
 }
 '@ + [Environment]::NewLine
-$expectedPowerShellProfile = $mobileSSHInitialization + $starshipInitialization
+$pathInitialization = @'
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = @($machinePath, $userPath) -join ';'
+'@ + [Environment]::NewLine
+$expectedPowerShellProfile = $pathInitialization + $mobileSSHInitialization + $starshipInitialization
 $powerShellProfileDirectory = Split-Path -Parent $powerShellProfilePath
 New-Item -ItemType Directory -Path $powerShellProfileDirectory -Force | Out-Null
 if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
@@ -3259,7 +3264,7 @@ if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
     [IO.File]::WriteAllText($powerShellProfilePath, $expectedPowerShellProfile, (New-Object Text.UTF8Encoding($false)))
 }
 if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
-    throw 'PowerShell 7 mobile SSH and Starship profile verification failed.'
+    throw 'PowerShell 7 PATH, mobile SSH, and Starship profile verification failed.'
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {

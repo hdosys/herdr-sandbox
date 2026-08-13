@@ -229,6 +229,91 @@ func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
 	}
 }
 
+func TestInspectProjectProvisioningPlanResolvesProjectPlaywrightLockVersion(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	projectDirectory := t.TempDir()
+	frontendDirectory := filepath.Join(projectDirectory, "frontend")
+	if err := os.Mkdir(frontendDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(frontendDirectory, "package-lock.json"), playwrightPackageLock("1.61.1", "1.61.1", "1.61.1", "1.61.1", "1.61.1"))
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "jobs.ps1")
+	writeTestFile(t, profile, "$projectPlaywrightVersion = 'runtime-validated-from-lock'\nInstall-NodeStack -PlaywrightVersion $projectPlaywrightVersion\n")
+	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "jobs", HostDirectory: projectDirectory, ProvisioningPath: profile}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range inspection.ToolVersions {
+		if tool.Tool == "playwright" {
+			if tool.Version != "1.61.1" || strings.Join(tool.Owners, "|") != `project "jobs" (node-project-lock)` {
+				t.Fatalf("Playwright lock tool = %#v", tool)
+			}
+			return
+		}
+	}
+	t.Fatal("Playwright lock tool is missing")
+}
+
+func TestInspectProjectProvisioningPlanRejectsInvalidProjectPlaywrightLock(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	projectDirectory := t.TempDir()
+	frontendDirectory := filepath.Join(projectDirectory, "frontend")
+	if err := os.Mkdir(frontendDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(frontendDirectory, "package-lock.json"), playwrightPackageLock("1.61.1", "1.61.0", "1.61.1", "1.61.1", "1.61.1"))
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "jobs.ps1")
+	writeTestFile(t, profile, "Install-NodeStack -PlaywrightVersion $projectPlaywrightVersion\n")
+	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "jobs", HostDirectory: projectDirectory, ProvisioningPath: profile}})
+	if err == nil || !strings.Contains(err.Error(), "Playwright package-lock versions are missing or inconsistent") {
+		t.Fatalf("invalid Playwright package lock error = %v", err)
+	}
+}
+
+func TestReadProjectPlaywrightVersionRejectsPrerelease(t *testing.T) {
+	projectDirectory := t.TempDir()
+	frontendDirectory := filepath.Join(projectDirectory, "frontend")
+	if err := os.Mkdir(frontendDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(frontendDirectory, "package-lock.json"), playwrightPackageLock("1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1"))
+	_, err := readProjectPlaywrightVersion(projectDirectory)
+	if err == nil || !strings.Contains(err.Error(), "Playwright package-lock versions are missing or inconsistent") {
+		t.Fatalf("prerelease Playwright package lock error = %v", err)
+	}
+}
+
+func TestInspectProjectProvisioningPlanRejectsOtherDynamicPlaywrightVersion(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "project.ps1")
+	writeTestFile(t, profile, "$version = '1.61.1'\nInstall-NodeStack -PlaywrightVersion $version\n")
+	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "project", HostDirectory: t.TempDir(), ProvisioningPath: profile}})
+	if err == nil || !strings.Contains(err.Error(), "parameter -PlaywrightVersion must be one literal string") {
+		t.Fatalf("dynamic Playwright version error = %v", err)
+	}
+}
+
 func TestInspectProjectProvisioningPlanRejectsDynamicRustProjectDirectory(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
@@ -340,6 +425,10 @@ func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
 	if string(data) != "{\"schemaVersion\":1,\"tools\":[{\"tool\":\"GoLang.Go\",\"version\":\"1.26.5\",\"series\":\"\",\"owners\":[\"project \\\"project\\\" (go)\"]}]}\n" {
 		t.Fatalf("tool version snapshot = %s", data)
 	}
+}
+
+func playwrightPackageLock(testVersion, testDependency, playwrightVersion, coreDependency, coreVersion string) string {
+	return `{"lockfileVersion":3,"packages":{"node_modules/@playwright/test":{"version":"` + testVersion + `","dependencies":{"playwright":"` + testDependency + `"}},"node_modules/playwright":{"version":"` + playwrightVersion + `","dependencies":{"playwright-core":"` + coreDependency + `"}},"node_modules/playwright-core":{"version":"` + coreVersion + `"}}}`
 }
 
 func projectStackStrings(stacks []projectStack) []string {

@@ -80,6 +80,43 @@ func TestGuestHerdrStatusScriptUsesPublishedProvisionedBinary(t *testing.T) {
 	}
 }
 
+func TestGuestHerdrStatusUsesSeparatedSSHOutputOwner(t *testing.T) {
+	data, err := os.ReadFile("connection.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "func readGuestHerdrStatus")
+	end := strings.Index(text[start:], "func validateGuestHerdrStatus")
+	if start < 0 || end < 0 {
+		t.Fatal("guest Herdr status owner is missing")
+	}
+	section := text[start : start+end]
+	if !strings.Contains(section, "runSSHPowerShell") || strings.Contains(section, "CombinedOutput") {
+		t.Fatalf("guest Herdr status does not keep SSH stderr outside JSON: %s", section)
+	}
+}
+
+func TestGuestHerdrPublicationAddsExactSidecarDirectoryToMachinePath(t *testing.T) {
+	executable := `C:\Users\WDAGUtilityAccount\.herdr\remote\build-id\herdr.exe`
+	script := guestHerdrPublicationScript(executable)
+	for _, required := range []string{
+		"SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine')",
+		"SetEnvironmentVariable('Path'",
+		"$publishedEntries[0]",
+		"Count -ne 1",
+		"Get-Command herdr.exe",
+		"Guest Herdr PATH resolution failed.",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("guest Herdr publication script is missing %q: %s", required, script)
+		}
+	}
+	if !strings.Contains(script, executable) || strings.Contains(script, `C:\HerdrSandbox\bin`) {
+		t.Fatalf("guest Herdr publication script uses the wrong binary owner: %s", script)
+	}
+}
+
 func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
 	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
 	status, err := decodeGuestHerdrStatus(valid)

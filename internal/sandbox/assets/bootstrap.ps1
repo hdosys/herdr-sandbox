@@ -859,6 +859,18 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         $herdrVersion.IndexOf("`r") -ge 0 -or $herdrVersion.IndexOf("`n") -ge 0) {
         throw 'Provisioned guest Herdr version identity is invalid.'
     }
+    $herdrDirectory = Split-Path -Parent $herdrExecutable
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $machinePathEntries = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($machinePathEntries.Count -eq 0 -or
+        $machinePathEntries[0].TrimEnd('\') -ine $herdrDirectory.TrimEnd('\') -or
+        @($machinePathEntries | Where-Object { $_.TrimEnd('\') -ieq $herdrDirectory.TrimEnd('\') }).Count -ne 1) {
+        throw 'Provisioned guest Herdr directory is not the unique first machine PATH entry.'
+    }
+    $workspacePath = @($machinePath, [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
+    if ([string]::IsNullOrWhiteSpace($workspacePath) -or $workspacePath.Length -gt 32767) {
+        throw 'Provisioned guest workspace PATH is invalid.'
+    }
 
     Write-ProgressStatus -Phase 'herdr-workspace' -Message "Creating $($workspaceEntries.Count) mounted-project workspaces and terminal panes"
     $orderedWorkspaceEntries = @($workspaceEntries | Sort-Object `
@@ -869,7 +881,8 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     foreach ($workspace in $orderedWorkspaceEntries) {
         $workspaceName = [string]$workspace.name
         $workspaceDirectory = [string]$workspace.directory
-        $workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName)
+        $workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName,
+            '--env', "PATH=$workspacePath", '--env', "HERDR_SANDBOX_HERDR_EXE=$herdrExecutable")
         if ($workspaceDirectory -ceq $activeWorkspace) { $workspaceArguments += '--focus' }
         $workspaceOutput = Invoke-HerdrBoundary -Role "Herdr workspace creation for $workspaceName" `
             -FilePath $herdrExecutable -ArgumentList $workspaceArguments

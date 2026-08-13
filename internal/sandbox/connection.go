@@ -363,16 +363,11 @@ func verifyGuestHerdr(ctx context.Context, connection Connection) error {
 }
 
 func readGuestHerdrStatus(ctx context.Context, connection Connection) (guestHerdrStatus, error) {
-	ssh, err := exec.LookPath("ssh.exe")
-	if err != nil {
-		return guestHerdrStatus{}, errors.New("OpenSSH ssh.exe is not on PATH")
-	}
 	verifyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	remoteCommand := `powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ` + encodePowerShell(guestHerdrStatusScript())
-	output, err := hiddenCommandContext(verifyContext, ssh, "-F", connection.SSHConfigPath, connection.SSHTarget, remoteCommand).CombinedOutput()
+	output, err := runSSHPowerShell(verifyContext, connection, nil, guestHerdrStatusScript(), "verify guest Herdr server", maximumRemoteProvisionOutput)
 	if err != nil {
-		return guestHerdrStatus{}, fmt.Errorf("verify guest Herdr server over SSH: %w: %s", err, boundedText(output))
+		return guestHerdrStatus{}, err
 	}
 	status, err := decodeGuestHerdrStatus(output)
 	if err != nil {
@@ -396,12 +391,7 @@ func publishGuestHerdrExecutable(ctx context.Context, connection Connection, exe
 	if err := validateGuestHerdrBinary(executable); err != nil {
 		return fmt.Errorf("publish guest Herdr executable: invalid path %q", executable)
 	}
-	quoted := strings.ReplaceAll(executable, "'", "''")
-	script := "$path = '" + quoted + "'; " +
-		"if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Provisioned guest Herdr executable is missing.' }; " +
-		"[Environment]::SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine'); " +
-		"if ([Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine') -cne $path) { throw 'Guest Herdr executable publication failed.' }; " +
-		"Write-Output 'published'"
+	script := guestHerdrPublicationScript(executable)
 	operationContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	output, err := runSSHPowerShell(operationContext, connection, nil, script, "publish provisioned guest Herdr executable", 1024)
@@ -412,6 +402,26 @@ func publishGuestHerdrExecutable(ctx context.Context, connection Connection, exe
 		return fmt.Errorf("publish provisioned guest Herdr executable returned %q", boundedText(output))
 	}
 	return nil
+}
+
+func guestHerdrPublicationScript(executable string) string {
+	quoted := strings.ReplaceAll(executable, "'", "''")
+	return "$path = '" + quoted + "'; " +
+		"if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Provisioned guest Herdr executable is missing.' }; " +
+		"$directory = Split-Path -Parent $path; " +
+		"$directoryItem = Get-Item -LiteralPath $directory -Force; " +
+		"if (-not $directoryItem.PSIsContainer -or ($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Provisioned guest Herdr directory is unsafe.' }; " +
+		"$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); " +
+		"$entries = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimEnd([char]92) -ine $directory.TrimEnd([char]92) }); " +
+		"[Environment]::SetEnvironmentVariable('Path', ((@($directory) + $entries) -join ';'), 'Machine'); " +
+		"[Environment]::SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine'); " +
+		"$publishedPath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); " +
+		"$publishedEntries = @($publishedPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }); " +
+		"if ($publishedEntries.Count -eq 0 -or $publishedEntries[0].TrimEnd([char]92) -ine $directory.TrimEnd([char]92) -or @($publishedEntries | Where-Object { $_.TrimEnd([char]92) -ieq $directory.TrimEnd([char]92) }).Count -ne 1 -or [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine') -cne $path) { throw 'Guest Herdr executable publication failed.' }; " +
+		"$env:Path = @($publishedPath, [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'; " +
+		"$resolved = Get-Command herdr.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1; " +
+		"if ([IO.Path]::GetFullPath([string]$resolved.Source) -ine [IO.Path]::GetFullPath($path)) { throw 'Guest Herdr PATH resolution failed.' }; " +
+		"Write-Output 'published'"
 }
 
 func guestHerdrStatusScript() string {

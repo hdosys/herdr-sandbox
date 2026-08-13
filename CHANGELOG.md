@@ -32,14 +32,21 @@ release notes remain available on the
 - Built-in stack versions are now preflighted across `user.ps1` and every selected
   project profile before fresh or retained guest mutation. Exact requests converge,
   conflicts name all owners and stop, all-omitted tools resolve latest stable once,
-  Rust toolchain channels remain separate from the rustup package, and
-  `sandbox plan` shows the resulting selection and owners.
+  the Jobs Playwright version is independently resolved from its matching npm
+  lockfile entries, Rust toolchain channels remain separate from the rustup package,
+  and `sandbox plan` shows the resulting selection and owners.
 - Fresh and retained `sandbox up` now use Herdr's exact unattended remote
   provisioning command as the single guest runtime, configuration validation, and
   server lifecycle owner. Sandbox no longer snapshots or copies a Herdr runtime,
   starts a duplicate server, or reloads configuration separately, and readiness
   now verifies the exact versioned sidecar, runtime version, protocol, and detached
-  server reported by Herdr.
+  server reported by Herdr. Successful Herdr diagnostics remain separate from its
+  strict JSON result instead of corrupting the final readiness handoff.
+- Guest Herdr status verification now likewise keeps PowerShell and SSH diagnostics
+  outside the strict JSON response.
+- Guest project terminals and new PowerShell 7 shells now resolve the exact
+  provisioned Herdr sidecar through refreshed `PATH` state, without a copied
+  binary or wrapper.
 - Every explicitly registered transferred configuration root that is itself a Git
   repository now fast-forwards from its configured upstream on the host before
   `up` and after a terminal `down` by default. Both lifecycle hooks can be disabled
