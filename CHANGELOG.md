@@ -44,6 +44,10 @@ release notes remain available on the
 - Selecting TradingView now registers the verified TVControl server as a
   disabled-by-default guest-managed OpenCode MCP integration. Use `/mcps` to
   enable its fixed loopback CDP tools only for the current session.
+- TVControl launch requests from Session 0 now start TradingView visibly in the
+  active desktop session through one bounded, serialized launcher. Matching ready
+  instances are reused, non-CDP duplicates are refused, and failed new launches
+  clean up only their validated process tree.
 - The portable TradingView Desktop now receives a Start-menu shortcut and a
   conditional taskbar pin that launch with its fixed local CDP port enabled.
 - Built-in stack versions are now preflighted across `user.ps1` and every selected

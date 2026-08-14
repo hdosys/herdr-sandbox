@@ -103,15 +103,17 @@ These are deliberate non-guarantees:
   disposable guest environment; anyone with that token and guest process access
   can bypass the extension's approval dialog until the token changes or the guest
   is discarded.
-- Starting TradingView Desktop from its managed Start-menu or taskbar shortcut
-  passes `--remote-debugging-port=9222` and opens a local Chrome DevTools Protocol
-  endpoint with powerful chart/UI access, exposing signed-in TradingView content
-  to guest processes until Desktop exits. Selecting the stack registers TVControl
-  in guest OpenCode as disabled by default; toggling it through `/mcps` exposes
-  its tools to that OpenCode session. The stack
-  installs and verifies the official signed MSIX payload, but provisioning and
-  configuration sync never launch Desktop, open the endpoint themselves, or
-  perform an interactive authentication flow.
+- Starting TradingView Desktop from its managed shortcut or through TVControl's
+  bounded active-session launcher passes `--remote-debugging-port=9222` and opens
+  a local Chrome DevTools Protocol endpoint with powerful chart/UI access,
+  exposing signed-in TradingView content to guest processes until Desktop exits.
+  Selecting the stack registers TVControl in guest OpenCode as disabled by
+  default; toggling it through `/mcps` exposes its tools, including launch, to that
+  OpenCode session. The launcher verifies the endpoint owner and refuses to create
+  a duplicate beside an already-running non-CDP Desktop. The stack installs and
+  verifies the official signed MSIX payload, but provisioning and configuration
+  sync never launch Desktop, open the endpoint themselves, or perform an
+  interactive authentication flow.
   Desktop is already guest-local, so TVControl does not need its protected-MSIX
   copy fallback; launch is non-destructive unless the user explicitly supplies
   `--kill-existing`. TradingView terms and market-data licenses

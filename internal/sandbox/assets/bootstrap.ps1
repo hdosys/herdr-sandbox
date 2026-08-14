@@ -573,11 +573,12 @@ try {
     $baseProvisioning = Join-Path $provisioningDirectory 'base.ps1'
     $userProvisioning = Join-Path $provisioningDirectory 'user.ps1'
     $processOwner = Join-Path $provisioningDirectory 'provisioning-process.cs'
+    $activeSessionLauncher = Join-Path $provisioningDirectory 'active-session-launch.ps1'
     $projectProvisioningDirectory = Join-Path $provisioningDirectory 'projects'
     $workspaceManifestPath = Join-Path $provisioningDirectory 'workspaces.json'
     $packagePlanPath = Join-Path $provisioningDirectory 'winget-packages.json'
     $toolVersionPlanPath = Join-Path $provisioningDirectory 'tool-versions.json'
-    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $processOwner, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath, $toolVersionPlanPath)) {
+    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $processOwner, $activeSessionLauncher, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath, $toolVersionPlanPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Development provisioning input is missing: $requiredPath"
         }
