@@ -31,3 +31,10 @@ cross-project workflow in the global OpenCode configuration repository.
   whitespace and canonicalize the expected mapped directory with the production
   path owner before comparison. Expected benefit: presentation-only output and
   valid Windows path aliases no longer mask behavioral gate results.
+- **Status: proposed. Publish process-tree fixture PIDs atomically.**
+  Evidence: remote Nightly run `31788065760` observed the PID file after
+  `os.WriteFile` created it but before its bytes were visible, so
+  `TestCommandWaitTerminatesDescendantAfterParentExits` parsed an empty PID while
+  the changed Sandbox package passed. Write the PID to a same-directory temporary
+  file and rename it into place before the reader accepts it. Expected benefit:
+  deterministic process-tree tests without masking product verification.
