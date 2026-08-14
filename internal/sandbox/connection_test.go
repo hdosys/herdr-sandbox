@@ -229,6 +229,18 @@ func TestDefaultDataDirectoryRequiresLocalAppData(t *testing.T) {
 	}
 }
 
+func TestDefaultDataDirectoryUsesApplicationName(t *testing.T) {
+	localAppData := t.TempDir()
+	t.Setenv("LOCALAPPDATA", localAppData)
+	directory, err := defaultDataDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(localAppData, applicationName); directory != want {
+		t.Fatalf("defaultDataDirectory = %q, want %q", directory, want)
+	}
+}
+
 func TestValidateEd25519PublicKey(t *testing.T) {
 	if err := validateEd25519PublicKey(testHostKey + " comment"); err != nil {
 		t.Fatalf("validateEd25519PublicKey: %v", err)

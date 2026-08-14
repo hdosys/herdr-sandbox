@@ -35,8 +35,10 @@ func TestRunPrintsHelp(t *testing.T) {
 	if strings.Contains(stdout.String(), "--timeout 20m") {
 		t.Fatalf("help = %q", stdout.String())
 	}
-	if strings.Contains(stdout.String(), "__installer-") {
-		t.Fatalf("installer-only commands leaked into help: %q", stdout.String())
+	for _, hidden := range []string{"__installer-", "installer-stop-processes"} {
+		if strings.Contains(stdout.String(), hidden) {
+			t.Fatalf("installer-only command %q leaked into help: %q", hidden, stdout.String())
+		}
 	}
 }
 
@@ -101,6 +103,7 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	openCalls := 0
 	seedCalls := 0
+	stopCalls := 0
 	cleanCalls := []bool{}
 	lockedCleanCalls := []bool{}
 	dependencies.openConfig = func() (string, error) {
@@ -109,6 +112,15 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	}
 	dependencies.seedInstaller = func() error {
 		seedCalls++
+		return nil
+	}
+	dependencies.stopInstallerProcesses = func(ctx context.Context) error {
+		stopCalls++
+		deadline, ok := ctx.Deadline()
+		remaining := time.Until(deadline)
+		if !ok || remaining > installerStopProcessesTimeout || remaining < installerStopProcessesTimeout-time.Second {
+			t.Fatalf("installer process-stop deadline = %v, found = %t", deadline, ok)
+		}
 		return nil
 	}
 	dependencies.cleanInstaller = func(ctx context.Context, deleteConfiguration bool) error {
@@ -129,13 +141,13 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 		}
 		return nil
 	}
-	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "--delete-configuration"}} {
+	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"installer-stop-processes"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "--delete-configuration"}} {
 		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
 			t.Fatalf("%v exit code = %d", args, code)
 		}
 	}
-	if openCalls != 1 || seedCalls != 1 || len(cleanCalls) != 0 || len(lockedCleanCalls) != 2 || lockedCleanCalls[0] || !lockedCleanCalls[1] {
-		t.Fatalf("installer owner calls = open %d, seed %d, clean %#v, locked clean %#v", openCalls, seedCalls, cleanCalls, lockedCleanCalls)
+	if openCalls != 1 || seedCalls != 1 || stopCalls != 1 || len(cleanCalls) != 0 || len(lockedCleanCalls) != 2 || lockedCleanCalls[0] || !lockedCleanCalls[1] {
+		t.Fatalf("installer owner calls = open %d, seed %d, stop %d, clean %#v, locked clean %#v", openCalls, seedCalls, stopCalls, cleanCalls, lockedCleanCalls)
 	}
 }
 
@@ -143,6 +155,7 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	dependencies.openConfig = func() (string, error) { return "", errors.New("open fixture") }
 	dependencies.seedInstaller = func() error { return errors.New("seed fixture") }
+	dependencies.stopInstallerProcesses = func(context.Context) error { return errors.New("stop fixture") }
 	dependencies.cleanInstaller = func(context.Context, bool) error { return errors.New("clean fixture") }
 	dependencies.cleanInstallerWithLockHeld = func(context.Context, bool) error { return errors.New("locked clean fixture") }
 	for _, test := range []struct {
@@ -152,11 +165,13 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	}{
 		{args: []string{"__installer-open-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
 		{args: []string{"__installer-seed-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
+		{args: []string{"installer-stop-processes", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
 		{args: []string{"__installer-clean-uninstall"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
 		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
 		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
 		{args: []string{"__installer-open-configuration"}, wantCode: 1, wantText: "open fixture"},
 		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
+		{args: []string{"installer-stop-processes"}, wantCode: 1, wantText: "stop fixture"},
 		{args: []string{"__installer-clean-uninstall", "--installer-lock-held"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
 		{args: []string{"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "extra"}, wantCode: 2, wantText: "accepts only --delete-configuration"},
 		{args: []string{"__installer-clean-uninstall", "--installer-lifecycle-lock-held"}, wantCode: 1, wantText: "locked clean fixture"},

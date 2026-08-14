@@ -57,6 +57,10 @@ The product protects these boundaries:
   replaced before display.
 - Destructive lifecycle and uninstall paths require exact app ownership and fail
   closed when identity changes.
+- Repair, upgrade, and uninstall may force-terminate only peer processes whose
+  queried full image path exactly equals the installed `sandbox.exe`. They retain
+  each validated process handle through bounded exit confirmation, do not kill a
+  process tree, and never target `WindowsSandbox.exe`.
 - Mobile SSH listens only on the verified Tailscale IPv4 at TCP 2222, accepts
   public-key authentication only, and disables forwarding. Windows Firewall
   allows that port only from the Tailscale IPv4 range and blocks tailnet access

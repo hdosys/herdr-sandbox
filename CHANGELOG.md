@@ -31,6 +31,11 @@ release notes remain available on the
 
 ### Changed
 
+- The installed quiet-uninstall runner is now named `uninstall.ps1` beside
+  `uninstall.exe`, making their relationship explicit.
+- Repair, upgrade, and uninstall now stop exact running installed `sandbox.exe`
+  processes within five seconds while preserving the Windows Sandbox guest. A
+  late locked-file uninstall can be retried without rerunning setup.
 - TradingView login transfer now reads the installed Desktop MSIX package profile
   and carries its complete signed session cookie pair into the portable guest app.
 - Selecting TradingView now also registers the verified TVControl server as an

@@ -65,6 +65,12 @@ func TestInstallerBuildInputsBindSafeCurrentIdentity(t *testing.T) {
 	if err := validateInstallerBuildInputs(version, output); err != nil {
 		t.Fatalf("validateInstallerBuildInputs: %v", err)
 	}
+	if productidentity.QuietUninstallHelperName != "uninstall.ps1" {
+		t.Fatalf("quiet uninstall helper = %q, want uninstall.ps1", productidentity.QuietUninstallHelperName)
+	}
+	if productidentity.InstallDirectoryName != productidentity.DisplayName {
+		t.Fatalf("install directory = %q, want display name %q", productidentity.InstallDirectoryName, productidentity.DisplayName)
+	}
 	wantOwned := []string{
 		productidentity.BaseScriptName,
 		productidentity.LicenseName,
@@ -361,6 +367,7 @@ func TestInstallerTemplateExposesSandboxIntegrationContract(t *testing.T) {
 		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
 		`A running Sandbox stays open but becomes unmanaged`,
 		`__installer-seed-configuration`,
+		`installer-stop-processes`,
 		`__installer-clean-uninstall`,
 		`--installer-lifecycle-lock-held`,
 		`--delete-configuration`,
@@ -395,6 +402,71 @@ func TestInstallerTemplateExposesSandboxIntegrationContract(t *testing.T) {
 	}
 }
 
+func TestInstallerStopsApplicationProcessesBeforeLifecycleMutationAndResumesLateUninstall(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer.nsi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		`!macro StopInstalledApplicationProcesses ACTION FAILURE_CODE`,
+		`nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" installer-stop-processes'`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 0`,
+		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 1`,
+		`${AndIf} $1 == "1"`,
+		`The installation remains registered. Run uninstall again.`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("installer process-stop or retry contract is missing %q", want)
+		}
+	}
+	if got := strings.Count(source, `!insertmacro StopInstalledApplicationProcesses "`); got != 2 {
+		t.Fatalf("installed process-stop call count = %d, want 2", got)
+	}
+	if strings.Contains(source, `taskkill /IM`) || strings.Contains(source, `WindowsSandbox.exe`) || strings.Contains(source, `Run setup again before retrying uninstall`) {
+		t.Fatal("installer retains a broad process kill or setup-only late-uninstall retry")
+	}
+
+	installStart := strings.Index(source, `Section "Install"`)
+	uninstallStart := strings.Index(source, `Section "Uninstall"`)
+	if installStart < 0 || uninstallStart <= installStart {
+		t.Fatal("installer sections are missing or out of order")
+	}
+	installSection := source[installStart:uninstallStart]
+	uninstallSection := source[uninstallStart:]
+	assertInstallerOrder := func(name, section string, values ...string) {
+		t.Helper()
+		previous := -1
+		for _, value := range values {
+			index := strings.Index(section, value)
+			if index <= previous {
+				t.Fatalf("%s order for %q = %d after %d", name, value, index, previous)
+			}
+			previous = index
+		}
+	}
+	assertInstallerOrder("setup", installSection,
+		`!insertmacro AcquireInstallerMutex`,
+		`!insertmacro StopInstalledApplicationProcesses "setup"`,
+		`!insertmacro AcquireLifecycleMutex`,
+		`Call EnsureInstallRepairRegistration`,
+		`System::Call 'KERNEL32::CreateDirectoryW(w "$INSTDIR", p 0)`,
+		`Call RemoveOwnedDirectoryTree`,
+	)
+	assertInstallerOrder("uninstall", uninstallSection,
+		`!insertmacro AcquireInstallerMutex`,
+		`!insertmacro StopInstalledApplicationProcesses "uninstall"`,
+		`!insertmacro AcquireLifecycleMutex`,
+		`Call un.EnsureRetryUninstaller`,
+		`StrCpy $InstallMutationActive "1"`,
+	)
+	ensureStart := strings.Index(source, `Function EnsureInstallRepairRegistration`)
+	ensureEnd := strings.Index(source[ensureStart:], `FunctionEnd`)
+	if ensureStart < 0 || ensureEnd < 0 || !strings.Contains(source[ensureStart:ensureStart+ensureEnd], `WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 0`) {
+		t.Fatal("setup repair registration does not clear resumable-uninstall state before target mutation")
+	}
+}
+
 func TestInstallerRestoresExactRegistryValueKinds(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer.nsi"))
 	if err != nil {
@@ -416,11 +488,11 @@ func TestInstallerRestoresExactRegistryValueKinds(t *testing.T) {
 			t.Fatalf("exact registry restoration is missing %q", want)
 		}
 	}
-	if got := strings.Count(source, `!insertmacro SnapshotRegistryValue "`); got != 4 {
-		t.Fatalf("registry snapshot count = %d, want 4", got)
+	if got := strings.Count(source, `!insertmacro SnapshotRegistryValue "`); got != 5 {
+		t.Fatalf("registry snapshot count = %d, want 5", got)
 	}
-	if got := strings.Count(source, `!insertmacro RestoreRegistryValue "`); got != 4 {
-		t.Fatalf("registry restore count = %d, want 4", got)
+	if got := strings.Count(source, `!insertmacro RestoreRegistryValue "`); got != 5 {
+		t.Fatalf("registry restore count = %d, want 5", got)
 	}
 }
 
@@ -528,7 +600,7 @@ func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
 }
 
 func TestQuietUninstallWrapperOwnsPrivateTemporaryCopyAndExitCode(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "quiet-uninstall.ps1"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "uninstall.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +642,7 @@ func TestQuietUninstallWrapperTerminatesOwnedProcessTreeInWindowsPowerShell51(t 
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 process-tree termination regression")
 	}
-	helper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "quiet-uninstall.ps1"))
+	helper, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "uninstall.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}

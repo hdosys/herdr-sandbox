@@ -206,6 +206,9 @@ Var InstallIntentTokenValid
 Var InstallCompleteWasPresent
 Var InstallCompleteOriginal
 Var InstallCompleteOriginalType
+Var UninstallPendingWasPresent
+Var UninstallPendingOriginal
+Var UninstallPendingOriginalType
 Var ProductGuidWasPresent
 Var ProductGuidOriginal
 Var ProductGuidOriginalType
@@ -745,6 +748,37 @@ FunctionEnd
     ${EndIf}
 !macroend
 
+!macro StopInstalledApplicationProcesses ACTION FAILURE_CODE
+    !insertmacro GetRegularFileState "$INSTDIR\${APP_EXECUTABLE}"
+    ${If} $FileState == ${APP_FILE_STATE_REGULAR}
+        DetailPrint "Stopping running ${APP_DISPLAY_NAME} commands before ${ACTION}..."
+        SetOutPath "$INSTDIR"
+        ; The installed command owns the five-second wall-clock deadline and
+        ; writes output only after terminal failure. This seven-second nsExec
+        ; inactivity timeout is a secondary fallback for a silent stuck command.
+        nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" installer-stop-processes'
+        Pop $0
+        Pop $1
+        SetOutPath "$TEMP"
+        ${If} $0 == "error"
+            MessageBox MB_ICONSTOP|MB_OK "Windows could not start the installed ${APP_DISPLAY_NAME} process shutdown command. Close running ${APP_DISPLAY_NAME} commands manually, then retry. No installed files were changed." /SD IDOK
+            SetErrorLevel ${FAILURE_CODE}
+            !insertmacro ReleaseInstallerMutex
+            Quit
+        ${ElseIf} $0 != "0"
+            MessageBox MB_ICONSTOP|MB_OK "Could not stop running ${APP_DISPLAY_NAME} commands before ${ACTION}: status $0. $1 Close them manually, then retry." /SD IDOK
+            SetErrorLevel ${FAILURE_CODE}
+            !insertmacro ReleaseInstallerMutex
+            Quit
+        ${EndIf}
+    ${ElseIf} $FileState == ${APP_FILE_STATE_UNSAFE}
+        MessageBox MB_ICONSTOP|MB_OK "The installed application executable is inaccessible or unsafe. No installed files were changed." /SD IDOK
+        SetErrorLevel ${FAILURE_CODE}
+        !insertmacro ReleaseInstallerMutex
+        Quit
+    ${EndIf}
+!macroend
+
 !macro DefineOwnedDirectoryRemoval PREFIX
 Function ${PREFIX}RemoveOwnedDirectoryTree
     Exch $0
@@ -1007,6 +1041,7 @@ Function RestorePreInstallRegistryState
     !insertmacro RestoreRegistryValue "ProductGuid" $ProductGuidWasPresent $ProductGuidOriginalType $ProductGuidOriginal
     !insertmacro RestoreRegistryValue "InstallLocation" $InstallLocationWasPresent $InstallLocationOriginalType $InstallLocationOriginal
     !insertmacro RestoreRegistryValue "InstallComplete" $InstallCompleteWasPresent $InstallCompleteOriginalType $InstallCompleteOriginal
+    !insertmacro RestoreRegistryValue "UninstallPending" $UninstallPendingWasPresent $UninstallPendingOriginalType $UninstallPendingOriginal
     !insertmacro RestoreRegistryValue "InstallIntentToken" $InstallIntentTokenWasPresent $InstallIntentTokenOriginalType $InstallIntentTokenOriginal
 
     ; A pre-existing key must still exist after exact value restoration. The
@@ -1039,6 +1074,11 @@ Function EnsureInstallRepairRegistration
     ${EndIf}
     ClearErrors
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0
+    ${If} ${Errors}
+        Goto ensure_repair_registry_failed
+    ${EndIf}
+    ClearErrors
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 0
     ${If} ${Errors}
         Goto ensure_repair_registry_failed
     ${EndIf}
@@ -1108,24 +1148,28 @@ Function un.RestoreRetryRegistration
         StrCpy $9 "1"
     ${Else}
         ; Quiet uninstall is optional for recovery. A normal installed
-        ; uninstall.exe is sufficient to retry or repair the installation.
+        ; uninstall.exe is sufficient to resume removal.
         StrCpy $9 "0"
     ${EndIf}
 
-    ; InstallIntentToken is the first retry-registry write. If any later write
-    ; fails or the process stops, matching setup can repair the partial key from
-    ; this exact product and location binding.
+    ; InstallIntentToken is the first retry-registry write. It binds a late
+    ; uninstall retry to this exact product and location.
     ClearErrors
     WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallIntentToken" "${APP_PRODUCT_GUID}|$INSTDIR"
     ${If} ${Errors}
         Goto restore_registry_failed
     ${EndIf}
 
-    ; Build a deliberately incomplete retry registration. Every required value
-    ; is checked individually so no earlier failure can be hidden by a later
-    ; successful registry call.
+    ; Build a deliberately resumable uninstall registration. Every required
+    ; value is checked individually so no earlier failure can be hidden by a
+    ; later successful registry call.
     ClearErrors
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "InstallComplete" 0
+    ${If} ${Errors}
+        Goto restore_registry_failed
+    ${EndIf}
+    ClearErrors
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 1
     ${If} ${Errors}
         Goto restore_registry_failed
     ${EndIf}
@@ -1197,8 +1241,8 @@ Function un.RestoreRetryRegistration
         Goto restore_registry_failed
     ${EndIf}
 
-    ; Keep InstallIntentToken and InstallComplete=0 so setup, rather than an
-    ; incomplete binary root, owns the only supported repair path.
+    ; Keep InstallIntentToken, InstallComplete=0, and UninstallPending=1 so the
+    ; installed uninstaller can resume exact residual cleanup without setup.
     ClearErrors
     DeleteRegValue HKCU "${UNINSTALL_KEY}" "PathAddPending"
     ClearErrors
@@ -1214,13 +1258,15 @@ FunctionEnd
 
 Section "Install"
     !insertmacro AcquireInstallerMutex ${APP_EXIT_INSTALL_FAILED}
-    !insertmacro AcquireLifecycleMutex ${APP_EXIT_INSTALL_FAILED}
 
     StrCpy $ExistingInstallation "0"
     StrCpy $ExistingRegistryOwned "0"
     StrCpy $InstallCompleteWasPresent "0"
     StrCpy $InstallCompleteOriginal "0"
     StrCpy $InstallCompleteOriginalType 0
+    StrCpy $UninstallPendingWasPresent "0"
+    StrCpy $UninstallPendingOriginal "0"
+    StrCpy $UninstallPendingOriginalType 0
     StrCpy $ProductGuidWasPresent "0"
     StrCpy $ProductGuidOriginal ""
     StrCpy $ProductGuidOriginalType 0
@@ -1280,6 +1326,7 @@ Section "Install"
         !insertmacro SnapshotRegistryValue "ProductGuid" $ProductGuidWasPresent $ProductGuidOriginalType $ProductGuidOriginal
         !insertmacro SnapshotRegistryValue "InstallLocation" $InstallLocationWasPresent $InstallLocationOriginalType $InstallLocationOriginal
         !insertmacro SnapshotRegistryValue "InstallComplete" $InstallCompleteWasPresent $InstallCompleteOriginalType $InstallCompleteOriginal
+        !insertmacro SnapshotRegistryValue "UninstallPending" $UninstallPendingWasPresent $UninstallPendingOriginalType $UninstallPendingOriginal
         !insertmacro SnapshotRegistryValue "InstallIntentToken" $InstallIntentTokenWasPresent $InstallIntentTokenOriginalType $InstallIntentTokenOriginal
 
         ${If} $InstallIntentTokenWasPresent == "1"
@@ -1380,6 +1427,9 @@ Section "Install"
             StrCpy $PathPending "0"
         ${EndIf}
     ${EndIf}
+
+    !insertmacro StopInstalledApplicationProcesses "setup" ${APP_EXIT_INSTALL_FAILED}
+    !insertmacro AcquireLifecycleMutex ${APP_EXIT_INSTALL_FAILED}
 
     InitPluginsDir
     SetOutPath "$PLUGINSDIR\package"
@@ -1603,6 +1653,7 @@ Section "Install"
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "PathAdded" $PathOwned
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 0
+    WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 0
     ${If} ${Errors}
         StrCpy $InstallFailureMessage "Windows Installed Apps registration failed."
         Goto install_integration_failure
@@ -1759,7 +1810,6 @@ SectionEnd
 
 Section "Uninstall"
     !insertmacro AcquireInstallerMutex ${APP_EXIT_UNINSTALL_FAILED}
-    !insertmacro AcquireLifecycleMutex ${APP_EXIT_UNINSTALL_FAILED}
 
     SetAutoClose true
     SetOutPath "$TEMP"
@@ -1809,22 +1859,48 @@ Section "Uninstall"
     ClearErrors
     ReadRegDWORD $0 HKCU "${UNINSTALL_KEY}" "InstallComplete"
     ${If} ${Errors}
-    ${OrIf} $0 != "1"
-        MessageBox MB_ICONSTOP|MB_OK "Run the matching setup once to repair the incomplete installation before uninstalling." /SD IDOK
-        SetErrorLevel ${APP_EXIT_UNINSTALL_FAILED}
-        !insertmacro ReleaseAllMutexes
-        Quit
+        Goto uninstall_requires_setup
+    ${EndIf}
+    ClearErrors
+    ReadRegDWORD $1 HKCU "${UNINSTALL_KEY}" "UninstallPending"
+    ${If} ${Errors}
+        Goto uninstall_requires_setup
     ${EndIf}
 
-    ; A complete install must not retain an active payload-mutation intent.
-    ClearErrors
-    ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "InstallIntentToken"
-    ${IfNot} ${Errors}
-        MessageBox MB_ICONSTOP|MB_OK "The installation still carries an active repair intent. Run setup once before uninstalling." /SD IDOK
-        SetErrorLevel ${APP_EXIT_UNINSTALL_FAILED}
-        !insertmacro ReleaseAllMutexes
-        Quit
+    ${If} $0 == "1"
+        ${If} $1 != "0"
+            Goto uninstall_requires_setup
+        ${EndIf}
+        ; A complete install must not retain an active payload-mutation intent.
+        ClearErrors
+        ReadRegStr $2 HKCU "${UNINSTALL_KEY}" "InstallIntentToken"
+        ${IfNot} ${Errors}
+            Goto uninstall_requires_setup
+        ${EndIf}
+    ${ElseIf} $0 == "0"
+    ${AndIf} $1 == "1"
+        ; A failed late uninstall owns one exact resumable product/location intent.
+        ClearErrors
+        ReadRegStr $2 HKCU "${UNINSTALL_KEY}" "InstallIntentToken"
+        ${If} ${Errors}
+        ${OrIf} $2 != "${APP_PRODUCT_GUID}|$INSTDIR"
+            Goto uninstall_requires_setup
+        ${EndIf}
+    ${Else}
+        Goto uninstall_requires_setup
     ${EndIf}
+    Goto uninstall_registration_ready
+
+    uninstall_requires_setup:
+        MessageBox MB_ICONSTOP|MB_OK "The installation is incomplete and is not a resumable uninstall. Run the matching setup once to repair it." /SD IDOK
+        SetErrorLevel ${APP_EXIT_UNINSTALL_FAILED}
+        !insertmacro ReleaseInstallerMutex
+        Quit
+
+    uninstall_registration_ready:
+
+    !insertmacro StopInstalledApplicationProcesses "uninstall" ${APP_EXIT_UNINSTALL_FAILED}
+    !insertmacro AcquireLifecycleMutex ${APP_EXIT_UNINSTALL_FAILED}
 
     ; Keep a normal retry entry point available before application cleanup.
     Call un.EnsureRetryUninstaller
@@ -1947,7 +2023,7 @@ Section "Uninstall"
 
     ; Registration and the exact fixed path have already proved ownership of the
     ; complete binary root. Remove the registration, then remove that root as one
-    ; unit. A failure recreates a minimal repair entry point for setup.
+    ; unit. A late failure recreates an exact resumable uninstall entry point.
     ClearErrors
     DeleteRegKey HKCU "${UNINSTALL_KEY}"
     ${If} ${Errors}
@@ -1981,19 +2057,24 @@ Section "Uninstall"
     Goto uninstall_done
 
     uninstall_retryable_failure:
+        StrCpy $2 "$InstallFailureMessage The installation remains registered. Run uninstall again."
         ${If} $RegistryRestoreFailed == "1"
-            MessageBox MB_ICONSTOP|MB_OK "$InstallFailureMessage A repair entry point could not be restored. Run setup again." /SD IDOK
+            StrCpy $2 "$InstallFailureMessage A retry entry point could not be restored. Run setup again."
         ${ElseIf} $CleanupRetryRequired == "1"
-            ClearErrors
-            WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 0
-            ${If} ${Errors}
-                MessageBox MB_ICONSTOP|MB_OK "$InstallFailureMessage Cleanup succeeded, but its retry state could not be reset. Run setup once to repair the installation, then uninstall again." /SD IDOK
-            ${Else}
-                MessageBox MB_ICONSTOP|MB_OK "$InstallFailureMessage The installation remains registered for repair. Run setup again before retrying uninstall." /SD IDOK
+            ; Rerun application cleanup only while its executable remains. If it
+            ; was already removed, the committed cleanup state remains sufficient.
+            !insertmacro GetRegularFileState "$INSTDIR\${APP_EXECUTABLE}"
+            ${If} $FileState == ${APP_FILE_STATE_REGULAR}
+                ClearErrors
+                WriteRegDWORD HKCU "${UNINSTALL_KEY}" "CleanupComplete" 0
+                ${If} ${Errors}
+                    StrCpy $2 "$InstallFailureMessage Cleanup succeeded, but its retry state could not be reset. Run setup once, then uninstall again."
+                ${EndIf}
+            ${ElseIf} $FileState == ${APP_FILE_STATE_UNSAFE}
+                StrCpy $2 "$InstallFailureMessage The installed executable became unsafe. Run setup once, then uninstall again."
             ${EndIf}
-        ${Else}
-            MessageBox MB_ICONSTOP|MB_OK "$InstallFailureMessage Run setup again before retrying uninstall." /SD IDOK
         ${EndIf}
+        MessageBox MB_ICONSTOP|MB_OK "$2" /SD IDOK
         StrCpy $InstallMutationActive "0"
         SetErrorLevel ${APP_EXIT_UNINSTALL_FAILED}
         !insertmacro ReleaseAllMutexes

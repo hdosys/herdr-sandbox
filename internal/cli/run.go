@@ -58,7 +58,10 @@ Behavior:
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
-const installerCleanUninstallTimeout = 15 * time.Second
+const (
+	installerCleanUninstallTimeout = 15 * time.Second
+	installerStopProcessesTimeout  = 5 * time.Second
+)
 
 const stackSelectionHelp = "android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, python-ai"
 
@@ -85,6 +88,7 @@ type commandDependencies struct {
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
 	openConfig                 func() (string, error)
 	seedInstaller              func() error
+	stopInstallerProcesses     func(context.Context) error
 	cleanInstaller             func(context.Context, bool) error
 	cleanInstallerWithLockHeld func(context.Context, bool) error
 }
@@ -106,6 +110,7 @@ func defaultCommandDependencies() commandDependencies {
 		initialize:                 sandbox.InitializeProject,
 		openConfig:                 sandbox.OpenConfiguration,
 		seedInstaller:              sandbox.SeedInstallerConfiguration,
+		stopInstallerProcesses:     sandbox.StopInstallerProcesses,
 		cleanInstaller:             sandbox.CleanInstallerData,
 		cleanInstallerWithLockHeld: sandbox.CleanInstallerDataWithLockHeld,
 	}
@@ -179,6 +184,18 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 2
 		}
 		if err := dependencies.seedInstaller(); err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		}
+		return 0
+	case "installer-stop-processes":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "sandbox: installer-stop-processes does not accept arguments")
+			return 2
+		}
+		stopContext, cancel := context.WithTimeout(ctx, installerStopProcessesTimeout)
+		defer cancel()
+		if err := dependencies.stopInstallerProcesses(stopContext); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}

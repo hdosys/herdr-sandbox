@@ -445,7 +445,7 @@ func defaultDataDirectory() (string, error) {
 	if !filepath.IsAbs(localAppData) {
 		return "", fmt.Errorf("LOCALAPPDATA is not absolute: %q", localAppData)
 	}
-	return filepath.Join(localAppData, "herdr-sandbox"), nil
+	return filepath.Join(localAppData, applicationName), nil
 }
 
 func effectiveCacheDirectory(configured string) (string, error) {

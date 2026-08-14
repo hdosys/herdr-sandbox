@@ -440,7 +440,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if _, err := requireExecutable(pathHelper, "installer PATH helper"); err != nil {
 		return err
 	}
-	quietUninstallHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "quiet-uninstall.ps1"))
+	quietUninstallHelper, err := filepath.Abs(filepath.Join("packaging", "windows", "uninstall.ps1"))
 	if err != nil {
 		return fmt.Errorf("resolve quiet uninstall helper: %w", err)
 	}
