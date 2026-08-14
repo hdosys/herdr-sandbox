@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+func normalizedProjectPlanError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.Join(strings.Fields(err.Error()), " ")
+}
+
 func TestInspectProjectProvisioningPlanUsesDirectCallsWithoutExecutingScripts(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
@@ -225,7 +232,7 @@ func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "$version = '1.26.5'\nInstall-GoStack -ProjectDirectory $ProjectDirectory -Version $version\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
-	if err == nil || !strings.Contains(err.Error(), "must be one literal string") {
+	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "must be one literal string") {
 		t.Fatalf("dynamic version error = %v", err)
 	}
 }
@@ -310,7 +317,7 @@ func TestInspectProjectProvisioningPlanRejectsOtherDynamicPlaywrightVersion(t *t
 	writeTestFile(t, profile, "$version = '1.61.1'\nInstall-NodeStack -PlaywrightVersion $version\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "project", HostDirectory: t.TempDir(), ProvisioningPath: profile}})
-	if err == nil || !strings.Contains(err.Error(), "parameter -PlaywrightVersion must be one literal string") {
+	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "parameter -PlaywrightVersion must be one literal string") {
 		t.Fatalf("dynamic Playwright version error = %v", err)
 	}
 }
@@ -326,7 +333,7 @@ func TestInspectProjectProvisioningPlanRejectsDynamicRustProjectDirectory(t *tes
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "$rustRoot = Join-Path $ProjectDirectory 'src'\nInstall-RustMSVCStack -ProjectDirectory $rustRoot\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
-	if err == nil || !strings.Contains(err.Error(), "parameter -ProjectDirectory must be one literal string") {
+	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "parameter -ProjectDirectory must be one literal string") {
 		t.Fatalf("dynamic Rust project directory error = %v", err)
 	}
 }

@@ -2362,7 +2362,11 @@ func TestResolveProvisioningIncludesDedicatedWorktreeDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(filepath.Clean(plan.WorktreeDirectory), filepath.Clean(worktrees)) ||
+	expectedWorktreeDirectory, err := canonicalMappedDirectory(worktrees)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(filepath.Clean(plan.WorktreeDirectory), expectedWorktreeDirectory) ||
 		len(plan.Workspaces) != 1 || !plan.Workspaces[0].Active {
 		t.Fatalf("provisioning plan = %#v", plan)
 	}
