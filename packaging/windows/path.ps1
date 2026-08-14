@@ -38,51 +38,117 @@ function Get-NormalizedPath {
     return $full
 }
 
-function Test-EffectivePathEntry {
+function Get-PathEntryDescriptor {
     param(
         [AllowEmptyString()][string]$Entry,
-        [Parameter(Mandatory = $true)][string]$Expected,
-        [Parameter(Mandatory = $true)][bool]$ExpandVariables
-    )
-
-    $candidate = $Entry.Trim().Trim([char[]]@('"'))
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-        return $false
-    }
-    try {
-        if ($ExpandVariables) {
-            $candidate = [Environment]::ExpandEnvironmentVariables($candidate)
-        }
-        return (Get-NormalizedPath -Path $candidate) -ieq $Expected
-    }
-    catch {
-        return $false
-    }
-}
-
-function Test-OwnedPathEntry {
-    param(
-        [AllowEmptyString()][string]$Entry,
+        [Parameter(Mandatory = $true)][bool]$ExpandVariables,
         [Parameter(Mandatory = $true)][string]$Expected
     )
 
-    $candidate = $Entry.Trim().Trim([char[]]@('"'))
+    $raw = [string]$Entry
+    $candidate = $raw.Trim().Trim([char[]]@('"'))
     if ([string]::IsNullOrWhiteSpace($candidate)) {
-        return $false
+        return [pscustomobject]@{
+            Raw = $raw
+            Empty = $true
+            Product = $false
+            EffectiveKey = $null
+        }
     }
+
+    $literal = $null
     try {
-        # Compare normalized literal paths without expanding environment variables.
-        # This converges duplicate spelling variants of the fixed install directory
-        # while expressions such as %LOCALAPPDATA% remain foreign.
-        return [string]::Equals(
-            (Get-NormalizedPath -Path $candidate),
-            $Expected,
-            [StringComparison]::OrdinalIgnoreCase
-        )
+        $literal = Get-NormalizedPath -Path $candidate
     }
     catch {
-        return $false
+        $literal = $null
     }
+
+    $effective = $literal
+    if ($ExpandVariables) {
+        try {
+            $expanded = [Environment]::ExpandEnvironmentVariables($candidate)
+            $effective = Get-NormalizedPath -Path $expanded
+        }
+        catch {
+            # A literal path containing percent characters must still compare as
+            # its literal spelling even when the registry value is REG_EXPAND_SZ.
+            $effective = $literal
+        }
+    }
+
+    $product = ($null -ne $literal -and
+            [string]::Equals($literal, $Expected, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($null -ne $effective -and
+            [string]::Equals($effective, $Expected, [StringComparison]::OrdinalIgnoreCase))
+
+    if ($null -ne $effective) {
+        $effectiveKey = 'P|' + $effective
+    }
+    elseif ($null -ne $literal) {
+        $effectiveKey = 'P|' + $literal
+    }
+    else {
+        # Preserve unusual relative or malformed entries, but collapse exact
+        # duplicates because repeating the same text cannot change precedence.
+        $effectiveKey = 'R|' + $candidate
+    }
+
+    return [pscustomobject]@{
+        Raw = $raw
+        Empty = $false
+        Product = [bool]$product
+        EffectiveKey = $effectiveKey
+    }
+}
+
+function Get-ConvergedPathEntries {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]]$Entries,
+        [Parameter(Mandatory = $true)][bool]$ExpandVariables,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [Parameter(Mandatory = $true)][bool]$RemoveProduct
+    )
+
+    # We deliberately deduplicate the full effective PATH while preserving the first occurrence.
+    # Add will canonicalize this product's directory to one literal entry on Add.
+    # Uninstall will remove every effective product entry on Remove.
+    $kept = New-Object 'Collections.Generic.List[string]'
+    $seenEffective = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in $Entries) {
+        $descriptor = Get-PathEntryDescriptor -Entry ([string]$entry) `
+            -ExpandVariables $ExpandVariables -Expected $Expected
+        if ([bool]$descriptor.Empty) {
+            continue
+        }
+
+        if ([bool]$descriptor.Product) {
+            if (-not $RemoveProduct) {
+                $effectiveKey = 'P|' + $Expected
+                if ($seenEffective.Add($effectiveKey)) {
+                    [void]$kept.Add($Expected)
+                }
+            }
+            continue
+        }
+
+        $effectiveKey = [string]$descriptor.EffectiveKey
+        if ($seenEffective.Add($effectiveKey)) {
+            [void]$kept.Add([string]$descriptor.Raw)
+        }
+    }
+
+    if (-not $RemoveProduct) {
+        $effectiveKey = 'P|' + $Expected
+        if ($seenEffective.Add($effectiveKey)) {
+            [void]$kept.Add($Expected)
+        }
+    }
+
+    return [string[]]$kept
 }
 
 function Resolve-UserPathUpdate {
@@ -95,49 +161,28 @@ function Resolve-UserPathUpdate {
 
     $entries = @([regex]::Split($Current, ';'))
     $present = @($entries | Where-Object {
-            Test-EffectivePathEntry -Entry $_ -Expected $Expected -ExpandVariables $ExpandVariables
+            $descriptor = Get-PathEntryDescriptor -Entry ([string]$_) `
+                -ExpandVariables $ExpandVariables -Expected $Expected
+            [bool]$descriptor.Product
         }).Count -gt 0
 
     if ($RequestedAction -eq 'Contains') {
         return [pscustomobject]@{ Changed = $false; Present = $present; Value = $Current }
     }
-    if ($RequestedAction -eq 'Add') {
-        if ($present) {
-            return [pscustomobject]@{ Changed = $false; Present = $true; Value = $Current }
-        }
-        $updated = if ([string]::IsNullOrEmpty($Current)) { $Expected } else { $Current + ';' + $Expected }
-        # Windows environment-variable values cannot exceed 32,767 characters,
-        # including the terminating null character.
-        if ($updated.Length -ge 32767) {
-            throw 'Adding the install directory would exceed the Windows PATH length limit.'
-        }
-        return [pscustomobject]@{ Changed = $true; Present = $true; Value = $updated }
+
+    $removeProduct = $RequestedAction -eq 'Remove'
+    $converged = @(Get-ConvergedPathEntries -Entries $entries `
+            -ExpandVariables $ExpandVariables -Expected $Expected -RemoveProduct $removeProduct)
+    $updated = [string]::Join(';', [string[]]$converged)
+
+    if (-not $removeProduct -and $updated.Length -ge 32767) {
+        throw 'Adding the install directory would exceed the Windows PATH length limit.'
     }
 
-    # The product owns complete literal convergence for its fixed install path.
-    # Remove every normalized literal spelling so uninstall leaves no dead alias.
-    # Environment expressions and unrelated entries remain untouched.
-    $kept = New-Object 'Collections.Generic.List[string]'
-    $removed = $false
-    foreach ($entry in $entries) {
-        if (Test-OwnedPathEntry -Entry ([string]$entry) -Expected $Expected) {
-            $removed = $true
-        }
-        else {
-            [void]$kept.Add([string]$entry)
-        }
-    }
-    if (-not $removed) {
-        return [pscustomobject]@{ Changed = $false; Present = $present; Value = $Current }
-    }
-    $remaining = [string[]]$kept
-    $remainingPresent = @($remaining | Where-Object {
-            Test-EffectivePathEntry -Entry $_ -Expected $Expected -ExpandVariables $ExpandVariables
-        }).Count -gt 0
     return [pscustomobject]@{
-        Changed = $true
-        Present = $remainingPresent
-        Value = [string]::Join(';', $remaining)
+        Changed = -not [string]::Equals($updated, $Current, [StringComparison]::Ordinal)
+        Present = -not $removeProduct
+        Value = $updated
     }
 }
 
@@ -176,56 +221,99 @@ function Test-SnapshotEqual {
         [string]$Left.Value -ceq [string]$Right.Value
 }
 
+function Enter-UserPathLock {
+    $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+        throw 'Windows did not provide the current-user LocalAppData directory.'
+    }
+    $lockDirectory = Join-Path $localAppData 'InstallerPathLocks'
+    [void][IO.Directory]::CreateDirectory($lockDirectory)
+    $lockPath = Join-Path $lockDirectory 'user-path.lock'
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        try {
+            return [IO.File]::Open(
+                $lockPath,
+                [IO.FileMode]::OpenOrCreate,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None
+            )
+        }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw 'Another current-user PATH update did not release the serialization lock.'
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    } while ($true)
+}
+
+function Invoke-UserPathAction {
+    param(
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][ValidateSet('Contains', 'Add', 'Remove')][string]$RequestedAction
+    )
+
+    if ($RequestedAction -eq 'Contains') {
+        $snapshot = Get-UserPathSnapshot
+        $kind = if ([bool]$snapshot.Exists) { [string]$snapshot.Kind } else { 'ExpandString' }
+        $result = Resolve-UserPathUpdate -Current ([string]$snapshot.Value) -Expected $Target `
+            -RequestedAction Contains -ExpandVariables ($kind -eq 'ExpandString')
+        [Console]::Out.Write($(if ([bool]$result.Present) { '1' } else { '0' }))
+        return 0
+    }
+
+    for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+        $snapshot = Get-UserPathSnapshot
+        $kind = if ([bool]$snapshot.Exists) {
+            [Microsoft.Win32.RegistryValueKind][Enum]::Parse(
+                [Microsoft.Win32.RegistryValueKind],
+                [string]$snapshot.Kind
+            )
+        }
+        else {
+            [Microsoft.Win32.RegistryValueKind]::ExpandString
+        }
+        $update = Resolve-UserPathUpdate -Current ([string]$snapshot.Value) -Expected $Target `
+            -RequestedAction $RequestedAction -ExpandVariables ($kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString)
+        if (-not [bool]$update.Changed) {
+            return 0
+        }
+        if (-not (Test-SnapshotEqual -Left $snapshot -Right (Get-UserPathSnapshot))) {
+            continue
+        }
+
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if ($null -eq $key) {
+            $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+        }
+        if ($null -eq $key) {
+            throw 'Could not open the current-user Environment registry key.'
+        }
+        try {
+            $key.SetValue('Path', [string]$update.Value, $kind)
+        }
+        finally {
+            $key.Dispose()
+        }
+
+        $readback = Get-UserPathSnapshot
+        if (-not [bool]$readback.Exists -or [string]$readback.Kind -cne [string]$kind -or
+            [string]$readback.Value -cne [string]$update.Value) {
+            throw 'Current-user PATH write did not pass exact type/data read-back.'
+        }
+        return 10
+    }
+
+    throw 'Current-user PATH changed concurrently three times; no installer PATH write was applied.'
+}
+
 $target = Get-NormalizedPath -Path $InstallDirectory
-if ($Action -eq 'Contains') {
-    $snapshot = Get-UserPathSnapshot
-    $kind = if ([bool]$snapshot.Exists) { [string]$snapshot.Kind } else { 'ExpandString' }
-    $result = Resolve-UserPathUpdate -Current ([string]$snapshot.Value) -Expected $target `
-        -RequestedAction Contains -ExpandVariables ($kind -eq 'ExpandString')
-    [Console]::Out.Write($(if ([bool]$result.Present) { '1' } else { '0' }))
-    exit 0
+$pathLock = Enter-UserPathLock
+try {
+    $exitCode = Invoke-UserPathAction -Target $target -RequestedAction $Action
 }
-
-for ($attempt = 1; $attempt -le 3; $attempt += 1) {
-    $snapshot = Get-UserPathSnapshot
-    $kind = if ([bool]$snapshot.Exists) {
-        [Microsoft.Win32.RegistryValueKind][Enum]::Parse(
-            [Microsoft.Win32.RegistryValueKind],
-            [string]$snapshot.Kind
-        )
-    }
-    else {
-        [Microsoft.Win32.RegistryValueKind]::ExpandString
-    }
-    $update = Resolve-UserPathUpdate -Current ([string]$snapshot.Value) -Expected $target `
-        -RequestedAction $Action -ExpandVariables ($kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString)
-    if (-not [bool]$update.Changed) {
-        exit 0
-    }
-    if (-not (Test-SnapshotEqual -Left $snapshot -Right (Get-UserPathSnapshot))) {
-        continue
-    }
-
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-    if ($null -eq $key) {
-        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
-    }
-    if ($null -eq $key) {
-        throw 'Could not open the current-user Environment registry key.'
-    }
-    try {
-        $key.SetValue('Path', [string]$update.Value, $kind)
-    }
-    finally {
-        $key.Dispose()
-    }
-
-    $readback = Get-UserPathSnapshot
-    if (-not [bool]$readback.Exists -or [string]$readback.Kind -cne [string]$kind -or
-        [string]$readback.Value -cne [string]$update.Value) {
-        throw 'Current-user PATH write did not pass exact type/data read-back.'
-    }
-    exit 10
+finally {
+    $pathLock.Dispose()
 }
-
-throw 'Current-user PATH changed concurrently three times; no installer PATH write was applied.'
+exit $exitCode

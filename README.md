@@ -49,7 +49,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
 - **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
 - **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
-- **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/marker-bound uninstall ownership.
+- **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/fixed-location uninstall ownership.
 - **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
 
 ## Key capabilities
@@ -103,10 +103,11 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest relea
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
 
-- Installs to `%LOCALAPPDATA%\Programs\Herdr Sandbox`. A permanent product GUID, the registered location, and a matching marker establish ownership; setup refuses a nonempty unmarked directory.
-- Setup stages and backs up the four-file payload, restores a failed replacement, and repairs a marked interrupted install when rerun. It does not promise rollback after power loss.
-- Reparse points, inaccessible state, locked application files, and unknown siblings fail closed or remain preserved for a later repair.
-- Setup and uninstall share one installer-only gate, so ordinary `sandbox` commands no longer cause a false "another installer is running" result. Destructive uninstall cleanup additionally holds the existing application lifecycle gate continuously until executable removal. Setup adds at most one effective user `PATH` entry; owned uninstall removes every normalized literal spelling of that fixed directory, including duplicates, while preserving environment-expression and unrelated entries.
+- Installs to the fixed `%LOCALAPPDATA%\Programs\Herdr Sandbox` binary root. Its current product-GUID registration and exact location establish ownership; setup refuses a nonempty root without that registration.
+- The entire binary root belongs to the installer. Setup stages and backs up the supported payload, replaces the complete root during an upgrade, restores a failed replacement and prior registration, and repairs a recognized interrupted install when rerun. It does not promise rollback after power loss.
+- Setup does not migrate historical registrations, marker files, or executable names. Remove an older-format installation with its matching uninstaller before installing this release.
+- Reparse roots and inaccessible state fail closed. Files placed manually inside the registered binary root are removed with that root during upgrade or uninstall; configuration and project data remain outside it.
+- Setup and uninstall share one installer-only gate, so ordinary `sandbox` commands no longer cause a false "another installer is running" result. Destructive uninstall cleanup additionally holds the existing application lifecycle gate continuously through recursive binary-root deletion. Setup removes empty and duplicate user `PATH` entries while preserving first-occurrence command precedence, then keeps one canonical Sandbox entry. Uninstall removes every effective Sandbox entry, including expanded-variable and duplicate forms, while preserving unique unrelated entries.
 - `config.json` and `user.ps1` are created only when absent and survive upgrades. They also survive uninstall unless **Also delete config.json and user.ps1** or silent `/DELETE_CONFIG` is selected.
 - Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It validates ownership and removes only exact app-owned SSH, machine-local, cache, registration, and application state. Silent cleanup is bounded to 30 seconds and returns a nonzero status instead of hanging. A running Sandbox is preserved and becomes unmanaged.
 - Herdr/Herdr-Win, agents, updaters, runtime bundles, Windows prerequisites, project profiles, unrelated SSH content, and unselected user configuration remain outside installer ownership.

@@ -129,7 +129,7 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 		}
 		return nil
 	}
-	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-schema=1", "--installer-lifecycle-lock-held"}, {"__installer-clean-uninstall", "--installer-schema=1", "--installer-lifecycle-lock-held", "--delete-configuration"}} {
+	for _, args := range [][]string{{"__installer-open-configuration"}, {"__installer-seed-configuration"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held"}, {"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "--delete-configuration"}} {
 		if code := runWithCommandDependencies(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 0 {
 			t.Fatalf("%v exit code = %d", args, code)
 		}
@@ -152,16 +152,15 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	}{
 		{args: []string{"__installer-open-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
 		{args: []string{"__installer-seed-configuration", "extra"}, wantCode: 2, wantText: "does not accept arguments"},
-		{args: []string{"__installer-clean-uninstall"}, wantCode: 2, wantText: "requires --installer-schema=1"},
-		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "requires --installer-schema=1"},
-		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1"},
+		{args: []string{"__installer-clean-uninstall"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
+		{args: []string{"__installer-clean-uninstall", "extra"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
+		{args: []string{"__installer-clean-uninstall", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
 		{args: []string{"__installer-open-configuration"}, wantCode: 1, wantText: "open fixture"},
 		{args: []string{"__installer-seed-configuration"}, wantCode: 1, wantText: "seed fixture"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1"}, wantCode: 2, wantText: "requires --installer-schema=1 --installer-lifecycle-lock-held"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--delete-configuration"}, wantCode: 2, wantText: "requires --installer-schema=1 --installer-lifecycle-lock-held"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--installer-lock-held"}, wantCode: 2, wantText: "requires --installer-schema=1 --installer-lifecycle-lock-held"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--installer-lifecycle-lock-held"}, wantCode: 1, wantText: "locked clean fixture"},
-		{args: []string{"__installer-clean-uninstall", "--installer-schema=1", "--installer-lifecycle-lock-held", "--delete-configuration"}, wantCode: 1, wantText: "locked clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-lock-held"}, wantCode: 2, wantText: "requires --installer-lifecycle-lock-held"},
+		{args: []string{"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "extra"}, wantCode: 2, wantText: "accepts only --delete-configuration"},
+		{args: []string{"__installer-clean-uninstall", "--installer-lifecycle-lock-held"}, wantCode: 1, wantText: "locked clean fixture"},
+		{args: []string{"__installer-clean-uninstall", "--installer-lifecycle-lock-held", "--delete-configuration"}, wantCode: 1, wantText: "locked clean fixture"},
 	} {
 		var stderr bytes.Buffer
 		code := runWithCommandDependencies(context.Background(), test.args, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)

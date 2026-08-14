@@ -346,19 +346,6 @@ func canonicalInstallerLeaf(value string) string {
 	return strings.ToLower(strings.TrimRight(value, " ."))
 }
 
-func validateReplacedExecutableName(value string) error {
-	if err := validateInstallerLeaf("replaced executable", value); err != nil {
-		return err
-	}
-	currentFiles := append(installerOwnedFiles(), productidentity.InstallerMarkerName)
-	for _, current := range currentFiles {
-		if canonicalInstallerLeaf(value) == canonicalInstallerLeaf(current) {
-			return fmt.Errorf("replaced executable %q collides with current installer-owned file %q", value, current)
-		}
-	}
-	return nil
-}
-
 func validateInstallerBuildInputs(version releaseVersion, outputPath string) error {
 	if !installerProductGUIDPattern.MatchString(productidentity.ProductGUID) {
 		return fmt.Errorf("installer product GUID is invalid: %q", productidentity.ProductGUID)
@@ -373,16 +360,12 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 		"Base script":            productidentity.BaseScriptName,
 		"Stacks script":          productidentity.StackScriptName,
 		"license":                productidentity.LicenseName,
-		"installer marker":       productidentity.InstallerMarkerName,
 		"quiet uninstall helper": productidentity.QuietUninstallHelperName,
 		"uninstaller":            installerUninstallerName,
 	} {
 		if err := validateInstallerLeaf(role, value); err != nil {
 			return err
 		}
-	}
-	if err := validateReplacedExecutableName(productidentity.ReplacedExecutableName); err != nil {
-		return err
 	}
 	if err := validateInstallerLeaf("install directory", productidentity.InstallDirectoryName); err != nil {
 		return err
@@ -404,7 +387,7 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 		return errors.New("installer display name must not contain an unescaped ampersand")
 	}
 	seen := map[string]string{}
-	for _, name := range append(installerOwnedFiles(), productidentity.InstallerMarkerName) {
+	for _, name := range installerOwnedFiles() {
 		key := canonicalInstallerLeaf(name)
 		if previous, exists := seen[key]; exists {
 			return fmt.Errorf("installer file names collide case-insensitively: %q and %q", previous, name)
@@ -490,6 +473,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"-WindowStyle", "Hidden",
 		"-ExecutionPolicy", "Bypass",
 		"-File", buildValidator,
+		"-InstallerScript", script,
 		"-Version", version.Display,
 		"-FixedVersion", version.Fixed,
 		"-AppName", productidentity.CommandName,
@@ -513,9 +497,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"-AppBaseScript", productidentity.BaseScriptName,
 		"-AppStackScript", productidentity.StackScriptName,
 		"-AppLicense", productidentity.LicenseName,
-		"-AppInstallerMarker", productidentity.InstallerMarkerName,
 		"-AppQuietUninstallHelper", productidentity.QuietUninstallHelperName,
-		"-AppReplacedExecutable", productidentity.ReplacedExecutableName,
 		"-AssetsDirectory", assetsDirectory,
 	}
 	if err := runCommand(ctx, stdout, stderr, powerShell, validatorArgs...); err != nil {
@@ -523,7 +505,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	}
 	args := []string{
 		"/WX",
-		"/V2",
+		"/V4",
 		"/NOCONFIG",
 		"/DRELEASE_TAG=" + version.Tag,
 		"/DVERSION=" + version.Display,
@@ -532,7 +514,6 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_APPLICATION_NAME=" + productidentity.ApplicationName,
 		"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName,
 		"/DAPP_EXECUTABLE=" + productidentity.ExecutableName,
-		"/DAPP_REPLACED_EXECUTABLE=" + productidentity.ReplacedExecutableName,
 		"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName,
 		"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName,
 		"/DAPP_LICENSE=" + productidentity.LicenseName,
@@ -544,12 +525,12 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DAPP_PRODUCT_URL=" + productidentity.ProductURL,
 		"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID,
 		"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName,
-		"/DAPP_INSTALLER_MARKER=" + productidentity.InstallerMarkerName,
 		"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName,
 		"/DAPP_COPYRIGHT=" + productidentity.Copyright,
 		"/DPACKAGE_DIR=" + stageDirectory,
 		"/DPATH_HELPER=" + pathHelper,
 		"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper,
+		"/DASSETS_DIR=" + assetsDirectory,
 		"/DOUTPUT_FILE=" + outputPath,
 		"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath),
 		script,

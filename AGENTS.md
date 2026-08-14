@@ -47,6 +47,11 @@ in the global OpenCode configuration, not this repository.
 
 ## Product and implementation invariants
 
+- This project currently has no backward-compatibility contract. Do not add or
+  retain legacy formats, layouts, versions, migrations, shims, aliases, fallback
+  paths, cleanup bridges, or dual behavior. A future exception requires an
+  explicit current-user decision and a matching canonical product or architecture
+  contract in the same milestone; historical releases alone never authorize it.
 - Agent-invoked host console subprocesses must not create visible console windows.
   Capture output/exit status through a hidden process-tree console inherited by
   descendants; a consoleless parent is insufficient for toolchains that spawn

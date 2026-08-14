@@ -17,6 +17,12 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Emit structured package artifact evidence.**
+  Evidence: the package task already computed both SHA-256 values, but final
+  closeout still needed a separate byte-count and hashing command, including one
+  avoidable command-syntax retry. Emit machine-readable path, byte count, and
+  lowercase SHA-256 fields for every published artifact. Expected benefit: remove
+  ad hoc evidence scripts and reduce artifact transcription errors.
 - **Status: proposed. Centralize extracted PowerShell function test setup.**
   Evidence: adding the shared tool-version helper left two focused Windows
   PowerShell 5.1 harnesses with incomplete manually listed dependencies; only the

@@ -83,17 +83,24 @@ release notes remain available on the
 - Python 3 stacks now expose adjacent verified `python` and `python3` commands so
   uv-created Windows virtual environments retain a valid base executable.
 - Installer ownership now keeps one stable unversioned lifecycle mutex across
-  releases, accepts rooted literal PATH entries containing `%`, and rejects a
-  replaced-executable name that collides with any current payload filename.
+  releases and accepts rooted literal PATH entries containing `%`. The current
+  installer uses a new product GUID and supports only its own registration,
+  payload names, and direct application protocol. Remove an older-format
+  installation with its matching uninstaller before installing this release.
 - Setup and uninstall now use a dedicated installer-only gate, so ordinary
-  Sandbox commands no longer trigger a false installer-busy message. The simpler
-  direct model removes the application-wide installer gate and transaction
-  machinery, verifies every ownership-marker write, bounds quiet uninstall to 30
-  seconds, and keeps destructive cleanup race-free under the existing app lock.
-- Installer builds now validate identity, payload, helper syntax, version/output
-  agreement, and artwork before NSIS compilation. PATH cleanup removes every
-  normalized literal spelling of the fixed install directory while preserving
-  environment-expression and unrelated entries.
+  Sandbox commands no longer trigger a false installer-busy message. Setup records
+  repair intent before creating installer-owned state, restores exact prior
+  registration after preparation failure, and replaces the complete dedicated
+  binary root during an upgrade. Quiet uninstall remains bounded to 30 seconds,
+  destructive cleanup remains race-free under the existing app lock, and uninstall
+  now shows its real progress details by default. Locked binaries produce a clear
+  close-running-commands and retry action.
+- Installer builds now validate identity, payload architecture, helper syntax,
+  reparse-safe inputs, version/output agreement, and exact artwork before NSIS
+  compilation. PATH setup removes empty and duplicate entries while preserving
+  first-occurrence command precedence, keeps one canonical Sandbox entry, and
+  uninstall removes every effective Sandbox entry without disturbing unique
+  unrelated entries.
 
 ## v0.0.12 - 2026-08-07
 
