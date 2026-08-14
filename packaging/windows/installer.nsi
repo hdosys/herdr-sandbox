@@ -547,7 +547,7 @@ Function un.DeleteConfigurationPage
         ${NSD_CreateLabel} 0 0 100% 96u "Application cleanup completed during an earlier uninstall attempt. This retry can remove the remaining installer files, but it cannot newly delete ${APP_CONFIG_FILE} or ${APP_USER_SCRIPT} because the application executable is already gone. Run setup once and uninstall again only if those optional files must also be deleted. Project ${APP_PROJECT_DIRECTORY} profiles are not removed."
         Pop $0
     ${Else}
-        ${NSD_CreateLabel} 0 0 100% 72u "Uninstall removes ${APP_DISPLAY_NAME} machine-local state, SSH integration, and the configured package/tool cache. A running Sandbox stays open but becomes unmanaged; close it manually when finished. Select this option to also remove ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}. Project ${APP_PROJECT_DIRECTORY} profiles are not removed."
+        ${NSD_CreateLabel} 0 0 100% 72u "Uninstall removes ${APP_DISPLAY_NAME} machine-local state, SSH integration, the configured package/tool cache, and its installer-owned sample configuration. A running Sandbox stays open but becomes unmanaged; close it manually when finished. Select this option to also remove ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}. Project ${APP_PROJECT_DIRECTORY} profiles are not removed."
         Pop $0
         ${NSD_CreateCheckbox} 0 82u 100% 14u "Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}"
         Pop $DeleteConfigurationCheckbox
@@ -1692,7 +1692,7 @@ Section "Install"
         Goto install_integration_failure
     ${EndIf}
 
-    DetailPrint "Creating default configuration when missing..."
+    DetailPrint "Creating default configuration and refreshing its sample..."
     ; Setup remains serialized, but the application command may acquire its
     ; normal lifecycle gate.
     !insertmacro ReleaseLifecycleMutex

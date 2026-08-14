@@ -26,6 +26,7 @@ const (
 	provisioningProcessName            = "provisioning-process.cs"
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
+	sampleConfigurationName            = productidentity.SampleConfigurationName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 51"
@@ -1518,8 +1519,8 @@ func ensureGlobalProvisioning(globalRoot string) error {
 	return rejectLegacyUserBase(globalRoot)
 }
 
-// SeedInstallerConfiguration creates the user-owned defaults that setup owns
-// seeding once. Existing user files are never replaced.
+// SeedInstallerConfiguration creates the user-owned defaults when absent and
+// replaces the installer-owned sample with the current canonical defaults.
 func SeedInstallerConfiguration() error {
 	configurationRoot, err := os.UserConfigDir()
 	if err != nil {
@@ -1593,6 +1594,43 @@ func seedInstallerConfigurationRoot(globalRoot string) (resultErr error) {
 	}
 	if configurationCreated {
 		created = append(created, seededFile{path: configurationPath, contents: defaultGlobalConfiguration})
+	}
+	if err := writeInstallerSampleConfiguration(globalRoot); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeInstallerSampleConfiguration(globalRoot string) error {
+	path := filepath.Join(globalRoot, sampleConfigurationName)
+	if info, err := os.Lstat(path); err == nil {
+		reparse, reparseErr := fileInfoIsReparsePoint(info)
+		if reparseErr != nil {
+			return fmt.Errorf("inspect installer-owned sample configuration reparse state: %w", reparseErr)
+		}
+		if reparse || !info.Mode().IsRegular() {
+			return fmt.Errorf("installer-owned sample configuration is not a regular non-reparse file: %s", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect installer-owned sample configuration: %w", err)
+	}
+	if err := rejectMappedPathReparsePoints(globalRoot); err != nil {
+		return fmt.Errorf("validate installer-owned sample configuration root: %w", err)
+	}
+	if err := writeFileAtomically(path, defaultGlobalConfiguration, 0o600); err != nil {
+		return fmt.Errorf("replace installer-owned sample configuration: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("verify installer-owned sample configuration: %w", err)
+	}
+	reparse, err := fileInfoIsReparsePoint(info)
+	if err != nil {
+		return fmt.Errorf("verify installer-owned sample configuration reparse state: %w", err)
+	}
+	contents, readErr := os.ReadFile(path)
+	if reparse || !info.Mode().IsRegular() || readErr != nil || !bytes.Equal(contents, defaultGlobalConfiguration) {
+		return fmt.Errorf("installer-owned sample configuration verification failed: %s", path)
 	}
 	return nil
 }

@@ -387,6 +387,7 @@ func TestConfigurationSyncForcesManagedOpenCodeConfigurationAfterTransfer(t *tes
 		"TV_CDP_PORT = '9222'",
 		"TV_MCP_ADVANCED = '0'",
 		"TV_MCP_TELEMETRY = '0'",
+		"enabled = $false",
 		"Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue",
 		"sandbox-allow-all.js",
 		"$allowAllJSON = $permissions | ConvertTo-Json -Compress",
@@ -3202,20 +3203,59 @@ func TestInstallerSeedCreatesDefaultsWithoutOwningLegacyBase(t *testing.T) {
 	}
 }
 
+func TestInstallerSeedAlwaysReplacesOwnedSampleAndPreservesUserFiles(t *testing.T) {
+	global := t.TempDir()
+	configurationPath := filepath.Join(global, globalConfigurationName)
+	configuration := []byte("user-owned configuration")
+	if err := os.WriteFile(configurationPath, configuration, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(global, userProvisioningName)
+	user := append(bytes.Clone(defaultUserProvisioningScript), []byte("Write-Output 'custom'\n")...)
+	if err := os.WriteFile(userPath, user, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedInstallerConfigurationRoot(global); err != nil {
+		t.Fatalf("initial installer seed: %v", err)
+	}
+	samplePath := filepath.Join(global, sampleConfigurationName)
+	if sample, err := os.ReadFile(samplePath); err != nil || !bytes.Equal(sample, defaultGlobalConfiguration) {
+		t.Fatalf("initial sample = %q, %v", sample, err)
+	}
+	if err := os.WriteFile(samplePath, []byte("obsolete installer sample"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedInstallerConfigurationRoot(global); err != nil {
+		t.Fatalf("replacement installer seed: %v", err)
+	}
+	for path, expected := range map[string][]byte{
+		configurationPath: configuration,
+		userPath:          user,
+		samplePath:        defaultGlobalConfiguration,
+	} {
+		contents, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(contents, expected) {
+			t.Fatalf("installer seed result %s = %q, %v", path, contents, err)
+		}
+	}
+}
+
 func TestInstallerSeedRollsBackOnlyDefaultsCreatedByFailedAttempt(t *testing.T) {
 	global := filepath.Join(t.TempDir(), "global")
-	if err := os.MkdirAll(filepath.Join(global, globalConfigurationName), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(global, sampleConfigurationName), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := seedInstallerConfigurationRoot(global)
-	if err == nil || !strings.Contains(err.Error(), globalConfigurationName) {
+	if err == nil || !strings.Contains(err.Error(), sampleConfigurationName) {
 		t.Fatalf("seedInstallerConfigurationRoot error = %v", err)
 	}
-	if _, statErr := os.Lstat(filepath.Join(global, userProvisioningName)); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("user default created by failed installer seed was not rolled back: %v", statErr)
+	for _, name := range []string{userProvisioningName, globalConfigurationName} {
+		if _, statErr := os.Lstat(filepath.Join(global, name)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("default %s created by failed installer seed was not rolled back: %v", name, statErr)
+		}
 	}
-	if info, statErr := os.Stat(filepath.Join(global, globalConfigurationName)); statErr != nil || !info.IsDir() {
-		t.Fatalf("preexisting unknown configuration entry changed: %v, %#v", statErr, info)
+	if info, statErr := os.Stat(filepath.Join(global, sampleConfigurationName)); statErr != nil || !info.IsDir() {
+		t.Fatalf("preexisting unsafe sample entry changed: %v, %#v", statErr, info)
 	}
 }
 

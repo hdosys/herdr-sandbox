@@ -106,8 +106,9 @@ These are deliberate non-guarantees:
 - Starting TradingView Desktop from its managed Start-menu or taskbar shortcut
   passes `--remote-debugging-port=9222` and opens a local Chrome DevTools Protocol
   endpoint with powerful chart/UI access, exposing signed-in TradingView content
-  to guest processes until Desktop exits. Selecting the stack also exposes
-  TVControl to guest OpenCode through the managed local MCP definition. The stack
+  to guest processes until Desktop exits. Selecting the stack registers TVControl
+  in guest OpenCode as disabled by default; toggling it through `/mcps` exposes
+  its tools to that OpenCode session. The stack
   installs and verifies the official signed MSIX payload, but provisioning and
   configuration sync never launch Desktop, open the endpoint themselves, or
   perform an interactive authentication flow.

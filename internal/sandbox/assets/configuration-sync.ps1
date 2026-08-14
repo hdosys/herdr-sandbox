@@ -294,7 +294,7 @@ function Get-OpenCodeTVControlMCPConfiguration {
     return [ordered]@{
         type = 'local'
         command = @($nodePath, [IO.Path]::GetFullPath($serverPath))
-        enabled = $true
+        enabled = $false
         environment = [ordered]@{
             TV_CDP_HOST = '127.0.0.1'
             TV_CDP_PORT = '9222'

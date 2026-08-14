@@ -890,9 +890,9 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 	}
 }
 
-func TestNativeOpenCodeTVControlMCP(t *testing.T) {
+func TestNativeOpenCodeTVControlMCPDefaultsDisabled(t *testing.T) {
 	if os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL") != "1" {
-		t.Skip("set HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL=1 for the ready guest OpenCode and TVControl boundary")
+		t.Skip("set HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL=1 for the ready guest OpenCode and TVControl configuration boundary")
 	}
 	runDirectory := strings.TrimSpace(os.Getenv("HERDR_SANDBOX_NATIVE_RUN_DIRECTORY"))
 	if !filepath.IsAbs(runDirectory) {
@@ -903,17 +903,11 @@ func TestNativeOpenCodeTVControlMCP(t *testing.T) {
 	if start < 0 || end <= start {
 		t.Fatal("configuration-sync OpenCode helper block was not found")
 	}
-	listOnlyLiteral := "$false"
-	if os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL_LIST_ONLY") == "1" {
-		listOnlyLiteral = "$true"
-	}
-	script := string(configurationSyncScript[start:end]) + "\n$testListOnly = " + listOnlyLiteral + "\n" + `
+	script := string(configurationSyncScript[start:end]) + `
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $serverPath = 'C:\HerdrSandbox\tools\tvcontrol\node_modules\@ferroxlabs\tvcontrol\src\server.js'
 $openCode = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-$tradingViewBefore = @(Get-Process -Name 'TradingView' -ErrorAction Stop | ForEach-Object { [int]$_.Id } | Sort-Object)
-if ($tradingViewBefore.Count -eq 0) { throw 'TradingView Desktop is not running.' }
 
 function Get-OwnedTVControlNodeProcessIDs {
     return @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop |
@@ -978,63 +972,16 @@ function Invoke-BoundedOpenCode {
 }
 
 if (-not (Enable-OpenCodeSandboxConfiguration -RequireExecutable $true -TradingViewEnabled $true)) {
-    throw 'OpenCode TVControl MCP configuration was not enabled.'
+    throw 'OpenCode TVControl MCP configuration was not applied.'
 }
 $mcpList = Invoke-BoundedOpenCode -Arguments @('mcp', 'list') -TimeoutMilliseconds 60000
-if ($mcpList -notmatch '(?is)tvcontrol.*connected') {
-    throw 'OpenCode did not connect the TVControl MCP server.'
-}
-
-if ($testListOnly) {
-    [ordered]@{
-        schemaVersion = 1
-        mcpConnected = $true
-        healthVerified = $false
-        tradingViewProcessesPreserved = $true
-    } | ConvertTo-Json -Compress
-    exit 0
-}
-
-$cdpAvailable = $false
-try {
-    $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:9222/json/version')
-    $request.Timeout = 5000
-    $request.ReadWriteTimeout = 5000
-    $response = $request.GetResponse()
-    try { $cdpAvailable = [int]$response.StatusCode -eq 200 } finally { $response.Dispose() }
-} catch {
-    $cdpAvailable = $false
-}
-if (-not $cdpAvailable) { throw 'TradingView Desktop is running without CDP on 127.0.0.1:9222.' }
-
-$prompt = 'Use the TVControl MCP server health tool exactly once. Do not call tv_launch or any mutating tool. Return exactly MCP_TVCONTROL_HEALTH_OK only when the tool reports healthy=true and cdp_connected=true.'
-$events = Invoke-BoundedOpenCode -Arguments @('run', '--format', 'json', '--agent', 'direct-builder') -TimeoutMilliseconds 180000 -InputText $prompt
-$healthToolObserved = $false
-$successMarkerObserved = $false
-foreach ($line in @($events -split '[\r\n]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
-    try { $event = $line | ConvertFrom-Json } catch { throw 'OpenCode MCP verification returned invalid JSONL.' }
-    if ([string]$event.type -ceq 'tool_use' -and [string]$event.part.state.status -ceq 'completed') {
-        $toolOutput = [string]$event.part.state.output
-        if ($toolOutput -match '"healthy"\s*:\s*true' -and $toolOutput -match '"cdp_connected"\s*:\s*true') {
-            $healthToolObserved = $true
-        }
-    }
-    if ([string]$event.type -ceq 'text' -and [string]$event.part.text -ceq 'MCP_TVCONTROL_HEALTH_OK') {
-        $successMarkerObserved = $true
-    }
-}
-if (-not $healthToolObserved -or -not $successMarkerObserved) {
-    throw 'OpenCode did not complete the TVControl health tool contract.'
-}
-$tradingViewAfter = @(Get-Process -Name 'TradingView' -ErrorAction Stop | ForEach-Object { [int]$_.Id } | Sort-Object)
-if (($tradingViewBefore -join ',') -cne ($tradingViewAfter -join ',')) {
-    throw 'OpenCode TVControl verification changed the running TradingView process set.'
+if ($mcpList -notmatch '(?is)tvcontrol.*disabled') {
+    throw 'OpenCode TVControl MCP was not disabled by default.'
 }
 [ordered]@{
     schemaVersion = 1
-    mcpConnected = $true
-    healthVerified = $true
-    tradingViewProcessesPreserved = $true
+    mcpDefaultDisabled = $true
+    tvControlProcessesPreserved = $true
 } | ConvertTo-Json -Compress
 `
 	var archive bytes.Buffer
@@ -1049,7 +996,7 @@ if (($tradingViewBefore -join ',') -cne ($tradingViewAfter -join ',')) {
 	if err := archiveWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	connection := Connection{
 		RunDirectory:  runDirectory,
@@ -1063,16 +1010,14 @@ if (($tradingViewBefore -join ',') -cne ($tradingViewAfter -join ',')) {
 		t.Fatal(err)
 	}
 	var result struct {
-		SchemaVersion                 int  `json:"schemaVersion"`
-		MCPConnected                  bool `json:"mcpConnected"`
-		HealthVerified                bool `json:"healthVerified"`
-		TradingViewProcessesPreserved bool `json:"tradingViewProcessesPreserved"`
+		SchemaVersion               int  `json:"schemaVersion"`
+		MCPDefaultDisabled          bool `json:"mcpDefaultDisabled"`
+		TVControlProcessesPreserved bool `json:"tvControlProcessesPreserved"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		t.Fatalf("decode OpenCode TVControl result: %v", err)
 	}
-	listOnly := os.Getenv("HERDR_SANDBOX_NATIVE_OPENCODE_TVCONTROL_LIST_ONLY") == "1"
-	if result.SchemaVersion != 1 || !result.MCPConnected || result.HealthVerified == listOnly || !result.TradingViewProcessesPreserved {
+	if result.SchemaVersion != 1 || !result.MCPDefaultDisabled || !result.TVControlProcessesPreserved {
 		t.Fatalf("OpenCode TVControl result = %#v", result)
 	}
 }

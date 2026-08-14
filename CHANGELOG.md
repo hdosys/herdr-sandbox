@@ -8,6 +8,9 @@ release notes remain available on the
 
 ### Added
 
+- Windows setup now maintains an installer-owned `config.sample.json` beside the
+  active configuration. Every install refreshes it, and uninstall removes it
+  without touching user-owned `config.json` or `user.ps1` by default.
 - Optional `worktreeDirectory` support now maps one dedicated persistent host root
   to `C:\Worktrees`, configures guest Herdr to create native Git worktrees there,
   and teaches selected guest agents to use Herdr's create, discover, reopen, and
@@ -38,8 +41,9 @@ release notes remain available on the
   late locked-file uninstall can be retried without rerunning setup.
 - TradingView login transfer now reads the installed Desktop MSIX package profile
   and carries its complete signed session cookie pair into the portable guest app.
-- Selecting TradingView now also registers the verified TVControl server as an
-  enabled guest-managed OpenCode MCP integration with fixed loopback CDP settings.
+- Selecting TradingView now registers the verified TVControl server as a
+  disabled-by-default guest-managed OpenCode MCP integration. Use `/mcps` to
+  enable its fixed loopback CDP tools only for the current session.
 - The portable TradingView Desktop now receives a Start-menu shortcut and a
   conditional taskbar pin that launch with its fixed local CDP port enabled.
 - Built-in stack versions are now preflighted across `user.ps1` and every selected
