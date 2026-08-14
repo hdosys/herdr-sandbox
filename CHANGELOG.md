@@ -36,7 +36,7 @@ release notes remain available on the
 - Selecting TradingView now also registers the verified TVControl server as an
   enabled guest-managed OpenCode MCP integration with fixed loopback CDP settings.
 - The portable TradingView Desktop now receives a Start-menu shortcut and a
-  conditional taskbar pin in the existing post-provisioning layout update.
+  conditional taskbar pin that launch with its fixed local CDP port enabled.
 - Built-in stack versions are now preflighted across `user.ps1` and every selected
   project profile before fresh or retained guest mutation. Exact requests converge,
   conflicts name all owners and stop, all-omitted tools resolve latest stable once,

@@ -2328,7 +2328,8 @@ function Install-TradingViewStack {
     if ([IO.Path]::GetFullPath($resolvedDesktop) -ine [IO.Path]::GetFullPath($desktopExecutable)) {
         throw "TradingView Desktop command resolved from an unexpected path: $resolvedDesktop"
     }
-    Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable
+    Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable `
+        -ShortcutArguments '--remote-debugging-port=9222'
 
     Install-NodeRuntime -Version $NodeVersion
     $nodeTools = Get-StackNodeTools
@@ -2452,7 +2453,7 @@ function Install-TradingViewStack {
 
     Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
     Write-Output "TVControl ready: $TVControlVersion"
-    Write-Output 'TradingView remains stopped with CDP disabled. Run tv launch only when local Desktop automation is intended and permitted.'
+    Write-Output 'TradingView remains stopped. Its managed Start-menu and taskbar shortcut enables local CDP on port 9222 when explicitly launched.'
 }
 
 function Resolve-StackPythonPackage {

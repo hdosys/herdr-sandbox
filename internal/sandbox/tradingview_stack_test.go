@@ -37,6 +37,7 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 		"AppxManifest.xml",
 		"Wait-ProvisioningCommandAvailable -Role 'TradingView Desktop command' -Name 'TradingView.exe'",
 		"Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable",
+		"-ShortcutArguments '--remote-debugging-port=9222'",
 		"Install-NodeRuntime -Version $NodeVersion",
 		"@ferroxlabs/tvcontrol@latest",
 		"@ferroxlabs/tvcontrol@$TVControlVersion",
@@ -55,14 +56,14 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 		"'tv.ps1'",
 		"'tvcontrol.ps1'",
 		"Usage: tv <command> [options]",
-		"TradingView remains stopped with CDP disabled",
+		"managed Start-menu and taskbar shortcut enables local CDP on port 9222",
 	} {
 		if !strings.Contains(block, required) {
 			t.Fatalf("TradingView stack is missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{
-		"Start-Process", "taskkill", "--remote-debugging-port", "launch_tv_debug.bat",
+		"Start-Process", "taskkill", "launch_tv_debug.bat",
 		"Install-NodeStack", "npm ci", "npm link", "ProjectDirectory",
 		"Join-Path $tvControlRoot $TVControlVersion",
 		"$tvBin -cne $tvControlBin",
@@ -78,6 +79,9 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 	shortcutIndex := strings.Index(block, "Ensure-ProvisioningStartShortcut -DisplayName 'TradingView'")
 	if commandIndex < 0 || shortcutIndex <= commandIndex {
 		t.Fatalf("TradingView shortcut is not created after executable verification: command=%d shortcut=%d", commandIndex, shortcutIndex)
+	}
+	if strings.Count(block, "--remote-debugging-port=9222") != 1 {
+		t.Fatalf("TradingView stack does not assign exactly one fixed CDP shortcut argument")
 	}
 }
 

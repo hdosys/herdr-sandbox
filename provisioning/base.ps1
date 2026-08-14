@@ -2444,7 +2444,8 @@ function Ensure-ProvisioningStartShortcut {
         [ValidateSet('File Pilot', 'TradingView')]
         [string]$DisplayName,
         [Parameter(Mandatory = $true)]
-        [string]$Executable
+        [string]$Executable,
+        [string]$ShortcutArguments = ''
     )
 
     if (-not [IO.Path]::IsPathRooted($Executable) -or
@@ -2469,11 +2470,11 @@ function Ensure-ProvisioningStartShortcut {
     $matches = (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -and
         [string]$shortcut.TargetPath -ieq $Executable -and
         [string]$shortcut.WorkingDirectory -ieq $workingDirectory -and
-        [string]::IsNullOrEmpty([string]$shortcut.Arguments)
+        [string]$shortcut.Arguments -ceq $ShortcutArguments
     if (-not $matches) {
         $shortcut.TargetPath = $Executable
         $shortcut.WorkingDirectory = $workingDirectory
-        $shortcut.Arguments = ''
+        $shortcut.Arguments = $ShortcutArguments
         $shortcut.Description = $DisplayName
         $shortcut.Save()
     }
@@ -2482,8 +2483,8 @@ function Ensure-ProvisioningStartShortcut {
     if (($shortcutInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         [string]$verifiedShortcut.TargetPath -ine $Executable -or
         [string]$verifiedShortcut.WorkingDirectory -ine $workingDirectory -or
-        -not [string]::IsNullOrEmpty([string]$verifiedShortcut.Arguments)) {
-        throw "$DisplayName Start shortcut read-back did not match the installed executable."
+        [string]$verifiedShortcut.Arguments -cne $ShortcutArguments) {
+        throw "$DisplayName Start shortcut read-back did not match the installed executable and arguments."
     }
     Write-Host "$DisplayName Start shortcut ready: $shortcutPath"
 }

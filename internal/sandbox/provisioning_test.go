@@ -312,15 +312,63 @@ func TestDefaultBaseInstallsWinDirStatAndFilePilot(t *testing.T) {
 		"-Role 'File Pilot' -Id 'Voidstar.FilePilot'",
 		"function Ensure-ProvisioningStartShortcut",
 		"[ValidateSet('File Pilot', 'TradingView')]",
+		"[string]$ShortcutArguments = ''",
 		"function Ensure-ProvisioningFilePilotStartShortcut",
 		`Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe`,
 		"New-Object -ComObject WScript.Shell",
 		"Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $filePilotExecutable",
-		"Start shortcut read-back did not match the installed executable",
+		"[string]$shortcut.Arguments -ceq $ShortcutArguments",
+		"$shortcut.Arguments = $ShortcutArguments",
+		"[string]$verifiedShortcut.Arguments -cne $ShortcutArguments",
+		"Start shortcut read-back did not match the installed executable and arguments",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing GUI utility contract %q", required)
 		}
+	}
+}
+
+func TestProvisioningStartShortcutPreservesExactArguments(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows shortcut regression")
+	}
+	root := t.TempDir()
+	executable := filepath.Join(root, "TradingView.exe")
+	if err := os.WriteFile(executable, []byte("shortcut target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+$shortcutFunction = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Ensure-ProvisioningStartShortcut'
+}, $true)
+if ($null -eq $shortcutFunction) { throw 'Shortcut function is missing.' }
+Invoke-Expression $shortcutFunction.Extent.Text
+$env:APPDATA = '%s'
+$executable = '%s'
+Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $executable
+Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $executable -ShortcutArguments '--remote-debugging-port=9222'
+Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $executable
+$shell = New-Object -ComObject WScript.Shell
+$tradingView = $shell.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\TradingView.lnk'))
+$filePilot = $shell.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\File Pilot.lnk'))
+if ([string]$tradingView.TargetPath -ine $executable -or
+    [string]$tradingView.Arguments -cne '--remote-debugging-port=9222' -or
+    [string]$filePilot.TargetPath -ine $executable -or
+    -not [string]::IsNullOrEmpty([string]$filePilot.Arguments)) {
+    throw 'Shortcut target or argument read-back failed.'
+}
+`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(filepath.Join(root, "appdata")), quote(executable))
+	command := hiddenCommand(mustWindowsPowerShellPath(t),
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("shortcut argument regression: %v: %s", err, output)
 	}
 }
 
