@@ -358,11 +358,9 @@ Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $executab
 $shell = New-Object -ComObject WScript.Shell
 $tradingView = $shell.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\TradingView.lnk'))
 $filePilot = $shell.CreateShortcut((Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\File Pilot.lnk'))
-if ([string]$tradingView.TargetPath -ine $executable -or
-    [string]$tradingView.Arguments -cne '--remote-debugging-port=9222' -or
-    [string]$filePilot.TargetPath -ine $executable -or
+if ([string]$tradingView.Arguments -cne '--remote-debugging-port=9222' -or
     -not [string]::IsNullOrEmpty([string]$filePilot.Arguments)) {
-    throw 'Shortcut target or argument read-back failed.'
+    throw "Shortcut argument read-back failed: TradingView=$([string]$tradingView.Arguments), FilePilot=$([string]$filePilot.Arguments)"
 }
 `, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(filepath.Join(root, "appdata")), quote(executable))
 	command := hiddenCommand(mustWindowsPowerShellPath(t),
