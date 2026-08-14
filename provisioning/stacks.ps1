@@ -2328,6 +2328,7 @@ function Install-TradingViewStack {
     if ([IO.Path]::GetFullPath($resolvedDesktop) -ine [IO.Path]::GetFullPath($desktopExecutable)) {
         throw "TradingView Desktop command resolved from an unexpected path: $resolvedDesktop"
     }
+    Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable
 
     Install-NodeRuntime -Version $NodeVersion
     $nodeTools = Get-StackNodeTools

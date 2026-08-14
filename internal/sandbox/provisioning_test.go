@@ -310,10 +310,13 @@ func TestDefaultBaseInstallsWinDirStatAndFilePilot(t *testing.T) {
 		"-InstallerType 'wix' -Scope 'machine' -Adapter 'MSI'",
 		"Join-Path $env:ProgramFiles 'WinDirStat\\WinDirStat.exe'",
 		"-Role 'File Pilot' -Id 'Voidstar.FilePilot'",
+		"function Ensure-ProvisioningStartShortcut",
+		"[ValidateSet('File Pilot', 'TradingView')]",
 		"function Ensure-ProvisioningFilePilotStartShortcut",
 		`Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe`,
 		"New-Object -ComObject WScript.Shell",
-		"File Pilot Start shortcut read-back did not match",
+		"Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $filePilotExecutable",
+		"Start shortcut read-back did not match the installed executable",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing GUI utility contract %q", required)
@@ -895,6 +898,8 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 		"<taskbar:UWA AppUserModelID=\"",
 		"<taskbar:DesktopApp DesktopApplicationID=\"WinDirStat\" />",
 		`<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />`,
+		`<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\TradingView.lnk" />`,
+		"HerdrSandboxToolVersionPlan.Versions.ContainsKey('TradingView.TradingViewDesktop')",
 		"[Net.WebUtility]::HtmlEncode($layout)",
 		"StartLayout -ceq $layout",
 		"Taskbar policy read-back did not match the canonical decoded layout",
@@ -922,14 +927,15 @@ func TestDefaultBaseUsesSupportedIdempotentTaskbarPolicy(t *testing.T) {
 	edgeIndex := strings.Index(taskbar, `DesktopApplicationID="MSEdge"`)
 	explorerIndex := strings.Index(taskbar, `DesktopApplicationID="Microsoft.Windows.Explorer"`)
 	filePilotIndex := strings.Index(taskbar, `DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk"`)
+	tradingViewIndex := strings.Index(taskbar, `DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\TradingView.lnk"`)
 	terminalIndex := strings.Index(taskbar, `<taskbar:UWA AppUserModelID="`)
 	winDirStatIndex := strings.Index(taskbar, `DesktopApplicationID="WinDirStat"`)
 	matchingIndex := strings.Index(taskbar, "Taskbar pins already match:")
 	writeIndex := strings.Index(taskbar, "$encodedLayout = [Net.WebUtility]::HtmlEncode($layout)")
 	readBackIndex := strings.Index(taskbar, "Taskbar policy read-back did not match the canonical decoded layout")
 	restartIndex := strings.Index(taskbar, "Restart-ProvisioningExplorerShell -Role 'taskbar policy change'")
-	if edgeIndex < 0 || explorerIndex < edgeIndex || filePilotIndex < explorerIndex || terminalIndex < filePilotIndex || winDirStatIndex < terminalIndex {
-		t.Fatalf("taskbar pin order is invalid: Edge=%d Explorer=%d File Pilot=%d Terminal=%d WinDirStat=%d", edgeIndex, explorerIndex, filePilotIndex, terminalIndex, winDirStatIndex)
+	if edgeIndex < 0 || explorerIndex < edgeIndex || filePilotIndex < explorerIndex || tradingViewIndex < filePilotIndex || terminalIndex < tradingViewIndex || winDirStatIndex < terminalIndex {
+		t.Fatalf("taskbar pin order is invalid: Edge=%d Explorer=%d File Pilot=%d TradingView=%d Terminal=%d WinDirStat=%d", edgeIndex, explorerIndex, filePilotIndex, tradingViewIndex, terminalIndex, winDirStatIndex)
 	}
 	if matchingIndex < 0 || writeIndex < matchingIndex || readBackIndex < writeIndex || restartIndex < readBackIndex {
 		t.Fatalf("taskbar match/write/read-back/restart ordering is invalid: match=%d write=%d readBack=%d restart=%d", matchingIndex, writeIndex, readBackIndex, restartIndex)

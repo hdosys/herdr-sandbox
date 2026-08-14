@@ -36,6 +36,7 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 		"-RequireAuthenticodeSignature",
 		"AppxManifest.xml",
 		"Wait-ProvisioningCommandAvailable -Role 'TradingView Desktop command' -Name 'TradingView.exe'",
+		"Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable",
 		"Install-NodeRuntime -Version $NodeVersion",
 		"@ferroxlabs/tvcontrol@latest",
 		"@ferroxlabs/tvcontrol@$TVControlVersion",
@@ -72,6 +73,11 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 		if strings.Contains(block, forbidden) {
 			t.Fatalf("TradingView stack contains forbidden runtime/project path %q", forbidden)
 		}
+	}
+	commandIndex := strings.Index(block, "Wait-ProvisioningCommandAvailable -Role 'TradingView Desktop command'")
+	shortcutIndex := strings.Index(block, "Ensure-ProvisioningStartShortcut -DisplayName 'TradingView'")
+	if commandIndex < 0 || shortcutIndex <= commandIndex {
+		t.Fatalf("TradingView shortcut is not created after executable verification: command=%d shortcut=%d", commandIndex, shortcutIndex)
 	}
 }
 

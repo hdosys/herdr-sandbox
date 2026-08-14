@@ -2438,47 +2438,60 @@ public static class HerdrSandboxShellWindow {
     Write-Host "Explorer shell restarted: $($stoppedExplorerProcessIDs -join ', ') -> $($newExplorerProcesses.Id -join ', ')"
 }
 
-function Ensure-ProvisioningFilePilotStartShortcut {
-    $filePilotExecutable = Join-Path $env:LOCALAPPDATA `
-        'Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe'
-    if (-not (Test-Path -LiteralPath $filePilotExecutable -PathType Leaf)) {
-        throw "File Pilot portable executable is missing: $filePilotExecutable"
-    }
-    $filePilotExecutableInfo = Get-Item -LiteralPath $filePilotExecutable -Force
-    if (($filePilotExecutableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "File Pilot portable executable is a reparse point: $filePilotExecutable"
-    }
+function Ensure-ProvisioningStartShortcut {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('File Pilot', 'TradingView')]
+        [string]$DisplayName,
+        [Parameter(Mandatory = $true)]
+        [string]$Executable
+    )
 
+    if (-not [IO.Path]::IsPathRooted($Executable) -or
+        -not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+        throw "$DisplayName executable is missing: $Executable"
+    }
+    $Executable = [IO.Path]::GetFullPath($Executable)
+    $executableInfo = Get-Item -LiteralPath $Executable -Force
+    if (($executableInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$DisplayName executable is a reparse point: $Executable"
+    }
     $shortcutDirectory = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
     New-Item -ItemType Directory -Path $shortcutDirectory -Force | Out-Null
     $shortcutDirectoryInfo = Get-Item -LiteralPath $shortcutDirectory -Force
     if (($shortcutDirectoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "File Pilot Start shortcut directory is a reparse point: $shortcutDirectory"
+        throw "$DisplayName Start shortcut directory is a reparse point: $shortcutDirectory"
     }
-    $shortcutPath = Join-Path $shortcutDirectory 'File Pilot.lnk'
-    $workingDirectory = Split-Path -Parent $filePilotExecutable
+    $shortcutPath = Join-Path $shortcutDirectory ($DisplayName + '.lnk')
+    $workingDirectory = Split-Path -Parent $Executable
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($shortcutPath)
     $matches = (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -and
-        [string]$shortcut.TargetPath -ieq $filePilotExecutable -and
+        [string]$shortcut.TargetPath -ieq $Executable -and
         [string]$shortcut.WorkingDirectory -ieq $workingDirectory -and
         [string]::IsNullOrEmpty([string]$shortcut.Arguments)
     if (-not $matches) {
-        $shortcut.TargetPath = $filePilotExecutable
+        $shortcut.TargetPath = $Executable
         $shortcut.WorkingDirectory = $workingDirectory
         $shortcut.Arguments = ''
-        $shortcut.Description = 'File Pilot'
+        $shortcut.Description = $DisplayName
         $shortcut.Save()
     }
     $shortcutInfo = Get-Item -LiteralPath $shortcutPath -Force
     $verifiedShortcut = $shell.CreateShortcut($shortcutPath)
     if (($shortcutInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        [string]$verifiedShortcut.TargetPath -ine $filePilotExecutable -or
+        [string]$verifiedShortcut.TargetPath -ine $Executable -or
         [string]$verifiedShortcut.WorkingDirectory -ine $workingDirectory -or
         -not [string]::IsNullOrEmpty([string]$verifiedShortcut.Arguments)) {
-        throw 'File Pilot Start shortcut read-back did not match the installed portable executable.'
+        throw "$DisplayName Start shortcut read-back did not match the installed executable."
     }
-    Write-Host "File Pilot Start shortcut ready: $shortcutPath"
+    Write-Host "$DisplayName Start shortcut ready: $shortcutPath"
+}
+
+function Ensure-ProvisioningFilePilotStartShortcut {
+    $filePilotExecutable = Join-Path $env:LOCALAPPDATA `
+        'Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe'
+    Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $filePilotExecutable
 }
 
 function Ensure-ProvisioningTaskbarPins {
@@ -2513,6 +2526,15 @@ function Ensure-ProvisioningTaskbarPins {
         }
         $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />') | Out-Null
         $pinNames.Add('File Pilot') | Out-Null
+    }
+    if ($global:HerdrSandboxToolVersionPlan.Versions.ContainsKey('TradingView.TradingViewDesktop')) {
+        $tradingViewShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\TradingView.lnk'
+        if (-not (Test-Path -LiteralPath $tradingViewShortcut -PathType Leaf) -or
+            ((Get-Item -LiteralPath $tradingViewShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TradingView taskbar shortcut is missing or unsafe: $tradingViewShortcut"
+        }
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\TradingView.lnk" />') | Out-Null
+        $pinNames.Add('TradingView') | Out-Null
     }
     $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
     if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
