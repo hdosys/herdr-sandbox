@@ -89,20 +89,18 @@ func TestTradingViewPortableMetadataUsesStrictOfficialManifestInWindowsPowerShel
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 metadata regression")
 	}
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	functionSetup := provisioningPowerShellFunctionSetup(t,
+		provisioningPowerShellFunctionSource{
+			path:  defaultProvisioningPath(t, baseProvisioningName),
+			names: []string{"Get-ProvisioningMetadataValue", "Get-ProvisioningToolVersion"},
+		},
+		provisioningPowerShellFunctionSource{
+			path:  defaultProvisioningPath(t, stackProvisioningName),
+			names: []string{"Get-TradingViewDesktopPortableMetadata"},
+		},
+	)
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$tokens = $null
-$errors = $null
-$baseAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$metadataValue = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-ProvisioningMetadataValue' }, $true)
-$toolVersion = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-ProvisioningToolVersion' }, $true)
-$stackAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$resolver = $stackAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-TradingViewDesktopPortableMetadata' }, $true)
-if ($null -eq $metadataValue -or $null -eq $toolVersion -or $null -eq $resolver) { throw 'TradingView metadata functions are missing.' }
-Invoke-Expression $metadataValue.Extent.Text
-Invoke-Expression $toolVersion.Extent.Text
-Invoke-Expression $resolver.Extent.Text
-$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
+%s
 $script:searchCount = 0
 $script:manifestContent = @'
 PackageIdentifier: TradingView.TradingViewDesktop
@@ -148,7 +146,7 @@ try {
     $rejected = $true
 }
 if (-not $rejected) { throw 'Duplicate TradingView installer URL was accepted.' }
-`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(defaultProvisioningPath(t, stackProvisioningName)))
+`, functionSetup)
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("TradingView manifest metadata regression: %v: %s", err, output)

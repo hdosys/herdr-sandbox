@@ -17,19 +17,16 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
-- **Status: proposed. Emit structured package artifact evidence.**
-  Evidence: the package task already computed both SHA-256 values, but final
-  closeout still needed a separate byte-count and hashing command, including one
-  avoidable command-syntax retry. Emit machine-readable path, byte count, and
-  lowercase SHA-256 fields for every published artifact. Expected benefit: remove
-  ad hoc evidence scripts and reduce artifact transcription errors.
-- **Status: proposed. Centralize extracted PowerShell function test setup.**
-  Evidence: adding the shared tool-version helper left two focused Windows
-  PowerShell 5.1 harnesses with incomplete manually listed dependencies; only the
-  first full repository gate exposed both omissions. Add one test helper that
-  extracts an explicit production function set and initializes shared provisioning
-  context consistently. Expected benefit: dependency drift fails in the focused
-  test that owns the changed function and avoids repeated harness repair.
+- **Status: done. Emit structured package artifact evidence.**
+  Evidence: the package task emits one JSON object per published artifact with its
+  clean path, byte count, and lowercase SHA-256. A focused test validates the exact
+  fields and artifact order. Expected benefit: closeout no longer needs ad hoc
+  evidence scripts or manual hash transcription.
+- **Status: done. Centralize extracted PowerShell function test setup.**
+  Evidence: the NSIS, online WinGet, and TradingView metadata regressions share one
+  helper that extracts each explicit production function set and initializes the
+  tool-version context consistently. Expected benefit: dependency drift fails in
+  the focused test that owns the changed function.
 - **Status: done. Normalize Windows CI evidence before comparison.**
   Evidence: Nightly exposed both PowerShell console-width line wrapping in three
   diagnostic assertions and short-versus-long path aliases in
@@ -37,10 +34,8 @@ cross-project workflow in the global OpenCode configuration repository.
   whitespace and canonicalize the expected mapped directory with the production
   path owner before comparison. Expected benefit: presentation-only output and
   valid Windows path aliases no longer mask behavioral gate results.
-- **Status: proposed. Publish process-tree fixture PIDs atomically.**
-  Evidence: remote Nightly run `31788065760` observed the PID file after
-  `os.WriteFile` created it but before its bytes were visible, so
-  `TestCommandWaitTerminatesDescendantAfterParentExits` parsed an empty PID while
-  the changed Sandbox package passed. Write the PID to a same-directory temporary
-  file and rename it into place before the reader accepts it. Expected benefit:
-  deterministic process-tree tests without masking product verification.
+- **Status: done. Publish process-tree fixture PIDs atomically.**
+  Evidence: the process-tree fixture writes its PID to a same-directory temporary
+  file and renames it into place before the reader can observe it. Repeated focused
+  execution passes. Expected benefit: deterministic process-tree tests without
+  masking product verification.

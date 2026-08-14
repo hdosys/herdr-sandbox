@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"debug/pe"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -54,6 +55,13 @@ type releasePackagePaths struct {
 	Installer string
 }
 
+type releaseArtifactEvidence struct {
+	Kind   string `json:"kind"`
+	Path   string `json:"path"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
 	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		return fmt.Errorf("package requires windows/amd64, got %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -94,18 +102,38 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := publishReleaseArtifactSet(generated, paths); err != nil {
 		return err
 	}
-	for _, path := range releaseOutputPaths(paths) {
-		hash, err := fileSHA256(path)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(stdout, "Release artifact: %s (sha256:%x)\n", filepath.Clean(path), hash)
+	if err := writeReleaseArtifactEvidence(stdout, paths); err != nil {
+		return err
 	}
 	return nil
 }
 
 func releaseOutputPaths(paths releasePackagePaths) []string {
 	return []string{paths.ZIP, paths.Installer}
+}
+
+func writeReleaseArtifactEvidence(stdout io.Writer, paths releasePackagePaths) error {
+	encoder := json.NewEncoder(stdout)
+	for _, path := range releaseOutputPaths(paths) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect published release artifact: %w", err)
+		}
+		hash, err := fileSHA256(path)
+		if err != nil {
+			return err
+		}
+		evidence := releaseArtifactEvidence{
+			Kind:   "release-artifact",
+			Path:   filepath.Clean(path),
+			Bytes:  info.Size(),
+			SHA256: fmt.Sprintf("%x", hash),
+		}
+		if err := encoder.Encode(evidence); err != nil {
+			return fmt.Errorf("write release artifact evidence: %w", err)
+		}
+	}
+	return nil
 }
 
 func verifyReleaseArtifactSet(paths releasePackagePaths) error {

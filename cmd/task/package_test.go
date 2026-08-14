@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/png"
@@ -256,6 +257,42 @@ func TestPublishReleaseArtifactSetNeverLeavesMixedOutputs(t *testing.T) {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("mixed release output remains %s: %v", path, err)
 		}
+	}
+}
+
+func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
+	root := t.TempDir()
+	paths := releasePackagePaths{
+		ZIP:       filepath.Join(root, "release.zip"),
+		Installer: filepath.Join(root, "release_setup.exe"),
+	}
+	contents := [][]byte{[]byte("zip fixture"), []byte("installer fixture")}
+	for index, path := range releaseOutputPaths(paths) {
+		if err := os.WriteFile(path, contents[index], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var output bytes.Buffer
+	if err := writeReleaseArtifactEvidence(&output, paths); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(&output)
+	for index, path := range releaseOutputPaths(paths) {
+		var evidence releaseArtifactEvidence
+		if err := decoder.Decode(&evidence); err != nil {
+			t.Fatalf("decode artifact evidence %d: %v", index, err)
+		}
+		wantHash := fmt.Sprintf("%x", sha256.Sum256(contents[index]))
+		if evidence.Kind != "release-artifact" || evidence.Path != filepath.Clean(path) ||
+			evidence.Bytes != int64(len(contents[index])) || evidence.SHA256 != wantHash ||
+			evidence.SHA256 != strings.ToLower(evidence.SHA256) {
+			t.Fatalf("artifact evidence %d = %#v", index, evidence)
+		}
+	}
+	var extra releaseArtifactEvidence
+	if err := decoder.Decode(&extra); err != io.EOF {
+		t.Fatalf("unexpected trailing artifact evidence: %#v, %v", extra, err)
 	}
 }
 

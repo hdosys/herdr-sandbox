@@ -71,18 +71,12 @@ func TestWinGetMetadataAcceptsExplicitExtensionForSourceForgeDownloadURL(t *test
 		t.Skip("Windows PowerShell 5.1 metadata regression")
 	}
 	basePath := defaultProvisioningPath(t, baseProvisioningName)
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path:  basePath,
+		names: []string{"Get-ProvisioningMetadataValue", "Get-ProvisioningToolVersion", "Get-ProvisioningWinGetMetadata"},
+	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$tokens = $null
-$errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-ProvisioningMetadataValue', 'Get-ProvisioningToolVersion', 'Get-ProvisioningWinGetMetadata')) {
-    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
-    if ($null -eq $definition) { throw "Missing metadata function: $name" }
-    Invoke-Expression $definition.Extent.Text
-}
-$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
+%s
 $script:arguments = @()
 function Invoke-ProvisioningNative {
     param($Role, $FilePath, [object[]]$ArgumentList)
@@ -109,7 +103,7 @@ try {
     $rejected = $true
 }
 if (-not $rejected) { throw 'Extensionless installer URL was accepted without an explicit payload extension.' }
-`, quote(basePath))
+`, functionSetup)
 	scriptPath := filepath.Join(t.TempDir(), "nsis-metadata-regression.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatal(err)

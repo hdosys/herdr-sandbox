@@ -1514,19 +1514,13 @@ func TestOnlineWinGetPackageConcretizesLatestInWindowsPowerShell51(t *testing.T)
 		t.Skip("Windows PowerShell 5.1 online WinGet regression")
 	}
 	basePath := defaultProvisioningPath(t, baseProvisioningName)
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path:  basePath,
+		names: []string{"Get-ProvisioningToolVersion", "Confirm-ProvisioningWinGetReadback", "Install-ProvisioningOnlineWinGetPackage"},
+	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 trap { Write-Output ($_ | Out-String); exit 1 }
-$tokens = $null
-$errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-ProvisioningToolVersion', 'Confirm-ProvisioningWinGetReadback', 'Install-ProvisioningOnlineWinGetPackage')) {
-    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
-    if ($null -eq $definition) { throw "Missing online WinGet function: $name" }
-    Invoke-Expression $definition.Extent.Text
-}
-$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
+%s
 $script:searchCalls = 0
 $script:installArguments = @()
 $script:installCalls = 0
@@ -1568,7 +1562,7 @@ Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -V
 if ($script:installCalls -ne $installCalls) {
     throw 'Matching online WinGet package was reinstalled.'
 }
-`, quote(basePath))
+`, functionSetup)
 	scriptPath := filepath.Join(t.TempDir(), "online-winget-regression.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
@@ -2309,6 +2303,46 @@ func mustWindowsPowerShellPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+type provisioningPowerShellFunctionSource struct {
+	path  string
+	names []string
+}
+
+func provisioningPowerShellFunctionSetup(t *testing.T, sources ...provisioningPowerShellFunctionSource) string {
+	t.Helper()
+	if len(sources) == 0 {
+		t.Fatal("PowerShell function setup requires at least one source")
+	}
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	var script strings.Builder
+	script.WriteString("$herdrFunctionSources = @(\n")
+	for _, source := range sources {
+		if source.path == "" || len(source.names) == 0 {
+			t.Fatal("PowerShell function source requires a path and explicit names")
+		}
+		names := make([]string, len(source.names))
+		for index, name := range source.names {
+			names[index] = quote(name)
+		}
+		fmt.Fprintf(&script, "    [pscustomobject]@{ Path = %s; Names = @(%s) }\n", quote(source.path), strings.Join(names, ", "))
+	}
+	script.WriteString(`)
+foreach ($source in $herdrFunctionSources) {
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($source.Path, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -ne 0) { throw $errors[0].Message }
+    foreach ($name in $source.Names) {
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+        if ($null -eq $definition) { throw "Missing provisioning function $name from $($source.Path)" }
+        Invoke-Expression $definition.Extent.Text
+    }
+}
+$global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Owners = @{} }
+`)
+	return script.String()
 }
 
 func TestResolveProvisioningCombinesGlobalAndActiveWorkspaces(t *testing.T) {

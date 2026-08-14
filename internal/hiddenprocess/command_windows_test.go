@@ -144,9 +144,15 @@ func TestProcessTreeHelper(t *testing.T) {
 		if err := command.Start(); err != nil {
 			t.Fatalf("start process-tree grandchild: %v", err)
 		}
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(command.Process.Pid)), 0o600); err != nil {
+		temporaryPIDFile := pidFile + ".tmp"
+		if err := os.WriteFile(temporaryPIDFile, []byte(strconv.Itoa(command.Process.Pid)), 0o600); err != nil {
 			_ = command.Process.Kill()
 			t.Fatalf("publish process-tree grandchild PID: %v", err)
+		}
+		if err := os.Rename(temporaryPIDFile, pidFile); err != nil {
+			_ = os.Remove(temporaryPIDFile)
+			_ = command.Process.Kill()
+			t.Fatalf("publish process-tree grandchild PID atomically: %v", err)
 		}
 		if os.Getenv(processTreeHelperMode) == parentExitsAfterSpawn {
 			if err := command.Process.Release(); err != nil {
