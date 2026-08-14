@@ -4,12 +4,12 @@
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Its `sandbox` command launches Windows Sandbox with only the selected projects, provisions native toolchains, transfers approved agent configuration over verified SSH, delegates the matching guest runtime and persistent server to Herdr's remote provision command, and attaches the normal host terminal. Source edits persist on the host; guest tools and processes disappear with the Sandbox.
+Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
 
-[How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Worktrees](#persistent-herdr-worktrees) · [Configuration](#configuration) · [Engineering](#engineering-approach) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## How it works
 
@@ -42,56 +42,6 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 > [!IMPORTANT]
 > This is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
-## Key capabilities
-
-- **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
-- **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **One Herdr lifecycle owner:** exact `herdr --remote sandbox --provision --yes --json` deploys the matching versioned guest sidecar, validates final configuration, and starts, reloads, or restarts the persistent server for both fresh and retained runs.
-- **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
-- **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
-- **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
-- **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
-- **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
-- **Persistent agent worktrees:** an optional dedicated host root keeps Herdr-created linked checkouts available across fresh Sandboxes without broadening the mapped home or project set.
-- **QR-assisted mobile Herdr over Tailscale (experimental):** preserve one tagged guest identity and connect from an authorized phone, tablet, or computer through a key-only private endpoint without publishing a service to the internet.
-
-## Supported stacks
-
-`sandbox init --stack` exposes the individually selectable aliases below plus separate project shortcuts. Use `--stack all` to include every standalone alias together with the direct Bun, Cargo Nextest, Just, and uv helper owners, or repeat the flag to combine compatible individual selections. Project profiles may also call those helper functions directly.
-
-### Technology and tool stacks
-
-| Selection | Guest tooling |
-| --- | --- |
-| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
-| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
-| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
-| `dotnet` | .NET 10 LTS SDK |
-| `go` | Go |
-| `java` | Microsoft OpenJDK 25 LTS |
-| `node` | Node.js LTS, Playwright, and Chromium |
-| `nsis` | NSIS compiler for building Windows installers |
-| `nushell` | Latest stable Nushell command-line shell |
-| `playwright-cli` | Playwright CLI without a bundled browser |
-| `python` | Latest stable Python |
-| `rust` | Rust with MSVC Build Tools |
-| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
-| `zig` | Zig |
-
-### Project shortcuts
-
-| Shortcut | Intended setup |
-| --- | --- |
-| `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
-| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
-| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
-
-Project shortcuts do not represent additional technologies. They package complex project setup for convenience. Their preferred long-term home is the repository they serve, in its own `.herdr-sandbox\provision.ps1`. Dependencies, application commands, and release workflows remain project-owned. `sandbox plan` expands each shortcut into its concrete stack owners without executing the profile.
-
-## Deployment time
-
-There is no separate VM to set up or maintain, and only selected stacks are provisioned. Deployment time depends on the selected plan and cache state rather than one universal target: a small cached plan can finish in a few minutes, while first runs with browsers, Android, Vulkan, or Visual Studio payloads take materially longer. `sandbox status` exposes current progress and recent phase timings. Attaching to an already ready Sandbox skips provisioning.
-
 ## Engineering approach
 
 - **Native Windows architecture:** a standard-library-first Go control plane owns the product while PowerShell 5.1 remains a narrow Windows provisioning adapter; no CGO, helper runtime, daemon, provider framework, or alternate provisioner is required.
@@ -101,6 +51,19 @@ There is no separate VM to set up or maintain, and only selected stacks are prov
 - **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
 - **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/marker-bound uninstall ownership.
 - **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
+
+## Key capabilities
+
+- **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
+- **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
+- **One Herdr lifecycle owner:** the host Herdr command deploys the matching guest runtime, validates it, and keeps one persistent guest server ready for attach and reattach.
+- **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
+- **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
+- **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
+- **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
+- **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
+- **Persistent agent worktrees:** an optional dedicated host root keeps Herdr-created linked checkouts available across fresh Sandboxes without broadening the mapped home or project set.
+- **QR-assisted mobile Herdr over Tailscale (experimental):** authorized devices can reach the running guest through a key-only private endpoint without publishing it to the internet.
 
 ## Get started
 
@@ -119,7 +82,12 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
+<details>
+<summary><strong>Why herdr-win is required</strong></summary>
+
 [`herdr-win`](https://github.com/hdosys/herdr-win) is the required Windows remote distribution. Herdr Sandbox validates the existing `herdr.exe` command and active client identity, then uses that command's unattended remote provision owner to transfer its matching complete Windows payload over verified SSH. Sandbox never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
+
+</details>
 
 ### Install Herdr Sandbox
 
@@ -127,7 +95,7 @@ Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) 
 
 #### Installer (recommended)
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds the application to Windows Installed Apps and user `PATH`. The Finish page explains that no app window opens, lists the first `sandbox init`, `up`, `config`, and `status` commands, and links to this guide. A fresh interactive install also shows a checked **Open Herdr Sandbox configuration** option. Leave it selected to open `%APPDATA%\herdr-sandbox\config.json` with the application registered for `.json` files. Standard WinGet and other silent installs, plus repairs and upgrades, do not show the option or open the file.
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds `sandbox` to user `PATH`. No application window opens after setup; use the terminal commands below. A fresh interactive install can open `%APPDATA%\herdr-sandbox\config.json` from its Finish page.
 
 > [!WARNING]
 > The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches GitHub's digest for the same release asset.
@@ -145,9 +113,12 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest relea
 
 </details>
 
+<details>
+<summary><strong>Alternative installation methods</strong></summary>
+
 #### WinGet
 
-The Sandbox package ID is `hdosys.herdr-sandbox`. Its first community manifest is tracked in [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). Once the public source resolves the package, install it with:
+The Sandbox package ID is `hdosys.herdr-sandbox`. Publication in the public source is tracked in [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). When `winget show --id hdosys.herdr-sandbox --exact` resolves the package, install it with:
 
 ```powershell
 winget install --id hdosys.herdr-sandbox --exact
@@ -169,19 +140,26 @@ go run ./cmd/task check
 
 The checked build writes the same four files to `build\bin`. Use that executable directly or add the directory to user `PATH`.
 
+</details>
+
 ### Launch your first project
 
 Commands below assume `sandbox.exe` is on `PATH`; otherwise use its full path.
 
 #### 1. Initialize a project profile
 
-From the project root, select one or more stacks explicitly:
+From the project root, select the stack the project needs:
 
 ```powershell
 sandbox init --stack go
 ```
 
-To select every standalone technology and tool stack at once:
+Repeat `--stack` to combine compatible selections from [Supported stacks](#supported-stacks), or omit it for a guided prompt.
+
+<details>
+<summary><strong>All-stack and project-shortcut examples</strong></summary>
+
+Select every standalone technology and tool stack at once:
 
 ```powershell
 sandbox init --stack all
@@ -193,7 +171,11 @@ For an official Herdr upstream checkout without a project profile, select its pr
 sandbox init --stack herdr
 ```
 
-Repeat `--stack` to combine compatible individual selections from [Supported stacks](#supported-stacks), or omit it for a guided prompt. `all` cannot be combined with another selection and excludes project-specific shortcuts. Project shortcuts cannot be combined with stacks they already include. `init` writes one direct-call `.herdr-sandbox\provision.ps1` and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
+`all` cannot be combined with another selection and excludes project-specific shortcuts. Project shortcuts cannot be combined with stacks they already include.
+
+</details>
+
+`init` writes one direct-call `.herdr-sandbox\provision.ps1` and never replaces an existing or ancestor-owned profile. The nearest ancestor containing that file becomes the active project.
 
 #### Optional: Inspect the effective plan
 
@@ -209,9 +191,16 @@ sandbox plan
 sandbox up
 ```
 
-The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. After project provisioning and final configuration publication, the host invokes exact `herdr --remote sandbox --provision --yes --json`. Success requires the returned versioned sidecar, runtime/protocol identity, and detached server state to match independently verified guest evidence. Sandbox publishes that exact executable as machine-owned `HERDR_SANDBOX_HERDR_EXE`, prepends only its directory to guest machine `PATH`, supplies both values to initial project workspaces, and refreshes new PowerShell 7 shells from current machine and user PATH state. A successful run then attaches the host Herdr client; plain SSH or an installed toolchain alone is insufficient.
+The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. When provisioning is ready, the normal host Herdr client attaches to the guest server.
+
+<details>
+<summary><strong>Herdr provisioning and readiness contract</strong></summary>
+
+After project provisioning and final configuration publication, the host invokes exact `herdr --remote sandbox --provision --yes --json`. Success requires the returned versioned sidecar, runtime/protocol identity, and detached server state to match independently verified guest evidence. Sandbox publishes that exact executable as machine-owned `HERDR_SANDBOX_HERDR_EXE`, prepends only its directory to guest machine `PATH`, supplies both values to initial project workspaces, and refreshes new PowerShell 7 shells from current machine and user PATH state. Plain SSH or an installed toolchain alone is insufficient.
 
 Retained `sandbox up` uses the same owner to reload or restart the server as required. If a later post-provision phase fails, another retained `up` can verify SSH, reprovision, and republish current ready identity instead of requiring a fresh Sandbox.
+
+</details>
 
 > [!NOTE]
 > Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
@@ -236,7 +225,8 @@ Plain SSH is available for noninteractive diagnostics:
 ssh sandbox
 ```
 
-### Optional: keep Herdr worktrees across Sandboxes
+<details>
+<summary><strong>Optional: keep Herdr worktrees across Sandboxes</strong></summary>
 
 Set `worktreeDirectory` to one existing dedicated host folder when agent-created linked checkouts should survive disposal of the guest. The folder maps read/write only at `C:\Worktrees`; Herdr remains the create, list, reopen, and remove owner.
 
@@ -247,6 +237,57 @@ Set `worktreeDirectory` to one existing dedicated host folder when agent-created
 ```
 
 If a guest is already running, use `sandbox down` before applying a new or changed worktree root, then start again with `sandbox up`. See [Persistent Herdr worktrees](#persistent-herdr-worktrees) for the lifecycle commands and safety contract.
+
+</details>
+
+## Supported stacks
+
+`sandbox init --stack` accepts the individual stack names below, the exclusive `all` selection, and separate project shortcuts.
+
+<details>
+<summary><strong>Technology and tool stack catalog</strong></summary>
+
+| Selection | Guest tooling |
+| --- | --- |
+| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
+| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
+| `dotnet` | .NET 10 LTS SDK |
+| `go` | Go |
+| `java` | Microsoft OpenJDK 25 LTS |
+| `node` | Node.js LTS, Playwright, and Chromium |
+| `nsis` | NSIS compiler for building Windows installers |
+| `nushell` | Latest stable Nushell command-line shell |
+| `playwright-cli` | Playwright CLI without a bundled browser |
+| `python` | Latest stable Python |
+| `rust` | Rust with MSVC Build Tools |
+| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
+| `zig` | Zig |
+
+Project profiles may also call the direct Bun, Cargo Nextest, Just, and uv helper functions described in the [profile function reference](#project-profiles).
+
+</details>
+
+### Project shortcuts
+
+Project shortcuts package complex repository setups without introducing another technology owner.
+
+<details>
+<summary><strong>Project shortcut catalog and ownership</strong></summary>
+
+| Shortcut | Intended setup |
+| --- | --- |
+| `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
+| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
+| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
+
+Their preferred long-term home is the repository they serve, in its own `.herdr-sandbox\provision.ps1`. Dependencies, application commands, and release workflows remain project-owned. `sandbox plan` expands each shortcut into its concrete stack owners without executing the profile.
+
+</details>
+
+## Deployment time
+
+There is no separate VM to set up or maintain, and only selected stacks are provisioned. A small cached plan can finish in a few minutes, while first runs with browsers, Android, Vulkan, or Visual Studio payloads take materially longer. `sandbox status` shows current progress and recent phase timings. Attaching to an already ready Sandbox skips provisioning.
 
 ## Commands
 
@@ -551,9 +592,12 @@ Mapped folders expose host data across the isolation boundary. Ordinary explicit
 
 </details>
 
-#### Persistent Herdr worktrees
+### Persistent Herdr worktrees
 
 Set `worktreeDirectory` when Herdr should create linked Git checkouts that survive disposal of the guest. Herdr Sandbox maps that one dedicated host root read/write at `C:\Worktrees`, sets guest Herdr's native `[worktrees].directory` to it, and trusts only `C:/Worktrees/*` in guest Git. Automatic paths follow Herdr's `<root>\<repository>\<branch>` layout.
+
+<details>
+<summary><strong>Worktree lifecycle commands and safety contract</strong></summary>
 
 Use Herdr for the complete worktree lifecycle so each checkout is also represented by a Herdr workspace:
 
@@ -569,6 +613,8 @@ When worktrees are enabled, configuration sync adds one guest-only managed routi
 The directory must already exist, be absolute and non-reparse, and must not overlap a workspace, generic mount, cache, configuration, private run state, protected root, or sensitive credential location. Changing or disabling it requires `sandbox down` before the next `up`. `sandbox clean` and uninstall preserve the entire directory, including when configuration deletion is selected.
 
 These are guest-native linked worktrees, not portable host-side checkouts. Git stores their linked metadata in the mapped main repository, and the linked checkout records guest paths. Keep the same main workspace mapped at the same `C:\Workspaces\<name>` path on later launches, perform worktree lifecycle operations through guest Herdr, and remove linked worktrees before removing their main workspace. Herdr Sandbox does not add leases, pruning, or automatic worktree deletion.
+
+</details>
 
 <details>
 <summary><strong>Agent packages, global extensions, and persistent host state</strong></summary>
@@ -623,6 +669,11 @@ See [`SECURITY.md`](SECURITY.md) for vulnerability reporting, the complete threa
 model, and practical guidance for credential-free or externally network-restricted
 use.
 
+Guest processes have administrator access inside Windows Sandbox. Only select host folders deliberately, prefer read-only mounts, and treat every credential copied into the network-enabled guest as accessible to its workloads.
+
+<details>
+<summary><strong>Boundary highlights</strong></summary>
+
 - Writable host mappings are limited to selected project roots, named mounts with `readOnly: false`, the optional dedicated worktree root, the explicit package/tool cache, and bounded per-run status; networking remains enabled.
 - The host home root, general AppData, unselected repositories, and private SSH/GPG keys are never mapped; only the app-owned public SSH key enters the guest.
 - Mobile device private keys never leave those devices. Only their Ed25519 public keys enter config/run input, and the QR contains only the SSH URI.
@@ -638,6 +689,8 @@ use.
 - Host Rust tooling is forbidden. Rust installation, builds, and tests belong only in the verified guest or GitHub Actions.
 - Lifecycle commands revalidate exact app-owned process/path identity and refuse unrelated, changed, or reparse-bearing state.
 
+</details>
+
 ## Stable Tailscale tailnet identity (experimental)
 
 > [!CAUTION]
@@ -645,10 +698,12 @@ use.
 
 `herdr-sandbox` joins an existing user-owned tailnet; it does not create the tailnet or manage policy. The stable address lets an approved phone, tablet, or computer reach Herdr in the running Sandbox without publishing it to the internet. Leave `"tailscale": false` when stable private reachability is not needed.
 
+<details>
+<summary><strong>How mobile access works and how to enroll</strong></summary>
+
 Tailscale supplies only the private network path. Tailscale SSH server mode is unavailable on Windows, so Herdr Sandbox starts a separate key-only Win32-OpenSSH listener on TCP 2222 when mobile public keys are configured. It binds only the verified Tailscale IPv4, disables forwarding, and sends interactive logins directly into Herdr. The app-owned management endpoint on TCP 22 remains separate and is blocked from tailnet clients; never copy its private key to another device.
 
-<details>
-<summary><strong>First-time tailnet and enrollment setup</strong></summary>
+### First-time tailnet and enrollment setup
 
 **1. Prepare the tailnet**
 
@@ -760,7 +815,10 @@ Start with `sandbox status`; it preserves a running guest, removes only proven s
 
 ## Development
 
-Repository tasks:
+The repository uses one Go task runner for formatting, tests, stable builds, native acceptance, and release packaging.
+
+<details>
+<summary><strong>Repository task and verification reference</strong></summary>
 
 ```powershell
 go run ./cmd/task fmt
@@ -777,6 +835,8 @@ go run ./cmd/task release-notes v0.0.0
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - `release-notes` renders the public changelog section for one release version.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
+
+</details>
 
 ## License
 
