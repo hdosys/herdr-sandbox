@@ -24,9 +24,10 @@ cross-project workflow in the global OpenCode configuration repository.
   extracts an explicit production function set and initializes shared provisioning
   context consistently. Expected benefit: dependency drift fails in the focused
   test that owns the changed function and avoids repeated harness repair.
-- **Status: done. Compare canonical Windows paths with Windows semantics.**
-  Evidence: Nightly exposed both drive-letter casing and short-versus-long path
-  aliases in `TestResolveProvisioningIncludesDedicatedWorktreeDirectory`.
-  Canonicalize the expected mapped directory with the production path owner before
-  the case-insensitive comparison. Expected benefit: valid Windows path aliases no
-  longer mask behavioral gate results.
+- **Status: done. Normalize Windows CI evidence before comparison.**
+  Evidence: Nightly exposed both PowerShell console-width line wrapping in three
+  diagnostic assertions and short-versus-long path aliases in
+  `TestResolveProvisioningIncludesDedicatedWorktreeDirectory`. Collapse diagnostic
+  whitespace and canonicalize the expected mapped directory with the production
+  path owner before comparison. Expected benefit: presentation-only output and
+  valid Windows path aliases no longer mask behavioral gate results.
