@@ -17,6 +17,14 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Mark `build` as intermediate and `package` as the candidate artifact.**
+  Evidence: a verified CLI was available 9.082 seconds after the source edit but
+  was incorrectly reported as the user artifact; the existing package task later
+  produced the validated installer in 6.640 seconds. Label `build` as intermediate
+  CLI output in task help and successful output, and label `package` as the sole
+  interactive installable-candidate owner. Expected benefit: command-level routing
+  reinforces the existing installer-first workflow without adding another build
+  path.
 - **Status: proposed. Emit commit-keyed native acceptance evidence.**
   Evidence: the v0.0.13 release audit could not bind prior native coverage to
   the frozen candidate commit and had to treat `native-all-stacks` as missing.
