@@ -28,6 +28,8 @@ const (
 	grandchildSleeps      = "grandchild"
 )
 
+const windowsSharingViolation syscall.Errno = 32
+
 func TestCommandCombinedOutputUsesOwnedRunPath(t *testing.T) {
 	command := CommandContext(t.Context(), os.Args[0], "-test.run=^TestSuccessfulCommandHelper$")
 	command.Env = append(os.Environ(), successHelperMode+"=1")
@@ -246,6 +248,7 @@ func assertHandleActive(t *testing.T, role string, handle syscall.Handle) {
 func waitForHelperPID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -255,11 +258,12 @@ func waitForHelperPID(t *testing.T, path string) int {
 			}
 			return pid
 		}
-		if !os.IsNotExist(err) {
+		if !os.IsNotExist(err) && !errors.Is(err, windowsSharingViolation) {
 			t.Fatalf("read process-tree helper PID: %v", err)
 		}
+		lastErr = err
 		time.Sleep(25 * time.Millisecond)
 	}
-	t.Fatal("process-tree helper did not publish a PID within 10 seconds")
+	t.Fatalf("process-tree helper did not publish a readable PID within 10 seconds: %v", lastErr)
 	return 0
 }

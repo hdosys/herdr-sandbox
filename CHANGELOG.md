@@ -6,7 +6,7 @@ release notes remain available on the
 
 ## Unreleased
 
-## v0.0.14 - 2026-08-15
+## v0.0.15 - 2026-08-15
 
 ### Added
 
