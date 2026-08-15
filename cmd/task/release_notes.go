@@ -68,5 +68,5 @@ func releaseNotesForVersion(changelog []byte, tag string) (string, error) {
 	if match := releaseNoteFillerPattern.FindString(body); match != "" {
 		return "", fmt.Errorf("changelog release section contains portfolio-irrelevant copy %q: %s", match, tag)
 	}
-	return body + "\n\nSee the [setup and usage guide](" + productidentity.ProductURL + "#readme).\n", nil
+	return "See [CHANGELOG.md for " + tag + "](" + productidentity.ProductURL + "/blob/" + tag + "/CHANGELOG.md).\n", nil
 }

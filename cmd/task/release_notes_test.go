@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestReleaseNotesForVersionExtractsOnlyCuratedSection(t *testing.T) {
+func TestReleaseNotesForVersionLinksTaggedChangelogWithoutDuplication(t *testing.T) {
 	changelog := []byte(`# Changelog
 
 ## Unreleased
@@ -26,13 +26,14 @@ func TestReleaseNotesForVersionExtractsOnlyCuratedSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"### Added", "Shipped user value", "setup and usage guide"} {
-		if !strings.Contains(notes, required) {
-			t.Fatalf("release notes are missing %q: %s", required, notes)
-		}
+	want := "See [CHANGELOG.md for v0.0.9](https://github.com/hdosys/herdr-sandbox/blob/v0.0.9/CHANGELOG.md).\n"
+	if notes != want {
+		t.Fatalf("release notes = %q, want %q", notes, want)
 	}
-	if strings.Contains(notes, "Prior release detail") || strings.Contains(notes, "## v0.0.8") {
-		t.Fatalf("release notes include another version: %s", notes)
+	for _, duplicated := range []string{"### Added", "Shipped user value", "Prior release detail"} {
+		if strings.Contains(notes, duplicated) {
+			t.Fatalf("release notes duplicate changelog content %q: %s", duplicated, notes)
+		}
 	}
 }
 

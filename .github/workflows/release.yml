@@ -93,7 +93,7 @@ jobs:
           }
           $releaseNotes = (& go run ./cmd/task release-notes $env:RELEASE_TAG) -join [Environment]::NewLine
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseNotes)) {
-              throw 'Curated release-note generation failed.'
+              throw 'Tagged changelog link generation failed.'
           }
           $arguments = @('release', 'create', $env:RELEASE_TAG) + @($assets.FullName) + @(
               '--verify-tag',

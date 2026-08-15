@@ -31,7 +31,7 @@ Tasks:
   test [args...]   run go test ./... with optional extra arguments
   build            build build/bin/%s
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
-  release-notes VERSION  print curated notes from the matching CHANGELOG section
+  release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
   check            check format, PowerShell syntax, tests, vet, and build
 `, productidentity.ExecutableName)

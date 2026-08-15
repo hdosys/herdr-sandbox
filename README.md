@@ -1,4 +1,4 @@
-# herdr-sandbox
+# Herdr Sandbox
 
 **Run coding agents in a disposable, native Windows development environment without RDP, broad home-directory mounts, or host toolchain drift.**
 
@@ -91,14 +91,29 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 ### Install Herdr Sandbox
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer and a portable ZIP. GitHub records and displays the SHA-256 digest of each asset. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
+#### WinGet (recommended)
 
-#### Installer (recommended)
+`hdosys.herdr-sandbox` is available from the public WinGet community source. Install it, confirm the resolved build, and use the same package ID for later upgrades:
 
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds `sandbox` to user `PATH`. No application window opens after setup; use the terminal commands below. A fresh interactive install can open `%APPDATA%\herdr-sandbox\config.json` from its Finish page.
+```powershell
+winget install --id hdosys.herdr-sandbox --exact
+sandbox --version
+
+# Later releases
+winget upgrade --id hdosys.herdr-sandbox --exact
+```
+
+The initial publication is recorded in [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). The required Herdr-Win host command remains a separate installation and is never bundled or declared as a package dependency.
 
 > [!WARNING]
-> The installer path is currently unsigned, so Windows may display a SmartScreen warning. Use it only after its SHA-256 matches GitHub's digest for the same release asset.
+> The current installer is not Authenticode-signed. WinGet verifies the published installer hash, but Windows reputation policy may still warn or block it.
+
+<details>
+<summary><strong>Direct GitHub installer</strong></summary>
+
+Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer and a portable ZIP. GitHub records and displays the SHA-256 digest of each asset. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
+
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds `sandbox` to user `PATH`. No application window opens after setup; use the terminal commands below. A fresh interactive install can open `%APPDATA%\herdr-sandbox\config.json` from its Finish page.
 
 <details>
 <summary><strong>Installer ownership and uninstall behavior</strong></summary>
@@ -114,18 +129,10 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest relea
 
 </details>
 
+</details>
+
 <details>
-<summary><strong>Alternative installation methods</strong></summary>
-
-#### WinGet
-
-The Sandbox package ID is `hdosys.herdr-sandbox`. It is published in the WinGet community source through [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). Install it with:
-
-```powershell
-winget install --id hdosys.herdr-sandbox --exact
-```
-
-Herdr-Win remains a separate package and is never bundled or declared as a dependency.
+<summary><strong>Portable ZIP and source build</strong></summary>
 
 #### Portable ZIP
 
@@ -218,7 +225,9 @@ After a normal detach, the guest Herdr server remains running:
 sandbox attach
 ```
 
-The verified `herdr --remote sandbox` alias remains available for direct Herdr use.
+`sandbox attach` remains in the foreground until detach so it can return the
+client status and verify that the guest server stayed available. Run
+`herdr --remote sandbox` directly when only the Herdr client process is wanted.
 
 Plain SSH is available for noninteractive diagnostics:
 
@@ -836,7 +845,8 @@ go run ./cmd/task release-notes v0.0.0
 - `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
 - `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile and Nushell command check, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
-- `release-notes` renders the public changelog section for one release version.
+- `release-notes` validates one release section and prints only its tagged
+  `CHANGELOG.md` link for GitHub Releases.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
 </details>

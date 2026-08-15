@@ -38,6 +38,8 @@ release notes remain available on the
 
 ### Changed
 
+- GitHub Releases now link to the tagged `CHANGELOG.md` instead of duplicating
+  its entries, keeping one release-history owner.
 - Guest worktree routing can no longer enter normal commits from synchronized
   Git-backed agent configuration. Legitimate workflow edits still stage, while
   the guest-only managed block and generated routing files stay local.

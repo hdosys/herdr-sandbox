@@ -298,19 +298,21 @@ func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
 
 func TestInstallerWelcomeArtworkAssets(t *testing.T) {
 	root := filepath.Join("..", "..")
-	source, err := os.ReadFile(filepath.Join(root, "bg.png"))
+	assetDirectory := filepath.Join(root, "packaging", "windows", "assets")
+	sourceName := "installer-welcome-finish-source.png"
+	source, err := os.ReadFile(filepath.Join(assetDirectory, sourceName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != "cda0b672eb6ba9d912bc9c422b2ee53fc96aa8b9b1d751b4f653d9b6d0be4b27" {
-		t.Fatalf("bg.png SHA-256 = %s", got)
+		t.Fatalf("%s SHA-256 = %s", sourceName, got)
 	}
 	config, err := png.DecodeConfig(bytes.NewReader(source))
 	if err != nil {
-		t.Fatalf("decode bg.png: %v", err)
+		t.Fatalf("decode %s: %v", sourceName, err)
 	}
 	if config.Width != 906 || config.Height != 1736 || len(source) < 29 || source[24] != 8 || source[25] != 2 || source[28] != 0 {
-		t.Fatalf("bg.png contract = %dx%d depth=%d color-type=%d interlace=%d", config.Width, config.Height, source[24], source[25], source[28])
+		t.Fatalf("%s contract = %dx%d depth=%d color-type=%d interlace=%d", sourceName, config.Width, config.Height, source[24], source[25], source[28])
 	}
 
 	variants := []struct {
@@ -325,7 +327,6 @@ func TestInstallerWelcomeArtworkAssets(t *testing.T) {
 		{name: "installer-welcome-finish-287x550.bmp", width: 287, height: 550, hash: "8912c6dcee700825c4463704841f777e248d807f48cbe5db3ceb1b87c8d96127"},
 		{name: "installer-welcome-finish-328x628.bmp", width: 328, height: 628, hash: "b3b5bfaa3b07dd7eb8441f81bf733de86e31b8c37ec60ac3832a824c10e1cd3b"},
 	}
-	assetDirectory := filepath.Join(root, "packaging", "windows", "assets")
 	entries, err := os.ReadDir(assetDirectory)
 	if err != nil {
 		t.Fatal(err)
