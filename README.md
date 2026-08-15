@@ -119,7 +119,7 @@ Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest relea
 
 #### WinGet
 
-The Sandbox package ID is `hdosys.herdr-sandbox`. Publication in the public source is tracked in [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). When `winget show --id hdosys.herdr-sandbox --exact` resolves the package, install it with:
+The Sandbox package ID is `hdosys.herdr-sandbox`. It is published in the WinGet community source through [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). Install it with:
 
 ```powershell
 winget install --id hdosys.herdr-sandbox --exact

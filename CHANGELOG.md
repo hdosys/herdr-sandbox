@@ -6,8 +6,12 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.13 - 2026-08-15
+
 ### Added
 
+- The CLI now accepts the conventional `sandbox --version` form as well as
+  `sandbox version` for release and support checks.
 - Windows setup now maintains an installer-owned `config.sample.json` beside the
   active configuration. Every install refreshes it, and uninstall removes it
   without touching user-owned `config.json` or `user.ps1` by default.

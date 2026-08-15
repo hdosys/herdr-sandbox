@@ -3,7 +3,7 @@
 ## Supported version
 
 Security fixes target the latest published GitHub release. Before reporting a
-problem, run `sandbox version` and include its version and abbreviated
+problem, run `sandbox --version` and include its version and abbreviated
 source revision without attaching configuration, credentials, logs, or run-state
 archives.
 
@@ -150,6 +150,6 @@ version when reproducibility is part of the threat model.
 The current installer is unsigned and may trigger SmartScreen. Compare its local
 SHA-256 with the digest GitHub displays for that Release asset, understand that
 this digest is delivered through the same GitHub release channel, and confirm
-`sandbox version` after installation. Do not treat stripping, digests, or Windows
+`sandbox --version` after installation. Do not treat stripping, digests, or Windows
 Sandbox disposability as a substitute for publisher signing or trusted release
 provenance.

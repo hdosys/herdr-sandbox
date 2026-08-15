@@ -5,10 +5,12 @@ the Microsoft community repository. The intended independent package ID is
 `hdosys.herdr-sandbox`; Herdr/Herdr-Win is never bundled or declared as a package
 dependency.
 
-## Prepared release
+## Published release
 
 - Version: `0.0.12`
 - Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.12>
+- Community publication:
+  <https://github.com/microsoft/winget-pkgs/pull/410501>
 - Installer:
   <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.12/herdr-sandbox_v0.0.12_windows_amd64_setup.exe>
 - Published installer SHA-256:
@@ -16,8 +18,9 @@ dependency.
 - Manifest schema: `1.12.0`
 
 The v0.0.12 package passed the repository gate, exact v0.0.11 command-rename
-upgrade, final installed-version check, clean quiet uninstall, and GitHub asset
-digest verification. The installer is currently not Authenticode-signed.
+upgrade, final installed-version check, clean quiet uninstall, GitHub asset
+digest verification, WinGet validation, and manual review. The installer is
+currently not Authenticode-signed.
 
 ## Validate locally
 

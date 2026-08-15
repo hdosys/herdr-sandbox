@@ -23,7 +23,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		t.Fatalf("exit code = %d", code)
 	}
 	for _, required := range []string{
-		"sandbox version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
+		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
 		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
@@ -66,10 +66,25 @@ func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.
 }
 
 func TestRunPrintsVersionWithoutCrossingSandboxBoundary(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := Run(context.Background(), []string{"version"}, &bytes.Buffer{}, &stdout, &stderr)
-	if code != 0 || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "sandbox ") {
-		t.Fatalf("version code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	var expected string
+	for _, argument := range []string{"version", "--version"} {
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{argument}, &bytes.Buffer{}, &stdout, &stderr)
+		if code != 0 || stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "sandbox ") {
+			t.Fatalf("%s code = %d, stdout = %q, stderr = %q", argument, code, stdout.String(), stderr.String())
+		}
+		if expected == "" {
+			expected = stdout.String()
+		} else if stdout.String() != expected {
+			t.Fatalf("%s output = %q, want %q", argument, stdout.String(), expected)
+		}
+	}
+	for _, argument := range []string{"version", "--version"} {
+		var stderr bytes.Buffer
+		code := Run(context.Background(), []string{argument, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "version does not accept arguments") {
+			t.Fatalf("%s extra argument code = %d, stderr = %q", argument, code, stderr.String())
+		}
 	}
 }
 

@@ -20,6 +20,7 @@ const usage = `Usage:
   sandbox config
   sandbox pull-host-config
   sandbox version
+  sandbox --version
   sandbox plan
   sandbox init [--stack android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig|all|handy|herdr|python-ai]...
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
@@ -32,7 +33,7 @@ const usage = `Usage:
 Commands:
   config  create the global config when absent and open it with the registered .json application
   pull-host-config  fast-forward transferred Git-backed configuration roots on the host
-  version print the application version and source revision when available
+  version, --version  print the application version and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
@@ -129,7 +130,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	}
 	switch args[0] {
-	case "version":
+	case "version", "--version":
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: version does not accept arguments\n\n%s", usage)
 			return 2
