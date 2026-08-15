@@ -32,7 +32,7 @@ func TestAndroidStackInstallsVerifiedCommandLineBuildAndWirelessADBTools(t *test
 		"'--no-metrics'",
 		"Android CLI version verification",
 		"Android SDK location verification",
-		"Android Platform Tools package verification",
+		"Pkg\\.Revision=(?<version>\\d+\\.\\d+\\.\\d+)",
 		"Android ADB version verification",
 		"Android JDK runtime version verification",
 		"Android JDK compiler version verification",
@@ -48,6 +48,7 @@ func TestAndroidStackInstallsVerifiedCommandLineBuildAndWirelessADBTools(t *test
 	for _, forbidden := range []string{
 		"Install-JavaStack", "Microsoft.OpenJDK.25", "Android Studio", "emulator",
 		"fastboot", "usbip", "host adb", "adb.exe server nodaemon", "--force",
+		"'sdk', 'list', 'platform-tools'",
 	} {
 		if strings.Contains(section, forbidden) {
 			t.Errorf("Android stack contains an unrelated or unsupported path %q", forbidden)

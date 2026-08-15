@@ -8,6 +8,8 @@ release notes remain available on the
 
 ### Fixed
 
+- Android stack provisioning now verifies installed Platform Tools from its local
+  package metadata and `adb` instead of rerunning the crash-prone package listing.
 - `sandbox down` now preserves the already verified local Tailscale state without
   waiting for control-plane readiness or restarting the service before it stops
   the exact owned Sandbox. A failed stop restarts Tailscale as rollback.

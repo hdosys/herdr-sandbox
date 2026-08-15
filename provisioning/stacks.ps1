@@ -1470,26 +1470,22 @@ function Install-AndroidStack {
         $reportedSDK = ((Invoke-ProvisioningNative -Role 'Android SDK location verification' `
                 -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
                 -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
-        $platformToolsListing = ((Invoke-ProvisioningNative -Role 'Android Platform Tools package verification' `
-                -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'list', 'platform-tools') `
-                -TimeoutSeconds 120) -join [Environment]::NewLine)
     } finally {
         $env:JAVA_HOME = $previousJavaHome
     }
     if ($androidVersion -cne $androidCLIVersion -or
-        [IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\') -or
-        $platformToolsListing -notmatch '(?m)^\s*platform-tools\s+(?<version>\d+\.\d+\.\d+)\s+Android SDK Platform-Tools\s*$') {
+        [IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
         throw "Android SDK verification failed: cli=$androidVersion sdk=$reportedSDK"
     }
-    $platformToolsVersion = [string]$Matches['version']
     $platformTools = Join-Path $androidSDK 'platform-tools'
     $adb = Join-Path $platformTools 'adb.exe'
     Assert-StackAndroidTree -Root $platformTools `
         -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties')
     $platformProperties = [IO.File]::ReadAllText((Join-Path $platformTools 'source.properties'))
-    if ($platformProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($platformToolsVersion) + '\r?$')) {
+    if ($platformProperties -notmatch '(?m)^Pkg\.Revision=(?<version>\d+\.\d+\.\d+)\r?$') {
         throw 'Android Platform Tools source identity is unexpected.'
     }
+    $platformToolsVersion = [string]$Matches['version']
     $adbVersion = ((Invoke-ProvisioningNative -Role 'Android ADB version verification' -FilePath $adb `
             -ArgumentList @('version') -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
     $adbHelp = ((Invoke-ProvisioningNative -Role 'Android wireless ADB command verification' -FilePath $adb `

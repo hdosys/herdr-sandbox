@@ -619,10 +619,15 @@ $reportedAndroidSDK = Invoke-SmokeTool 'android-sdk-location' $androidCLI @('--n
 if ([IO.Path]::GetFullPath($reportedAndroidSDK).TrimEnd('\') -ine $androidSDK) {
     throw "Android SDK location is unexpected: $reportedAndroidSDK"
 }
-$platformTools = Invoke-SmokeTool 'android-platform-tools' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'sdk','list','platform-tools')
-Assert-SmokeOutput 'android-platform-tools' $platformTools 'Android SDK Platform-Tools'
+$platformToolsProperties = [IO.File]::ReadAllText((Join-Path $androidSDK 'platform-tools\source.properties'))
+if ($platformToolsProperties -notmatch '(?m)^Pkg\.Revision=(?<version>\d+\.\d+\.\d+)\r?$') {
+    throw 'Android Platform Tools source identity is unexpected.'
+}
+$platformToolsVersion = [string]$Matches['version']
+[Console]::Out.WriteLine("[all-stacks] android-platform-tools: $platformToolsVersion")
 $adbVersion = Invoke-SmokeTool 'adb-version' $adb @('version')
 Assert-SmokeOutput 'adb-version' $adbVersion 'Android Debug Bridge version 1.0.41'
+Assert-SmokeOutput 'adb-version' $adbVersion "Version ${platformToolsVersion}-"
 $adbHelp = Invoke-SmokeTool 'adb-wireless-help' $adb @('help')
 Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'pair HOST[:PORT]'
 Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'connect HOST[:PORT]'
