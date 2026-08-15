@@ -24,6 +24,8 @@ the global workflow or recreate project `.opencode/` configuration.
   and test improvements.
 - `.agent/sessions/<session-id>/` owns ignored task-local `TASK.md`, `STATE.md`, and
   `LOG.md` for long work.
+- `.agent/deferred-verification/` owns ignored, workspace-persistent pending,
+  running, completed, and blocked verifier assignments.
 
 Do not invent another active memory owner or carry product facts/task history from
 another repository into these files. After system/current-user instructions,
