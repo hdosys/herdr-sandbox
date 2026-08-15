@@ -1,10 +1,11 @@
+# Created using wingetcreate 1.12.13.0
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: hdosys.herdr-sandbox
-PackageVersion: 0.0.12
+PackageVersion: 0.0.15
+MinimumOSVersion: 10.0.18362.0
 InstallerType: nullsoft
 Scope: user
-MinimumOSVersion: 10.0.18362.0
 UpgradeBehavior: install
 Commands:
 - sandbox
@@ -12,10 +13,10 @@ ProductCode: '{F845EA2A-FF3F-465B-95FA-49B1BAF63B17}'
 UnsupportedArguments:
 - log
 - location
-ReleaseDate: 2026-08-07
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.12/herdr-sandbox_v0.0.12_windows_amd64_setup.exe
-  InstallerSha256: 2C215816BE7B09E8CA689AC2FF4FB43A6B0E4DD4EA9ECCAEB128BE369EE8A4D3
+  InstallerUrl: https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.15/herdr-sandbox_v0.0.15_windows_amd64_setup.exe
+  InstallerSha256: 596C1F374EF532C1F2B413433B9AED86FB59FEEB36869CC4FE7E51410BD31BAB
 ManifestType: installer
 ManifestVersion: 1.12.0
+ReleaseDate: 2026-08-15

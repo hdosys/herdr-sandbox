@@ -7,27 +7,26 @@ dependency.
 
 ## Published release
 
-- Version: `0.0.12`
-- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.12>
-- Community publication:
-  <https://github.com/microsoft/winget-pkgs/pull/410501>
+- Version: `0.0.15`
+- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.15>
+- Community submission:
+  <https://github.com/microsoft/winget-pkgs/pull/418113>
 - Installer:
-  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.12/herdr-sandbox_v0.0.12_windows_amd64_setup.exe>
+  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.15/herdr-sandbox_v0.0.15_windows_amd64_setup.exe>
 - Published installer SHA-256:
-  `2c215816be7b09e8ca689ac2ff4fb43a6b0e4dd4ea9eccaeb128be369ee8a4d3`
+  `596c1f374ef532c1f2b413433b9aed86fb59feeb36869cc4fe7e51410bd31bab`
 - Manifest schema: `1.12.0`
 
-The v0.0.12 package passed the repository gate, exact v0.0.11 command-rename
-upgrade, final installed-version check, clean quiet uninstall, GitHub asset
-digest verification, WinGet validation, and manual review. The installer is
-currently not Authenticode-signed.
+The v0.0.15 package passed the repository release gate, public GitHub asset
+digest verification, WinGetCreate generation, `winget validate`, and submitted
+manifest diff review. The installer is currently not Authenticode-signed.
 
 ## Validate locally
 
 From the repository root:
 
 ```powershell
-$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.12'
+$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.15'
 winget validate --manifest $manifest --disable-interactivity
 winget install --manifest $manifest --silent --accept-package-agreements `
   --accept-source-agreements --disable-interactivity
@@ -46,13 +45,13 @@ community submission pipeline remains the authoritative manifest-install gate.
 The target path in `microsoft/winget-pkgs` is:
 
 ```text
-manifests/h/hdosys/herdr-sandbox/0.0.12/
+manifests/h/hdosys/herdr-sandbox/0.0.15/
 ```
 
-At submission time, re-download the public installer, recompute its SHA-256, run
-`winget validate`, and then submit only that directory through WinGetCreate or a
-sparse `microsoft/winget-pkgs` fork. Do not store or pass a GitHub token in this
-repository, command logs, or manifest files.
+The v0.0.15 submission re-downloaded the public installer, recomputed its
+SHA-256, ran `winget validate`, and submitted only that directory through
+WinGetCreate. Do not store or pass a GitHub token in this repository, command
+logs, or manifest files.
 
 Submit this Sandbox directory independently. Herdr-Win remains a separate package
 and will be prepared later; it is not bundled or declared as a dependency here.
