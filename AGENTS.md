@@ -132,17 +132,22 @@ in the global OpenCode configuration, not this repository.
 Use repository-owned tasks and the smallest ladder covering the change:
 
 1. Focused pure tests for parsing, rendering, status, and quoting.
-2. `go run ./cmd/task fmt`, `go run ./cmd/task test`, and applicable Windows
-   PowerShell 5.1 syntax checks.
+2. `go run ./cmd/task fmt`, the fast product-focused `go run ./cmd/task test`, and
+   applicable Windows PowerShell 5.1 syntax checks.
 3. `go run ./cmd/task build` and the stable CLI under `build/bin` when binary
    behavior changed.
 4. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
    WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
    real interactive remote-attach check when attach behavior changed.
 
-`go run ./cmd/task check` is the complete repository gate covering formatting,
-PowerShell parsing, tests, `go vet`, and the stable build artifact. Unit tests do
-not replace the native gate when the changed behavior depends on the boundary.
+`go run ./cmd/task check` is the normal iteration gate covering formatting, one
+batched PowerShell parse, fast product tests, `go vet`, and the stable build
+artifact. It must remain within a five-minute hard deadline and should normally
+finish within three minutes. `go run ./cmd/task test-integration` and
+`go run ./cmd/task check-integration` own external PowerShell/Git execution and
+the full nightly/release matrix. Do not run them while a user waits for an
+ordinary build or installer. Unit tests do not replace the native gate when the
+changed behavior depends on the boundary.
 
 For long-running GitHub Actions, check status no more than once every two minutes
 and fetch detailed logs only after terminal failure. GitHub release artifacts do

@@ -20,20 +20,24 @@ import (
 )
 
 const (
-	taskTimeout                = 30 * time.Minute
+	taskTimeout                = 5 * time.Minute
+	integrationTaskTimeout     = 30 * time.Minute
 	nativeAllStacksTaskTimeout = 2 * time.Hour
+	fastTestsEnvironment       = "HERDR_SANDBOX_FAST_TESTS"
 )
 
 var usage = fmt.Sprintf(`Usage: go run ./cmd/task <task>
 
 Tasks:
   fmt              format Go source
-  test [args...]   run go test ./... with optional extra arguments
+  test [args...]   run fast product tests with optional go test arguments
+  test-integration [args...]  run all Go external-boundary tests
   build            build build/bin/%s
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
-  check            check format, PowerShell syntax, tests, vet, and build
+  check            run the fast iteration gate: format, syntax, tests, vet, build
+  check-integration run the full nightly/release gate
 `, productidentity.ExecutableName)
 
 func main() {
@@ -69,8 +73,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if len(extra) > 0 && extra[0] == "--" {
 			extra = extra[1:]
 		}
-		goArgs := append([]string{"test", "./..."}, extra...)
-		return runCommand(ctx, stdout, stderr, "go", goArgs...)
+		return runGoTests(ctx, stdout, stderr, true, extra)
+	case "test-integration":
+		extra := args[1:]
+		if len(extra) > 0 && extra[0] == "--" {
+			extra = extra[1:]
+		}
+		return runGoTests(ctx, stdout, stderr, false, extra)
 	case "build":
 		if len(args) != 1 {
 			return errors.New("build accepts no arguments")
@@ -95,7 +104,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if len(args) != 1 {
 			return errors.New("check accepts no arguments")
 		}
-		return check(ctx, stdout, stderr)
+		return check(ctx, stdout, stderr, true)
+	case "check-integration":
+		if len(args) != 1 {
+			return errors.New("check-integration accepts no arguments")
+		}
+		return check(ctx, stdout, stderr, false)
 	default:
 		return fmt.Errorf("unknown task %q\n\n%s", args[0], usage)
 	}
@@ -105,10 +119,13 @@ func taskTimeoutFor(args []string) time.Duration {
 	if len(args) > 0 && args[0] == "native-all-stacks" {
 		return nativeAllStacksTaskTimeout
 	}
+	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "check-integration") {
+		return integrationTaskTimeout
+	}
 	return taskTimeout
 }
 
-func check(ctx context.Context, stdout, stderr io.Writer) error {
+func check(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 	fmt.Fprintln(stdout, "Checking Go formatting...")
 	if err := checkGoFormat(ctx, stderr); err != nil {
 		return err
@@ -117,20 +134,48 @@ func check(ctx context.Context, stdout, stderr io.Writer) error {
 	if err := checkPowerShell(ctx, stdout, stderr); err != nil {
 		return err
 	}
-	for _, step := range []struct {
-		message string
-		command []string
-	}{
-		{message: "Running Go tests...", command: []string{"go", "test", "./..."}},
-		{message: "Running go vet...", command: []string{"go", "vet", "./..."}},
-	} {
-		fmt.Fprintln(stdout, step.message)
-		if err := runCommand(ctx, stdout, stderr, step.command[0], step.command[1:]...); err != nil {
-			return err
-		}
+	if err := runGoTests(ctx, stdout, stderr, fast, nil); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Running go vet...")
+	if err := runCommand(ctx, stdout, stderr, "go", "vet", "./..."); err != nil {
+		return err
 	}
 	fmt.Fprintln(stdout, "Building sandbox...")
 	return build(ctx, stdout, stderr)
+}
+
+func runGoTests(ctx context.Context, stdout, stderr io.Writer, fast bool, extra []string) error {
+	if fast {
+		fmt.Fprintln(stdout, "Running fast product Go tests...")
+		fmt.Fprintln(stdout, "External Windows PowerShell and Git test processes are skipped; use `check-integration` for that matrix.")
+	} else {
+		fmt.Fprintln(stdout, "Running the full Go test matrix, including external Windows PowerShell and Git processes...")
+	}
+	goArgs := append([]string{"test", "./..."}, extra...)
+	command := hiddenCommandContext(ctx, "go", goArgs...)
+	command.Env = goTestEnvironment(fast)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.Stdin = os.Stdin
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("run %s: %w", commandText("go", goArgs), err)
+	}
+	return nil
+}
+
+func goTestEnvironment(fast bool) []string {
+	prefix := strings.ToUpper(fastTestsEnvironment) + "="
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(entry), prefix) {
+			environment = append(environment, entry)
+		}
+	}
+	if fast {
+		environment = append(environment, fastTestsEnvironment+"=1")
+	}
+	return environment
 }
 
 func checkGoFormat(ctx context.Context, stderr io.Writer) error {

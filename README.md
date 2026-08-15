@@ -819,14 +819,21 @@ The repository uses one Go task runner for formatting, tests, stable builds, nat
 ```powershell
 go run ./cmd/task fmt
 go run ./cmd/task test
+go run ./cmd/task test-integration
 go run ./cmd/task build
 go run ./cmd/task check
+go run ./cmd/task check-integration
 go run ./cmd/task native-all-stacks
 go run ./cmd/task package v0.0.0
 go run ./cmd/task release-notes v0.0.0
 ```
 
-- `check` covers Go formatting, Windows PowerShell 5.1 parsing, all Go tests, `go vet`, and the stable `build\bin` artifact.
+- `test` and `check` are the fast local iteration gates. `check` covers Go
+  formatting, one batched Windows PowerShell 5.1 parse, product-focused Go tests,
+  `go vet`, and the stable `build\bin` artifact.
+- `test-integration` and `check-integration` add the external PowerShell and Git
+  execution matrix. They are for nightly, release, or an explicitly changed
+  native boundary, not ordinary local iteration.
 - `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile and Nushell command check, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - `release-notes` validates one release section and prints only its tagged

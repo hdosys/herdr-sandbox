@@ -25,4 +25,4 @@ jobs:
           cache: false
       - name: Run checked build
         shell: powershell
-        run: go run ./cmd/task check
+        run: go run ./cmd/task check-integration

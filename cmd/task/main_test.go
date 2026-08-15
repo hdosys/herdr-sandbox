@@ -30,7 +30,7 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 }
 
 func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
-	for _, task := range []string{"fmt", "build", "check", "native-all-stacks"} {
+	for _, task := range []string{"fmt", "build", "check", "check-integration", "native-all-stacks"} {
 		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
 			t.Fatalf("run %s error = %v", task, err)
@@ -44,6 +44,27 @@ func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	}
 	if got := taskTimeoutFor([]string{"check"}); got != taskTimeout {
 		t.Fatalf("ordinary timeout = %s", got)
+	}
+	if got := taskTimeoutFor([]string{"check-integration"}); got != integrationTaskTimeout {
+		t.Fatalf("integration timeout = %s", got)
+	}
+}
+
+func TestGoTestEnvironmentSelectsOneExplicitMode(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "inherited")
+	for fast, expected := range map[bool]bool{true: true, false: false} {
+		found := false
+		for _, entry := range goTestEnvironment(fast) {
+			if entry == fastTestsEnvironment+"=1" {
+				found = true
+			}
+			if strings.HasPrefix(strings.ToUpper(entry), strings.ToUpper(fastTestsEnvironment)+"=") && entry != fastTestsEnvironment+"=1" {
+				t.Fatalf("test mode retained inherited value: %q", entry)
+			}
+		}
+		if found != expected {
+			t.Fatalf("fast=%t environment marker found=%t", fast, found)
+		}
 	}
 }
 

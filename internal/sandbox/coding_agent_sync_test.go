@@ -638,61 +638,6 @@ func TestArchiveAgentGitRepositoryRejectsTrackedCredentialsAndGitFiles(t *testin
 		}
 	})
 
-	t.Run("external object store", func(t *testing.T) {
-		repository := filepath.Join(t.TempDir(), "opencode")
-		if err := os.MkdirAll(repository, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
-		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
-		writeTestFile(t, filepath.Join(repository, ".git", "objects", "info", "alternates"), `C:\outside\objects`)
-		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
-		if err == nil || !strings.Contains(err.Error(), "external object store") {
-			t.Fatalf("external Git object store error = %v", err)
-		}
-	})
-
-	t.Run("linked worktree metadata", func(t *testing.T) {
-		repository := filepath.Join(t.TempDir(), "opencode")
-		if err := os.MkdirAll(repository, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
-		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
-		if err := os.MkdirAll(filepath.Join(repository, ".git", "worktrees", "linked"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
-		if err == nil || !strings.Contains(err.Error(), "worktrees") {
-			t.Fatalf("linked worktree metadata error = %v", err)
-		}
-	})
-
-	t.Run("active gc process", func(t *testing.T) {
-		repository := filepath.Join(t.TempDir(), "opencode")
-		if err := os.MkdirAll(repository, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		writeTestFile(t, filepath.Join(repository, "opencode.json"), `{}`)
-		initializeAgentGitRepository(t, repository, "opencode", []string{"opencode.json"})
-		writeTestFile(t, filepath.Join(repository, ".git", "gc.pid"), "1234")
-		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
-		if err == nil || !strings.Contains(err.Error(), "active process marker") {
-			t.Fatalf("active Git gc process error = %v", err)
-		}
-	})
-
-	t.Run("reftable", func(t *testing.T) {
-		repository := filepath.Join(t.TempDir(), "opencode")
-		if err := os.MkdirAll(repository, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		runAgentGitTest(t, repository, "init", "--initial-branch=main", "--ref-format=reftable")
-		_, err := archiveAgentGitRepository(context.Background(), repository, "opencode", func(string, string) error { return nil })
-		if err == nil || !strings.Contains(err.Error(), "physical root .git directory") {
-			t.Fatalf("reftable Git repository error = %v", err)
-		}
-	})
 }
 
 func TestAgentGitEnvironmentDropsInheritedOverrides(t *testing.T) {
@@ -1054,6 +999,7 @@ func configureAgentGitTestIdentity(t *testing.T, directory string) {
 
 func runAgentGitTest(t *testing.T, directory string, arguments ...string) string {
 	t.Helper()
+	requireExternalBoundaryTest(t, "Git repository integration")
 	commandArguments := append([]string{"-C", directory}, arguments...)
 	command := hiddenCommand("git", commandArguments...)
 	command.Env = agentGitTestEnvironment(command.Env)

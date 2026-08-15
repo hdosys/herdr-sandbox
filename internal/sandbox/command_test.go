@@ -13,7 +13,10 @@ import (
 
 const testCommandTimeout = 2 * time.Minute
 
-const boundedOutputHelper = "HERDR_SANDBOX_BOUNDED_OUTPUT_HELPER"
+const (
+	boundedOutputHelper  = "HERDR_SANDBOX_BOUNDED_OUTPUT_HELPER"
+	fastTestsEnvironment = "HERDR_SANDBOX_FAST_TESTS"
+)
 
 type boundedTestCommand struct {
 	*hiddenprocess.Command
@@ -38,6 +41,13 @@ func (c *boundedTestCommand) Run() error {
 func (c *boundedTestCommand) Wait() error {
 	defer c.cancel()
 	return c.Command.Wait()
+}
+
+func requireExternalBoundaryTest(t *testing.T, boundary string) {
+	t.Helper()
+	if os.Getenv(fastTestsEnvironment) == "1" {
+		t.Skipf("%s boundary runs through `go run ./cmd/task test-integration`", boundary)
+	}
 }
 
 func TestRunBoundedGitHubCLITerminatesOwnedCommandOnOverflow(t *testing.T) {

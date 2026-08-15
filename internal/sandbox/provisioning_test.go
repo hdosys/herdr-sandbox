@@ -2299,6 +2299,7 @@ if ($resolved -cne 'C:\Program Files\Python313\python.exe') { throw "Resolved un
 
 func mustWindowsPowerShellPath(t *testing.T) string {
 	t.Helper()
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 execution")
 	path, err := windowsPowerShellExecutable()
 	if err != nil {
 		t.Fatal(err)
