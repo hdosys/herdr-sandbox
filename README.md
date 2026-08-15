@@ -1,10 +1,12 @@
 # Herdr Sandbox
 
-**Run coding agents in a disposable, native Windows development environment without RDP, broad home-directory mounts, or host toolchain drift.**
+**A disposable native Windows development environment for coding agents, with MSVC, Windows SDKs, .NET, installers, and GUI tooling controlled from the normal host terminal.**
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
+Herdr Sandbox is a project-oriented, Windows-native counterpart to a [dev container](https://containers.dev/). It runs workloads inside Microsoft's disposable Windows Sandbox, not a Linux guest. Use it when compilation, tests, packaging, or GUI behavior must actually be Windows. If Linux or OCI is sufficient, a Linux container or microVM runtime is a better fit.
+
+Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
 > [!NOTE]
 > Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
@@ -40,7 +42,7 @@ flowchart LR
 The host owns source, identity, configuration, cache, and bounded run evidence. The guest owns compilation, agent execution, and disposable runtime state. Go owns host lifecycle decisions and strict boundary contracts; PowerShell is the narrow Windows provisioning adapter.
 
 > [!IMPORTANT]
-> This is practical isolation, not a complete security boundary. Selected projects remain writable and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
+> Herdr Sandbox isolates agent and project activity from the normal Windows installation; it is not a secret-preserving arbitrary-code execution service. Selected projects remain writable, guest administrators can access explicitly transferred credentials, and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
 ## Engineering approach
 
@@ -58,6 +60,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
 - **One Herdr lifecycle owner:** the host Herdr command deploys the matching guest runtime, validates it, and keeps one persistent guest server ready for attach and reattach.
 - **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
+- **Focused core with explicit opt-ins:** lifecycle, mappings, provisioning, attach, and project profiles share one path; mobile access, browser and TradingView tooling, and project shortcuts activate only when selected.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
