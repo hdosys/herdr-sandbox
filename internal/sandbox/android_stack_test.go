@@ -32,6 +32,7 @@ func TestAndroidStackInstallsVerifiedCommandLineBuildAndWirelessADBTools(t *test
 		"'--no-metrics'",
 		"Android CLI version verification",
 		"Android SDK location verification",
+		"UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.",
 		"Pkg\\.Revision=(?<version>\\d+\\.\\d+\\.\\d+)",
 		"Android ADB version verification",
 		"Android JDK runtime version verification",

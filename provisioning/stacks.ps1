@@ -1461,15 +1461,18 @@ function Install-AndroidStack {
     $previousJavaHome = [string]$env:JAVA_HOME
     try {
         $env:JAVA_HOME = $jdkRoot
+        $androidJVMWarning = 'OpenJDK 64-Bit Server VM warning: The UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.'
         Invoke-ProvisioningNative -Role 'Android Platform Tools installation' -FilePath $androidCLI `
             -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
             -TimeoutSeconds 600 | Out-Null
-        $androidVersion = ((Invoke-ProvisioningNative -Role 'Android CLI version verification' `
-                -FilePath $androidCLI -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30) `
+        $androidVersion = (@(Invoke-ProvisioningNative -Role 'Android CLI version verification' `
+                    -FilePath $androidCLI -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | `
+                    Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
             -join [Environment]::NewLine).Trim()
-        $reportedSDK = ((Invoke-ProvisioningNative -Role 'Android SDK location verification' `
-                -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
-                -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        $reportedSDK = (@(Invoke-ProvisioningNative -Role 'Android SDK location verification' `
+                    -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
+                    -TimeoutSeconds 30 | Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
+            -join [Environment]::NewLine).Trim()
     } finally {
         $env:JAVA_HOME = $previousJavaHome
     }

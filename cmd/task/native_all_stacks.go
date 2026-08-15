@@ -556,6 +556,11 @@ function Assert-SmokeOutput([string]$Role, [string]$Output, [string]$Expected) {
     if (-not $Output.Contains($Expected)) { throw "$Role output did not contain $Expected" }
 }
 
+function Remove-AndroidJVMWarning([string]$Output) {
+    $warning = 'OpenJDK 64-Bit Server VM warning: The UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.'
+    return (@([regex]::Split($Output, '\r?\n') | Where-Object { $_.Trim() -cne $warning }) -join [Environment]::NewLine).Trim()
+}
+
 $readOnlyMount = 'C:\Mounts\reference'
 $writableMount = 'C:\Mounts\worktrees'
 if ([IO.File]::ReadAllText((Join-Path $readOnlyMount 'host-reference.txt')).Trim() -cne 'read-only-mount-ok') {
@@ -611,11 +616,11 @@ if ($env:ANDROID_HOME -cne $androidSDK -or $env:ANDROID_JAVA_HOME -cne $androidJ
     [IO.Path]::GetFullPath($adb) -ine (Join-Path $androidSDK 'platform-tools\adb.exe')) {
     throw 'Android SDK, JDK, or command environment is unavailable in the SSH session.'
 }
-$androidVersion = Invoke-SmokeTool 'android-cli-version' $androidCLI @('--no-metrics','--version')
+$androidVersion = Remove-AndroidJVMWarning (Invoke-SmokeTool 'android-cli-version' $androidCLI @('--no-metrics','--version'))
 if ($androidVersion -notmatch '^1\.0\.\d+$') { throw "Android CLI version is unexpected: $androidVersion" }
 $androidJDKVersion = Invoke-SmokeTool 'android-jdk-version' (Join-Path $androidJDK 'bin\java.exe') @('-version')
 Assert-SmokeOutput 'android-jdk-version' $androidJDKVersion 'openjdk version "17.0.20"'
-$reportedAndroidSDK = Invoke-SmokeTool 'android-sdk-location' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'info','sdk')
+$reportedAndroidSDK = Remove-AndroidJVMWarning (Invoke-SmokeTool 'android-sdk-location' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'info','sdk'))
 if ([IO.Path]::GetFullPath($reportedAndroidSDK).TrimEnd('\') -ine $androidSDK) {
     throw "Android SDK location is unexpected: $reportedAndroidSDK"
 }

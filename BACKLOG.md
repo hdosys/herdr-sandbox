@@ -11,6 +11,12 @@ Open, planned, blocked, or deferred product work only. User-visible rules belong
 
 ## Items
 
+- Move the verified SSH connection to the earliest practical guest bootstrap
+  boundary, then run the existing idempotent Base and development provisioning
+  through that channel for both fresh and retained runs. A failure after SSH must
+  be retryable in the same live Sandbox without `down`, GUI input, a watcher or
+  daemon, a second provisioner, or a fresh launch; keep the unavoidable pre-SSH
+  failure window minimal and explicit.
 - Run one fresh native `python-ai` acceptance gate when `Containers-DisposableClientVM` is available: initialize the profile through the stable CLI, require `plan` to expand it to only the Python 3.13 and `astral-sh.uv` owners, provision with `up --no-attach`, and verify `python`, `python3`, uv version/cache readback, `UV_NO_MANAGED_PYTHON=1`, an offline `uv sync`, a locked `uv run`, and retained reprovisioning against the same ready guest. Keep framework packages project-owned and leave CUDA outside this CPU/API gate.
 - Automate the official Playwright Extension token handoff after the manual-first stack passes natively. Keep the unmodified Chrome Web Store extension, existing headed main-user Edge profile, and `playwright-cli.cmd -s=edge-main attach --extension=msedge` contract; investigate a bounded way to extract the extension-generated profile-local token and publish it only to disposable guest environment state without UI automation, logging, project persistence, remote debugging, another profile, or a custom extension. Native verification must prove fresh-guest install/enable, token extraction, prompt-free attach, tab control, `detach` without closing Edge, and no token in host mappings, run evidence, cache, or source.
 - Run one fresh native acceptance gate for the new current-path UX and modern .NET owner when `Containers-DisposableClientVM` is available: use the stable built CLI to confirm `plan` remains nonmutating, initialize a disposable `dotnet` profile, provision with `up --no-attach`, observe retained progress and prompt `status` snapshots, verify a bounded terminal operation outcome independently of ready health, attach from a real console, and build/run a minimal `net10.0` project after exact `dotnet --version`/`--list-sdks` readback. Require the resolved package plan to contain only `Microsoft.DotNet.SDK.10` for .NET, with no prior/preview SDK package, Framework, Visual Studio/MSBuild, or alternate installer path.
