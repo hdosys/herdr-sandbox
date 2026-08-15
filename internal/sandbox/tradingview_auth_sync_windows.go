@@ -17,6 +17,7 @@ import (
 
 const (
 	maximumTradingViewCookieDatabaseSize = 64 * 1024 * 1024
+	maximumTradingViewSettingsSize       = 1024 * 1024
 	sqliteOK                             = 0
 	sqliteRow                            = 100
 	sqliteDone                           = 101
@@ -107,7 +108,11 @@ func exportTradingViewAuthentication(ctx context.Context, profile string) ([]byt
 	if len(cookies) == 0 {
 		return emptyTradingViewAuthenticationPayload()
 	}
-	authentication := tradingViewAuthentication{SchemaVersion: tradingViewAuthenticationSchema, Cookies: cookies}
+	userIDs, err := readTradingViewUserIDs(profile)
+	if err != nil {
+		return nil, 0, err
+	}
+	authentication := tradingViewAuthentication{SchemaVersion: tradingViewAuthenticationSchema, Cookies: cookies, UserIDs: userIDs}
 	for index := range authentication.Cookies {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, err
@@ -117,6 +122,67 @@ func exportTradingViewAuthentication(ctx context.Context, profile string) ([]byt
 		}
 	}
 	return encodeTradingViewAuthentication(authentication)
+}
+
+func readTradingViewUserIDs(profile string) ([]string, error) {
+	storageRoot := filepath.Join(profile, "TVUserStorage")
+	entries, err := os.ReadDir(storageRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect host TradingView user storage: %w", err)
+	}
+	if len(entries) > 32 {
+		return nil, errors.New("host TradingView user storage contains too many entries")
+	}
+	userIDs := []string{}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "id-") {
+			continue
+		}
+		userID := strings.TrimPrefix(entry.Name(), "id-")
+		if !validTradingViewUserID(userID) {
+			return nil, errors.New("host TradingView user storage identity is invalid")
+		}
+		directory := filepath.Join(storageRoot, entry.Name())
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return nil, fmt.Errorf("inspect host TradingView user storage identity: %w", err)
+		}
+		reparse, err := fileInfoIsReparsePoint(info)
+		if err != nil {
+			return nil, fmt.Errorf("inspect host TradingView user storage identity: %w", err)
+		}
+		if reparse || !info.IsDir() {
+			return nil, errors.New("host TradingView user storage identity is not a physical directory")
+		}
+		settingsPath := filepath.Join(directory, "settings.json")
+		settingsInfo, err := boundedTradingViewSourceFile(settingsPath, maximumTradingViewSettingsSize)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect host TradingView user settings: %w", err)
+		}
+		if settingsInfo.Size() == 0 {
+			continue
+		}
+		settings, err := os.ReadFile(settingsPath)
+		if err != nil {
+			return nil, fmt.Errorf("read host TradingView user settings: %w", err)
+		}
+		if err := validateExactJSONObjectShape(settings, "host TradingView user settings", []string{
+			"linking", "globals", "tabs", "app", "featureList", "new-tab",
+		}); err != nil {
+			return nil, fmt.Errorf("validate host TradingView user settings: %w", err)
+		}
+		userIDs = append(userIDs, userID)
+		if len(userIDs) > maximumTradingViewUserIDs {
+			return nil, fmt.Errorf("host TradingView user ID count exceeds %d", maximumTradingViewUserIDs)
+		}
+	}
+	return userIDs, nil
 }
 
 func boundedTradingViewSourceFile(path string, maximum int64) (os.FileInfo, error) {

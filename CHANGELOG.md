@@ -14,6 +14,10 @@ release notes remain available on the
 
 ### Fixed
 
+- Fresh TradingView guests now initialize one small, credential-free chart state
+  for each bounded authenticated Desktop identity. TradingView opens directly to
+  a controllable chart without its first-run Welcome dialog, while retained user
+  tabs remain unchanged and no host profile or layout is copied.
 - Generic Go stack profiles no longer require `ProjectDirectory` or a root
   `go.mod`, so empty projects can select and provision Go like every other
   generic toolchain stack. `sandbox plan` now reports each resolved stack-tool

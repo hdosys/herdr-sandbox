@@ -372,7 +372,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != configurationAgentWorktreeInstructionsArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath {
+		if !file.FileInfo().IsDir() && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != configurationAgentWorktreeInstructionsArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath && file.Name != tradingViewSettingsArchivePath {
 			count++
 		}
 	}
@@ -1038,11 +1038,22 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 		if len(tradingViewCookieSyncSource) == 0 {
 			return nil, errors.New("TradingView cookie sync source is empty")
 		}
+		if len(tradingViewInitialSettings) == 0 {
+			return nil, errors.New("TradingView initial settings are empty")
+		}
+		if err := validateExactJSONObjectShape(tradingViewInitialSettings, "TradingView initial settings", []string{
+			"linking", "globals", "tabs", "app", "featureList", "new-tab",
+		}); err != nil {
+			return nil, fmt.Errorf("validate TradingView initial settings: %w", err)
+		}
 		if err := addData(sources.TradingViewAuthentication, tradingViewAuthenticationArchivePath, "TradingView authentication"); err != nil {
 			return nil, fmt.Errorf("archive TradingView authentication: %w", err)
 		}
 		if err := addData(tradingViewCookieSyncSource, tradingViewCookieSyncSourceArchivePath, "TradingView cookie sync source"); err != nil {
 			return nil, fmt.Errorf("archive TradingView cookie sync source: %w", err)
+		}
+		if err := addData(tradingViewInitialSettings, tradingViewSettingsArchivePath, "TradingView initial settings"); err != nil {
+			return nil, fmt.Errorf("archive TradingView initial settings: %w", err)
 		}
 	}
 

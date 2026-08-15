@@ -1,0 +1,75 @@
+{
+  "linking": {
+    "groups": []
+  },
+  "globals": {
+    "undo": []
+  },
+  "tabs": {
+    "default": {
+      "9d56f877-10ab-4c70-a29a-fda83496cb89": {
+        "tabs": [
+          {
+            "persistentId": "71ed31f5-ee75-434c-8548-4b55a417513c",
+            "active": true,
+            "pinned": false,
+            "title": "TradingView",
+            "url": "https://www.tradingview.com/chart/",
+            "fullscreen": false
+          }
+        ]
+      }
+    },
+    "user": {}
+  },
+  "app": {
+    "chartWindows": [
+      {
+        "persistentId": "9d56f877-10ab-4c70-a29a-fda83496cb89",
+        "activeGroupId": null,
+        "options": {
+          "windowOptions": {
+            "width": 1280,
+            "height": 800,
+            "minWidth": 500,
+            "minHeight": 350,
+            "x": 100,
+            "y": 100,
+            "state": 0,
+            "show": true
+          },
+          "titleBarOptions": {
+            "showMainMenu": true,
+            "showTabs": true,
+            "showMaximize": true,
+            "showMinimize": true
+          }
+        },
+        "tabs": [
+          {
+            "persistentId": "71ed31f5-ee75-434c-8548-4b55a417513c",
+            "active": true,
+            "pinned": false,
+            "title": "TradingView",
+            "url": "https://www.tradingview.com/chart/",
+            "fullscreen": false
+          }
+        ]
+      }
+    ],
+    "state": {
+      "focusedWindowId": "9d56f877-10ab-4c70-a29a-fda83496cb89"
+    }
+  },
+  "featureList": {},
+  "new-tab": {
+    "layoutSort": {
+      "sortField": "title",
+      "sortDirection": 0
+    },
+    "productDrawerButton": {
+      "showHint": false
+    },
+    "products": {}
+  }
+}

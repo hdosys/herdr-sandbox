@@ -1092,15 +1092,29 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         throw 'TradingView authentication input is not valid JSON.'
     }
     $tradingViewAuthenticationProperties = @($tradingViewAuthentication.PSObject.Properties.Name | Sort-Object)
-    if (($tradingViewAuthenticationProperties -join '|') -cne 'cookies|schemaVersion' -or
+    if (($tradingViewAuthenticationProperties -join '|') -cne 'cookies|schemaVersion|userIds' -or
         $tradingViewAuthentication.schemaVersion -isnot [int] -or
-        [int]$tradingViewAuthentication.schemaVersion -ne 2 -or
-        $tradingViewAuthentication.cookies -isnot [array]) {
+        [int]$tradingViewAuthentication.schemaVersion -ne 3 -or
+        $tradingViewAuthentication.cookies -isnot [array] -or
+        $tradingViewAuthentication.userIds -isnot [array]) {
         throw 'TradingView authentication input has an unsupported contract.'
     }
     $tradingViewCookies = @($tradingViewAuthentication.cookies)
+    $tradingViewUserIDs = @($tradingViewAuthentication.userIds)
     if ($tradingViewCookies.Count -gt 4) {
         throw 'TradingView authentication input contains too many cookies.'
+    }
+    if ($tradingViewUserIDs.Count -gt 8 -or ($tradingViewCookies.Count -gt 0 -and $tradingViewUserIDs.Count -eq 0)) {
+        throw 'TradingView authentication input contains invalid user settings identities.'
+    }
+    $previousTradingViewUserID = ''
+    foreach ($tradingViewUserID in $tradingViewUserIDs) {
+        if ($tradingViewUserID -isnot [string] -or [string]$tradingViewUserID -notmatch '^[1-9][0-9]{0,18}$' -or
+            (-not [string]::IsNullOrEmpty($previousTradingViewUserID) -and
+             [string]::CompareOrdinal($previousTradingViewUserID, [string]$tradingViewUserID) -ge 0)) {
+            throw 'TradingView authentication input contains invalid user settings identities.'
+        }
+        $previousTradingViewUserID = [string]$tradingViewUserID
     }
     $tradingViewCookieIdentities = @{}
     $tradingViewCookiePairs = @{}
@@ -1155,11 +1169,13 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             throw 'TradingView authentication input contains an incomplete signed session.'
         }
     }
-    if ($tradingViewCookies.Count -gt 0) {
+    if ($tradingViewCookies.Count -gt 0 -or $tradingViewUserIDs.Count -gt 0) {
         $runningTradingView = @(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)
         if ($runningTradingView.Count -ne 0) {
             throw 'TradingView Desktop is running in the guest; close it before reapplying authentication.'
         }
+    }
+    if ($tradingViewCookies.Count -gt 0) {
         $tradingViewAdapterPath = Join-Path $expanded 'herdr-sandbox\tradingview-cookie-sync.cs'
         if (-not (Test-Path -LiteralPath $tradingViewAdapterPath -PathType Leaf)) {
             throw 'TradingView cookie sync adapter is missing.'
@@ -1206,6 +1222,52 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         }
     } else {
         Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
+    }
+    $tradingViewSettingsTemplate = Join-Path $expanded 'herdr-sandbox\tradingview-settings.json'
+    if ($tradingViewUserIDs.Count -gt 0) {
+        if (-not (Test-Path -LiteralPath $tradingViewSettingsTemplate -PathType Leaf)) {
+            throw 'TradingView initial settings template is missing.'
+        }
+        $templateInfo = Get-Item -LiteralPath $tradingViewSettingsTemplate -Force
+        if (($templateInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $templateInfo.Length -le 0 -or $templateInfo.Length -gt 65536) {
+            throw 'TradingView initial settings template is unsafe.'
+        }
+        $templateHash = (Get-FileHash -LiteralPath $tradingViewSettingsTemplate -Algorithm SHA256).Hash
+        foreach ($tradingViewUserID in $tradingViewUserIDs) {
+            $settingsDestination = Join-Path $env:APPDATA ('TradingView\TVUserStorage\id-' + [string]$tradingViewUserID + '\settings.json')
+            Assert-ConfigurationDestinationPath -Path $settingsDestination
+            if (Test-Path -LiteralPath $settingsDestination) {
+                $existingSettings = Get-Item -LiteralPath $settingsDestination -Force
+                if ($existingSettings.PSIsContainer -or
+                    ($existingSettings.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                    $existingSettings.Length -le 0 -or $existingSettings.Length -gt 1048576) {
+                    throw 'Existing TradingView user settings are unsafe.'
+                }
+                try {
+                    $existingState = [IO.File]::ReadAllText($settingsDestination) | ConvertFrom-Json
+                } catch {
+                    throw 'Existing TradingView user settings are invalid JSON.'
+                }
+                $existingProperties = @($existingState.PSObject.Properties.Name | Sort-Object)
+                if (($existingProperties -join '|') -cne 'app|featureList|globals|linking|new-tab|tabs') {
+                    throw 'Existing TradingView user settings have an unsupported shape.'
+                }
+                continue
+            }
+            $settingsDirectory = Split-Path -Parent $settingsDestination
+            New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
+            $temporarySettings = Join-Path $settingsDirectory ('.herdr-sandbox-tradingview-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+            try {
+                [IO.File]::Copy($tradingViewSettingsTemplate, $temporarySettings, $false)
+                [IO.File]::Move($temporarySettings, $settingsDestination)
+            } finally {
+                if (Test-Path -LiteralPath $temporarySettings) { [IO.File]::Delete($temporarySettings) }
+            }
+            if ((Get-FileHash -LiteralPath $settingsDestination -Algorithm SHA256).Hash -cne $templateHash) {
+                throw 'TradingView initial settings verification failed.'
+            }
+        }
     }
     if (Test-Path -LiteralPath $tradingViewAuthenticationPath) {
         throw 'TradingView authentication input cleanup failed.'

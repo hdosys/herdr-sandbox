@@ -16,14 +16,19 @@ import (
 //go:embed assets/tradingview-cookie-sync.cs
 var tradingViewCookieSyncSource []byte
 
+//go:embed assets/tradingview-settings.json
+var tradingViewInitialSettings []byte
+
 const (
-	tradingViewAuthenticationSchema        = 2
+	tradingViewAuthenticationSchema        = 3
 	tradingViewAuthenticationArchivePath   = "tradingview/authentication.json"
 	tradingViewCookieSyncSourceArchivePath = "herdr-sandbox/tradingview-cookie-sync.cs"
+	tradingViewSettingsArchivePath         = "herdr-sandbox/tradingview-settings.json"
 	tradingViewDesktopPackageFamilyName    = "TradingView.Desktop_n534cwy3pjxzj"
 	maximumTradingViewAuthenticationSize   = 64 * 1024
 	maximumTradingViewCookies              = 4
 	maximumTradingViewCookieValueSize      = 16 * 1024
+	maximumTradingViewUserIDs              = 8
 	tradingViewSessionCookieName           = "sessionid"
 	tradingViewSessionSignatureCookieName  = "sessionid_sign"
 )
@@ -33,6 +38,8 @@ var tradingViewCookieJSONFields = []string{
 	"secure", "httpOnly", "lastAccessUtc", "hasExpires", "persistent", "priority", "sameSite",
 	"sourceScheme", "sourcePort", "lastUpdateUtc", "sourceType", "crossSiteAncestor",
 }
+
+var tradingViewAuthenticationJSONFields = []string{"schemaVersion", "cookies", "userIds"}
 
 func provisioningStacksContain(userStacks []projectStack, workspaces []workspacePlan, expected projectStack) bool {
 	if stacksContain(userStacks, expected) {
@@ -58,6 +65,7 @@ func defaultTradingViewProfilePath() (string, error) {
 type tradingViewAuthentication struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	Cookies       []tradingViewCookie `json:"cookies"`
+	UserIDs       []string            `json:"userIds"`
 }
 
 type tradingViewCookie struct {
@@ -86,6 +94,7 @@ func emptyTradingViewAuthenticationPayload() ([]byte, int, error) {
 	return encodeTradingViewAuthentication(tradingViewAuthentication{
 		SchemaVersion: tradingViewAuthenticationSchema,
 		Cookies:       []tradingViewCookie{},
+		UserIDs:       []string{},
 	})
 }
 
@@ -107,12 +116,13 @@ func decodeTradingViewAuthentication(payload []byte) (tradingViewAuthentication,
 	if len(payload) == 0 || len(payload) > maximumTradingViewAuthenticationSize {
 		return tradingViewAuthentication{}, errors.New("TradingView authentication payload size is invalid")
 	}
-	if err := validateExactJSONObjectShape(payload, "TradingView authentication", []string{"schemaVersion", "cookies"}); err != nil {
+	if err := validateExactJSONObjectShape(payload, "TradingView authentication", tradingViewAuthenticationJSONFields); err != nil {
 		return tradingViewAuthentication{}, errors.New("decode TradingView authentication payload")
 	}
 	var envelope struct {
 		SchemaVersion int               `json:"schemaVersion"`
 		Cookies       []json.RawMessage `json:"cookies"`
+		UserIDs       []string          `json:"userIds"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -125,6 +135,7 @@ func decodeTradingViewAuthentication(payload []byte) (tradingViewAuthentication,
 	authentication := tradingViewAuthentication{
 		SchemaVersion: envelope.SchemaVersion,
 		Cookies:       make([]tradingViewCookie, 0, len(envelope.Cookies)),
+		UserIDs:       envelope.UserIDs,
 	}
 	if envelope.Cookies == nil || len(envelope.Cookies) > maximumTradingViewCookies {
 		return tradingViewAuthentication{}, fmt.Errorf("TradingView authentication cookie count exceeds %d", maximumTradingViewCookies)
@@ -157,6 +168,19 @@ func validateTradingViewAuthentication(authentication tradingViewAuthentication)
 	if authentication.Cookies == nil || len(authentication.Cookies) > maximumTradingViewCookies {
 		return fmt.Errorf("TradingView authentication cookie count exceeds %d", maximumTradingViewCookies)
 	}
+	if authentication.UserIDs == nil || len(authentication.UserIDs) > maximumTradingViewUserIDs {
+		return fmt.Errorf("TradingView user ID count exceeds %d", maximumTradingViewUserIDs)
+	}
+	seenUserIDs := make(map[string]bool, len(authentication.UserIDs))
+	for index, userID := range authentication.UserIDs {
+		if !validTradingViewUserID(userID) || seenUserIDs[userID] || (index > 0 && authentication.UserIDs[index-1] >= userID) {
+			return errors.New("TradingView authentication contains invalid user IDs")
+		}
+		seenUserIDs[userID] = true
+	}
+	if len(authentication.Cookies) > 0 && len(authentication.UserIDs) == 0 {
+		return errors.New("TradingView authentication is missing user settings identity")
+	}
 	seen := make(map[string]bool, len(authentication.Cookies))
 	pairs := make(map[string]uint8, len(authentication.Cookies)/2)
 	for _, cookie := range authentication.Cookies {
@@ -183,6 +207,18 @@ func validateTradingViewAuthentication(authentication tradingViewAuthentication)
 		}
 	}
 	return nil
+}
+
+func validTradingViewUserID(value string) bool {
+	if value == "" || len(value) > 19 || value[0] == '0' {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTradingViewCookie(cookie tradingViewCookie) error {

@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -22,12 +23,13 @@ func TestTradingViewHostExportAndGuestMergeBoundary(t *testing.T) {
 	}
 	cookieDatabase := filepath.Join(profile, "Network", "Cookies")
 	createTradingViewCookieDatabaseFixture(t, cookieDatabase, "host-session", "unrelated-value")
+	createTradingViewUserSettingsFixture(t, profile, "12345678")
 	payload, count, err := exportTradingViewAuthentication(t.Context(), profile)
 	if err != nil || count != 2 {
 		t.Fatalf("export TradingView authentication: count=%d err=%v", count, err)
 	}
 	authentication, err := decodeTradingViewAuthentication(payload)
-	if err != nil || len(authentication.Cookies) != 2 || authentication.Cookies[0].Value != "host-session" ||
+	if err != nil || len(authentication.Cookies) != 2 || len(authentication.UserIDs) != 1 || authentication.UserIDs[0] != "12345678" || authentication.Cookies[0].Value != "host-session" ||
 		authentication.Cookies[1].Value != "host-session-signature" {
 		t.Fatalf("exported authentication = %#v, err=%v", authentication, err)
 	}
@@ -63,6 +65,17 @@ func TestTradingViewHostExportAndGuestMergeBoundary(t *testing.T) {
 	}
 }
 
+func createTradingViewUserSettingsFixture(t *testing.T, profile, userID string) {
+	t.Helper()
+	directory := filepath.Join(profile, "TVUserStorage", "id-"+userID)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "settings.json"), tradingViewInitialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTradingViewHostExportMissingProfileIsNoop(t *testing.T) {
 	root := t.TempDir()
 	localAppData := filepath.Join(root, "local")
@@ -91,6 +104,80 @@ func TestDefaultTradingViewProfilePathUsesPackagedDesktopProfile(t *testing.T) {
 	}
 	if !strings.EqualFold(filepath.Clean(profile), filepath.Clean(packaged)) {
 		t.Fatalf("packaged TradingView profile = %q, want %q", profile, packaged)
+	}
+}
+
+func TestTradingViewGuestSettingsInitializationIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	expanded := filepath.Join(root, "expanded")
+	appData := filepath.Join(root, "appdata")
+	authenticationPath := filepath.Join(expanded, "tradingview", "authentication.json")
+	templatePath := filepath.Join(expanded, "herdr-sandbox", "tradingview-settings.json")
+	if err := os.MkdirAll(filepath.Dir(authenticationPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(templatePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(templatePath, tradingViewInitialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload, _, err := encodeTradingViewAuthentication(tradingViewAuthentication{
+		SchemaVersion: tradingViewAuthenticationSchema,
+		Cookies:       []tradingViewCookie{},
+		UserIDs:       []string{"12345678"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(configurationSyncScript)
+	start := strings.Index(source, "$tradingViewAuthenticationPath =")
+	end := strings.Index(source[start:], "[Console]::Error.WriteLine('[config-sync] apply-herdr')")
+	if start < 0 || end <= 0 {
+		t.Fatal("TradingView configuration apply section is missing")
+	}
+	section := source[start : start+end]
+	section = strings.Replace(section, "@(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)", "@()", 1)
+	runApply := func() {
+		t.Helper()
+		if err := os.WriteFile(authenticationPath, payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		script := `$ErrorActionPreference = 'Stop'
+$expanded = '` + strings.ReplaceAll(expanded, "'", "''") + `'
+$env:APPDATA = '` + strings.ReplaceAll(appData, "'", "''") + `'
+$tradingViewAuthenticatedCookies = 0
+$tradingViewAuthenticationVerified = $false
+function Assert-ConfigurationDestinationPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [IO.Path]::IsPathRooted([IO.Path]::GetFullPath($Path))) { throw 'destination is not absolute' }
+}
+function Get-FileHash {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath, [string]$Algorithm)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($LiteralPath)
+        try { $hash = ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '') } finally { $stream.Dispose() }
+    } finally { $sha256.Dispose() }
+    return [pscustomobject]@{ Hash = $hash }
+}
+` + section
+		runWindowsPowerShellFileFixture(t, script)
+	}
+	runApply()
+	destination := filepath.Join(appData, "TradingView", "TVUserStorage", "id-12345678", "settings.json")
+	actual, err := os.ReadFile(destination)
+	if err != nil || !bytes.Equal(actual, tradingViewInitialSettings) {
+		t.Fatalf("initialized TradingView settings mismatch: err=%v", err)
+	}
+	preserved := bytes.Replace(tradingViewInitialSettings, []byte(`"TradingView"`), []byte(`"Preserved"`), 1)
+	if err := os.WriteFile(destination, preserved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runApply()
+	actual, err = os.ReadFile(destination)
+	if err != nil || !bytes.Equal(actual, preserved) {
+		t.Fatalf("retained TradingView settings were replaced: err=%v", err)
 	}
 }
 
@@ -274,5 +361,19 @@ func runWindowsPowerShellFixture(t *testing.T, script string) {
 	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("Windows PowerShell fixture: %v: %s", err, output)
+	}
+}
+
+func runWindowsPowerShellFileFixture(t *testing.T, script string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fixture.ps1")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Windows PowerShell file fixture: %v: %s", err, output)
 	}
 }
