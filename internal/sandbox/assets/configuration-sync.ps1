@@ -194,6 +194,143 @@ function Sync-ClaudeCodeUserState {
     }
     $script:CopiedConfigurationFiles += 1
 }
+function Invoke-AgentConfigurationGit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string[]]$ProcessArguments
+    )
+    $gitCommand = Get-Command 'git.exe' -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& ([string]$gitCommand.Source) '-C' $Repository @ProcessArguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "$Role failed with exit code $exitCode."
+    }
+    return @($output | ForEach-Object { [string]$_ })
+}
+function Add-AgentConfigurationGitInfoLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Line
+    )
+    Assert-ConfigurationDestinationPath -Path $Path
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $lines = @()
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $lines = @([IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Split([char]10) |
+            Where-Object { -not [string]::IsNullOrEmpty([string]$_) })
+    }
+    if (@($lines | Where-Object { [string]$_ -ceq $Line }).Count -eq 0) {
+        $lines += $Line
+        [IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"), $script:Utf8NoBom)
+    }
+    $verified = @([IO.File]::ReadAllText($Path).Replace("`r`n", "`n").Split([char]10) |
+        Where-Object { [string]$_ -ceq $Line })
+    if ($verified.Count -ne 1) {
+        throw "Agent configuration Git metadata verification failed: $Path"
+    }
+}
+function Protect-ManagedAgentWorktreeInstructions {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigurationRoot,
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [Parameter(Mandatory = $true)][string]$ArchivedSource,
+        [Parameter(Mandatory = $true)][string]$FilterScript
+    )
+    $segments = @($RelativePath -split '/')
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or $RelativePath.Length -gt 1024 -or
+        [IO.Path]::IsPathRooted($RelativePath) -or $RelativePath.Contains('\') -or
+        $RelativePath.Contains(':') -or $RelativePath -match '[\x00\r\n]' -or
+        @($segments | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -in @('.', '..') }).Count -ne 0) {
+        throw "Agent worktree instruction path is unsafe: $RelativePath"
+    }
+    $gitDirectory = Join-Path $ConfigurationRoot '.git'
+    if (-not (Test-Path -LiteralPath $gitDirectory)) { return }
+    if (-not (Test-Path -LiteralPath $gitDirectory -PathType Container)) {
+        throw "Agent configuration Git metadata is not a physical directory: $gitDirectory"
+    }
+    foreach ($path in @($ConfigurationRoot, $gitDirectory, $FilterScript)) {
+        Assert-ConfigurationDestinationPath -Path $path
+    }
+    if (-not (Test-Path -LiteralPath $FilterScript -PathType Leaf)) {
+        throw 'Agent worktree Git clean filter is missing.'
+    }
+
+    $metadata = @(Invoke-AgentConfigurationGit -Role 'Agent configuration Git identity verification' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'))
+    if ($metadata.Count -ne 3 -or
+        [IO.Path]::GetFullPath(([string]$metadata[0]).Replace('/', '\')).TrimEnd('\') -ine [IO.Path]::GetFullPath($ConfigurationRoot).TrimEnd('\') -or
+        [IO.Path]::GetFullPath(([string]$metadata[1]).Replace('/', '\')).TrimEnd('\') -ine [IO.Path]::GetFullPath($gitDirectory).TrimEnd('\') -or
+        [IO.Path]::GetFullPath(([string]$metadata[2]).Replace('/', '\')).TrimEnd('\') -ine [IO.Path]::GetFullPath($gitDirectory).TrimEnd('\')) {
+        throw "Agent configuration repository does not use its physical root .git directory: $ConfigurationRoot"
+    }
+
+    $filterPath = [IO.Path]::GetFullPath($FilterScript).Replace('\', '/')
+    if ($filterPath -match '\s') {
+        throw "Agent worktree Git clean filter path contains whitespace: $filterPath"
+    }
+    $filterCommand = 'powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File ' + $filterPath
+    $null = Invoke-AgentConfigurationGit -Role 'Configure agent worktree Git clean filter' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', 'filter.herdr-sandbox-worktree.clean', $filterCommand)
+    $null = Invoke-AgentConfigurationGit -Role 'Require agent worktree Git clean filter' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', 'filter.herdr-sandbox-worktree.required', 'true')
+
+    $attributesPath = Join-Path $gitDirectory 'info\attributes'
+    $attributeLine = $RelativePath + ' filter=herdr-sandbox-worktree'
+    Add-AgentConfigurationGitInfoLine -Path $attributesPath -Line $attributeLine
+    if (-not (Test-Path -LiteralPath $ArchivedSource -PathType Leaf)) {
+        Add-AgentConfigurationGitInfoLine -Path (Join-Path $gitDirectory 'info\exclude') -Line ('/' + $RelativePath)
+    }
+
+    $attribute = @(Invoke-AgentConfigurationGit -Role 'Verify agent worktree Git clean filter attribute' `
+        -Repository $ConfigurationRoot -ProcessArguments @('check-attr', 'filter', '--', $RelativePath))
+    if ($attribute.Count -ne 1 -or [string]$attribute[0] -cne ($RelativePath + ': filter: herdr-sandbox-worktree')) {
+        throw "Agent worktree Git clean filter attribute verification failed: $RelativePath"
+    }
+    $configuredCommand = @(Invoke-AgentConfigurationGit -Role 'Verify agent worktree Git clean filter command' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', '--get', 'filter.herdr-sandbox-worktree.clean'))
+    $required = @(Invoke-AgentConfigurationGit -Role 'Verify required agent worktree Git clean filter' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', '--get', 'filter.herdr-sandbox-worktree.required'))
+    if ($configuredCommand.Count -ne 1 -or [string]$configuredCommand[0] -cne $filterCommand -or
+        $required.Count -ne 1 -or [string]$required[0] -cne 'true') {
+        throw 'Agent worktree Git clean filter configuration verification failed.'
+    }
+
+    $tracked = @(Invoke-AgentConfigurationGit -Role 'Inspect managed agent instruction tracking' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'ls-files', '--cached', '--', $RelativePath))
+    if ($tracked.Count -eq 1 -and [string]$tracked[0] -ceq $RelativePath) {
+        $indexHash = @(Invoke-AgentConfigurationGit -Role 'Read managed agent instruction index identity' `
+            -Repository $ConfigurationRoot -ProcessArguments @(
+                'rev-parse', '--verify', (':' + $RelativePath)))
+        $filteredHash = @(Invoke-AgentConfigurationGit -Role 'Read managed agent instruction filtered identity' `
+            -Repository $ConfigurationRoot -ProcessArguments @(
+                'hash-object', '--filters', ('--path=' + $RelativePath), $RelativePath))
+        if ($indexHash.Count -ne 1 -or $filteredHash.Count -ne 1) {
+            throw 'Agent worktree Git clean filter identity verification failed.'
+        }
+        if ([string]$indexHash[0] -ceq [string]$filteredHash[0]) {
+            $null = Invoke-AgentConfigurationGit -Role 'Refresh managed agent instruction index metadata' `
+                -Repository $ConfigurationRoot -ProcessArguments @(
+                    'add', '--renormalize', '--', $RelativePath)
+        }
+    } elseif ($tracked.Count -ne 0) {
+        throw "Agent configuration Git returned unexpected tracking state: $RelativePath"
+    }
+}
 function Set-ManagedAgentWorktreeInstructions {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -693,10 +830,13 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
 
     $worktreeDirectoryPath = Join-Path $expanded 'herdr-sandbox\worktree-directory.txt'
     $agentWorktreeInstructions = Join-Path $expanded 'herdr-sandbox\agent-worktree-instructions.md'
+    $agentWorktreeCleanFilter = Join-Path $expanded 'herdr-sandbox\agent-worktree-clean.ps1'
     $worktreeDirectoryConfigured = Test-Path -LiteralPath $worktreeDirectoryPath -PathType Leaf
     $agentWorktreeInstructionsAvailable = Test-Path -LiteralPath $agentWorktreeInstructions -PathType Leaf
-    if ($worktreeDirectoryConfigured -ne $agentWorktreeInstructionsAvailable) {
-        throw 'Agent worktree instructions do not match the worktree-directory contract.'
+    $agentWorktreeCleanFilterAvailable = Test-Path -LiteralPath $agentWorktreeCleanFilter -PathType Leaf
+    if ($worktreeDirectoryConfigured -ne $agentWorktreeInstructionsAvailable -or
+        $worktreeDirectoryConfigured -ne $agentWorktreeCleanFilterAvailable) {
+        throw 'Agent worktree instructions and Git protection do not match the worktree-directory contract.'
     }
     if ($worktreeDirectoryConfigured) {
         $worktreeDirectory = [IO.File]::ReadAllText($worktreeDirectoryPath).Trim()
@@ -705,24 +845,64 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             throw 'Herdr worktree directory metadata is invalid during configuration sync.'
         }
         [Console]::Error.WriteLine('[config-sync] apply-agent-worktree-instructions')
+        $agentWorktreeFilterDestination = 'C:\HerdrSandbox\tools\configuration\agent-worktree-clean.ps1'
+        Set-AtomicConfigurationFile -Source $agentWorktreeCleanFilter -Destination $agentWorktreeFilterDestination
         $agentWorktreeDestinations = @()
+        $agentWorktreeProtectionTargets = @()
         if ([bool]$agentSync.opencode) {
-            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.config\opencode\AGENTS.md')
+            $root = Join-Path $env:USERPROFILE '.config\opencode'
+            $agentWorktreeDestinations += (Join-Path $root 'AGENTS.md')
+            $agentWorktreeProtectionTargets += [pscustomobject]@{
+                Root = $root
+                RelativePath = 'AGENTS.md'
+                ArchivedSource = (Join-Path $expanded 'opencode\AGENTS.md')
+            }
         }
         if ([bool]$agentSync.claudeCode) {
-            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.claude\CLAUDE.md')
+            $root = Join-Path $env:USERPROFILE '.claude'
+            $agentWorktreeDestinations += (Join-Path $root 'CLAUDE.md')
+            $agentWorktreeProtectionTargets += [pscustomobject]@{
+                Root = $root
+                RelativePath = 'CLAUDE.md'
+                ArchivedSource = (Join-Path $expanded 'claude-code\CLAUDE.md')
+            }
         }
         if ([bool]$agentSync.codex) {
-            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.codex\AGENTS.md')
+            $root = Join-Path $env:USERPROFILE '.codex'
+            $agentWorktreeDestinations += (Join-Path $root 'AGENTS.md')
+            $agentWorktreeProtectionTargets += [pscustomobject]@{
+                Root = $root
+                RelativePath = 'AGENTS.md'
+                ArchivedSource = (Join-Path $expanded 'codex\AGENTS.md')
+            }
         }
         if ([bool]$agentSync.githubCopilot) {
-            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.copilot\instructions\herdr-sandbox-worktrees.instructions.md')
+            $root = Join-Path $env:USERPROFILE '.copilot'
+            $relative = 'instructions/herdr-sandbox-worktrees.instructions.md'
+            $agentWorktreeDestinations += (Join-Path $root ($relative.Replace('/', '\')))
+            $agentWorktreeProtectionTargets += [pscustomobject]@{
+                Root = $root
+                RelativePath = $relative
+                ArchivedSource = (Join-Path $expanded 'github-copilot\instructions\herdr-sandbox-worktrees.instructions.md')
+            }
         }
         if ([bool]$agentSync.pi) {
-            $agentWorktreeDestinations += (Join-Path $env:USERPROFILE '.pi\agent\AGENTS.md')
+            $root = Join-Path $env:USERPROFILE '.pi\agent'
+            $agentWorktreeDestinations += (Join-Path $root 'AGENTS.md')
+            $agentWorktreeProtectionTargets += [pscustomobject]@{
+                Root = $root
+                RelativePath = 'AGENTS.md'
+                ArchivedSource = (Join-Path $expanded 'pi\AGENTS.md')
+            }
         }
         if ($agentWorktreeDestinations.Count -gt 0) {
             Set-ManagedAgentWorktreeInstructions -Source $agentWorktreeInstructions -Destinations $agentWorktreeDestinations
+        }
+        foreach ($target in $agentWorktreeProtectionTargets) {
+            Protect-ManagedAgentWorktreeInstructions -ConfigurationRoot ([string]$target.Root) `
+                -RelativePath ([string]$target.RelativePath) `
+                -ArchivedSource ([string]$target.ArchivedSource) `
+                -FilterScript $agentWorktreeFilterDestination
         }
     }
 

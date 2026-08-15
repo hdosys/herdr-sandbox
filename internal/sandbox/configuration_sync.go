@@ -25,6 +25,9 @@ var configurationSyncScript []byte
 //go:embed assets/agent-worktree-instructions.md
 var agentWorktreeInstructions []byte
 
+//go:embed assets/agent-worktree-clean.ps1
+var agentWorktreeCleanFilter []byte
+
 const (
 	agentWorktreeInstructionsStart = "<!-- herdr-sandbox:worktrees:start -->"
 	agentWorktreeInstructionsEnd   = "<!-- herdr-sandbox:worktrees:end -->"
@@ -43,6 +46,7 @@ const (
 	configurationPackagePlanArchivePath               = "herdr-sandbox/winget-packages.json"
 	configurationWorktreeDirectoryArchivePath         = "herdr-sandbox/worktree-directory.txt"
 	configurationAgentWorktreeInstructionsArchivePath = "herdr-sandbox/agent-worktree-instructions.md"
+	configurationAgentWorktreeCleanFilterArchivePath  = "herdr-sandbox/agent-worktree-clean.ps1"
 	powerShellProfileGUID                             = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
 	powerShellCommandLine                             = `pwsh.exe`
 	windowsTerminalGuestFont                          = "GeistMono Nerd Font"
@@ -89,6 +93,25 @@ func validateAgentWorktreeInstructions(data []byte) error {
 	} {
 		if !strings.Contains(text, required) {
 			return fmt.Errorf("embedded agent worktree instructions are missing %q", required)
+		}
+	}
+	return nil
+}
+
+func validateAgentWorktreeCleanFilter(data []byte) error {
+	if len(data) == 0 || len(data) > 32*1024 || bytes.IndexByte(data, 0) >= 0 {
+		return errors.New("embedded agent worktree clean filter must be nonempty and bounded")
+	}
+	for _, required := range []string{
+		agentWorktreeInstructionsStart,
+		agentWorktreeInstructionsEnd,
+		"[Console]::In.ReadToEnd()",
+		"[Console]::Out.Write($remainder)",
+		"$startMatches.Count -ne 1",
+		"$endMatches.Count -ne 1",
+	} {
+		if !strings.Contains(string(data), required) {
+			return fmt.Errorf("embedded agent worktree clean filter is missing %q", required)
 		}
 	}
 	return nil
@@ -947,6 +970,12 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 		}
 		if err := addData(agentWorktreeInstructions, configurationAgentWorktreeInstructionsArchivePath, "guest agent worktree instructions"); err != nil {
 			return nil, fmt.Errorf("archive guest agent worktree instructions: %w", err)
+		}
+		if err := validateAgentWorktreeCleanFilter(agentWorktreeCleanFilter); err != nil {
+			return nil, err
+		}
+		if err := addData(agentWorktreeCleanFilter, configurationAgentWorktreeCleanFilterArchivePath, "guest agent worktree Git clean filter"); err != nil {
+			return nil, fmt.Errorf("archive guest agent worktree Git clean filter: %w", err)
 		}
 	}
 

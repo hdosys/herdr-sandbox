@@ -153,7 +153,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 			}
 		}
 	}
-	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, configurationWorktreeDirectoryArchivePath, configurationAgentWorktreeInstructionsArchivePath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
+	for _, required := range []string{configurationApplyScriptArchivePath, configurationPackagePlanArchivePath, configurationWorkspaceManifestPath, configurationWorktreeDirectoryArchivePath, configurationAgentWorktreeInstructionsArchivePath, configurationAgentWorktreeCleanFilterArchivePath, "git/.gitconfig", "github-cli/config.yml", "github-cli/hosts.yml", githubCLIAuthenticationArchivePath, "opencode/opencode.json", "opencode/AGENTS.md", "opencode/agents/builder.md", "opencode/plugin/provider.js", "opencode-auth/auth.json", "herdr/config.toml", windowsTerminalEditionArchivePath, starshipPresetArchivePath, "windows-terminal/settings.json"} {
 		if !entries[required] {
 			t.Fatalf("archive is missing %s: %#v", required, entries)
 		}
@@ -169,7 +169,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 			t.Fatalf("archive contains excluded Herdr state %s", excluded)
 		}
 	}
-	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != 10 {
+	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != 11 {
 		t.Fatalf("payload file count = %d, err = %v", count, err)
 	}
 	var patched map[string]any
@@ -263,6 +263,38 @@ func TestAgentWorktreeInstructionsOwnHerdrLifecycleWithoutCleanupPolicy(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Fatalf("agent instructions invent cleanup/path policy %q: %s", forbidden, text)
 		}
+	}
+}
+
+func TestAgentWorktreeCleanFilterRemovesOnlyManagedGuestBlock(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 Git clean-filter regression")
+	}
+	if err := validateAgentWorktreeCleanFilter(agentWorktreeCleanFilter); err != nil {
+		t.Fatal(err)
+	}
+	filterPath := filepath.Join(t.TempDir(), "agent-worktree-clean.ps1")
+	writeTestFile(t, filterPath, string(agentWorktreeCleanFilter))
+	run := func(input string) (string, error) {
+		command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filterPath)
+		command.Stdin = strings.NewReader(input)
+		var output bytes.Buffer
+		command.Stdout = &output
+		command.Stderr = io.Discard
+		err := command.Run()
+		return output.String(), err
+	}
+	personal := "personal instructions\nlegitimate guest edit\n"
+	projected := strings.TrimRight(string(agentWorktreeInstructions), "\r\n") + "\n\n" + personal
+	if got, err := run(projected); err != nil || got != personal {
+		t.Fatalf("clean projected instructions = %q, err = %v", got, err)
+	}
+	if got, err := run(personal); err != nil || got != personal {
+		t.Fatalf("clean ordinary instructions = %q, err = %v", got, err)
+	}
+	malformed := agentWorktreeInstructionsStart + "\n" + agentWorktreeInstructionsEnd + "\ncontent without separator\n"
+	if _, err := run(malformed); err == nil {
+		t.Fatal("malformed managed boundary unexpectedly passed the clean filter")
 	}
 }
 
@@ -1108,14 +1140,17 @@ func TestDevelopmentConfigurationRemoteScriptParsesInWindowsPowerShell51(t *test
 		[]byte("herdr-sandbox\\workspaces.json"),
 		[]byte("herdr-sandbox\\worktree-directory.txt"),
 		[]byte("herdr-sandbox\\agent-worktree-instructions.md"),
+		[]byte("herdr-sandbox\\agent-worktree-clean.ps1"),
 		[]byte("C:/Worktrees/*"),
 		[]byte("[config-sync] apply-agent-worktree-instructions"),
-		[]byte(".config\\opencode\\AGENTS.md"),
-		[]byte(".claude\\CLAUDE.md"),
-		[]byte(".codex\\AGENTS.md"),
-		[]byte(".copilot\\instructions\\herdr-sandbox-worktrees.instructions.md"),
-		[]byte(".pi\\agent\\AGENTS.md"),
-		[]byte("Agent worktree instructions do not match the worktree-directory contract"),
+		[]byte(".config\\opencode"),
+		[]byte(".claude"),
+		[]byte(".codex"),
+		[]byte("instructions/herdr-sandbox-worktrees.instructions.md"),
+		[]byte(".pi\\agent"),
+		[]byte("Agent worktree instructions and Git protection do not match the worktree-directory contract"),
+		[]byte("Protect-ManagedAgentWorktreeInstructions"),
+		[]byte("filter.herdr-sandbox-worktree.clean"),
 		[]byte("--replace-all' 'safe.directory"),
 		[]byte("Git safe-directory verification failed"),
 		[]byte("Set-AtomicConfigurationFile"),

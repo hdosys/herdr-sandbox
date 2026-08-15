@@ -891,6 +891,7 @@ foreach ($destination in $destinations) {
     }
 	if (-not $text.EndsWith('personal instructions' + [char]10)) { throw "Personal instructions were not preserved: $destination" }
 }
+
 `
 	encodedDestinations, err := json.Marshal(destinations)
 	if err != nil {
@@ -922,6 +923,87 @@ if (-not $rejected) { throw 'Malformed ownership markers were accepted.' }
 	command.Env = append(os.Environ(), "SYNC_SOURCE="+source, "SYNC_DESTINATION="+malformed)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("malformed managed worktree instruction rejection: %v: %s", err, output)
+	}
+}
+
+func TestCodingAgentPowerShellKeepsManagedWorktreeInstructionsOutOfGit(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 configuration-sync Git protection regression")
+	}
+	contents := configurationSyncScript
+	start := bytes.Index(contents, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(contents, []byte("function Get-OpenCodeAllowAllPermissions"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync managed-instruction helper block was not found")
+	}
+
+	root := t.TempDir()
+	trackedRepository := filepath.Join(root, "tracked")
+	generatedRepository := filepath.Join(root, "generated")
+	for _, directory := range []string{trackedRepository, generatedRepository} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trackedInstructions := filepath.Join(trackedRepository, "AGENTS.md")
+	writeTestFile(t, trackedInstructions, "personal instructions\n")
+	initializeAgentGitRepository(t, trackedRepository, "tracked", []string{"AGENTS.md"})
+	writeTestFile(t, filepath.Join(generatedRepository, "settings.json"), "{}\n")
+	initializeAgentGitRepository(t, generatedRepository, "generated", []string{"settings.json"})
+
+	instructionSource := filepath.Join(root, "agent-worktree-instructions.md")
+	filterPath := filepath.Join(root, "agent-worktree-clean.ps1")
+	writeTestFile(t, instructionSource, string(agentWorktreeInstructions))
+	writeTestFile(t, filterPath, string(agentWorktreeCleanFilter))
+	generatedRelative := "instructions/herdr-sandbox-worktrees.instructions.md"
+	generatedInstructions := filepath.Join(generatedRepository, filepath.FromSlash(generatedRelative))
+
+	script := string(contents[start:end]) + `
+Set-ManagedAgentWorktreeInstructions -Source $env:SYNC_INSTRUCTIONS -Destinations @($env:SYNC_TRACKED_DESTINATION, $env:SYNC_GENERATED_DESTINATION)
+Set-ManagedAgentWorktreeInstructions -Source $env:SYNC_INSTRUCTIONS -Destinations @($env:SYNC_TRACKED_DESTINATION, $env:SYNC_GENERATED_DESTINATION)
+Protect-ManagedAgentWorktreeInstructions -ConfigurationRoot $env:SYNC_TRACKED_ROOT -RelativePath 'AGENTS.md' -ArchivedSource $env:SYNC_TRACKED_SOURCE -FilterScript $env:SYNC_FILTER
+Protect-ManagedAgentWorktreeInstructions -ConfigurationRoot $env:SYNC_GENERATED_ROOT -RelativePath 'instructions/herdr-sandbox-worktrees.instructions.md' -ArchivedSource $env:SYNC_MISSING_SOURCE -FilterScript $env:SYNC_FILTER
+`
+	scriptPath := filepath.Join(root, "managed-worktree-git-protection.ps1")
+	writeTestFile(t, scriptPath, script)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	command.Env = append(os.Environ(),
+		"SYNC_TRACKED_ROOT="+trackedRepository,
+		"SYNC_TRACKED_SOURCE="+trackedInstructions,
+		"SYNC_TRACKED_DESTINATION="+trackedInstructions,
+		"SYNC_GENERATED_ROOT="+generatedRepository,
+		"SYNC_GENERATED_DESTINATION="+generatedInstructions,
+		"SYNC_MISSING_SOURCE="+filepath.Join(root, "missing.instructions.md"),
+		"SYNC_INSTRUCTIONS="+instructionSource,
+		"SYNC_FILTER="+filterPath,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("managed worktree Git protection: %v: %s", err, output)
+	}
+
+	if got := strings.TrimSpace(runAgentGitTest(t, trackedRepository, "status", "--porcelain=v1")); got != "" {
+		t.Fatalf("managed tracked instructions changed Git status: %q", got)
+	}
+	if got := strings.TrimSpace(runAgentGitTest(t, generatedRepository, "status", "--porcelain=v1")); got != "" {
+		t.Fatalf("managed generated instructions changed Git status: %q", got)
+	}
+	working, err := os.ReadFile(trackedInstructions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(working, []byte(agentWorktreeInstructionsStart)) || !bytes.Contains(working, []byte("personal instructions")) {
+		t.Fatalf("tracked working instructions lost guest or personal content: %q", working)
+	}
+	writeTestFile(t, trackedInstructions, string(working)+"legitimate guest edit\n")
+	runAgentGitTest(t, trackedRepository, "add", "--", "AGENTS.md")
+	staged := runAgentGitTest(t, trackedRepository, "show", ":AGENTS.md")
+	if strings.Contains(staged, agentWorktreeInstructionsStart) || strings.Contains(staged, `C:\Worktrees`) ||
+		!strings.Contains(staged, "personal instructions") || !strings.Contains(staged, "legitimate guest edit") {
+		t.Fatalf("staged instructions = %q", staged)
+	}
+	runAgentGitTest(t, generatedRepository, "add", "--all")
+	if got := strings.TrimSpace(runAgentGitTest(t, generatedRepository, "ls-files", "--cached", "--", generatedRelative)); got != "" {
+		t.Fatalf("generated guest-only instructions entered the index: %q", got)
 	}
 }
 

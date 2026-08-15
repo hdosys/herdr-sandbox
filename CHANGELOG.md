@@ -34,6 +34,9 @@ release notes remain available on the
 
 ### Changed
 
+- Guest worktree routing can no longer enter normal commits from synchronized
+  Git-backed agent configuration. Legitimate workflow edits still stage, while
+  the guest-only managed block and generated routing files stay local.
 - The installed quiet-uninstall runner is now named `uninstall.ps1` beside
   `uninstall.exe`, making their relationship explicit.
 - Repair, upgrade, and uninstall now stop exact running installed `sandbox.exe`
