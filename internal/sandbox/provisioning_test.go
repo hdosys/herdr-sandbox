@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -279,6 +280,35 @@ func TestDefaultBaseInstallsActionlintThroughCachedPortableAdapter(t *testing.T)
 		if !strings.Contains(text, required) {
 			t.Fatalf("default Base is missing actionlint contract %q", required)
 		}
+	}
+}
+
+func TestDefaultBaseInstallsPinnedOpenSrcCLI(t *testing.T) {
+	text := readDefaultBaseProvisioning(t)
+	for _, required := range []string{
+		"function Install-ProvisioningOpenSrc",
+		"Id = 'vercel-labs.opensrc'",
+		"Version = '0.7.3'",
+		"https://github.com/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-win32-x64.exe",
+		"C43465DD6E5B344A57DD073AC6432FD270D586E461CA28A56F5DB3AA1C1F85AC",
+		"-DownloadSource 'Direct' -Adapter 'PortableExecutable' -ExecutableName 'opensrc.exe'",
+		`C:\HerdrSandbox\cache\opensrc`,
+		"[Environment]::SetEnvironmentVariable('OPENSRC_HOME', $openSrcHome, 'Machine')",
+		"-ExpectedPattern '^opensrc 0\\.7\\.3$'",
+		"Install-ProvisioningOpenSrc",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("default Base is missing opensrc contract %q", required)
+		}
+	}
+	if strings.Contains(text, "npm install -g opensrc") || strings.Contains(text, "Install-NodeRuntime") {
+		t.Fatal("default Base installs opensrc through Node.js instead of the pinned native executable")
+	}
+	gitReady := strings.Index(text, `Write-Output "Git ready: $gitVersion"`)
+	openSrcInstall := strings.LastIndex(text, "Install-ProvisioningOpenSrc")
+	userProvisioning := strings.Index(text, "Write-Output 'Running global user provisioning'")
+	if gitReady < 0 || openSrcInstall <= gitReady || userProvisioning <= openSrcInstall {
+		t.Fatalf("opensrc provisioning order is invalid: Git=%d opensrc=%d user=%d", gitReady, openSrcInstall, userProvisioning)
 	}
 }
 
@@ -1862,6 +1892,58 @@ func TestDefaultBaseExtractsPortablePackagesWithInboxTar(t *testing.T) {
 	}
 	if strings.Contains(text, "Expand-Archive -LiteralPath $PayloadPath") {
 		t.Fatal("default Base retains the slow portable Expand-Archive path")
+	}
+}
+
+func TestPortableExecutableAdapterCopiesOneSafeCommandInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 portable executable regression")
+	}
+	root := t.TempDir()
+	toolsRoot := filepath.Join(root, "tools")
+	payload := filepath.Join(root, "payload.exe")
+	payloadData := []byte("portable executable fixture\n")
+	if err := os.WriteFile(payload, payloadData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payloadHash := fmt.Sprintf("%X", sha256.Sum256(payloadData))
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Install-ProvisioningPackagePayload' }, $true)
+if ($null -eq $definition) { throw 'Package payload function is missing.' }
+Invoke-Expression $definition.Extent.Text.Replace('C:\HerdrSandbox\tools', '%s')
+function Get-ProvisioningSafeCacheName { param([string]$Value) return $Value }
+function Add-ProvisioningMachinePath { param([string]$Directory) $script:pathDirectory = $Directory }
+function Update-ProvisioningPath { }
+function Wait-ProvisioningCommandAvailable { throw 'Deferred command readiness unexpectedly ran.' }
+function Get-FileHash { param([string]$LiteralPath, [string]$Algorithm) return [pscustomobject]@{ Hash = '%s' } }
+$payload = '%s'
+$metadata = [pscustomobject]@{
+    Id = 'vercel-labs.opensrc'
+    Sha256 = '%s'
+}
+Install-ProvisioningPackagePayload -Role 'opensrc fixture' -Metadata $metadata -PayloadPath $payload -Adapter 'PortableExecutable' -ExecutableName 'opensrc.exe' -DeferCommandReadiness
+$toolRoot = Join-Path '%s' 'vercel-labs.opensrc'
+$installed = Join-Path $toolRoot 'opensrc.exe'
+$items = @(Get-ChildItem -LiteralPath $toolRoot -Force)
+if ($items.Count -ne 1 -or -not (Test-Path -LiteralPath $installed -PathType Leaf) -or
+    [IO.File]::ReadAllText($installed) -cne [IO.File]::ReadAllText($payload) -or
+    [IO.Path]::GetFullPath($script:pathDirectory) -ine [IO.Path]::GetFullPath($toolRoot)) {
+    throw 'Portable executable adapter did not copy and expose exactly one command.'
+}
+$rejected = $false
+try {
+    Install-ProvisioningPackagePayload -Role 'unsafe fixture' -Metadata $metadata -PayloadPath $payload -Adapter 'PortableExecutable' -ExecutableName '..\unsafe.exe' -DeferCommandReadiness
+} catch { $rejected = $true }
+if (-not $rejected) { throw 'Portable executable adapter accepted a path-bearing command name.' }
+`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(toolsRoot), payloadHash, quote(payload), payloadHash, quote(toolsRoot))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("portable executable adapter regression: %v: %s", err, output)
 	}
 }
 

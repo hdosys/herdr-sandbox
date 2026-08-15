@@ -82,7 +82,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, Android CLI and wireless ADB tooling, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, opensrc source inspection, Android CLI and wireless ADB tooling, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return nil
@@ -607,6 +607,32 @@ $java = (Get-Command 'java.exe' -CommandType Application -ErrorAction Stop | Sel
 $javac = (Get-Command 'javac.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $androidCLI = (Get-Command 'android.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $adb = (Get-Command 'adb.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+$openSrc = (Get-Command 'opensrc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+
+$expectedOpenSrc = 'C:\HerdrSandbox\tools\vercel-labs.opensrc\opensrc.exe'
+$expectedOpenSrcHome = 'C:\HerdrSandbox\cache\opensrc'
+if ([IO.Path]::GetFullPath($openSrc) -ine $expectedOpenSrc -or
+    $env:OPENSRC_HOME -cne $expectedOpenSrcHome -or
+    -not (Test-Path -LiteralPath $expectedOpenSrcHome -PathType Container) -or
+    ((Get-Item -LiteralPath $expectedOpenSrcHome -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'opensrc command or persistent source cache is unavailable in the SSH session.'
+}
+$openSrcVersion = Invoke-SmokeTool 'opensrc-version' $openSrc @('--version')
+if ($openSrcVersion -cne 'opensrc 0.7.3') { throw "opensrc version is unexpected: $openSrcVersion" }
+$openSrcSmokeHome = Join-Path $root 'opensrc-cache'
+try {
+    $env:OPENSRC_HOME = $openSrcSmokeHome
+    $openSrcPath = Invoke-SmokeTool 'opensrc-path' $openSrc @('path','vercel-labs/opensrc@v0.7.3')
+} finally {
+    $env:OPENSRC_HOME = $expectedOpenSrcHome
+}
+$openSrcSource = [IO.Path]::GetFullPath($openSrcPath.Trim())
+$openSrcSmokeRoot = [IO.Path]::GetFullPath($openSrcSmokeHome).TrimEnd('\') + '\'
+if (-not $openSrcSource.StartsWith($openSrcSmokeRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath (Join-Path $openSrcSource 'packages\opensrc\cli\Cargo.toml') -PathType Leaf)) {
+    throw "opensrc source fetch returned an unexpected path: $openSrcSource"
+}
+[Console]::Out.WriteLine('[all-stacks] opensrc: pinned native CLI and isolated source fetch OK')
 
 $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
 $androidJDK = 'C:\HerdrSandbox\toolchains\android-jdk-17'
@@ -933,6 +959,6 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: Android, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: opensrc, Android, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')
 `

@@ -61,7 +61,7 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **One Herdr lifecycle owner:** the host Herdr command deploys the matching guest runtime, validates it, and keeps one persistent guest server ready for attach and reattach.
 - **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
 - **Focused core with explicit opt-ins:** lifecycle, mappings, provisioning, attach, and project profiles share one path; optional browser and application integrations activate only when selected.
-- **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
+- **Agent-ready guests:** the pinned `opensrc` CLI supports package-source inspection, while approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.

@@ -147,6 +147,11 @@ Omitted package versions intentionally resolve the latest available stable
 version. Pin every required `wingetPackages.versions` entry and project toolchain
 version when reproducibility is part of the threat model.
 
+The upstream Windows `opensrc` executable provisioned by Base is unsigned. Its
+release-owned URL and SHA-256 are pinned, and both cache hits and guest-local
+copies are revalidated before execution. That digest comes from the same upstream
+GitHub release channel and supplies integrity checking, not publisher signing.
+
 The current installer is unsigned and may trigger SmartScreen. Compare its local
 SHA-256 with the digest GitHub displays for that Release asset, understand that
 this digest is delivered through the same GitHub release channel, and confirm

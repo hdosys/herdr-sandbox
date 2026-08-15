@@ -6,6 +6,12 @@ release notes remain available on the
 
 ## Unreleased
 
+### Added
+
+- Base provisioning now installs and exact-version verifies the native `opensrc`
+  CLI for package-source inspection. Its fetched sources use the existing
+  persistent tool cache instead of a mapped user profile.
+
 ### Fixed
 
 - `sandbox plan` and `sandbox up` now reject a selected project Go stack whose

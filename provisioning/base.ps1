@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 51
+# herdr-sandbox-base-contract: 52
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -1552,7 +1552,7 @@ function Test-ProvisioningPackageInstalled {
     )
 
     switch ($Adapter) {
-        'Portable' {
+        { $_ -in @('Portable', 'PortableExecutable') } {
             return Test-ProvisioningPortablePackageInstalled -Metadata $Metadata -ExecutableName $ExecutableName `
                 -VersionArguments $PortableVersionArguments -VersionSource $PortableVersionSource
         }
@@ -1650,7 +1650,7 @@ function Install-ProvisioningPackagePayload {
         [Parameter(Mandatory = $true)]
         [string]$PayloadPath,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont', 'PortableExecutable')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1703,6 +1703,36 @@ function Install-ProvisioningPackagePayload {
         }
         'MSIX' {
             Add-AppxPackage -Path $PayloadPath -ErrorAction Stop | Out-Null
+        }
+        'PortableExecutable' {
+            if ([string]::IsNullOrWhiteSpace($ExecutableName) -or
+                [IO.Path]::GetFileName($ExecutableName) -cne $ExecutableName -or
+                [IO.Path]::GetExtension($ExecutableName) -ine '.exe') {
+                throw "$Role portable executable adapter requires one .exe file name."
+            }
+            $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+            if (Test-Path -LiteralPath $toolRoot) {
+                $existingRoot = Get-Item -LiteralPath $toolRoot -Force
+                $existingItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
+                if (($existingRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                    @($existingItems | Where-Object {
+                            ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                        }).Count -ne 0) {
+                    throw "$Role portable executable root contains a reparse point: $toolRoot"
+                }
+                Remove-Item -LiteralPath $toolRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $toolRoot | Out-Null
+            $installedExecutable = Join-Path $toolRoot $ExecutableName
+            Copy-Item -LiteralPath $PayloadPath -Destination $installedExecutable
+            $installedItems = @(Get-ChildItem -LiteralPath $toolRoot -Force)
+            $installedHash = (Get-FileHash -LiteralPath $installedExecutable -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($installedItems.Count -ne 1 -or $installedItems[0].PSIsContainer -or
+                ($installedItems[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $installedHash -cne [string]$Metadata.Sha256) {
+                throw "$Role portable executable copy verification failed: $installedExecutable"
+            }
+            Add-ProvisioningMachinePath -Directory $toolRoot
         }
         'Portable' {
             if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
@@ -1790,7 +1820,7 @@ function Install-ProvisioningCachedPackage {
         [ValidateSet('WinGet', 'Direct')]
         [string]$DownloadSource,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont', 'PortableExecutable')]
         [string]$Adapter,
         [string]$ExecutableName = '',
         [string[]]$InstallerArguments = @(),
@@ -1965,6 +1995,41 @@ function Install-ProvisioningGeistMonoNerdFont {
     }
     Install-ProvisioningCachedPackage -Role 'GeistMono Nerd Font' -Metadata $metadata `
         -DownloadSource 'Direct' -Adapter 'GeistMonoFont'
+}
+
+function Install-ProvisioningOpenSrc {
+    $metadata = [pscustomobject]@{
+        Id = 'vercel-labs.opensrc'
+        Version = '0.7.3'
+        Architecture = 'x64'
+        InstallerType = 'portable-exe'
+        Scope = ''
+        Url = 'https://github.com/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-win32-x64.exe'
+        Sha256 = 'C43465DD6E5B344A57DD073AC6432FD270D586E461CA28A56F5DB3AA1C1F85AC'
+        PayloadName = 'payload.exe'
+    }
+    $uri = [Uri]$metadata.Url
+    if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'github.com' -or
+        $uri.AbsolutePath -cne '/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-win32-x64.exe' -or
+        [string]$metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
+        throw 'Pinned opensrc metadata is invalid.'
+    }
+
+    Write-Output 'Installing opensrc...'
+    Install-ProvisioningCachedPackage -Role 'opensrc' -Metadata $metadata `
+        -DownloadSource 'Direct' -Adapter 'PortableExecutable' -ExecutableName 'opensrc.exe'
+
+    $openSrcHome = 'C:\HerdrSandbox\cache\opensrc'
+    New-Item -ItemType Directory -Path $openSrcHome -Force | Out-Null
+    Assert-ProvisioningCachePath -Path $openSrcHome
+    $env:OPENSRC_HOME = $openSrcHome
+    [Environment]::SetEnvironmentVariable('OPENSRC_HOME', $openSrcHome, 'Machine')
+    if ([Environment]::GetEnvironmentVariable('OPENSRC_HOME', 'Machine') -cne $openSrcHome) {
+        throw 'opensrc cache environment verification failed.'
+    }
+    $openSrcVersion = Assert-ProvisioningCommand -Role 'opensrc' -Name 'opensrc.exe' `
+        -VersionArguments @('--version') -ExpectedPattern '^opensrc 0\.7\.3$'
+    Write-Output "opensrc ready: $openSrcVersion"
 }
 
 function Install-ProvisioningOnlineWinGetPackage {
@@ -3519,6 +3584,8 @@ if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     }
     Write-Output "Git ready: $gitVersion"
 }
+
+Install-ProvisioningOpenSrc
 
 if (-not (Test-Path -LiteralPath $ProjectProvisioningDirectory -PathType Container)) {
     throw "Project provisioning directory is missing: $ProjectProvisioningDirectory"
