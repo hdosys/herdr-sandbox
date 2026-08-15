@@ -14,6 +14,9 @@ release notes remain available on the
 
 ### Fixed
 
+- Project provisioning validation failures now identify each failing workspace,
+  its host directory, and its source profile path instead of exposing only a
+  copied inspection filename.
 - Fresh TradingView guests now initialize one small, credential-free chart state
   for each bounded authenticated Desktop identity. TradingView opens directly to
   a controllable chart without its first-run Welcome dialog, while retained user

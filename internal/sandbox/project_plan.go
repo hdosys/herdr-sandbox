@@ -136,6 +136,38 @@ func (stack projectStack) valid() bool {
 	}
 }
 
+func projectProvisioningFailureContext(message string, workspaces []workspacePlan) string {
+	lines := strings.Split(message, "\n")
+	failed := make([]workspacePlan, 0)
+	for _, workspace := range workspaces {
+		if workspace.ProvisioningPath == "" {
+			continue
+		}
+		prefix := workspace.Name + ".ps1:"
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if len(line) >= len(prefix) && strings.EqualFold(line[:len(prefix)], prefix) {
+				failed = append(failed, workspace)
+				break
+			}
+		}
+	}
+	if len(failed) == 0 {
+		return ""
+	}
+	sort.Slice(failed, func(left, right int) bool {
+		return strings.ToLower(failed[left].Name) < strings.ToLower(failed[right].Name)
+	})
+
+	var context strings.Builder
+	context.WriteString("\nProject profile context:")
+	for _, workspace := range failed {
+		fmt.Fprintf(&context, "\n  Workspace: %s\n    Host directory: %s\n    Profile: %s",
+			workspace.Name, workspace.HostDirectory, workspace.ProvisioningPath)
+	}
+	return context.String()
+}
+
 func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScript, projectsDirectory string, workspaces []workspacePlan) (projectProvisioningInspection, error) {
 	if !filepath.IsAbs(runDirectory) || !filepath.IsAbs(userScript) || !filepath.IsAbs(projectsDirectory) {
 		return projectProvisioningInspection{}, errors.New("provisioning inspection requires absolute paths")
@@ -166,7 +198,9 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScrip
 		if inspectionContext.Err() != nil {
 			return projectProvisioningInspection{}, fmt.Errorf("inspect provisioning scripts: %w", inspectionContext.Err())
 		}
-		return projectProvisioningInspection{}, fmt.Errorf("inspect provisioning scripts: %w: %s", err, boundedText(stderr.Bytes()))
+		message := boundedText(stderr.Bytes())
+		message += projectProvisioningFailureContext(message, workspaces)
+		return projectProvisioningInspection{}, fmt.Errorf("inspect provisioning scripts: %w: %s", err, message)
 	}
 	if stdout.Len() == 0 || stdout.Len() > maximumProjectProvisioningPlanOutput {
 		return projectProvisioningInspection{}, fmt.Errorf("provisioning inspection output size is invalid: %d", stdout.Len())

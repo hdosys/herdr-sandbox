@@ -258,12 +258,23 @@ func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
 	}
 	runDirectory := t.TempDir()
 	projectsDirectory := t.TempDir()
+	projectDirectory := t.TempDir()
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\n")
-	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "$version = '1.26.5'\nInstall-GoStack -Version $version\n")
+	profileDirectory := filepath.Join(projectDirectory, projectConfigurationName)
+	if err := os.Mkdir(profileDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	profile := filepath.Join(profileDirectory, projectProvisioningName)
+	profileData := "$version = '1.26.5'\nInstall-GoStack -Version $version\n"
+	writeTestFile(t, profile, profileData)
+	writeTestFile(t, projectsDirectory+`\alpha.ps1`, profileData)
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
-		[]workspacePlan{{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
-	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "must be one literal string") {
+		[]workspacePlan{{Name: "alpha", HostDirectory: projectDirectory, ProvisioningPath: profile}})
+	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "must be one literal string") ||
+		!strings.Contains(err.Error(), "Workspace: alpha") ||
+		!strings.Contains(err.Error(), "Host directory: "+projectDirectory) ||
+		!strings.Contains(err.Error(), "Profile: "+profile) {
 		t.Fatalf("dynamic version error = %v", err)
 	}
 }
