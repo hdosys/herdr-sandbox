@@ -700,7 +700,9 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
 		},
 		StackPackages: []sandbox.EffectiveStackPackage{{Stack: "go", PackageOwner: "GoLang.Go"}},
-		ToolVersions:  []sandbox.EffectiveToolVersion{{Tool: "GoLang.Go", Selection: "1.26.5", Owners: []string{`project "project" (go)`}}},
+		ToolVersions: []sandbox.EffectiveToolVersion{{
+			Tool: "GoLang.Go", Selection: "1.26.5", Source: "explicit provisioning value or stack constraint", Owners: []string{`project "project" (go)`},
+		}},
 		Mounts: []sandbox.EffectiveMount{
 			{Name: "reference", HostDirectory: `E:\reference`, GuestDirectory: `C:\Mounts\reference`, ReadOnly: true},
 			{Name: "worktrees", HostDirectory: `E:\worktrees`, GuestDirectory: `C:\Mounts\worktrees`},
@@ -719,7 +721,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		"Mobile SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
-		"Resolved stack tools\n  - GoLang.Go\n    Selection: 1.26.5\n    Owners:\n      - project \"project\" (go)",
+		"Resolved stack tools\n  Precedence: explicit provisioning (including a selected project file) > optional project version file > stack default/latest stable; incompatible stack constraints fail\n  - GoLang.Go\n    Selection: 1.26.5\n    Source: explicit provisioning value or stack constraint\n    Owners:\n      - project \"project\" (go)",
 		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",
 		"  - worktrees\n    Host: E:\\worktrees\n    Guest: C:\\Mounts\\worktrees\n    Access: read/write",
 		"Workspaces\n  * project (active)\n    Host: D:\\project\n    Guest: C:\\Workspaces\\project\n    Stacks:\n      - go\n      - rust",

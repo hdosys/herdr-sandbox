@@ -14,9 +14,11 @@ release notes remain available on the
 
 ### Fixed
 
-- `sandbox plan` and `sandbox up` now reject a selected project Go stack whose
-  mapped root lacks `go.mod` before fresh or retained guest provisioning starts.
-  The error identifies the workspace, host path, profile, and corrective action.
+- Generic Go stack profiles no longer require `ProjectDirectory` or a root
+  `go.mod`, so empty projects can select and provision Go like every other
+  generic toolchain stack. `sandbox plan` now reports each resolved stack-tool
+  version source and the explicit, optional-project, then stack-default
+  precedence used before fresh or retained provisioning.
 - Android stack provisioning now tolerates the known harmless OpenJDK processor
   group warning during CLI identity checks and verifies installed Platform Tools
   from local package metadata and `adb` instead of rerunning the crash-prone

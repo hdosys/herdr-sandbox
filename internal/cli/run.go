@@ -724,9 +724,11 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	}
 	if len(plan.ToolVersions) > 0 {
 		fmt.Fprintln(output, "\nResolved stack tools")
+		fmt.Fprintln(output, "  Precedence: explicit provisioning (including a selected project file) > optional project version file > stack default/latest stable; incompatible stack constraints fail")
 		for _, entry := range plan.ToolVersions {
 			fmt.Fprintf(output, "  - %s\n", entry.Tool)
 			fmt.Fprintf(output, "    Selection: %s\n", entry.Selection)
+			fmt.Fprintf(output, "    Source: %s\n", entry.Source)
 			fmt.Fprintln(output, "    Owners:")
 			printBulletList(output, entry.Owners, "      ")
 		}

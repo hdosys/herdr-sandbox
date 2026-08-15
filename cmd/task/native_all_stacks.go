@@ -233,7 +233,7 @@ Set-StrictMode -Version 2.0
 
 Install-DotNetStack
 Install-AndroidStack
-Install-GoStack -ProjectDirectory $ProjectDirectory
+Install-GoStack
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-CppStack
 Install-JavaStack

@@ -24,6 +24,11 @@ const (
 	maximumProjectPackageLockSize        = 4 * 1024 * 1024
 	projectPlaywrightLockSource          = "node-project-lock"
 	toolVersionPlanFileName              = "tool-versions.json"
+	toolVersionPlanSchema                = 2
+	toolVersionSourceExplicit            = "explicit-provisioning"
+	toolVersionSourceSelectedProject     = "explicit-project-version"
+	toolVersionSourceProject             = "project-version-file"
+	toolVersionSourceDefault             = "stack-default"
 )
 
 //go:embed assets/project-provisioning-plan.ps1
@@ -78,6 +83,7 @@ type resolvedToolVersion struct {
 	Tool    string   `json:"tool"`
 	Version string   `json:"version"`
 	Series  string   `json:"series"`
+	Source  string   `json:"source"`
 	Owners  []string `json:"owners"`
 }
 
@@ -168,9 +174,6 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScrip
 
 	inspection, err := decodeProjectProvisioningPlan(stdout.Bytes(), workspaces)
 	if err != nil {
-		return projectProvisioningInspection{}, err
-	}
-	if err := validateGoWorkspaceModules(inspection.Workspaces); err != nil {
 		return projectProvisioningInspection{}, err
 	}
 	return inspection, nil
@@ -281,37 +284,17 @@ func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack
 	return result, nil
 }
 
-func validateGoWorkspaceModules(workspaces []workspacePlan) error {
-	for _, workspace := range workspaces {
-		selected := false
-		for _, stack := range workspace.Stacks {
-			if stack == stackGo {
-				selected = true
-				break
-			}
-		}
-		if !selected {
-			continue
-		}
-		if !filepath.IsAbs(workspace.HostDirectory) {
-			return fmt.Errorf("workspace %q selects Go but its mapped project path is not absolute: %q", workspace.Name, workspace.HostDirectory)
-		}
-		modulePath := filepath.Join(workspace.HostDirectory, "go.mod")
-		exists, err := regularFileExists(modulePath)
-		if err != nil {
-			return fmt.Errorf("validate Go project for workspace %q: %w", workspace.Name, err)
-		}
-		if !exists {
-			return fmt.Errorf("workspace %q selects Go but go.mod is missing from mapped project: %s; map the Go module root or remove Install-GoStack from %s", workspace.Name, workspace.HostDirectory, workspace.ProvisioningPath)
-		}
-	}
-	return nil
-}
-
 func mergeProjectToolVersions(userTools []projectToolRequirement, projects []projectProvisioningPlanEntry, workspaces []workspacePlan) ([]resolvedToolVersion, error) {
 	type ownedRequirement struct {
 		projectToolRequirement
 		owner string
+	}
+	type deferredProjectVersion struct {
+		kind         string
+		ownedIndex   int
+		projectName  string
+		projectRoot  string
+		projectOwner string
 	}
 	owned := make([]ownedRequirement, 0, len(userTools)+len(projects)*2)
 	for _, requirement := range userTools {
@@ -320,6 +303,7 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 		}
 		owned = append(owned, ownedRequirement{projectToolRequirement: requirement, owner: "user.ps1 (" + requirement.Source + ")"})
 	}
+	deferred := make([]deferredProjectVersion, 0, len(projects)*2)
 	workspaceByName := make(map[string]workspacePlan, len(workspaces))
 	for _, workspace := range workspaces {
 		workspaceByName[workspace.Name] = workspace
@@ -327,19 +311,21 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 	for _, project := range projects {
 		for _, requirement := range project.Tools {
 			if requirement.Source == projectPlaywrightLockSource {
-				workspace, found := workspaceByName[project.Name]
+				_, found := workspaceByName[project.Name]
 				if !found || requirement.Tool != "playwright" || requirement.Version != "" || requirement.Series != "" || requirement.ProjectDirectory != "" {
 					return nil, fmt.Errorf("project %q returned an invalid Playwright package-lock requirement", project.Name)
 				}
-				version, err := readProjectPlaywrightVersion(workspace.HostDirectory)
-				if err != nil {
-					return nil, fmt.Errorf("resolve Playwright package-lock version for project %q: %w", project.Name, err)
-				}
-				requirement.Version = version
 			}
+			ownedIndex := len(owned)
 			owned = append(owned, ownedRequirement{projectToolRequirement: requirement, owner: fmt.Sprintf("project %q (%s)", project.Name, requirement.Source)})
+			if requirement.Source == projectPlaywrightLockSource {
+				deferred = append(deferred, deferredProjectVersion{kind: projectPlaywrightLockSource, ownedIndex: ownedIndex, projectName: project.Name})
+			}
 			if strings.EqualFold(requirement.Tool, "rust-toolchain") {
-				workspace := workspaceByName[project.Name]
+				workspace, found := workspaceByName[project.Name]
+				if !found {
+					return nil, fmt.Errorf("Rust project workspace is missing for project %q", project.Name)
+				}
 				root := requirement.ProjectDirectory
 				if root == "$ProjectDirectory" {
 					root = workspace.HostDirectory
@@ -349,22 +335,59 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 				if requirement.Source == "handy" && root != "" {
 					root = filepath.Join(root, "src-tauri")
 				}
-				toolchain, found, err := readProjectRustToolchain(root)
-				if err != nil {
-					return nil, fmt.Errorf("resolve Rust toolchain for project %q: %w", project.Name, err)
-				}
-				if found {
-					owned = append(owned, ownedRequirement{projectToolRequirement: projectToolRequirement{Tool: "rust-toolchain", Version: toolchain, Source: "rust-toolchain.toml"}, owner: fmt.Sprintf("project %q (rust-toolchain.toml)", project.Name)})
-				}
+				deferred = append(deferred, deferredProjectVersion{kind: "rust-toolchain.toml", ownedIndex: -1, projectName: project.Name, projectRoot: root, projectOwner: fmt.Sprintf("project %q (rust-toolchain.toml)", project.Name)})
+			}
+		}
+	}
+	explicitTools := make(map[string]bool)
+	for _, requirement := range owned {
+		if requirement.Source != projectPlaywrightLockSource && (requirement.Version != "" || requirement.Series != "") {
+			explicitTools[strings.ToLower(requirement.Tool)] = true
+		}
+	}
+	for _, projectVersion := range deferred {
+		var tool string
+		switch projectVersion.kind {
+		case projectPlaywrightLockSource:
+			tool = "playwright"
+		case "rust-toolchain.toml":
+			tool = "rust-toolchain"
+		default:
+			return nil, fmt.Errorf("unsupported deferred project version source: %s", projectVersion.kind)
+		}
+		if projectVersion.kind == "rust-toolchain.toml" && explicitTools[strings.ToLower(tool)] {
+			continue
+		}
+		switch projectVersion.kind {
+		case projectPlaywrightLockSource:
+			workspace := workspaceByName[projectVersion.projectName]
+			version, err := readProjectPlaywrightVersion(workspace.HostDirectory)
+			if err != nil {
+				return nil, fmt.Errorf("resolve Playwright package-lock version for project %q: %w", projectVersion.projectName, err)
+			}
+			owned[projectVersion.ownedIndex].Version = version
+		case "rust-toolchain.toml":
+			toolchain, found, err := readProjectRustToolchain(projectVersion.projectRoot)
+			if err != nil {
+				return nil, fmt.Errorf("resolve Rust toolchain for project %q: %w", projectVersion.projectName, err)
+			}
+			if found {
+				owned = append(owned, ownedRequirement{projectToolRequirement: projectToolRequirement{Tool: "rust-toolchain", Version: toolchain, Source: "rust-toolchain.toml"}, owner: projectVersion.projectOwner})
 			}
 		}
 	}
 
-	type mergedTool struct {
-		name     string
+	type mergedValues struct {
 		versions map[string][]string
 		series   map[string][]string
-		owners   map[string]bool
+	}
+	type mergedTool struct {
+		name                    string
+		explicit                mergedValues
+		project                 mergedValues
+		hasDirectExplicit       bool
+		hasSelectedProjectValue bool
+		owners                  map[string]bool
 	}
 	merged := make(map[string]*mergedTool)
 	for _, requirement := range owned {
@@ -379,15 +402,31 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 		}
 		entry := merged[identity]
 		if entry == nil {
-			entry = &mergedTool{name: canonical, versions: map[string][]string{}, series: map[string][]string{}, owners: map[string]bool{}}
+			entry = &mergedTool{
+				name:     canonical,
+				explicit: mergedValues{versions: map[string][]string{}, series: map[string][]string{}},
+				project:  mergedValues{versions: map[string][]string{}, series: map[string][]string{}},
+				owners:   map[string]bool{},
+			}
 			merged[identity] = entry
 		}
 		entry.owners[requirement.owner] = true
+		values := &entry.explicit
+		if requirement.Source == "rust-toolchain.toml" {
+			values = &entry.project
+		}
+		if requirement.Version != "" || requirement.Series != "" {
+			if requirement.Source == projectPlaywrightLockSource {
+				entry.hasSelectedProjectValue = true
+			} else if requirement.Source != "rust-toolchain.toml" {
+				entry.hasDirectExplicit = true
+			}
+		}
 		if requirement.Version != "" {
-			entry.versions[requirement.Version] = append(entry.versions[requirement.Version], requirement.owner)
+			values.versions[requirement.Version] = append(values.versions[requirement.Version], requirement.owner)
 		}
 		if requirement.Series != "" {
-			entry.series[requirement.Series] = append(entry.series[requirement.Series], requirement.owner)
+			values.series[requirement.Series] = append(values.series[requirement.Series], requirement.owner)
 		}
 		if identity == "python" && requirement.Version != "" {
 			parts := strings.Split(requirement.Version, ".")
@@ -395,7 +434,7 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 				return nil, fmt.Errorf("Python version %q from %s is invalid", requirement.Version, requirement.owner)
 			}
 			derived := parts[0] + "." + parts[1]
-			entry.series[derived] = append(entry.series[derived], requirement.owner)
+			values.series[derived] = append(values.series[derived], requirement.owner)
 		}
 	}
 
@@ -407,20 +446,40 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 	result := make([]resolvedToolVersion, 0, len(identities))
 	for _, identity := range identities {
 		entry := merged[identity]
-		if len(entry.versions) > 1 {
-			return nil, toolVersionConflict(entry.name, "versions", entry.versions)
+		values := entry.explicit
+		source := toolVersionSourceExplicit
+		if !entry.hasDirectExplicit && entry.hasSelectedProjectValue {
+			source = toolVersionSourceSelectedProject
 		}
-		if len(entry.series) > 1 {
-			return nil, toolVersionConflict(entry.name, "series", entry.series)
+		if len(values.versions) == 0 && len(values.series) == 0 {
+			values = entry.project
+			source = toolVersionSourceProject
 		}
-		version := onlyRequirementValue(entry.versions)
-		series := onlyRequirementValue(entry.series)
+		if len(values.versions) == 0 && len(values.series) == 0 {
+			source = toolVersionSourceDefault
+		}
+		if len(values.versions) > 1 {
+			kind := "versions"
+			if source == toolVersionSourceProject {
+				kind = "project-file versions"
+			}
+			return nil, toolVersionConflict(entry.name, kind, values.versions)
+		}
+		if len(values.series) > 1 {
+			kind := "series"
+			if source == toolVersionSourceProject {
+				kind = "project-file series"
+			}
+			return nil, toolVersionConflict(entry.name, kind, values.series)
+		}
+		version := onlyRequirementValue(values.versions)
+		series := onlyRequirementValue(values.series)
 		owners := make([]string, 0, len(entry.owners))
 		for owner := range entry.owners {
 			owners = append(owners, owner)
 		}
 		sort.Strings(owners)
-		result = append(result, resolvedToolVersion{Tool: entry.name, Version: version, Series: series, Owners: owners})
+		result = append(result, resolvedToolVersion{Tool: entry.name, Version: version, Series: series, Source: source, Owners: owners})
 	}
 	return result, nil
 }
@@ -555,7 +614,7 @@ func encodeToolVersionPlan(tools []resolvedToolVersion) ([]byte, error) {
 	if err := validateResolvedToolVersionPlan(tools); err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(toolVersionPlan{SchemaVersion: 1, Tools: tools})
+	data, err := json.Marshal(toolVersionPlan{SchemaVersion: toolVersionPlanSchema, Tools: tools})
 	if err != nil {
 		return nil, fmt.Errorf("encode tool version plan: %w", err)
 	}
@@ -573,7 +632,10 @@ func validateResolvedToolVersionPlan(tools []resolvedToolVersion) error {
 		canonical, found := projectToolNames[identity]
 		if !found || tool.Tool != canonical || seen[identity] || (previous != "" && previous >= identity) ||
 			(tool.Version != "" && !projectToolValuePattern.MatchString(tool.Version)) ||
-			(tool.Series != "" && !projectToolValuePattern.MatchString(tool.Series)) || len(tool.Owners) == 0 || len(tool.Owners) > 32 {
+			(tool.Series != "" && !projectToolValuePattern.MatchString(tool.Series)) ||
+			(tool.Source != toolVersionSourceExplicit && tool.Source != toolVersionSourceSelectedProject &&
+				tool.Source != toolVersionSourceProject && tool.Source != toolVersionSourceDefault) ||
+			len(tool.Owners) == 0 || len(tool.Owners) > 32 {
 			return fmt.Errorf("resolved tool version is invalid: %s", tool.Tool)
 		}
 		seen[identity] = true

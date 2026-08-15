@@ -1819,17 +1819,19 @@ $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Read-ProvisioningToolVersionPlan','Get-ProvisioningToolVersion','Get-ProvisioningToolSeries')) {
+foreach ($name in @('Read-ProvisioningToolVersionPlan','Get-ProvisioningToolVersion','Get-ProvisioningToolSeries','Get-ProvisioningToolVersionSource')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing tool-plan function: $name" }
     Invoke-Expression $definition.Extent.Text
 }
 $path = '%s'
 $utf8 = New-Object Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($path, '{"schemaVersion":1,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","owners":["project alpha (go)","project beta (go)"]},{"tool":"Python","version":"","series":"3.13","owners":["project alpha (python)"]},{"tool":"zig.zig","version":"","series":"","owners":["project alpha (zig)","project beta (zig)"]}]}', $utf8)
+[IO.File]::WriteAllText($path, '{"schemaVersion":2,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","source":"explicit-provisioning","owners":["project alpha (go)","project beta (go)"]},{"tool":"Python","version":"","series":"3.13","source":"explicit-provisioning","owners":["project alpha (python)"]},{"tool":"zig.zig","version":"","series":"","source":"stack-default","owners":["project alpha (zig)","project beta (zig)"]}]}', $utf8)
 $global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $path
 if ((Get-ProvisioningToolVersion -Tool 'GoLang.Go') -cne '1.26.5' -or
     (Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested '1.26.5') -cne '1.26.5' -or
+    (Get-ProvisioningToolVersionSource -Tool 'GoLang.Go') -cne 'explicit-provisioning' -or
+    (Get-ProvisioningToolVersionSource -Tool 'zig.zig') -cne 'stack-default' -or
     (Get-ProvisioningToolSeries -Tool 'Python') -cne '3.13') { throw 'Resolved exact tool version was not reused.' }
 if ((Get-ProvisioningToolVersion -Tool 'zig.zig') -cne '') { throw 'Latest tool was prematurely concretized.' }
 if ((Get-ProvisioningToolVersion -Tool 'zig.zig' -Requested '0.15.2') -cne '0.15.2' -or
@@ -1837,7 +1839,7 @@ if ((Get-ProvisioningToolVersion -Tool 'zig.zig' -Requested '0.15.2') -cne '0.15
 $accepted = $false
 try { $null = Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested '1.26.4'; $accepted = $true } catch { }
 if ($accepted) { throw 'Conflicting post-preflight tool version was accepted.' }
-[IO.File]::WriteAllText($path, '{"schemaVersion":1,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","owners":["project alpha (go)"],"extra":true}]}', $utf8)
+[IO.File]::WriteAllText($path, '{"schemaVersion":2,"tools":[{"tool":"GoLang.Go","version":"1.26.5","series":"","source":"explicit-provisioning","owners":["project alpha (go)"],"extra":true}]}', $utf8)
 $accepted = $false
 try { $null = Read-ProvisioningToolVersionPlan -Path $path; $accepted = $true } catch { }
 if ($accepted) { throw 'Tool version plan with an unknown nested field was accepted.' }

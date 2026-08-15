@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 52
+# herdr-sandbox-base-contract: 53
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -197,11 +197,12 @@ function Read-ProvisioningToolVersionPlan {
     $properties = @($plan.PSObject.Properties.Name | Sort-Object)
     $tools = @($plan.tools)
     if (($properties -join '|') -cne 'schemaVersion|tools' -or
-        $plan.schemaVersion -isnot [int] -or [int]$plan.schemaVersion -ne 1 -or $tools.Count -gt 64) {
+        $plan.schemaVersion -isnot [int] -or [int]$plan.schemaVersion -ne 2 -or $tools.Count -gt 64) {
         throw 'Tool version plan has an unsupported contract.'
     }
     $versions = @{}
     $series = @{}
+    $sources = @{}
     $owners = @{}
     $lastTool = ''
     foreach ($entry in $tools) {
@@ -209,12 +210,14 @@ function Read-ProvisioningToolVersionPlan {
         $tool = [string]$entry.tool
         $version = [string]$entry.version
         $family = [string]$entry.series
+        $source = [string]$entry.source
         $entryOwners = @($entry.owners)
-        if (($entryProperties -join '|') -cne 'owners|series|tool|version' -or
-            $entry.tool -isnot [string] -or $entry.version -isnot [string] -or $entry.series -isnot [string] -or
+        if (($entryProperties -join '|') -cne 'owners|series|source|tool|version' -or
+            $entry.tool -isnot [string] -or $entry.version -isnot [string] -or $entry.series -isnot [string] -or $entry.source -isnot [string] -or
             $tool -notmatch '^[A-Za-z0-9@][A-Za-z0-9._+@/-]{0,127}$' -or
             (-not [string]::IsNullOrEmpty($version) -and $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
             (-not [string]::IsNullOrEmpty($family) -and $family -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
+            $source -notin @('explicit-provisioning', 'explicit-project-version', 'project-version-file', 'stack-default') -or
             $entryOwners.Count -eq 0 -or $entryOwners.Count -gt 32 -or
             (-not [string]::IsNullOrEmpty($lastTool) -and
                 [string]::Compare($lastTool, $tool, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or
@@ -233,10 +236,11 @@ function Read-ProvisioningToolVersionPlan {
         }
         $versions[$tool] = $version
         $series[$tool] = $family
+        $sources[$tool] = $source
         $owners[$tool] = @($entryOwners)
         $lastTool = $tool
     }
-    return [pscustomobject]@{ Versions = $versions; Series = $series; Owners = $owners }
+    return [pscustomobject]@{ Versions = $versions; Series = $series; Sources = $sources; Owners = $owners }
 }
 
 $global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
@@ -277,6 +281,12 @@ function Get-ProvisioningToolSeries {
         return $Requested
     }
     return $resolved
+}
+
+function Get-ProvisioningToolVersionSource {
+    param([Parameter(Mandatory = $true)][string]$Tool)
+    if (-not $global:HerdrSandboxToolVersionPlan.Sources.ContainsKey($Tool)) { return '' }
+    return [string]$global:HerdrSandboxToolVersionPlan.Sources[$Tool]
 }
 
 function Read-ProvisioningPackagePlan {

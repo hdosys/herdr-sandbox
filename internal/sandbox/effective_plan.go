@@ -39,6 +39,7 @@ type EffectiveStackPackage struct {
 type EffectiveToolVersion struct {
 	Tool      string
 	Selection string
+	Source    string
 	Owners    []string
 }
 
@@ -127,7 +128,9 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 			} else if selection == "" {
 				selection = "latest stable during provisioning"
 			}
-			plan.ToolVersions = append(plan.ToolVersions, EffectiveToolVersion{Tool: tool.Tool, Selection: selection, Owners: append([]string(nil), tool.Owners...)})
+			plan.ToolVersions = append(plan.ToolVersions, EffectiveToolVersion{
+				Tool: tool.Tool, Selection: selection, Source: effectiveToolVersionSource(tool.Source), Owners: append([]string(nil), tool.Owners...),
+			})
 		}
 	}
 	for _, stack := range userStacks {
@@ -201,6 +204,21 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		plan.NextAction = "Run `sandbox up` to apply this plan."
 	}
 	return plan, nil
+}
+
+func effectiveToolVersionSource(source string) string {
+	switch source {
+	case toolVersionSourceExplicit:
+		return "explicit provisioning value or stack constraint"
+	case toolVersionSourceSelectedProject:
+		return "project version file explicitly selected by provisioning"
+	case toolVersionSourceProject:
+		return "optional project version file"
+	case toolVersionSourceDefault:
+		return "stack default/latest stable"
+	default:
+		return source
+	}
 }
 
 func effectiveStackPackageOwner(stack projectStack) string {

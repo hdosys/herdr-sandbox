@@ -56,7 +56,6 @@ throw 'the AST adapter must not execute project code'
 	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `Install-HerdrStack -ProjectDirectory $ProjectDirectory
 `)
 	alphaDirectory := t.TempDir()
-	writeTestFile(t, filepath.Join(alphaDirectory, "go.mod"), "module example.com/alpha\n")
 	workspaces := []workspacePlan{
 		{Name: "alpha", HostDirectory: alphaDirectory, ProvisioningPath: projectsDirectory + `\alpha.ps1`},
 		{Name: "herdr", ProvisioningPath: projectsDirectory + `\herdr.ps1`},
@@ -78,7 +77,7 @@ throw 'the AST adapter must not execute project code'
 	}
 }
 
-func TestInspectProjectProvisioningPlanRejectsMissingGoModuleBeforeProvisioning(t *testing.T) {
+func TestInspectProjectProvisioningPlanAcceptsEmptyGoProject(t *testing.T) {
 	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
@@ -89,13 +88,15 @@ func TestInspectProjectProvisioningPlanRejectsMissingGoModuleBeforeProvisioning(
 	userScript := filepath.Join(runDirectory, userProvisioningName)
 	writeTestFile(t, userScript, userProvisioningContract+"\n")
 	profile := filepath.Join(projectsDirectory, "project.ps1")
-	writeTestFile(t, profile, "Install-GoStack -ProjectDirectory $ProjectDirectory\n")
-	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+	writeTestFile(t, profile, "Install-GoStack\n")
+	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "project", HostDirectory: projectDirectory, ProvisioningPath: profile}})
-	if err == nil || !strings.Contains(err.Error(), `workspace "project" selects Go`) ||
-		!strings.Contains(err.Error(), projectDirectory) || !strings.Contains(err.Error(), "map the Go module root") ||
-		!strings.Contains(err.Error(), profile) {
-		t.Fatalf("missing Go module error = %v", err)
+	if err != nil {
+		t.Fatalf("empty Go project inspection: %v", err)
+	}
+	if len(inspection.ToolVersions) != 1 || inspection.ToolVersions[0].Tool != "GoLang.Go" ||
+		inspection.ToolVersions[0].Version != "" || inspection.ToolVersions[0].Source != toolVersionSourceDefault {
+		t.Fatalf("empty Go project tool plan = %#v", inspection.ToolVersions)
 	}
 }
 
@@ -210,10 +211,9 @@ func TestInspectProjectProvisioningPlanMergesExactAndOmittedToolVersions(t *test
 	runDirectory := t.TempDir()
 	projectsDirectory := t.TempDir()
 	userScript := runDirectory + `\user.ps1`
-	writeTestFile(t, userScript, userProvisioningContract+"\nInstall-GoStack -ProjectDirectory 'C:\\Workspaces\\global' -Version '1.26.5'\n")
-	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Install-GoStack -ProjectDirectory $ProjectDirectory\n")
+	writeTestFile(t, userScript, userProvisioningContract+"\nInstall-GoStack -Version '1.26.5'\n")
+	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Install-GoStack\n")
 	projectDirectory := t.TempDir()
-	writeTestFile(t, filepath.Join(projectDirectory, "go.mod"), "module example.com/alpha\n")
 	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "alpha", HostDirectory: projectDirectory, ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
 	if err != nil {
@@ -225,7 +225,7 @@ func TestInspectProjectProvisioningPlanMergesExactAndOmittedToolVersions(t *test
 			goTool = tool
 		}
 	}
-	if goTool.Version != "1.26.5" || len(goTool.Owners) != 2 {
+	if goTool.Version != "1.26.5" || goTool.Source != toolVersionSourceExplicit || len(goTool.Owners) != 2 {
 		t.Fatalf("merged Go tool = %#v", goTool)
 	}
 }
@@ -239,8 +239,8 @@ func TestInspectProjectProvisioningPlanRejectsConflictingExactToolVersions(t *te
 	projectsDirectory := t.TempDir()
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\n")
-	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Install-GoStack -ProjectDirectory $ProjectDirectory -Version '1.26.4'\n")
-	writeTestFile(t, projectsDirectory+`\beta.ps1`, "Install-GoStack -ProjectDirectory $ProjectDirectory -Version '1.26.5'\n")
+	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Install-GoStack -Version '1.26.4'\n")
+	writeTestFile(t, projectsDirectory+`\beta.ps1`, "Install-GoStack -Version '1.26.5'\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, []workspacePlan{
 		{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`},
 		{Name: "beta", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\beta.ps1`},
@@ -260,7 +260,7 @@ func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
 	projectsDirectory := t.TempDir()
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\n")
-	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "$version = '1.26.5'\nInstall-GoStack -ProjectDirectory $ProjectDirectory -Version $version\n")
+	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "$version = '1.26.5'\nInstall-GoStack -Version $version\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
 	if err == nil || !strings.Contains(normalizedProjectPlanError(err), "must be one literal string") {
@@ -292,7 +292,8 @@ func TestInspectProjectProvisioningPlanResolvesProjectPlaywrightLockVersion(t *t
 	}
 	for _, tool := range inspection.ToolVersions {
 		if tool.Tool == "playwright" {
-			if tool.Version != "1.61.1" || strings.Join(tool.Owners, "|") != `project "jobs" (node-project-lock)` {
+			if tool.Version != "1.61.1" || tool.Source != toolVersionSourceSelectedProject ||
+				strings.Join(tool.Owners, "|") != `project "jobs" (node-project-lock)` {
 				t.Fatalf("Playwright lock tool = %#v", tool)
 			}
 			return
@@ -414,8 +415,24 @@ func TestMergeProjectToolVersionsKeepsRustupPackageSeparateFromToolchain(t *test
 		t.Fatal(err)
 	}
 	if len(tools) != 2 || tools[0].Tool != "rust-toolchain" || tools[0].Version != "1.92.0" ||
-		tools[1].Tool != "Rustlang.Rustup" || tools[1].Version != "" {
+		tools[0].Source != toolVersionSourceProject || tools[1].Tool != "Rustlang.Rustup" ||
+		tools[1].Version != "" || tools[1].Source != toolVersionSourceDefault {
 		t.Fatalf("Rust package/toolchain plan = %#v", tools)
+	}
+}
+
+func TestMergeProjectToolVersionsExplicitRustOverridesProjectFile(t *testing.T) {
+	project := t.TempDir()
+	writeTestFile(t, filepath.Join(project, "rust-toolchain.toml"), "not valid TOML for this contract\n")
+	tools, err := mergeProjectToolVersions(nil, []projectProvisioningPlanEntry{{
+		Name:  "project",
+		Tools: []projectToolRequirement{{Tool: "rust-toolchain", Version: "1.92.0", Source: "rust-msvc", ProjectDirectory: "$ProjectDirectory"}},
+	}}, []workspacePlan{{Name: "project", HostDirectory: project}})
+	if err != nil {
+		t.Fatalf("explicit Rust toolchain did not override optional project file: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Version != "1.92.0" || tools[0].Source != toolVersionSourceExplicit {
+		t.Fatalf("explicit Rust precedence = %#v", tools)
 	}
 }
 
@@ -442,8 +459,7 @@ func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := filepath.Join(profileDirectory, projectProvisioningName)
-	writeTestFile(t, profile, "param([Parameter(Mandatory = $true)][string]$ProjectDirectory)\nInstall-GoStack -ProjectDirectory $ProjectDirectory -Version '1.26.5'\n")
-	writeTestFile(t, filepath.Join(project, "go.mod"), "module example.com/project\n")
+	writeTestFile(t, profile, "param([Parameter(Mandatory = $true)][string]$ProjectDirectory)\nInstall-GoStack -Version '1.26.5'\n")
 	user := filepath.Join(root, userProvisioningName)
 	writeTestFile(t, user, userProvisioningContract+"\n")
 	terminal := testStableWindowsTerminalConfiguration()
@@ -467,7 +483,7 @@ func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "{\"schemaVersion\":1,\"tools\":[{\"tool\":\"GoLang.Go\",\"version\":\"1.26.5\",\"series\":\"\",\"owners\":[\"project \\\"project\\\" (go)\"]}]}\n" {
+	if string(data) != "{\"schemaVersion\":2,\"tools\":[{\"tool\":\"GoLang.Go\",\"version\":\"1.26.5\",\"series\":\"\",\"source\":\"explicit-provisioning\",\"owners\":[\"project \\\"project\\\" (go)\"]}]}\n" {
 		t.Fatalf("tool version snapshot = %s", data)
 	}
 	launcherData, err := os.ReadFile(filepath.Join(snapshot.Directory, activeSessionLaunchName))

@@ -149,7 +149,7 @@ function Get-CommandToolRequirements {
             return @(New-ToolRequirement 'Microsoft.DotNet.SDK.10' $version '' 'dotnet')
         }
         'Install-GoStack' {
-            $version = Get-LiteralCommandParameter $Command @('ProjectDirectory', 'Version') 'Version' $Role
+            $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'GoLang.Go' $version '' 'go')
         }
         'Install-HandyStack' {

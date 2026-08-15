@@ -21,7 +21,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	profile := filepath.Join(configuration, projectProvisioningName)
-	profileData := []byte("Install-AndroidStack\nInstall-CppStack\nInstall-DotNetStack\nInstall-GoStack -ProjectDirectory $ProjectDirectory\nInstall-HandyStack -ProjectDirectory $ProjectDirectory\nInstall-JavaStack\nInstall-NSISStack\nInstall-NushellStack\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
+	profileData := []byte("Install-AndroidStack\nInstall-CppStack\nInstall-DotNetStack\nInstall-GoStack\nInstall-HandyStack -ProjectDirectory $ProjectDirectory\nInstall-JavaStack\nInstall-NSISStack\nInstall-NushellStack\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
 	if err := os.WriteFile(profile, profileData, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,7 @@ func TestBuildEffectivePlanInspectsGlobalStacksWithoutAWorkspace(t *testing.T) {
 	}
 	if strings.Join(plan.GlobalStacks, "|") != "dotnet" || len(plan.StackPackages) != 1 || len(plan.ToolVersions) != 1 ||
 		plan.ToolVersions[0].Tool != "Microsoft.DotNet.SDK.10" || plan.ToolVersions[0].Selection != "latest stable during provisioning" ||
+		plan.ToolVersions[0].Source != "stack default/latest stable" ||
 		plan.StackPackages[0].PackageOwner != "Microsoft.DotNet.SDK.10" || !strings.Contains(plan.NextAction, "init") {
 		t.Fatalf("global effective plan = %#v", plan)
 	}

@@ -240,7 +240,7 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 		case stackDotNet:
 			call = "Install-DotNetStack"
 		case stackGo:
-			call = "Install-GoStack -ProjectDirectory $ProjectDirectory"
+			call = "Install-GoStack"
 		case stackHandyPreset:
 			call = "Install-HandyStack -ProjectDirectory $ProjectDirectory"
 		case stackHerdrPreset:

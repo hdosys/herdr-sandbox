@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 17
+# herdr-sandbox-stacks-contract: 18
 
 function Get-StackWebResponseText {
     param(
@@ -1844,16 +1844,11 @@ function Install-NushellStack {
 function Install-GoStack {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$ProjectDirectory,
         [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
         [string]$Version = ''
     )
 
     $Version = Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested $Version
-    if (-not (Test-Path -LiteralPath (Join-Path $ProjectDirectory 'go.mod') -PathType Leaf)) {
-        throw "Go project go.mod is missing from mapped project: $ProjectDirectory"
-    }
     Write-Output 'Installing Go...'
     Install-ProvisioningWinGetPackage -Role 'Go' -Id 'GoLang.Go' -Version $Version -InstallerType 'wix' `
         -Scope 'machine' -Adapter 'MSI' -ExecutableName 'go.exe' -RequireAuthenticodeSignature
@@ -2858,37 +2853,37 @@ function Install-ZigStack {
 function Install-RustMSVCStack {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$ProjectDirectory,
+        [string]$ProjectDirectory = '',
         [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
         [string]$Toolchain = ''
     )
 
     $Toolchain = Get-ProvisioningToolVersion -Tool 'rust-toolchain' -Requested $Toolchain
-    if (-not (Test-Path -LiteralPath $ProjectDirectory -PathType Container)) {
-        throw "Rust project directory is missing: $ProjectDirectory"
-    }
-    $toolchainFile = Join-Path $ProjectDirectory 'rust-toolchain.toml'
-    $projectToolchain = ''
-    if (Test-Path -LiteralPath $toolchainFile -PathType Leaf) {
-        $toolchainText = [IO.File]::ReadAllText($toolchainFile)
-        $channelMatches = [regex]::Matches($toolchainText, '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$')
-        if ($channelMatches.Count -ne 1) {
-            throw "Rust toolchain file must declare exactly one literal channel: $toolchainFile"
-        }
-        $projectToolchain = [string]$channelMatches[0].Groups[1].Value
-    }
+    $versionSource = Get-ProvisioningToolVersionSource -Tool 'rust-toolchain'
     $exactToolchainPattern = '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$'
-    if (-not [string]::IsNullOrWhiteSpace($projectToolchain) -and $projectToolchain -notmatch $exactToolchainPattern) {
-        throw "Rust project toolchain must pin one exact x.y.z channel: $projectToolchain"
+    if ($versionSource -ceq 'project-version-file' -and -not [string]::IsNullOrWhiteSpace($ProjectDirectory)) {
+        if (-not (Test-Path -LiteralPath $ProjectDirectory -PathType Container)) {
+            throw "Rust project directory is missing: $ProjectDirectory"
+        }
+        $toolchainFile = Join-Path $ProjectDirectory 'rust-toolchain.toml'
+        if (Test-Path -LiteralPath $toolchainFile -PathType Leaf) {
+            $toolchainInfo = Get-Item -LiteralPath $toolchainFile -Force
+            if (($toolchainInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $toolchainInfo.Length -le 0 -or $toolchainInfo.Length -gt 65536) {
+                throw "Rust toolchain file is empty or unsafe: $toolchainFile"
+            }
+            $toolchainText = [IO.File]::ReadAllText($toolchainFile)
+            $channelMatches = [regex]::Matches($toolchainText, '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$')
+            if ($channelMatches.Count -ne 1) {
+                throw "Rust toolchain file must declare exactly one literal channel: $toolchainFile"
+            }
+            $projectToolchain = [string]$channelMatches[0].Groups[1].Value
+            if ($projectToolchain -notmatch $exactToolchainPattern -or $projectToolchain -cne $Toolchain) {
+                throw "Rust project toolchain changed after preflight: $toolchainFile"
+            }
+        }
     }
-    if ([string]::IsNullOrWhiteSpace($Toolchain)) {
-        $requestedChannel = if ([string]::IsNullOrWhiteSpace($projectToolchain)) { 'stable' } else { $projectToolchain }
-    } elseif (-not [string]::IsNullOrWhiteSpace($projectToolchain) -and $Toolchain -cne $projectToolchain) {
-        throw "Requested Rust toolchain $Toolchain conflicts with project toolchain $projectToolchain."
-    } else {
-        $requestedChannel = $Toolchain
-    }
+    $requestedChannel = if ([string]::IsNullOrWhiteSpace($Toolchain)) { 'stable' } else { $Toolchain }
 
 $rustTriple = 'x86_64-pc-windows-msvc'
 $rustDistribution = Resolve-StackRustDistribution -RequestedChannel $requestedChannel -Target $rustTriple
