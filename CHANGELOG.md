@@ -6,6 +6,8 @@ release notes remain available on the
 
 ## Unreleased
 
+## v0.0.14 - 2026-08-15
+
 ### Added
 
 - Base provisioning now installs and exact-version verifies the native `opensrc`
