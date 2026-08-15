@@ -60,13 +60,12 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 - **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
 - **One Herdr lifecycle owner:** the host Herdr command deploys the matching guest runtime, validates it, and keeps one persistent guest server ready for attach and reattach.
 - **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
-- **Focused core with explicit opt-ins:** lifecycle, mappings, provisioning, attach, and project profiles share one path; mobile access, browser and TradingView tooling, and project shortcuts activate only when selected.
+- **Focused core with explicit opt-ins:** lifecycle, mappings, provisioning, attach, and project profiles share one path; optional mobile, browser, and application integrations activate only when selected.
 - **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
 - **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
 - **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
 - **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
 - **Persistent agent worktrees:** an optional dedicated host root keeps Herdr-created linked checkouts available across fresh Sandboxes without broadening the mapped home or project set.
-- **QR-assisted mobile Herdr over Tailscale (experimental):** authorized devices can reach the running guest through a key-only private endpoint without publishing it to the internet.
 
 ## Get started
 
@@ -298,10 +297,6 @@ Their preferred long-term home is the repository they serve, in its own `.herdr-
 
 </details>
 
-## Deployment time
-
-There is no separate VM to set up or maintain, and only selected stacks are provisioned. A small cached plan can finish in a few minutes, while first runs with browsers, Android, Vulkan, or Visual Studio payloads take materially longer. `sandbox status` shows current progress and recent phase timings. Attaching to an already ready Sandbox skips provisioning.
-
 ## Commands
 
 Command output is plain and redirect-safe: summaries use descriptive headings, indented fields, deterministic ordering, and one item per line instead of packed comma-separated lists. Results go to stdout, errors go to stderr, and no color or terminal UI framework is required.
@@ -309,7 +304,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 | Command | Behavior |
 | --- | --- |
 | `sandbox config` | Creates `config.json` when absent and opens it with the application registered for `.json` files. Existing configuration is never replaced. |
-| `sandbox version` | Prints the embedded application version and abbreviated source revision, or explicitly reports an unknown development revision. |
+| `sandbox version` or `sandbox --version` | Prints the embedded application version and abbreviated source revision, or explicitly reports an unknown development revision. |
 | `sandbox plan` | Prints the validated effective plan and differences from a ready guest without changing state. |
 | `sandbox init [--stack NAME]...` | Creates one direct-call project profile. With no flag, prompts for stacks; existing or ancestor-owned profiles are never replaced. |
 | `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Launches and provisions a guest, or reprovisions an exact matching ready guest. It attaches unless `--no-attach` stops at terminal ready; no overall timeout applies unless requested. |
@@ -636,22 +631,7 @@ These are guest-native linked worktrees, not portable host-side checkouts. Git s
 
 **Agent packages**
 
-Coding agents are removable additions rather than protected Base packages. Fresh configs list every agent with a verified WinGet package, so remove the entries you do not want or use an empty `add` array to install no coding agent globally. No separate disable entry is required.
-
-The seeded coding-agent package list is:
-
-```json
-{
-  "remove": [],
-  "add": [
-    "SST.opencode",
-    "Anthropic.ClaudeCode",
-    "OpenAI.Codex",
-    "GitHub.Copilot"
-  ],
-  "versions": {}
-}
-```
+Coding agents are removable additions rather than protected Base packages. Fresh configs use the verified agent package IDs shown in the [complete configuration example](#global-configuration); remove entries you do not want or use an empty `add` array to install no coding agent globally. No separate disable entry is required.
 
 Pi does not currently have a verified WinGet package; install it explicitly in the project profile that needs it. `codingAgentSync` controls configuration/authentication transfer only and does not install an agent.
 
@@ -706,7 +686,7 @@ Guest processes have administrator access inside Windows Sandbox. Only select ho
 
 </details>
 
-## Stable Tailscale tailnet identity (experimental)
+## Optional mobile access over Tailscale (experimental)
 
 > [!CAUTION]
 > The required two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open. Use this opt-in only with a tailnet prepared for a dedicated tagged device.
