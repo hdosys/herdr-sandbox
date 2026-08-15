@@ -88,7 +88,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 <details>
 <summary><strong>Why herdr-win is required</strong></summary>
 
-[`herdr-win`](https://github.com/hdosys/herdr-win) is the required Windows remote distribution. Herdr Sandbox validates the existing `herdr.exe` command and active client identity, then uses that command's unattended remote provision owner to transfer its matching complete Windows payload over verified SSH. Sandbox never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
+[`herdr-win`](https://github.com/hdosys/herdr-win) is required because upstream Herdr does not yet have feature parity for this workflow on Windows: its Windows build lacks the remote-provisioning path Herdr Sandbox depends on. The fork supplies the unattended `--remote <target> --provision --yes --json` contract that transfers and starts the matching guest runtime over verified SSH before attach. Sandbox validates the existing command and active client identity, and never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
 
 </details>
 
@@ -106,7 +106,7 @@ sandbox --version
 winget upgrade --id hdosys.herdr-sandbox --exact
 ```
 
-The initial publication is recorded in [microsoft/winget-pkgs#410501](https://github.com/microsoft/winget-pkgs/pull/410501). The required Herdr-Win host command remains a separate installation and is never bundled or declared as a package dependency.
+The required Herdr-Win host command remains a separate installation and is never bundled or declared as a package dependency.
 
 > [!WARNING]
 > The current installer is not Authenticode-signed. WinGet verifies the published installer hash, but Windows reputation policy may still warn or block it.
