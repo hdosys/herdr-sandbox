@@ -17,6 +17,14 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Bound interactive WinGet validation watching below the session watchdog.**
+  Evidence: `gh pr checks --watch --interval 180` waited more than ten minutes
+  for Microsoft-owned installer checks, exceeded the session watchdog, and
+  interrupted closeout even though the PR was durable and its first six stages
+  had passed. After one post-submission status read, report any remaining remote
+  stages instead of keeping an interactive watch on the critical path. Expected
+  benefit: preserve accurate validation status without a long process wait or
+  resumable-session interruption.
 - **Status: proposed. Mark `build` as intermediate and `package` as the candidate artifact.**
   Evidence: a verified CLI was available 9.082 seconds after the source edit but
   was incorrectly reported as the user artifact; the existing package task later
