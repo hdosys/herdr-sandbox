@@ -408,6 +408,7 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 		}
 		return DownResult{AlreadyStopped: true}, nil
 	}
+	var restartTailscaleOnFailure func() error
 	if active.Tailscale {
 		managed, err := classifyManagedSession(dataDirectory, active)
 		if err != nil {
@@ -466,7 +467,8 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 			}
 		}
 		if capture {
-			if err := captureTailscaleBeforeDown(ctx, dataDirectory, active, captureStatus); err != nil {
+			restartTailscaleOnFailure, err = captureTailscaleBeforeDown(ctx, dataDirectory, active, captureStatus)
+			if err != nil {
 				return DownResult{}, fmt.Errorf("preserve stable Tailscale identity before down; no close request was sent: %w", err)
 			}
 		}
@@ -474,6 +476,9 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 
 	stopped, err := stopOwnedSandboxProcess(ctx, active)
 	if err != nil {
+		if restartTailscaleOnFailure != nil {
+			err = errors.Join(err, restartTailscaleOnFailure())
+		}
 		return DownResult{}, err
 	}
 	if !stopped {
@@ -504,16 +509,16 @@ func tailscaleFailurePrecedesIdentity(phase string) bool {
 	}
 }
 
-func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, active activeSession, status connectionStatus) error {
+func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, active activeSession, status connectionStatus) (func() error, error) {
 	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !running {
-		return errors.New("recorded Windows Sandbox process is no longer running")
+		return nil, errors.New("recorded Windows Sandbox process is no longer running")
 	}
 	if err := active.matches(snapshot); err != nil {
-		return fmt.Errorf("refusing Tailscale capture from an unowned Sandbox process: %w", err)
+		return nil, fmt.Errorf("refusing Tailscale capture from an unowned Sandbox process: %w", err)
 	}
 	runDirectory := filepath.Join(dataDirectory, "runs", active.RunID)
 	statusDirectory := filepath.Join(runDirectory, "status")
@@ -524,11 +529,15 @@ func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, activ
 		PrivateKeyPath:  filepath.Join(dataDirectory, "identity", "id_ed25519"),
 	}, connectableStatus(status), "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	captureContext, cancel := context.WithTimeout(ctx, tailscaleDownCaptureTimeout)
 	defer cancel()
-	return recoverAndStoreTailscaleForDown(captureContext, connection, dataDirectory)
+	serviceStopped, err := recoverAndStoreTailscaleForDown(captureContext, connection, dataDirectory)
+	if err != nil || !serviceStopped {
+		return nil, err
+	}
+	return func() error { return restartTailscaleAfterFailedDown(connection) }, nil
 }
 
 func cleanupStaleStateAt(ctx context.Context, dataDirectory string) (CleanResult, error) {

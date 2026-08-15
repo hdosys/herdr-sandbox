@@ -154,6 +154,7 @@ func TestVerifyNativeAllStacksMountsRequiresBlockedAndPersistedWrites(t *testing
 }
 
 func TestNativeAllStacksSmokeScriptParsesWithWindowsPowerShell(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell native smoke parsing")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 parser boundary")
 	}

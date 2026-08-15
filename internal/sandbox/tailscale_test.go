@@ -169,6 +169,7 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	apply := buildTailscaleApplyLauncher(digest, 12345)
 	capture := buildTailscaleCaptureLauncher()
 	downCapture := buildTailscaleDownCaptureLauncher()
+	restart := buildTailscaleRestartLauncher()
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedLength = [long]12345",
@@ -190,7 +191,8 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 		}
 	}
 	if strings.Contains(apply, tailscaleAuthKeyEnvironment) || strings.Contains(apply, "tskey-") ||
-		strings.Contains(capture, tailscaleAuthKeyEnvironment) || strings.Contains(downCapture, tailscaleAuthKeyEnvironment) {
+		strings.Contains(capture, tailscaleAuthKeyEnvironment) || strings.Contains(downCapture, tailscaleAuthKeyEnvironment) ||
+		strings.Contains(restart, tailscaleAuthKeyEnvironment) {
 		t.Fatal("Tailscale launcher embeds an auth-key value or environment contract")
 	}
 	downBodyIndex := strings.LastIndex(downCapture, "$ErrorActionPreference = 'Stop'")
@@ -198,8 +200,12 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 		t.Fatal("down Tailscale capture body is missing")
 	}
 	downBody := downCapture[downBodyIndex:]
-	if !strings.Contains(downBody, "Capture-TailscaleStateBytes -ExpectedSID $currentSID") || strings.Contains(downBody, "Wait-TailscaleIdentity") {
+	if !strings.Contains(downBody, "Capture-TailscaleStateBytes -ExpectedSID $currentSID -LeaveServiceStopped") || strings.Contains(downBody, "Wait-TailscaleIdentity") {
 		t.Fatalf("down Tailscale capture still waits for control-plane readiness: %s", downBody)
+	}
+	restartBodyIndex := strings.LastIndex(restart, "$ErrorActionPreference = 'Stop'")
+	if restartBodyIndex < 0 || !strings.Contains(restart[restartBodyIndex:], "Start-TailscaleService") {
+		t.Fatal("failed-down rollback does not restart Tailscale")
 	}
 	if strings.Contains(apply, "Remove-Item -LiteralPath $authPath -Force -ErrorAction SilentlyContinue") {
 		t.Fatal("Tailscale launcher silently ignores auth-key staging cleanup")
@@ -209,7 +215,7 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	if declaration < 0 || use < 0 || declaration > use {
 		t.Fatal("Tailscale helper functions are declared after use")
 	}
-	for name, script := range map[string]string{"apply": apply, "capture": capture, "down capture": downCapture} {
+	for name, script := range map[string]string{"apply": apply, "capture": capture, "down capture": downCapture, "failed-down restart": restart} {
 		t.Run(name, func(t *testing.T) {
 			assertPowerShell51Parses(t, script)
 		})

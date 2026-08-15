@@ -2140,6 +2140,7 @@ if ($script:waitCount -ne 1) { throw "Default adapter readiness count: $script:w
 }
 
 func TestMergedManifestParserAcceptsBlankLinesInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell merged-manifest parsing")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}

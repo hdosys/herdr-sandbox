@@ -314,6 +314,7 @@ func TestCleanupReconcilesRunningOperationBeforeGoneRunDeletion(t *testing.T) {
 }
 
 func TestDownReconcilesRunningOperationBeforeProcessInspection(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows process inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows Sandbox lifecycle regression")
 	}
@@ -658,6 +659,7 @@ func TestParseRunningSandboxProcesses(t *testing.T) {
 }
 
 func TestInspectSandboxProcessReportsMissingPID(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows process inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows process boundary")
 	}
@@ -687,6 +689,7 @@ func TestSandboxProcessInspectionHandlesProcessDisappearance(t *testing.T) {
 }
 
 func TestInspectSandboxProcessDecodesCurrentProcess(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows process inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows process boundary")
 	}
@@ -697,6 +700,7 @@ func TestInspectSandboxProcessDecodesCurrentProcess(t *testing.T) {
 }
 
 func TestStopOwnedSandboxProcessRefusesChangedIdentity(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows process termination")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows process boundary")
 	}

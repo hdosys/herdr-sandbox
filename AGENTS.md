@@ -140,11 +140,11 @@ Use repository-owned tasks and the smallest ladder covering the change:
    WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
    real interactive remote-attach check when attach behavior changed.
 
-`go run ./cmd/task check` is the normal iteration gate covering formatting, one
+`go run ./cmd/task verify` is the normal iteration gate covering formatting, one
 batched PowerShell parse, fast product tests, `go vet`, and the stable build
 artifact. It must remain within a five-minute hard deadline and should normally
 finish within three minutes. `go run ./cmd/task test-integration` and
-`go run ./cmd/task check-integration` own external PowerShell/Git execution and
+`go run ./cmd/task verify-integration` own external PowerShell/Git execution and
 the full nightly/release matrix. Do not run them while a user waits for an
 ordinary build or installer. Unit tests do not replace the native gate when the
 changed behavior depends on the boundary.

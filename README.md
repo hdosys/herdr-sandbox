@@ -146,7 +146,7 @@ Download `herdr-sandbox_<version>_windows_amd64.zip`, verify its GitHub SHA-256 
 From the repository root:
 
 ```powershell
-go run ./cmd/task check
+go run ./cmd/task verify
 ```
 
 The checked build writes the same four files to `build\bin`. Use that executable directly or add the directory to user `PATH`.
@@ -821,17 +821,17 @@ go run ./cmd/task fmt
 go run ./cmd/task test
 go run ./cmd/task test-integration
 go run ./cmd/task build
-go run ./cmd/task check
-go run ./cmd/task check-integration
+go run ./cmd/task verify
+go run ./cmd/task verify-integration
 go run ./cmd/task native-all-stacks
 go run ./cmd/task package v0.0.0
 go run ./cmd/task release-notes v0.0.0
 ```
 
-- `test` and `check` are the fast local iteration gates. `check` covers Go
-  formatting, one batched Windows PowerShell 5.1 parse, product-focused Go tests,
-  `go vet`, and the stable `build\bin` artifact.
-- `test-integration` and `check-integration` add the external PowerShell and Git
+- `test` runs only the fast product test suite. `verify` is the fast complete local
+  gate: formatting, one batched Windows PowerShell 5.1 parse, product-focused Go
+  tests, `go vet`, and the stable `build\bin` artifact.
+- `test-integration` and `verify-integration` add the external PowerShell and Git
   execution matrix. They are for nightly, release, or an explicitly changed
   native boundary, not ordinary local iteration.
 - `native-all-stacks` is the maximal native compatibility gate, not a normal startup-time benchmark. It provisions the reusable stacks, including a real NSIS installer compile and Nushell command check, plus the Herdr and Handy project shortcuts in one fresh Sandbox, exercises representative commands over managed SSH, and closes only its exact app-owned guest. It requires Windows Sandbox, network/package access, host Herdr, and host `ssh.exe`; host GitHub CLI and authentication are optional sync inputs.

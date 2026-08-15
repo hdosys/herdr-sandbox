@@ -445,7 +445,7 @@ Function OpenInstalledConfiguration
     ${EndIf}
     ; Installation is already committed and section-owned gates are released.
     SetOutPath "$INSTDIR"
-    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" __installer-open-configuration'
+    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" --installer-open-configuration'
     Pop $0
     Pop $1
     SetOutPath "$TEMP"
@@ -756,7 +756,7 @@ FunctionEnd
         ; The installed command owns the five-second wall-clock deadline and
         ; writes output only after terminal failure. This seven-second nsExec
         ; inactivity timeout is a secondary fallback for a silent stuck command.
-        nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" installer-stop-processes'
+        nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" --installer-stop-processes'
         Pop $0
         Pop $1
         SetOutPath "$TEMP"
@@ -1697,7 +1697,7 @@ Section "Install"
     ; normal lifecycle gate.
     !insertmacro ReleaseLifecycleMutex
     SetOutPath "$INSTDIR"
-    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" __installer-seed-configuration'
+    nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" --installer-seed-configuration'
     Pop $0
     Pop $1
     SetOutPath "$TEMP"
@@ -1975,9 +1975,9 @@ Section "Uninstall"
         ; honor --installer-lifecycle-lock-held and skip acquiring it itself.
         SetOutPath "$INSTDIR"
         ${If} $DeleteConfigurationOnUninstall == "1"
-            nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --installer-lifecycle-lock-held --delete-configuration'
+            nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" --installer-clean-uninstall --installer-lifecycle-lock-held --delete-configuration'
         ${Else}
-            nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" __installer-clean-uninstall --installer-lifecycle-lock-held'
+            nsExec::ExecToStack '"$INSTDIR\${APP_EXECUTABLE}" --installer-clean-uninstall --installer-lifecycle-lock-held'
         ${EndIf}
         Pop $0
         Pop $1

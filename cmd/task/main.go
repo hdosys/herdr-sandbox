@@ -36,8 +36,8 @@ Tasks:
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the canonical ZIP and NSIS installer release artifacts
-  check            run the fast iteration gate: format, syntax, tests, vet, build
-  check-integration run the full nightly/release gate
+  verify           verify format, syntax, tests, vet, and the stable build
+  verify-integration run the full nightly/release verification
 `, productidentity.ExecutableName)
 
 func main() {
@@ -100,16 +100,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("release-notes requires one v0.0.RELEASE_ID version")
 		}
 		return writeReleaseNotes(args[1], stdout)
-	case "check":
+	case "verify":
 		if len(args) != 1 {
-			return errors.New("check accepts no arguments")
+			return errors.New("verify accepts no arguments")
 		}
-		return check(ctx, stdout, stderr, true)
-	case "check-integration":
+		return verify(ctx, stdout, stderr, true)
+	case "verify-integration":
 		if len(args) != 1 {
-			return errors.New("check-integration accepts no arguments")
+			return errors.New("verify-integration accepts no arguments")
 		}
-		return check(ctx, stdout, stderr, false)
+		return verify(ctx, stdout, stderr, false)
 	default:
 		return fmt.Errorf("unknown task %q\n\n%s", args[0], usage)
 	}
@@ -119,13 +119,13 @@ func taskTimeoutFor(args []string) time.Duration {
 	if len(args) > 0 && args[0] == "native-all-stacks" {
 		return nativeAllStacksTaskTimeout
 	}
-	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "check-integration") {
+	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "verify-integration") {
 		return integrationTaskTimeout
 	}
 	return taskTimeout
 }
 
-func check(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
+func verify(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 	fmt.Fprintln(stdout, "Checking Go formatting...")
 	if err := checkGoFormat(ctx, stderr); err != nil {
 		return err
@@ -148,7 +148,7 @@ func check(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 func runGoTests(ctx context.Context, stdout, stderr io.Writer, fast bool, extra []string) error {
 	if fast {
 		fmt.Fprintln(stdout, "Running fast product Go tests...")
-		fmt.Fprintln(stdout, "External Windows PowerShell and Git test processes are skipped; use `check-integration` for that matrix.")
+		fmt.Fprintln(stdout, "External Windows PowerShell and Git test processes are skipped; use `verify-integration` for that matrix.")
 	} else {
 		fmt.Fprintln(stdout, "Running the full Go test matrix, including external Windows PowerShell and Git processes...")
 	}

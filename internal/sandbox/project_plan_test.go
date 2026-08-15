@@ -17,6 +17,7 @@ func normalizedProjectPlanError(err error) string {
 }
 
 func TestInspectProjectProvisioningPlanUsesDirectCallsWithoutExecutingScripts(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -98,6 +99,7 @@ func TestValidateGitShellPackageRequirementRequiresRetainedGit(t *testing.T) {
 }
 
 func TestInspectProjectProvisioningPlanRejectsParseErrors(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -118,6 +120,7 @@ func TestInspectProjectProvisioningPlanRejectsParseErrors(t *testing.T) {
 }
 
 func TestInspectProjectProvisioningPlanRejectsUserParamBlock(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -177,6 +180,7 @@ func TestDecodeProjectProvisioningPlanAllowsWorkspaceWithoutProfile(t *testing.T
 }
 
 func TestInspectProjectProvisioningPlanMergesExactAndOmittedToolVersions(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -202,6 +206,7 @@ func TestInspectProjectProvisioningPlanMergesExactAndOmittedToolVersions(t *test
 }
 
 func TestInspectProjectProvisioningPlanRejectsConflictingExactToolVersions(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -222,6 +227,7 @@ func TestInspectProjectProvisioningPlanRejectsConflictingExactToolVersions(t *te
 }
 
 func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -238,6 +244,7 @@ func TestInspectProjectProvisioningPlanRejectsDynamicToolVersion(t *testing.T) {
 }
 
 func TestInspectProjectProvisioningPlanResolvesProjectPlaywrightLockVersion(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -270,6 +277,7 @@ func TestInspectProjectProvisioningPlanResolvesProjectPlaywrightLockVersion(t *t
 }
 
 func TestInspectProjectProvisioningPlanRejectsInvalidProjectPlaywrightLock(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -306,6 +314,7 @@ func TestReadProjectPlaywrightVersionRejectsPrerelease(t *testing.T) {
 }
 
 func TestInspectProjectProvisioningPlanRejectsOtherDynamicPlaywrightVersion(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -323,6 +332,7 @@ func TestInspectProjectProvisioningPlanRejectsOtherDynamicPlaywrightVersion(t *t
 }
 
 func TestInspectProjectProvisioningPlanRejectsDynamicRustProjectDirectory(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -396,6 +406,7 @@ func TestMergeProjectToolVersionsRejectsConflictingPythonSeries(t *testing.T) {
 }
 
 func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}

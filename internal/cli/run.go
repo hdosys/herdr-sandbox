@@ -169,7 +169,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		return 0
-	case "__installer-open-configuration":
+	case "--installer-open-configuration":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "sandbox: installer configuration open does not accept arguments")
 			return 2
@@ -179,7 +179,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		return 0
-	case "__installer-seed-configuration":
+	case "--installer-seed-configuration":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "sandbox: installer configuration seed does not accept arguments")
 			return 2
@@ -189,9 +189,9 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		return 0
-	case "installer-stop-processes":
+	case "--installer-stop-processes":
 		if len(args) != 1 {
-			fmt.Fprintln(stderr, "sandbox: installer-stop-processes does not accept arguments")
+			fmt.Fprintln(stderr, "sandbox: --installer-stop-processes does not accept arguments")
 			return 2
 		}
 		stopContext, cancel := context.WithTimeout(ctx, installerStopProcessesTimeout)
@@ -201,7 +201,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		return 0
-	case "__installer-clean-uninstall":
+	case "--installer-clean-uninstall":
 		deleteConfiguration := false
 		lockHeld := false
 		if len(args) == 3 && args[1] == "--installer-lifecycle-lock-held" && args[2] == "--delete-configuration" {

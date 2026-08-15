@@ -397,16 +397,16 @@ func TestInstallerTemplateExposesSandboxIntegrationContract(t *testing.T) {
 		`${APP_NAME} up: Start or reconnect`,
 		`${APP_NAME} config: Open the configuration file`,
 		`${APP_NAME} status: Inspect Sandbox state`,
-		`__installer-open-configuration`,
+		`--installer-open-configuration`,
 		`Run ${APP_NAME} config from a new terminal.`,
 		`!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\${APP_LICENSE}"`,
 		`!insertmacro MUI_PAGE_FINISH`,
 		`UninstPage custom un.DeleteConfigurationPage un.DeleteConfigurationPageLeave`,
 		`Also delete ${APP_CONFIG_FILE} and ${APP_USER_SCRIPT}`,
 		`A running Sandbox stays open but becomes unmanaged`,
-		`__installer-seed-configuration`,
-		`installer-stop-processes`,
-		`__installer-clean-uninstall`,
+		`--installer-seed-configuration`,
+		`--installer-stop-processes`,
+		`--installer-clean-uninstall`,
 		`--installer-lifecycle-lock-held`,
 		`--delete-configuration`,
 	} {
@@ -448,7 +448,7 @@ func TestInstallerStopsApplicationProcessesBeforeLifecycleMutationAndResumesLate
 	source := string(data)
 	for _, want := range []string{
 		`!macro StopInstalledApplicationProcesses ACTION FAILURE_CODE`,
-		`nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" installer-stop-processes'`,
+		`nsExec::ExecToStack /TIMEOUT=7000 '"$INSTDIR\${APP_EXECUTABLE}" --installer-stop-processes'`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 0`,
 		`WriteRegDWORD HKCU "${UNINSTALL_KEY}" "UninstallPending" 1`,
 		`${AndIf} $1 == "1"`,
@@ -535,6 +535,7 @@ func TestInstallerRestoresExactRegistryValueKinds(t *testing.T) {
 }
 
 func TestInstallerPathHelperConvergesPracticalUserPathInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell installer PATH integration")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 PATH regression")
 	}
@@ -677,6 +678,7 @@ func TestQuietUninstallWrapperOwnsPrivateTemporaryCopyAndExitCode(t *testing.T) 
 }
 
 func TestQuietUninstallWrapperTerminatesOwnedProcessTreeInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell quiet-uninstall integration")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 process-tree termination regression")
 	}

@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell provisioning-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -84,6 +85,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 }
 
 func TestBuildEffectivePlanInspectsGlobalStacksWithoutAWorkspace(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell provisioning-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}
@@ -112,6 +114,7 @@ func TestBuildEffectivePlanInspectsGlobalStacksWithoutAWorkspace(t *testing.T) {
 }
 
 func TestBuildEffectivePlanRejectsHerdrWhenBaseGitIsRemoved(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell provisioning-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
 	}

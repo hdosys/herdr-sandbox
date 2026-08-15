@@ -20,6 +20,7 @@ const (
 	tailscaleIdentityNotEstablishedExitCode = 42
 	tailscaleIdentityTimeout                = 10 * time.Minute
 	tailscaleDownCaptureTimeout             = 75 * time.Second
+	tailscaleDownRollbackTimeout            = 45 * time.Second
 	maximumTailscaleCaptureResultBytes      = maximumTailscaleIdentityBytes
 )
 
@@ -125,26 +126,29 @@ func recoverAndStoreTailscale(ctx context.Context, connection Connection, dataDi
 	return captureAndStoreTailscaleAgainst(ctx, connection, dataDirectory, nil)
 }
 
-func recoverAndStoreTailscaleForDown(ctx context.Context, connection Connection, dataDirectory string) error {
+func recoverAndStoreTailscaleForDown(ctx context.Context, connection Connection, dataDirectory string) (bool, error) {
 	expected, found, err := loadTailscaleIdentity(dataDirectory)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !found {
-		return recoverAndStoreTailscale(ctx, connection, dataDirectory)
+		return false, recoverAndStoreTailscale(ctx, connection, dataDirectory)
 	}
 	defer func() { clear(expected.State) }()
 	captured, err := captureTailscaleStateForDown(ctx, connection)
 	if err != nil {
-		return err
+		return false, restartTailscaleAfterDownCaptureFailure(connection, err)
 	}
 	defer clear(captured.State)
 	if captured.WindowsUserSID != expected.WindowsUserSID {
-		return errors.New("captured Tailscale state belongs to a different Windows Sandbox user SID")
+		return false, restartTailscaleAfterDownCaptureFailure(connection, errors.New("captured Tailscale state belongs to a different Windows Sandbox user SID"))
 	}
 	clear(expected.State)
 	expected.State = append([]byte(nil), captured.State...)
-	return storeTailscaleIdentity(dataDirectory, expected)
+	if err := storeTailscaleIdentity(dataDirectory, expected); err != nil {
+		return false, restartTailscaleAfterDownCaptureFailure(connection, err)
+	}
+	return true, nil
 }
 
 func captureAndStoreTailscaleAgainst(ctx context.Context, connection Connection, dataDirectory string, expected *tailscaleIdentity) error {
@@ -211,6 +215,21 @@ func captureTailscaleStateForDown(ctx context.Context, connection Connection) (t
 	}
 	defer clear(output)
 	return decodeTailscaleStateCaptureResult(output)
+}
+
+func restartTailscaleAfterDownCaptureFailure(connection Connection, cause error) error {
+	if err := restartTailscaleAfterFailedDown(connection); err != nil {
+		return errors.Join(cause, fmt.Errorf("restart Tailscale after failed down capture: %w", err))
+	}
+	return cause
+}
+
+func restartTailscaleAfterFailedDown(connection Connection) error {
+	restartContext, cancel := context.WithTimeout(context.Background(), tailscaleDownRollbackTimeout)
+	defer cancel()
+	output, err := runSecretSSHPowerShell(restartContext, connection, nil, buildTailscaleRestartLauncher(), "restart Tailscale after failed down", 4096)
+	clear(output)
+	return err
 }
 
 func decodeTailscaleStateCaptureResult(data []byte) (tailscaleStateCapture, error) {
@@ -382,8 +401,17 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 Set-TailscalePortablePolicy
-$result = Capture-TailscaleStateBytes -ExpectedSID $currentSID
+$result = Capture-TailscaleStateBytes -ExpectedSID $currentSID -LeaveServiceStopped
 [Console]::Out.Write(($result | ConvertTo-Json -Compress))
+exit 0`, tailscalePowerShellFunctions())
+}
+
+func buildTailscaleRestartLauncher() string {
+	return fmt.Sprintf(`%s
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Start-TailscaleService
 exit 0`, tailscalePowerShellFunctions())
 }
 
@@ -497,7 +525,7 @@ function Wait-TailscaleIdentity {
     throw 'Tailscale did not reach the required tagged running identity.'
 }
 function Capture-TailscaleStateBytes {
-    param([string]$ExpectedSID)
+    param([string]$ExpectedSID, [switch]$LeaveServiceStopped)
     $currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if ($currentSID -cne $ExpectedSID) { throw 'Tailscale state Windows user SID changed.' }
     Stop-TailscaleService
@@ -507,7 +535,7 @@ function Capture-TailscaleStateBytes {
         $stateBytes = [IO.File]::ReadAllBytes($path)
         Assert-TailscalePlaintextState -StateBytes $stateBytes
     } finally {
-        Start-TailscaleService
+        if (-not $LeaveServiceStopped) { Start-TailscaleService }
     }
     $encodedState = [Convert]::ToBase64String($stateBytes)
     $stateBytes = $null

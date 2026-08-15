@@ -12,6 +12,13 @@ import (
 	"time"
 )
 
+func requireExternalBoundaryTest(t *testing.T, boundary string) {
+	t.Helper()
+	if os.Getenv(fastTestsEnvironment) == "1" {
+		t.Skipf("%s boundary runs through `go run ./cmd/task test-integration`", boundary)
+	}
+}
+
 func TestRunPrintsHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := run(context.Background(), nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -30,7 +37,7 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 }
 
 func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
-	for _, task := range []string{"fmt", "build", "check", "check-integration", "native-all-stacks"} {
+	for _, task := range []string{"fmt", "build", "verify", "verify-integration", "native-all-stacks"} {
 		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
 			t.Fatalf("run %s error = %v", task, err)
@@ -42,10 +49,10 @@ func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	if got := taskTimeoutFor([]string{"native-all-stacks"}); got != nativeAllStacksTaskTimeout {
 		t.Fatalf("native timeout = %s", got)
 	}
-	if got := taskTimeoutFor([]string{"check"}); got != taskTimeout {
+	if got := taskTimeoutFor([]string{"verify"}); got != taskTimeout {
 		t.Fatalf("ordinary timeout = %s", got)
 	}
-	if got := taskTimeoutFor([]string{"check-integration"}); got != integrationTaskTimeout {
+	if got := taskTimeoutFor([]string{"verify-integration"}); got != integrationTaskTimeout {
 		t.Fatalf("integration timeout = %s", got)
 	}
 }
@@ -106,6 +113,7 @@ func TestNormalizeSourceRevisionRequiresFullSHA1(t *testing.T) {
 }
 
 func TestPowerShellSyntaxCheckReportsEveryInvalidScript(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell syntax diagnostics")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 syntax boundary")
 	}

@@ -533,7 +533,7 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	}
 	args := []string{
 		"/WX",
-		"/V4",
+		"/V2",
 		"/NOCONFIG",
 		"/DRELEASE_TAG=" + version.Tag,
 		"/DVERSION=" + version.Display,
