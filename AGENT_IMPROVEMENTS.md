@@ -17,6 +17,13 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Emit commit-keyed native acceptance evidence.**
+  Evidence: the v0.0.13 release audit could not bind prior native coverage to
+  the frozen candidate commit and had to treat `native-all-stacks` as missing.
+  Have the native task emit one bounded structured summary containing the exact
+  commit, platform, command, terminal result, and key acceptance boundaries.
+  Expected benefit: release audits can distinguish current evidence from prose
+  history without adding another persistent state owner.
 - **Status: done. Emit structured package artifact evidence.**
   Evidence: the package task emits one JSON object per published artifact with its
   clean path, byte count, and lowercase SHA-256. A focused test validates the exact
