@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
+
+const sandboxProcessInspectionTimeout = 30 * time.Second
 
 func ensureIdentity(ctx context.Context, directory string) (string, string, error) {
 	var err error
@@ -108,12 +111,14 @@ func runningSandboxProcesses(ctx context.Context) ([]runningSandboxProcess, erro
 	if err != nil {
 		return nil, err
 	}
+	inspectionContext, cancel := context.WithTimeout(ctx, sandboxProcessInspectionTimeout)
+	defer cancel()
 	script := `$processes = @(Get-CimInstance Win32_Process -Filter "Name = 'WindowsSandbox.exe' OR Name = 'WindowsSandboxClient.exe'" -ErrorAction Stop)
 $processes | ForEach-Object {
     $name = [IO.Path]::GetFileNameWithoutExtension([string]$_.Name)
     '{0}:{1}:{2}' -f $name,$_.ProcessId,$_.ParentProcessId
 }`
-	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
+	command := hiddenCommandContext(inspectionContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("check for an existing Windows Sandbox: %w: %s", err, boundedText(output))

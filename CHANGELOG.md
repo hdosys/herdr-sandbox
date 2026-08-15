@@ -6,6 +6,12 @@ release notes remain available on the
 
 ## Unreleased
 
+### Fixed
+
+- `sandbox down` now preserves the already verified local Tailscale state without
+  waiting for control-plane readiness before and after capture, then stops the
+  exact owned Sandbox. Lifecycle-lock and Windows process waits are bounded.
+
 ## v0.0.13 - 2026-08-15
 
 ### Added

@@ -28,10 +28,15 @@ const (
 	SessionFailed    = "failed"
 	SessionStale     = "stale"
 
-	statusLifecycleLockTimeout = time.Second
+	statusLifecycleLockTimeout   = time.Second
+	lifecycleMutationLockTimeout = 10 * time.Second
+	ownedSandboxStopTimeout      = 2 * time.Minute
 )
 
-var runIDPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{8}$`)
+var (
+	runIDPattern       = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{8}$`)
+	lifecycleMutexName = `Local\` + applicationName + `-lifecycle-v1`
+)
 
 type SessionStatus struct {
 	State              string
@@ -230,7 +235,7 @@ func Down(ctx context.Context) (DownResult, error) {
 	if err != nil {
 		return DownResult{}, err
 	}
-	release, err := acquireLifecycleLock(ctx)
+	release, err := acquireLifecycleMutationLock(ctx)
 	if err != nil {
 		return DownResult{}, err
 	}
@@ -253,7 +258,7 @@ func CleanupStaleState(ctx context.Context) (CleanResult, error) {
 	if err != nil {
 		return CleanResult{}, err
 	}
-	release, err := acquireLifecycleLock(ctx)
+	release, err := acquireLifecycleMutationLock(ctx)
 	if err != nil {
 		return CleanResult{}, err
 	}
@@ -266,6 +271,20 @@ func CleanupStaleState(ctx context.Context) (CleanResult, error) {
 		return result, releaseErr
 	}
 	return result, nil
+}
+
+func acquireLifecycleMutationLock(ctx context.Context) (func() error, error) {
+	return acquireLifecycleMutationLockWithin(ctx, lifecycleMutationLockTimeout)
+}
+
+func acquireLifecycleMutationLockWithin(ctx context.Context, timeout time.Duration) (func() error, error) {
+	lockContext, cancel := context.WithTimeout(ctx, timeout)
+	release, err := acquireLifecycleLock(lockContext)
+	cancel()
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return nil, fmt.Errorf("another Sandbox lifecycle operation is still running after %s; run `sandbox status`, then wait for or cancel the active command before retrying: %w", timeout, err)
+	}
+	return release, err
 }
 
 func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus, error) {
@@ -507,9 +526,9 @@ func captureTailscaleBeforeDown(ctx context.Context, dataDirectory string, activ
 	if err != nil {
 		return err
 	}
-	captureContext, cancel := context.WithTimeout(ctx, tailscaleIdentityTimeout)
+	captureContext, cancel := context.WithTimeout(ctx, tailscaleDownCaptureTimeout)
 	defer cancel()
-	return recoverAndStoreTailscale(captureContext, connection, dataDirectory)
+	return recoverAndStoreTailscaleForDown(captureContext, connection, dataDirectory)
 }
 
 func cleanupStaleStateAt(ctx context.Context, dataDirectory string) (CleanResult, error) {
@@ -1043,8 +1062,10 @@ func inspectSandboxProcess(ctx context.Context, pid int) (sandboxProcessSnapshot
 	if err != nil {
 		return sandboxProcessSnapshot{}, false, err
 	}
+	inspectionContext, cancel := context.WithTimeout(ctx, sandboxProcessInspectionTimeout)
+	defer cancel()
 	script := sandboxProcessInspectionScript(pid)
-	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	command := hiddenCommandContext(inspectionContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		var exitError *exec.ExitError
@@ -1107,6 +1128,8 @@ func stopOwnedSandboxProcess(ctx context.Context, active activeSession) (bool, e
 	if err != nil {
 		return false, err
 	}
+	stopContext, cancel := context.WithTimeout(ctx, ownedSandboxStopTimeout)
+	defer cancel()
 	script := `$ProgressPreference = 'SilentlyContinue'
 $item = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $env:HERDR_SANDBOX_EXPECTED_PID) -ErrorAction Stop
 if ($null -eq $item) { exit 3 }
@@ -1153,7 +1176,7 @@ if (-not $process.HasExited) {
 $client.Dispose()
 $process.Dispose()
 Write-Output 'HERDR_SANDBOX_STOPPED'`
-	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	command := hiddenCommandContext(stopContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	command.Env = append(childProcessEnvironment(os.Environ()),
 		"HERDR_SANDBOX_EXPECTED_PID="+strconv.Itoa(active.PID),
 		"HERDR_SANDBOX_EXPECTED_EXECUTABLE="+active.ExecutablePath,

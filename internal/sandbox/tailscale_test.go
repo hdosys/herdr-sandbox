@@ -120,6 +120,22 @@ func TestDecodeTailscaleIdentityResultIsStrict(t *testing.T) {
 	}
 }
 
+func TestDecodeTailscaleStateCaptureResultIsStrict(t *testing.T) {
+	identity := testTailscaleIdentity(t, "100.64.0.10")
+	encoded, err := json.Marshal(tailscaleStateCapture{WindowsUserSID: identity.WindowsUserSID, State: identity.State})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := decodeTailscaleStateCaptureResult(encoded)
+	if err != nil || captured.WindowsUserSID != identity.WindowsUserSID || !bytes.Equal(captured.State, identity.State) {
+		t.Fatalf("decoded state capture = %#v, error = %v", captured, err)
+	}
+	clear(captured.State)
+	if _, err := decodeTailscaleStateCaptureResult(bytes.Replace(encoded, []byte(`"state":`), []byte(`"extra":true,"state":`), 1)); err == nil {
+		t.Fatal("state capture with an extra field unexpectedly decoded")
+	}
+}
+
 func TestVerifyStableTailscaleIdentityRejectsDrift(t *testing.T) {
 	expected := testTailscaleIdentity(t, "100.64.0.10")
 	actual := expected
@@ -152,6 +168,7 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("test request")))
 	apply := buildTailscaleApplyLauncher(digest, 12345)
 	capture := buildTailscaleCaptureLauncher()
+	downCapture := buildTailscaleDownCaptureLauncher()
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedLength = [long]12345",
@@ -172,8 +189,17 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 			t.Fatalf("Tailscale apply launcher is missing %q", required)
 		}
 	}
-	if strings.Contains(apply, tailscaleAuthKeyEnvironment) || strings.Contains(apply, "tskey-") || strings.Contains(capture, tailscaleAuthKeyEnvironment) {
+	if strings.Contains(apply, tailscaleAuthKeyEnvironment) || strings.Contains(apply, "tskey-") ||
+		strings.Contains(capture, tailscaleAuthKeyEnvironment) || strings.Contains(downCapture, tailscaleAuthKeyEnvironment) {
 		t.Fatal("Tailscale launcher embeds an auth-key value or environment contract")
+	}
+	downBodyIndex := strings.LastIndex(downCapture, "$ErrorActionPreference = 'Stop'")
+	if downBodyIndex < 0 {
+		t.Fatal("down Tailscale capture body is missing")
+	}
+	downBody := downCapture[downBodyIndex:]
+	if !strings.Contains(downBody, "Capture-TailscaleStateBytes -ExpectedSID $currentSID") || strings.Contains(downBody, "Wait-TailscaleIdentity") {
+		t.Fatalf("down Tailscale capture still waits for control-plane readiness: %s", downBody)
 	}
 	if strings.Contains(apply, "Remove-Item -LiteralPath $authPath -Force -ErrorAction SilentlyContinue") {
 		t.Fatal("Tailscale launcher silently ignores auth-key staging cleanup")
@@ -183,7 +209,7 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	if declaration < 0 || use < 0 || declaration > use {
 		t.Fatal("Tailscale helper functions are declared after use")
 	}
-	for name, script := range map[string]string{"apply": apply, "capture": capture} {
+	for name, script := range map[string]string{"apply": apply, "capture": capture, "down capture": downCapture} {
 		t.Run(name, func(t *testing.T) {
 			assertPowerShell51Parses(t, script)
 		})

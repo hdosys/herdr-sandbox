@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -738,6 +739,42 @@ func TestLifecycleLockSerializesMutations(t *testing.T) {
 	}
 	if err := secondRelease(); err != nil {
 		t.Fatalf("release second lifecycle lock: %v", err)
+	}
+}
+
+func TestLifecycleTestsUseProcessIsolatedMutex(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows named-mutex boundary")
+	}
+	production := `Local\` + applicationName + `-lifecycle-v1`
+	if lifecycleMutexName == production || !strings.Contains(lifecycleMutexName, strconv.Itoa(os.Getpid())) {
+		t.Fatalf("test lifecycle mutex = %q, production = %q", lifecycleMutexName, production)
+	}
+}
+
+func TestLifecycleMutationLockTimesOutWithActionableStatusCommand(t *testing.T) {
+	release, err := acquireLifecycleLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquire held lifecycle lock: %v", err)
+	}
+	defer release()
+
+	result := make(chan error, 1)
+	go func() {
+		secondRelease, err := acquireLifecycleMutationLockWithin(context.Background(), 50*time.Millisecond)
+		if err == nil {
+			_ = secondRelease()
+		}
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "sandbox status") ||
+			!strings.Contains(err.Error(), "active command") {
+			t.Fatalf("bounded lifecycle lock error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bounded lifecycle lock wait did not terminate")
 	}
 }
 

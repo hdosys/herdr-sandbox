@@ -19,6 +19,7 @@ const (
 	tailscaleApplyModeRestore               = "restore"
 	tailscaleIdentityNotEstablishedExitCode = 42
 	tailscaleIdentityTimeout                = 10 * time.Minute
+	tailscaleDownCaptureTimeout             = 75 * time.Second
 	maximumTailscaleCaptureResultBytes      = maximumTailscaleIdentityBytes
 )
 
@@ -36,6 +37,11 @@ type tailscaleApplyRequest struct {
 	AuthKey        []byte `json:"authKey"`
 	State          []byte `json:"state"`
 	WindowsUserSID string `json:"windowsUserSID"`
+}
+
+type tailscaleStateCapture struct {
+	WindowsUserSID string `json:"windowsUserSID"`
+	State          []byte `json:"state"`
 }
 
 func prepareTailscaleBootstrap(dataDirectory string, enabled bool, authKey []byte, authKeyFound bool) (tailscaleBootstrap, error) {
@@ -119,6 +125,28 @@ func recoverAndStoreTailscale(ctx context.Context, connection Connection, dataDi
 	return captureAndStoreTailscaleAgainst(ctx, connection, dataDirectory, nil)
 }
 
+func recoverAndStoreTailscaleForDown(ctx context.Context, connection Connection, dataDirectory string) error {
+	expected, found, err := loadTailscaleIdentity(dataDirectory)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return recoverAndStoreTailscale(ctx, connection, dataDirectory)
+	}
+	defer func() { clear(expected.State) }()
+	captured, err := captureTailscaleStateForDown(ctx, connection)
+	if err != nil {
+		return err
+	}
+	defer clear(captured.State)
+	if captured.WindowsUserSID != expected.WindowsUserSID {
+		return errors.New("captured Tailscale state belongs to a different Windows Sandbox user SID")
+	}
+	clear(expected.State)
+	expected.State = append([]byte(nil), captured.State...)
+	return storeTailscaleIdentity(dataDirectory, expected)
+}
+
 func captureAndStoreTailscaleAgainst(ctx context.Context, connection Connection, dataDirectory string, expected *tailscaleIdentity) error {
 	identity, err := captureTailscaleIdentity(ctx, connection)
 	if err != nil {
@@ -174,6 +202,35 @@ func captureTailscaleIdentity(ctx context.Context, connection Connection) (tails
 	}
 	defer clear(output)
 	return decodeTailscaleIdentityResult(output)
+}
+
+func captureTailscaleStateForDown(ctx context.Context, connection Connection) (tailscaleStateCapture, error) {
+	output, err := runSecretSSHPowerShell(ctx, connection, nil, buildTailscaleDownCaptureLauncher(), "capture stable Tailscale identity before down", maximumTailscaleCaptureResultBytes)
+	if err != nil {
+		return tailscaleStateCapture{}, err
+	}
+	defer clear(output)
+	return decodeTailscaleStateCaptureResult(output)
+}
+
+func decodeTailscaleStateCaptureResult(data []byte) (tailscaleStateCapture, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || len(trimmed) > maximumTailscaleCaptureResultBytes {
+		return tailscaleStateCapture{}, errors.New("Tailscale state capture result size is invalid")
+	}
+	if err := validateExactJSONObjectShape(trimmed, "Tailscale state capture result", []string{"windowsUserSID", "state"}); err != nil {
+		return tailscaleStateCapture{}, fmt.Errorf("decode Tailscale state capture result: %w", err)
+	}
+	var captured tailscaleStateCapture
+	if err := decodeStrictJSON(trimmed, &captured); err != nil {
+		clear(captured.State)
+		return tailscaleStateCapture{}, fmt.Errorf("decode Tailscale state capture result: %w", err)
+	}
+	if len(captured.WindowsUserSID) > 184 || !windowsSIDPattern.MatchString(captured.WindowsUserSID) || len(captured.State) == 0 || len(captured.State) > maximumTailscaleStateBytes {
+		clear(captured.State)
+		return tailscaleStateCapture{}, errors.New("validate Tailscale state capture result: SID or state size is invalid")
+	}
+	return captured, nil
 }
 
 func decodeTailscaleIdentityResult(data []byte) (tailscaleIdentity, error) {
@@ -318,6 +375,18 @@ $result = Capture-TailscaleState -Identity $identity
 exit 0`, tailscalePowerShellFunctions())
 }
 
+func buildTailscaleDownCaptureLauncher() string {
+	return fmt.Sprintf(`%s
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+Set-TailscalePortablePolicy
+$result = Capture-TailscaleStateBytes -ExpectedSID $currentSID
+[Console]::Out.Write(($result | ConvertTo-Json -Compress))
+exit 0`, tailscalePowerShellFunctions())
+}
+
 func tailscalePowerShellFunctions() string {
 	return fmt.Sprintf(`function Assert-ExactProperties {
     param([object]$Value, [string[]]$Expected)
@@ -427,8 +496,10 @@ function Wait-TailscaleIdentity {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Tailscale did not reach the required tagged running identity.'
 }
-function Capture-TailscaleState {
-    param([Collections.IDictionary]$Identity)
+function Capture-TailscaleStateBytes {
+    param([string]$ExpectedSID)
+    $currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($currentSID -cne $ExpectedSID) { throw 'Tailscale state Windows user SID changed.' }
     Stop-TailscaleService
     try {
         $path = Join-Path $env:ProgramData 'Tailscale\server-state.conf'
@@ -438,12 +509,21 @@ function Capture-TailscaleState {
     } finally {
         Start-TailscaleService
     }
+    $encodedState = [Convert]::ToBase64String($stateBytes)
+    $stateBytes = $null
+    return [ordered]@{
+        windowsUserSID = $currentSID
+        state = $encodedState
+    }
+}
+function Capture-TailscaleState {
+    param([Collections.IDictionary]$Identity)
+    $captured = Capture-TailscaleStateBytes -ExpectedSID ([string]$Identity.windowsUserSID)
     $verified = Wait-TailscaleIdentity -ExpectedSID ([string]$Identity.windowsUserSID)
     foreach ($name in @('nodeID', 'nodeKey', 'ipv4', 'dnsName', 'hostName')) {
         if ([string]$verified[$name] -cne [string]$Identity[$name]) { throw 'Tailscale identity changed while capturing state.' }
     }
-    $verified['state'] = [Convert]::ToBase64String($stateBytes)
-    $stateBytes = $null
+    $verified['state'] = [string]$captured.state
     return $verified
 }`, maximumTailscaleStateBytes, maximumTailscaleStateBytes, maximumTailscaleStateBytes, maximumTailscaleStateBytes, tailscaleHostName, tailscaleIdentitySchemaVersion, maximumTailscaleStateBytes)
 }

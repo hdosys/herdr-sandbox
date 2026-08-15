@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 		runHostHerdrFixtureProcess()
 		return
 	}
+	if runtime.GOOS == "windows" {
+		lifecycleMutexName = fmt.Sprintf(`Local\%s-lifecycle-test-%d`, applicationName, os.Getpid())
+	}
 	os.Exit(m.Run())
 }
 
