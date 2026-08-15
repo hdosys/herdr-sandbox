@@ -11,6 +11,16 @@ Open, planned, blocked, or deferred product work only. User-visible rules belong
 
 ## Items
 
+- Audit every remaining built-in project stack and project shortcut for
+  deterministic mapped-project prerequisites that guest provisioning currently
+  checks only after work has started. Move each host-observable file, manifest,
+  and project-layout check into the shared nonexecuting `plan`/`up` preflight
+  before fresh or retained guest mutation, while retaining its guest-side boundary
+  recheck. Errors must name the workspace, host path, owning profile, and corrective
+  action. Do not infer stacks from repository contents or preflight network,
+  installation, or runtime-only facts. For every affected stack, verify that a
+  missing prerequisite fails without starting guest provisioning and that a valid
+  mapped project continues through inspection.
 - Move the verified SSH connection to the earliest practical guest bootstrap
   boundary, then run the existing idempotent Base and development provisioning
   through that channel for both fresh and retained runs. A failure after SSH must
