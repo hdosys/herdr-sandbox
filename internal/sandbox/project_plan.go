@@ -166,7 +166,14 @@ func inspectProjectProvisioningPlan(ctx context.Context, runDirectory, userScrip
 		return projectProvisioningInspection{}, fmt.Errorf("provisioning inspection output size is invalid: %d", stdout.Len())
 	}
 
-	return decodeProjectProvisioningPlan(stdout.Bytes(), workspaces)
+	inspection, err := decodeProjectProvisioningPlan(stdout.Bytes(), workspaces)
+	if err != nil {
+		return projectProvisioningInspection{}, err
+	}
+	if err := validateGoWorkspaceModules(inspection.Workspaces); err != nil {
+		return projectProvisioningInspection{}, err
+	}
+	return inspection, nil
 }
 
 func decodeProjectProvisioningPlan(data []byte, workspaces []workspacePlan) (projectProvisioningInspection, error) {
@@ -272,6 +279,33 @@ func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
 	return result, nil
+}
+
+func validateGoWorkspaceModules(workspaces []workspacePlan) error {
+	for _, workspace := range workspaces {
+		selected := false
+		for _, stack := range workspace.Stacks {
+			if stack == stackGo {
+				selected = true
+				break
+			}
+		}
+		if !selected {
+			continue
+		}
+		if !filepath.IsAbs(workspace.HostDirectory) {
+			return fmt.Errorf("workspace %q selects Go but its mapped project path is not absolute: %q", workspace.Name, workspace.HostDirectory)
+		}
+		modulePath := filepath.Join(workspace.HostDirectory, "go.mod")
+		exists, err := regularFileExists(modulePath)
+		if err != nil {
+			return fmt.Errorf("validate Go project for workspace %q: %w", workspace.Name, err)
+		}
+		if !exists {
+			return fmt.Errorf("workspace %q selects Go but go.mod is missing from mapped project: %s; map the Go module root or remove Install-GoStack from %s", workspace.Name, workspace.HostDirectory, workspace.ProvisioningPath)
+		}
+	}
+	return nil
 }
 
 func mergeProjectToolVersions(userTools []projectToolRequirement, projects []projectProvisioningPlanEntry, workspaces []workspacePlan) ([]resolvedToolVersion, error) {

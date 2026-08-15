@@ -55,8 +55,10 @@ throw 'the AST adapter must not execute project code'
 `)
 	writeTestFile(t, projectsDirectory+`\herdr.ps1`, `Install-HerdrStack -ProjectDirectory $ProjectDirectory
 `)
+	alphaDirectory := t.TempDir()
+	writeTestFile(t, filepath.Join(alphaDirectory, "go.mod"), "module example.com/alpha\n")
 	workspaces := []workspacePlan{
-		{Name: "alpha", ProvisioningPath: projectsDirectory + `\alpha.ps1`},
+		{Name: "alpha", HostDirectory: alphaDirectory, ProvisioningPath: projectsDirectory + `\alpha.ps1`},
 		{Name: "herdr", ProvisioningPath: projectsDirectory + `\herdr.ps1`},
 	}
 	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory, workspaces)
@@ -73,6 +75,27 @@ throw 'the AST adapter must not execute project code'
 	}
 	if strings.Join(projectStackStrings(userStacks), "|") != "android|cpp|rust-msvc|uv" {
 		t.Fatalf("user stacks = %v", userStacks)
+	}
+}
+
+func TestInspectProjectProvisioningPlanRejectsMissingGoModuleBeforeProvisioning(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	projectDirectory := t.TempDir()
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "project.ps1")
+	writeTestFile(t, profile, "Install-GoStack -ProjectDirectory $ProjectDirectory\n")
+	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "project", HostDirectory: projectDirectory, ProvisioningPath: profile}})
+	if err == nil || !strings.Contains(err.Error(), `workspace "project" selects Go`) ||
+		!strings.Contains(err.Error(), projectDirectory) || !strings.Contains(err.Error(), "map the Go module root") ||
+		!strings.Contains(err.Error(), profile) {
+		t.Fatalf("missing Go module error = %v", err)
 	}
 }
 
@@ -189,8 +212,10 @@ func TestInspectProjectProvisioningPlanMergesExactAndOmittedToolVersions(t *test
 	userScript := runDirectory + `\user.ps1`
 	writeTestFile(t, userScript, userProvisioningContract+"\nInstall-GoStack -ProjectDirectory 'C:\\Workspaces\\global' -Version '1.26.5'\n")
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, "Install-GoStack -ProjectDirectory $ProjectDirectory\n")
+	projectDirectory := t.TempDir()
+	writeTestFile(t, filepath.Join(projectDirectory, "go.mod"), "module example.com/alpha\n")
 	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
-		[]workspacePlan{{Name: "alpha", HostDirectory: t.TempDir(), ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
+		[]workspacePlan{{Name: "alpha", HostDirectory: projectDirectory, ProvisioningPath: projectsDirectory + `\alpha.ps1`}})
 	if err != nil {
 		t.Fatalf("merge exact and omitted versions: %v", err)
 	}
@@ -418,6 +443,7 @@ func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
 	}
 	profile := filepath.Join(profileDirectory, projectProvisioningName)
 	writeTestFile(t, profile, "param([Parameter(Mandatory = $true)][string]$ProjectDirectory)\nInstall-GoStack -ProjectDirectory $ProjectDirectory -Version '1.26.5'\n")
+	writeTestFile(t, filepath.Join(project, "go.mod"), "module example.com/project\n")
 	user := filepath.Join(root, userProvisioningName)
 	writeTestFile(t, user, userProvisioningContract+"\n")
 	terminal := testStableWindowsTerminalConfiguration()
