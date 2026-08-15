@@ -42,6 +42,12 @@ community submission pipeline remains the authoritative manifest-install gate.
 
 ## Community submission
 
+The 0.0.15 manifest is under review in
+[`microsoft/winget-pkgs#418113`](https://github.com/microsoft/winget-pkgs/pull/418113).
+Until that pull request is merged and published, the community source continues
+to serve the previously accepted release. Install 0.0.15 from its GitHub Release
+when the current version is required immediately.
+
 The target path in `microsoft/winget-pkgs` is:
 
 ```text
@@ -53,7 +59,6 @@ SHA-256, ran `winget validate`, and submitted only that directory through
 WinGetCreate. Do not store or pass a GitHub token in this repository, command
 logs, or manifest files.
 
-Submit this Sandbox directory independently. Herdr-Win remains a separate package
-and will be prepared later; it is not bundled or declared as a dependency here.
-The future combined community-source install remains unavailable until that
-separate package is published.
+This submission contains only Herdr Sandbox. Herdr-Win remains a separate
+distribution, is not bundled or declared as a dependency, and does not yet have a
+community-source package.

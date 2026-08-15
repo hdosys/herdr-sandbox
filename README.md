@@ -8,10 +8,27 @@ Herdr Sandbox is a project-oriented, Windows-native counterpart to a [dev contai
 
 Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
-> [!NOTE]
-> Automated checks and opt-in native acceptance gates cover the core path. Host policy, networking, upstream tools, and Windows platform changes can still affect operation.
+[Capabilities](#key-capabilities) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
-[How it works](#how-it-works) · [Engineering](#engineering-approach) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
+## Key capabilities
+
+- **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
+- **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
+- **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
+- **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacement.
+- **Narrow persistence:** selected source trees, an optional Herdr worktree root, and a verified package cache survive while the guest operating system and processes disappear.
+- **Agent-ready guests:** approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH, and `opensrc` supports package-source inspection.
+- **Explicit opt-ins:** browser, TradingView, audio, microphone, and experimental mobile Tailscale integration activate only when selected.
+
+## Engineering approach
+
+- **Native Windows architecture:** a standard-library-first Go control plane owns the product while PowerShell 5.1 remains a narrow Windows provisioning adapter; no CGO, helper runtime, daemon, provider framework, or alternate provisioner is required.
+- **Explicit responsibility boundaries:** CLI, configuration, lifecycle, SSH, cleanup, packaging, and user/project extensions each have one owner instead of parallel implementations.
+- **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
+- **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
+- **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
+- **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/fixed-location uninstall ownership.
+- **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
 
 ## How it works
 
@@ -44,30 +61,6 @@ The host owns source, identity, configuration, cache, and bounded run evidence. 
 > [!IMPORTANT]
 > Herdr Sandbox isolates agent and project activity from the normal Windows installation; it is not a secret-preserving arbitrary-code execution service. Selected projects remain writable, guest administrators can access explicitly transferred credentials, and guest networking is enabled. The disposable profile also intentionally restricts protections including Defender cloud features, SmartScreen, and automatic Windows/driver updates. Keep backups and normal supply-chain controls.
 
-## Engineering approach
-
-- **Native Windows architecture:** a standard-library-first Go control plane owns the product while PowerShell 5.1 remains a narrow Windows provisioning adapter; no CGO, helper runtime, daemon, provider framework, or alternate provisioner is required.
-- **Explicit responsibility boundaries:** CLI, configuration, lifecycle, SSH, cleanup, packaging, and user/project extensions each have one owner instead of parallel implementations.
-- **Defensive process and state handling:** subprocesses propagate cancellation, use focused timeouts, hide noninteractive console trees, publish state atomically, and return bounded diagnostics.
-- **Strict external contracts:** JSON, XML, status, process identity, paths, downloads, release artifacts, and installer state are validated before use; uncertain destructive operations fail closed.
-- **Reproducible provisioning:** exact versions, hashes, signatures, and realized state are verified where applicable; repeat runs avoid duplicate work and read back every change.
-- **Release engineering:** the installer and portable ZIP share one four-file payload, deterministic ZIP output, GitHub-verified asset digests, in-process file rollback, and product-GUID/fixed-location uninstall ownership.
-- **Production-path verification:** focused tests, PowerShell parse checks, `go vet`, stable builds, package checks, and opt-in real Windows Sandbox all-stack acceptance exercise the same implementation shipped to users.
-
-## Key capabilities
-
-- **Native Windows isolation:** real Windows toolchains run inside Windows Sandbox instead of a compatibility layer.
-- **Terminal-first workflow:** Herdr provides native attach and reattach from the host terminal; routine work does not require RDP.
-- **One Herdr lifecycle owner:** the host Herdr command deploys the matching guest runtime, validates it, and keeps one persistent guest server ready for attach and reattach.
-- **Project-aware provisioning:** reusable technology and tool stacks combine through one idempotent project profile, with separate shortcuts for complex project setups.
-- **Focused core with explicit opt-ins:** lifecycle, mappings, provisioning, attach, and project profiles share one path; optional browser and application integrations activate only when selected.
-- **Agent-ready guests:** the pinned `opensrc` CLI supports package-source inspection, while approved configuration for OpenCode, Claude Code, Codex, GitHub Copilot CLI, and Pi is synchronized over verified SSH.
-- **Configuration continuity:** selected Git-backed configuration roots can fast-forward on `up`, after `down`, or explicitly through `sandbox pull-host-config`, with divergence and overlapping edits left for user resolution.
-- **Fast iteration:** an exact ready guest can be reprovisioned and reattached without replacing it.
-- **Narrow persistence:** selected source trees and a verified package cache survive; the guest operating system, tools, and processes do not.
-- **Persistent agent worktrees:** an optional dedicated host root keeps Herdr-created linked checkouts available across fresh Sandboxes without broadening the mapped home or project set.
-- **Mobile Herdr over Tailscale (experimental):** approved devices can use a key-only private endpoint and secret-free QR profile without publishing the guest to the internet.
-
 ## Get started
 
 ### Prerequisites
@@ -88,51 +81,77 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 <details>
 <summary><strong>Why herdr-win is required</strong></summary>
 
-[`herdr-win`](https://github.com/hdosys/herdr-win) is required because upstream Herdr does not yet have feature parity for this workflow on Windows: its Windows build lacks the remote-provisioning path Herdr Sandbox depends on. The fork supplies the unattended `--remote <target> --provision --yes --json` contract that transfers and starts the matching guest runtime over verified SSH before attach. Sandbox validates the existing command and active client identity, and never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
+[`herdr-win`](https://github.com/hdosys/herdr-win) is required because upstream Herdr does not yet have feature parity for this workflow on Windows: its Windows build lacks the remote-provisioning path Herdr Sandbox depends on. The distribution supplies the unattended `--remote <target> --provision --yes --json` contract that transfers and starts the matching guest runtime over verified SSH before attach. Sandbox validates the existing command and active client identity, and never copies Herdr through bootstrap input, downloads it through guest HTTP or WinGet, or installs, updates, or replaces host Herdr.
 
 </details>
+
+### Install Herdr-Win
+
+Herdr Sandbox requires the maintained Herdr-Win distribution on the host. Download
+the newest `herdr-win_v<version>_windows_amd64_setup.exe` from the
+[Herdr-Win releases](https://github.com/hdosys/herdr-win/releases). The current
+Windows snapshots are prereleases. Verify the asset's GitHub SHA-256 digest, run
+the per-user setup, open a new terminal, and confirm the required identity:
+
+```powershell
+herdr --version
+```
+
+The result must contain the exact `herdr-win` marker. Herdr Sandbox validates the
+command again before provisioning and never installs or updates Herdr-Win itself.
 
 ### Install Herdr Sandbox
 
-#### WinGet (recommended)
+#### Direct GitHub installer (recommended)
 
-`hdosys.herdr-sandbox` is available from the public WinGet community source. Install it, confirm the resolved build, and use the same package ID for later upgrades:
+Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest
+[Herdr Sandbox release](https://github.com/hdosys/herdr-sandbox/releases/latest),
+compare `Get-FileHash -Algorithm SHA256 <path>` with GitHub's digest for the same
+asset, and run setup. It installs for the current user without administrator
+access, adds `sandbox` to user `PATH`, and can open the new configuration from its
+Finish page. Open a new terminal and confirm:
 
 ```powershell
-winget install --id hdosys.herdr-sandbox --exact
 sandbox --version
-
-# Later releases
-winget upgrade --id hdosys.herdr-sandbox --exact
 ```
 
-The required Herdr-Win host command remains a separate installation and is never bundled or declared as a package dependency.
-
 > [!WARNING]
-> The current installer is not Authenticode-signed. WinGet verifies the published installer hash, but Windows reputation policy may still warn or block it.
+> Herdr-Win and Herdr Sandbox installers are currently unsigned. Download them
+> only from their linked GitHub repositories and verify the published asset
+> digest before running setup.
 
 <details>
-<summary><strong>Direct GitHub installer</strong></summary>
+<summary><strong>Installer and uninstall behavior</strong></summary>
 
-Every [GitHub release](https://github.com/hdosys/herdr-sandbox/releases/latest) provides a per-user installer and a portable ZIP. GitHub records and displays the SHA-256 digest of each asset. Both formats contain exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`.
-
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest release, compare `Get-FileHash -Algorithm SHA256 <path>` with the digest GitHub displays for that asset, and run setup. It needs no administrator access, installs for the current user, and adds `sandbox` to user `PATH`. No application window opens after setup; use the terminal commands below. A fresh interactive install can open `%APPDATA%\herdr-sandbox\config.json` from its Finish page.
-
-<details>
-<summary><strong>Installer ownership and uninstall behavior</strong></summary>
-
-- Installs to the fixed `%LOCALAPPDATA%\Programs\Herdr Sandbox` binary root. Its current product-GUID registration and exact location establish ownership; setup refuses a nonempty root without that registration.
-- The entire binary root belongs to the installer. Setup stages and backs up the supported payload, replaces the complete root during an upgrade, restores a failed replacement and prior registration, and repairs a recognized interrupted install when rerun. It does not promise rollback after power loss.
-- Setup does not migrate historical registrations, marker files, or executable names. Remove an older-format installation with its matching uninstaller before installing this release.
-- Reparse roots and inaccessible state fail closed. Files placed manually inside the registered binary root are removed with that root during upgrade or uninstall; configuration and project data remain outside it.
-- Setup and uninstall share one installer-only gate. Before repair, upgrade, or uninstall changes installed files, it stops only running processes whose full executable path exactly matches the installed `sandbox.exe`, waits up to five seconds, and leaves the actual Windows Sandbox running. Destructive uninstall cleanup then holds the existing application lifecycle gate continuously through recursive binary-root deletion. Setup removes empty and duplicate user `PATH` entries while preserving first-occurrence command precedence, then keeps one canonical Sandbox entry. Uninstall removes every effective Sandbox entry, including expanded-variable and duplicate forms, while preserving unique unrelated entries.
-- `config.json` and `user.ps1` are created only when absent and survive upgrades. They also survive uninstall unless **Also delete config.json and user.ps1** or silent `/DELETE_CONFIG` is selected.
-- Uninstall from **Settings → Apps → Installed apps**, or run `%LOCALAPPDATA%\Programs\Herdr Sandbox\uninstall.exe`. It validates ownership, stops exact running installed commands, and removes only exact app-owned SSH, machine-local, cache, registration, and application state. A late locked-file failure remains registered so uninstall can be retried without setup. Silent cleanup is bounded to 30 seconds and returns a nonzero status instead of hanging. A running Sandbox is preserved and becomes unmanaged.
-- Herdr/Herdr-Win, agents, updaters, runtime bundles, Windows prerequisites, project profiles, unrelated SSH content, and unselected user configuration remain outside installer ownership.
+- Setup owns the fixed `%LOCALAPPDATA%\Programs\Herdr Sandbox` binary directory and replaces that complete directory during upgrade.
+- `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` are created only when absent and survive upgrades and normal uninstall. Select **Also delete config.json and user.ps1** only when that removal is intended.
+- Files manually placed inside the installed binary directory are removed during upgrade or uninstall; projects, Herdr-Win, and unrelated user data remain outside installer ownership.
+- Remove an older-format installation with its matching uninstaller before installing the current release. The current setup deliberately does not migrate historical installer formats.
+- Uninstall from **Settings → Apps → Installed apps**. A running Windows Sandbox is preserved and becomes unmanaged rather than being closed by setup.
 
 </details>
 
-</details>
+#### WinGet (0.0.15 update pending)
+
+The community source currently carries an earlier `hdosys.herdr-sandbox` release.
+The 0.0.15 update is under review in
+[`microsoft/winget-pkgs#418113`](https://github.com/microsoft/winget-pkgs/pull/418113).
+Use the direct installer above when you need 0.0.15 before that pull request is
+published. Check the version currently available from WinGet with:
+
+```powershell
+winget show --id hdosys.herdr-sandbox --exact --source winget
+```
+
+Install or upgrade to the version offered by the community source with:
+
+```powershell
+winget install --id hdosys.herdr-sandbox --exact --source winget
+winget upgrade --id hdosys.herdr-sandbox --exact --source winget
+```
+
+Herdr-Win remains a separate installation and is never bundled or declared as a
+package dependency.
 
 <details>
 <summary><strong>Portable ZIP and source build</strong></summary>
@@ -204,14 +223,9 @@ sandbox up
 
 The visible PowerShell bootstrap console inside Windows Sandbox is intentional and requires no interaction. When provisioning is ready, the normal host Herdr client attaches to the guest server.
 
-<details>
-<summary><strong>Herdr provisioning and readiness contract</strong></summary>
-
-After project provisioning and final configuration publication, the host invokes exact `herdr --remote sandbox --provision --yes --json`. Success requires the returned versioned sidecar, runtime/protocol identity, and detached server state to match independently verified guest evidence. Sandbox publishes that exact executable as machine-owned `HERDR_SANDBOX_HERDR_EXE`, prepends only its directory to guest machine `PATH`, supplies both values to initial project workspaces, and refreshes new PowerShell 7 shells from current machine and user PATH state. Plain SSH or an installed toolchain alone is insufficient.
-
-Retained `sandbox up` uses the same owner to reload or restart the server as required. If a later post-provision phase fails, another retained `up` can verify SSH, reprovision, and republish current ready identity instead of requiring a fresh Sandbox.
-
-</details>
+`up` validates Herdr-Win, provisions its matching guest runtime over SSH, and
+attaches only after the guest server and project workspaces are ready. A compatible
+ready guest is reprovisioned in place instead of being replaced.
 
 > [!NOTE]
 > Automatic attach requires real console-backed stdin, stdout, and stderr. A redirected or headless caller is rejected before cleanup or provisioning instead of sending a TUI into logs. Use the intentional headless path:
@@ -319,7 +333,7 @@ Command output is plain and redirect-safe: summaries use descriptive headings, i
 <details>
 <summary><strong>Lifecycle and automatic cleanup</strong></summary>
 
-- After valid command syntax, `up`, `attach`, `status`, and `down` run the same bounded cleanup; `clean` invokes that owner directly. Help, `plan`, and invalid command lines remain nonmutating.
+- After valid command syntax, `up`, `attach`, `status`, `mobile`, and `down` run the same bounded cleanup; `clean` invokes that owner directly. Help, `plan`, and invalid command lines remain nonmutating.
 - Cleanup clears stale run and SSH state only when process evidence proves no Sandbox launcher or client remains. Changed, unmanaged, reparse-bearing, or uncertain state is preserved and reported.
 - A freely acquired lifecycle lock records an abandoned retained operation as interrupted before another mutation can begin.
 - `up` reuses only an exact ready app-owned instance. Inspect refused state with `status`, then use `down` only when the CLI identifies the app-owned guest.
@@ -826,8 +840,8 @@ go run ./cmd/task build
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
 go run ./cmd/task native-all-stacks
-go run ./cmd/task package v0.0.0
-go run ./cmd/task release-notes v0.0.0
+go run ./cmd/task package v0.0.16
+go run ./cmd/task release-notes v0.0.15
 ```
 
 - `test` runs only the fast product test suite. `verify` is the fast complete local
@@ -840,6 +854,8 @@ go run ./cmd/task release-notes v0.0.0
 - `package` uses pinned NSIS 3.12 and writes the installer and ZIP under `build\dist` without installing them.
 - `release-notes` validates one release section and prints only its tagged
   `CHANGELOG.md` link for GitHub Releases.
+- Replace the package example with the next unused release ID. Use an existing
+  changelog version when checking release-note output.
 - Repository provisioning and installer helpers run exclusively under Windows PowerShell 5.1; installed PowerShell 7 remains interactive guest tooling.
 
 </details>

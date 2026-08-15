@@ -6,13 +6,12 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"herdr-sandbox/internal/productidentity"
 )
 
 var (
-	changelogReleaseHeadingPattern = regexp.MustCompile(`^## (v0\.0\.(?:0|[1-9][0-9]*)) - (\d{4}-\d{2}-\d{2})$`)
+	changelogReleaseHeadingPattern = regexp.MustCompile(`^## (v0\.0\.(?:0|[1-9][0-9]*))$`)
 	releaseNoteFillerPattern       = regexp.MustCompile(`(?i)known limitations?|not tested|not included|not bundled|not a claim|internal diagnostic|local incident`)
 )
 
@@ -40,14 +39,11 @@ func releaseNotesForVersion(changelog []byte, tag string) (string, error) {
 	start := -1
 	for index, line := range lines {
 		match := changelogReleaseHeadingPattern.FindStringSubmatch(line)
-		if len(match) != 3 || match[1] != tag {
+		if len(match) != 2 || match[1] != tag {
 			continue
 		}
 		if start >= 0 {
 			return "", fmt.Errorf("changelog contains duplicate release heading %s", tag)
-		}
-		if _, err := time.Parse("2006-01-02", match[2]); err != nil {
-			return "", fmt.Errorf("changelog release date for %s is invalid: %w", tag, err)
 		}
 		start = index + 1
 	}

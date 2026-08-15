@@ -116,10 +116,12 @@ in the global OpenCode configuration, not this repository.
   verified SSH channel; never stage it in host run state, log it, commit it, or
   scrape machine-bound keyring credentials.
 - Only the host SSH public key may enter the guest. Private keys remain on host.
-- App-owned Sandbox instances may be closed/replaced autonomously after preserving
-  terminal status. To avoid Windows Sandbox confirmation prompts, force-terminate
-  only the exact revalidated app-owned Sandbox client/process tree. Never extend
-  this permission to unrelated processes, VMs, evidence/cache, or user data.
+- After the current user explicitly requests a lifecycle action that closes or
+  replaces a ready guest, the product may force-terminate only the exact
+  revalidated app-owned Sandbox client/process tree after preserving terminal
+  status. This avoids Windows Sandbox confirmation prompts without granting an
+  agent authority to consume a ready guest on its own. Never extend this permission
+  to unrelated processes, VMs, evidence/cache, or user data.
 - Network, firewall, SSH, package installation, and tunnel behavior require native
   evidence. Use stable `build/bin/` executable paths; do not switch to random
   `go run` binaries after approval.

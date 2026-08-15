@@ -10,13 +10,13 @@ func TestReleaseNotesForVersionLinksTaggedChangelogWithoutDuplication(t *testing
 
 ## Unreleased
 
-## v0.0.9 - 2026-08-05
+## v0.0.9
 
 ### Added
 
 - Shipped user value.
 
-## v0.0.8 - 2026-08-04
+## v0.0.8
 
 ### Fixed
 
@@ -40,9 +40,10 @@ func TestReleaseNotesForVersionLinksTaggedChangelogWithoutDuplication(t *testing
 func TestReleaseNotesForVersionRejectsMissingDuplicateEmptyOrNegativeCopy(t *testing.T) {
 	for name, changelog := range map[string]string{
 		"missing":   "## Unreleased\n",
-		"duplicate": "## v0.0.9 - 2026-08-05\n### Added\n- Value.\n## v0.0.9 - 2026-08-05\n### Added\n- Value.\n",
-		"empty":     "## v0.0.9 - 2026-08-05\n\n## v0.0.8 - 2026-08-04\n",
-		"negative":  "## v0.0.9 - 2026-08-05\n### Known limitations\n- Not tested.\n",
+		"duplicate": "## v0.0.9\n### Added\n- Value.\n## v0.0.9\n### Added\n- Value.\n",
+		"empty":     "## v0.0.9\n\n## v0.0.8\n",
+		"dated":     "## v0.0.9 - 2026-08-05\n### Added\n- Value.\n",
+		"negative":  "## v0.0.9\n### Known limitations\n- Not tested.\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := releaseNotesForVersion([]byte(changelog), "v0.0.9"); err == nil {

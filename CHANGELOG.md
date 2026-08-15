@@ -1,161 +1,64 @@
 # Changelog
 
-Notable user-visible changes are recorded here. Published artifacts and exact
-release notes remain available on the
+Notable user-visible changes are recorded here. Exact publication times and
+artifacts remain available on the
 [GitHub Releases](https://github.com/hdosys/herdr-sandbox/releases) page.
 
 ## Unreleased
 
-## v0.0.15 - 2026-08-15
+## v0.0.15
 
 ### Added
 
-- Base provisioning now installs and exact-version verifies the native `opensrc`
-  CLI for package-source inspection. Its fetched sources use the existing
-  persistent tool cache instead of a mapped user profile.
+- Base provisioning now includes the native `opensrc` CLI for package-source
+  inspection and keeps fetched sources in the persistent tool cache.
 
 ### Fixed
 
-- Project provisioning validation failures now identify each failing workspace,
-  its host directory, and its source profile path instead of exposing only a
-  copied inspection filename.
-- Fresh TradingView guests now initialize one small, credential-free chart state
-  for each bounded authenticated Desktop identity. TradingView opens directly to
-  a controllable chart without its first-run Welcome dialog, while retained user
-  tabs remain unchanged and no host profile or layout is copied.
-- Generic Go stack profiles no longer require `ProjectDirectory` or a root
-  `go.mod`, so empty projects can select and provision Go like every other
-  generic toolchain stack. `sandbox plan` now reports each resolved stack-tool
-  version source and the explicit, optional-project, then stack-default
-  precedence used before fresh or retained provisioning.
-- Android stack provisioning now tolerates the known harmless OpenJDK processor
-  group warning during CLI identity checks and verifies installed Platform Tools
-  from local package metadata and `adb` instead of rerunning the crash-prone
-  package listing.
-- `sandbox down` now preserves the already verified local Tailscale state without
-  waiting for control-plane readiness or restarting the service before it stops
-  the exact owned Sandbox. A failed stop restarts Tailscale as rollback.
-  Lifecycle-lock and Windows process waits are bounded.
+- Generic stacks, including Go, now work in otherwise empty projects. `sandbox plan`
+  reports where each resolved tool version came from.
+- Project-profile errors identify the affected workspace, host directory, and
+  source profile.
+- Fresh authenticated TradingView guests open a controllable chart instead of
+  the first-run Welcome dialog, without replacing retained user tabs.
+- Android Platform Tools verification avoids a crash-prone package listing and
+  tolerates the harmless OpenJDK processor-group warning.
+- `sandbox down` preserves verified Tailscale state and bounds lifecycle and
+  process waits while retaining rollback on a failed stop.
 
-## v0.0.13 - 2026-08-15
+## v0.0.13
 
 ### Added
 
-- The CLI now accepts the conventional `sandbox --version` form as well as
-  `sandbox version` for release and support checks.
-- Windows setup now maintains an installer-owned `config.sample.json` beside the
-  active configuration. Every install refreshes it, and uninstall removes it
-  without touching user-owned `config.json` or `user.ps1` by default.
-- Optional `worktreeDirectory` support now maps one dedicated persistent host root
-  to `C:\Worktrees`, configures guest Herdr to create native Git worktrees there,
-  and teaches selected guest agents to use Herdr's create, discover, reopen, and
-  remove lifecycle while retaining the user's own cleanup policy.
-- Selecting the TradingView stack now carries an available host TradingView
-  Desktop login into the disposable guest through the verified configuration
-  transfer, without copying the host profile or unrelated cookies.
-- A new `android` stack provisions verified Android command-line build tooling,
-  latest stable Platform Tools, an isolated OpenJDK 17, and wireless ADB
-  `pair`/`connect` support without adding a host USB bridge.
-- A new `nushell` stack installs and verifies the latest stable x64 Nushell MSI
-  and exposes `nu.exe` without adding shell configuration or scripts.
-- A separate `nsis` stack installs and verifies the NSIS compiler, including a
-  real installer compile, so installer-only projects can select it with
-  `sandbox init --stack nsis`.
-- New `cpp` and `java` project stacks provide verified x64 C/C++ Build Tools and
-  Microsoft OpenJDK 25 LTS compile/run environments. Select them with
-  `sandbox init --stack cpp` and `sandbox init --stack java`.
-- `sandbox init --stack all` creates one direct-call profile for every standalone
-  technology and tool stack while keeping project-specific shortcuts separate.
+- The CLI accepts both `sandbox --version` and `sandbox version`, and setup keeps
+  an up-to-date `config.sample.json` without replacing user configuration.
+- Optional persistent Herdr worktrees survive fresh Sandboxes under one dedicated
+  host root and use Herdr's normal create, reopen, and remove lifecycle.
+- New Android, C/C++, Java, NSIS, and Nushell stacks add verified native Windows
+  toolchains. `sandbox init --stack all` selects every standalone stack.
+- The TradingView stack can transfer the signed session cookie pair from an
+  available host login, launch Desktop visibly, and expose TVControl to OpenCode
+  as an explicit session-only MCP opt-in.
 
 ### Changed
 
-- GitHub Releases now link to the tagged `CHANGELOG.md` instead of duplicating
-  its entries, keeping one release-history owner.
-- Guest worktree routing can no longer enter normal commits from synchronized
-  Git-backed agent configuration. Legitimate workflow edits still stage, while
-  the guest-only managed block and generated routing files stay local.
-- The installed quiet-uninstall runner is now named `uninstall.ps1` beside
-  `uninstall.exe`, making their relationship explicit.
-- Repair, upgrade, and uninstall now stop exact running installed `sandbox.exe`
-  processes within five seconds while preserving the Windows Sandbox guest. A
-  late locked-file uninstall can be retried without rerunning setup.
-- TradingView login transfer now reads the installed Desktop MSIX package profile
-  and carries its complete signed session cookie pair into the portable guest app.
-- Selecting TradingView now registers the verified TVControl server as a
-  disabled-by-default guest-managed OpenCode MCP integration. Use `/mcps` to
-  enable its fixed loopback CDP tools only for the current session.
-- TVControl launch requests from Session 0 now start TradingView visibly in the
-  active desktop session through one bounded, serialized launcher. Matching ready
-  instances are reused, non-CDP duplicates are refused, and failed new launches
-  clean up only their validated process tree.
-- The portable TradingView Desktop now receives a Start-menu shortcut and a
-  conditional taskbar pin that launch with its fixed local CDP port enabled.
-- Built-in stack versions are now preflighted across `user.ps1` and every selected
-  project profile before fresh or retained guest mutation. Exact requests converge,
-  conflicts name all owners and stop, all-omitted tools resolve latest stable once,
-  the Jobs Playwright version is independently resolved from its matching npm
-  lockfile entries, Rust toolchain channels remain separate from the rustup package,
-  and `sandbox plan` shows the resulting selection and owners.
-- Fresh and retained `sandbox up` now use Herdr's exact unattended remote
-  provisioning command as the single guest runtime, configuration validation, and
-  server lifecycle owner. Sandbox no longer snapshots or copies a Herdr runtime,
-  starts a duplicate server, or reloads configuration separately, and readiness
-  now verifies the exact versioned sidecar, runtime version, protocol, and detached
-  server reported by Herdr. Successful Herdr diagnostics remain separate from its
-  strict JSON result instead of corrupting the final readiness handoff.
-- Guest Herdr status verification now likewise keeps PowerShell and SSH diagnostics
-  outside the strict JSON response.
-- Guest project terminals and new PowerShell 7 shells now resolve the exact
-  provisioned Herdr sidecar through refreshed `PATH` state, without a copied
-  binary or wrapper.
-- Every explicitly registered transferred configuration root that is itself a Git
-  repository now fast-forwards from its configured upstream on the host before
-  `up` and after a terminal `down` by default. Both lifecycle hooks can be disabled
-  independently, while `sandbox pull-host-config` performs the host-only update on
-  demand. Local edits remain when Git can update safely; unsafe states stop the
-  pull for explicit user resolution without copying configuration from the guest.
-- Fresh configurations now select every coding agent with a verified WinGet
-  package. Remove unwanted entries from `wingetPackages.add` before provisioning.
-- Fresh interactive setup now offers a checked option on the Finish page to open
-  the Sandbox configuration with its registered application.
-- `sandbox up` now stops promptly when its launched Windows Sandbox process exits,
-  releases installer coordination, and safely clears the exact stale run on retry
-  even when process exit races cleanup inspection. Setup now uses actual Windows
-  mutex ownership, so a process or host crash is acquired as abandoned immediately
-  while only a currently live owner blocks installation.
-- Host Herdr inspection now requires bounded `herdr --version` output to contain
-  `herdr-win` in addition to proving the Windows remote interface. It no longer
-  compares that distribution identity with the independently formatted
-  `status client` version.
-- Visual Studio Build Tools host layout preparation now refreshes an existing
-  cached bootstrapper correctly on cache misses.
-- Guest provisioning now installs the pinned VC++ runtime before stack packages,
-  preventing the Vulkan SDK prerequisite from opening an interactive installer.
-  Handy now validates its CMake packages separately and uses the verified direct
-  compiler path, avoiding reusable MSBuild or Debug PDB workers.
-- Python 3 stacks now expose adjacent verified `python` and `python3` commands so
-  uv-created Windows virtual environments retain a valid base executable.
-- Installer ownership now keeps one stable unversioned lifecycle mutex across
-  releases and accepts rooted literal PATH entries containing `%`. The current
-  installer uses a new product GUID and supports only its own registration,
-  payload names, and direct application protocol. Remove an older-format
-  installation with its matching uninstaller before installing this release.
-- Setup and uninstall now use a dedicated installer-only gate, so ordinary
-  Sandbox commands no longer trigger a false installer-busy message. Setup records
-  repair intent before creating installer-owned state, restores exact prior
-  registration after preparation failure, and replaces the complete dedicated
-  binary root during an upgrade. Quiet uninstall remains bounded to 30 seconds,
-  destructive cleanup remains race-free under the existing app lock, and uninstall
-  now shows its real progress details by default. Locked binaries produce a clear
-  close-running-commands and retry action.
-- Installer builds now validate identity, payload architecture, helper syntax,
-  reparse-safe inputs, version/output agreement, and exact artwork before NSIS
-  compilation. PATH setup removes empty and duplicate entries while preserving
-  first-occurrence command precedence, keeps one canonical Sandbox entry, and
-  uninstall removes every effective Sandbox entry without disturbing unique
-  unrelated entries.
+- Built-in tool versions are resolved and checked before guest mutation; conflicts
+  name every owner, while `sandbox plan` shows the selected value and source.
+- Fresh and retained `sandbox up` use Herdr-Win's unattended remote provisioning
+  path as the single guest runtime and server lifecycle owner.
+- Git-backed configuration roots can fast-forward before `up`, after `down`, or
+  explicitly through `sandbox pull-host-config`, while unsafe local state is left
+  for the user to resolve.
+- Fresh configuration selects every coding agent with a verified WinGet package;
+  remove unwanted entries from `wingetPackages.add`.
+- Setup, repair, upgrade, and uninstall now stop exact installed commands, preserve
+  a running Windows Sandbox, recover retryable failures, and keep user
+  configuration unless deletion is explicitly selected.
+- The current installer uses one new product identity and does not migrate older
+  installer formats. Remove an older-format installation with its matching
+  uninstaller before installing this release.
 
-## v0.0.12 - 2026-08-07
+## v0.0.12
 
 ### Changed
 
@@ -165,119 +68,67 @@ release notes remain available on the
 - GitHub Releases now display SHA-256 digests for the installer and portable ZIP,
   which form the complete downloadable artifact set.
 
-## v0.0.11 - 2026-08-06
+## v0.0.11
 
 ### Added
 
-- A `handy` virtual project stack provisions the current Handy checkout's Windows
-  development toolchain with Bun, Rust/MSVC, latest-stable CMake and WebView2,
-  Vulkan SDK 1.4.309.0, and a verified SPIRV-Headers CMake target. Select it with
-  `herdr-sandbox init --stack handy`.
+- A `handy` project shortcut provisions its Windows toolchain with Bun,
+  Rust/MSVC, CMake, WebView2, and the project-pinned Vulkan SDK.
 
 ### Changed
 
-- The Windows installer now repairs interrupted upgrades and PATH registration,
-  preserves unknown files in its install directory, retains quiet-uninstall
-  recovery after late failures, and reports cleanup retry outcomes accurately.
+- The Windows installer improves interrupted-upgrade, PATH registration, and
+  quiet-uninstall recovery.
 
-## v0.0.10 - 2026-08-05
+## v0.0.10
 
 ### Added
 
-- A `python-ai` project stack provisions Python 3.13 and latest-stable uv with a
-  persistent dependency cache for CPU and API-based AI projects. Select it with
-  `herdr-sandbox init --stack python-ai`; each project keeps its frameworks and
-  reproducible environment in `pyproject.toml` and `uv.lock`.
+- A `python-ai` shortcut provisions Python 3.13 and uv with a persistent dependency
+  cache while projects retain their own frameworks and lockfiles.
 - QR-assisted mobile Herdr access can use device-owned Ed25519 keys over the
   stable private Tailscale identity. A dedicated key-only endpoint keeps its
-  host fingerprint across fresh Sandboxes, while `herdr-sandbox mobile` prints
-  the secret-free connection profile and manual fallback.
+  host fingerprint across fresh Sandboxes, while the mobile command prints the
+  secret-free connection profile and manual fallback.
 
 ### Fixed
 
-- Setup and uninstall now prioritize the requested terminal result: durable
-  transactions recover normally, while stale journals, registration drift, and
-  leftover files in the dedicated install directory automatically converge to a
-  complete current installation or complete removal instead of stranding the
-  installer on an aborted progress page. Interactive blockers remain actionable;
-  silent runs terminate without a dialog and return a stable failure status.
+- Setup and uninstall recover interrupted or drifted installer state and return
+  actionable terminal results instead of stranding the progress page.
 - Uninstall no longer fails when an active agent or tool temporarily locks
   disposable package-cache or machine-local state.
 
-## v0.0.9 - 2026-08-05
+## v0.0.9
 
 ### Added
 
-- A `tradingview` project stack provisions the latest stable TVControl commands
-  and verified official TradingView Desktop payload for Windows Sandbox. Select
-  it with `herdr-sandbox init --stack tradingview`; native acceptance passed
-  visible launch, CDP, health, API/datafeed, and compatibility.
+- A `tradingview` stack provisions verified TradingView Desktop and TVControl for
+  visible chart automation inside Windows Sandbox.
 
-## v0.0.8 - 2026-08-04
+## v0.0.8
 
 ### Added
 
-- `herdr-sandbox version`, reporting the release version and abbreviated source
-  revision embedded by the canonical build task.
-- A public security policy describing the host/guest trust boundary, credential
-  and network trade-offs, supported reporting path, unsigned installer, and
-  latest-versus-pinned package behavior.
-- A disabled-by-default experimental `KhronosGroup.VulkanRT` package opt-in with
-  strict physical-device verification through `vulkaninfo`.
-- An explicit virtual `herdr` project stack so official Herdr and Herdr-Win
-  checkouts can generate their maintained Windows toolchain profile, including
-  Bun, Git for Windows `sh`, and the repository-required `python3` command, with
-  `herdr-sandbox init --stack herdr`.
-- Git-backed OpenCode, Claude Code, Codex, GitHub Copilot, Pi, and shared-skills
-  configuration now retains tracked workflow files plus branch, remote, upstream,
-  index, refs, objects, tracked edits, and tracked deletions inside the guest.
-- A separate `playwright-cli` project stack installs the approved Playwright CLI
-  without browser binaries or update-check state and prepares the official
-  extension for manual attachment to the guest user's existing headed Edge profile.
+- A version command reports the release and abbreviated source revision, and the
+  new security policy documents the real host/guest trust model.
+- The `herdr` shortcut provisions the Windows toolchain used by Herdr checkouts;
+  the `playwright-cli` stack prepares the official Edge extension integration.
+- Git-backed coding-agent configuration retains usable repository state in the
+  guest, while an experimental Vulkan runtime remains an explicit opt-in.
+
 ### Changed
 
-- Host Herdr selection now accepts any Windows `herdr.exe` that proves the
-  required `--remote` capability. Guest provisioning copies the reported
-  physical executable and optional complete ConPTY bundle without depending on
-  a specific fork, package, installer, launcher, or managed-runtime layout.
-- Missing host Git configuration, GitHub CLI, and GitHub authentication are now
-  clean no-ops during guest configuration sync.
-- Windows Terminal's supported `system` theme now uses the deterministic dark
-  guest prompt baseline instead of blocking startup.
-- Ordinary selected folders beneath the user profile remain mountable, while
-  known SSH, GPG, cloud, container, agent-auth, GitHub, and Windows credential
-  roots are rejected together with their parents and descendants.
+- Configuration sync treats missing optional host Git, GitHub CLI, or login state
+  as a clean no-op and protects known credential roots from folder mappings.
+- The supported Windows Terminal `system` theme uses a deterministic guest prompt
+  baseline.
 
 ### Fixed
 
-- GitHub CLI authentication now imports into disposable guest-only file storage
-  and requires Git before configuring and exactly reading back `gh` as the
-  host-specific Git credential helper, avoiding Windows Credential Manager/GCM
-  account dialogs while preserving HTTPS Git access.
-- OpenCode configuration sync now reapplies the guest-wide `allow` policy after
-  every host configuration copy, even when OpenCode is installed outside the
-  selected Base package plan, so host top-level and agent permission rules cannot
-  govern the Sandbox.
-- Ready guests now accept WinGet package-plan changes through retained
-  reprovisioning when the same mappings differ only by Windows-insignificant
-  letter casing or ordering, while unknown launch-contract drift still fails closed.
-- Configuration archives larger than Win32-OpenSSH's redirected-stdin pipe
-  window now transfer through bounded guest staging before Windows PowerShell
-  verification, instead of timing out indefinitely at `receive-archive`.
-- Git-backed coding-agent sync now accepts its deterministic manifest property
-  order and empty tracked-deletion sets instead of rejecting enabled agent
-  configuration during guest apply.
-- Git-backed agent roots and configured cache overlap checks now compare physical
-  Windows identities, so DOS 8.3 aliases neither reject valid repositories nor
-  bypass overlap checks.
-- Python 3 command compatibility and Git-for-Windows `sh` exposure now remain
-  with their runtime/package owners, including retained reprovisioning after
-  `Git\bin` becomes the active Git command directory.
-- Bounded subprocess capture now terminates an output-flooding process tree after
-  one MiB instead of growing host memory without limit.
-- External diagnostics replace terminal-control characters before display.
-- User SSH config updates reread and retry when a concurrent edit is observed
-  before atomic replacement, substantially narrowing the prior lost-update window.
-- Installer failures after payload replacement now restore the prior application
-  files, uninstaller, registration version/PATH ownership, and newly added PATH
-  entry through one rollback path.
+- GitHub CLI and OpenCode authentication/configuration now import without host
+  credential dialogs and reapply the guest-wide OpenCode permission policy.
+- Ready guests can apply package-plan changes through retained reprovisioning, and
+  larger configuration archives transfer without the former SSH pipe timeout.
+- Process output and diagnostics are bounded and terminal-safe, SSH configuration
+  updates retry concurrent edits, and failed installer replacement restores the
+  prior application state.
