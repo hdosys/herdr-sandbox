@@ -15,7 +15,7 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 - **Repeatable project setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
 - **Fast iteration:** reuse and reprovision a compatible ready guest instead of rebuilding it for every change.
 - **Deliberate persistence:** source, an optional worktree root, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
-- **Mobile access to agents (experimental):** reconnect to Herdr from an approved phone or tablet over Tailscale, check on long-running work, and continue the session without staying at your desk. A device-owned SSH key and secret-free QR code make reconnecting convenient without moving private keys between devices.
+- **Mobile access to agents (experimental):** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
 
 ## Engineering approach
@@ -446,12 +446,15 @@ repeated. Do not create a second browser or profile for this integration.
 <details>
 <summary><strong>Mobile Herdr over Tailscale (experimental)</strong></summary>
 
-Use this when agents should keep working while you step away, but you still want
-to check progress or continue the Herdr session from a phone or tablet. The opt-in
-joins an existing tailnet and exposes a key-only mobile Herdr endpoint on TCP 2222.
-Prepare a dedicated least-privilege tag and ACL, generate an Ed25519 key on each
-mobile device, and create one non-reusable, non-ephemeral, pre-authorized Tailscale
-auth key for `tag:herdr-sandbox`. Never grant mobile peers management port 22.
+This opt-in lets a phone or tablet access Herdr over an existing tailnet to review
+notifications, answer agent questions, and run project commands. It exposes a
+key-only mobile Herdr endpoint on TCP 2222. Prepare a dedicated least-privilege tag
+and ACL, generate an Ed25519 key on each mobile device, and create one
+non-reusable, non-ephemeral, pre-authorized Tailscale auth key for
+`tag:herdr-sandbox`. Never grant mobile peers management port 22.
+
+The dedicated mobile SSH endpoint disables forwarding, so it is not a built-in
+proxy for project web servers.
 
 Add only device public keys to `config.json`:
 
