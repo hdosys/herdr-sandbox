@@ -81,9 +81,15 @@ GitHub SHA-256 digest, run setup, and open a new terminal:
 herdr --version
 ```
 
-The result must contain the exact `herdr-win` marker. Herdr-Win supplies the
-Windows remote-provisioning support this project needs and remains a separate
-installation.
+The result must contain the exact `herdr-win` marker.
+
+#### Why Herdr-Win is required
+
+Upstream Herdr does not currently support running the Herdr server on Windows.
+Herdr-Win provides both support for the server on Windows and the unattended
+remote-provisioning path Herdr Sandbox uses to transfer, start, and connect to the
+matching guest runtime over SSH. It remains a separate installation that Herdr
+Sandbox never bundles, installs, or updates.
 
 ### Install Herdr Sandbox
 

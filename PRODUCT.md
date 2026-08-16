@@ -7,7 +7,7 @@ Herdr Sandbox exposes the `sandbox` Windows command for running development and 
 ## Terminology
 
 - **Windows Sandbox**: Microsoft's disposable Windows guest environment.
-- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI and executable remain `herdr` and `herdr.exe`. Sandbox requires the maintained [`herdr-win`](https://github.com/hdosys/herdr-win) Windows distribution because upstream Herdr does not yet provide the remote-provisioning behavior this workflow needs. The host command must identify itself with the exact `herdr-win` marker and prove unattended `--remote <target> --provision --yes --json` behavior. Herdr-Win remains an independent distribution that Sandbox never installs or updates on the host.
+- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI and executable remain `herdr` and `herdr.exe`. Sandbox requires the maintained [`herdr-win`](https://github.com/hdosys/herdr-win) Windows distribution because upstream Herdr does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow needs. The host command must identify itself with the exact `herdr-win` marker and prove unattended `--remote <target> --provision --yes --json` behavior. Herdr-Win remains an independent distribution that Sandbox never installs or updates on the host.
 - **Host**: the user's normal Windows machine.
 - **Guest**: the disposable Windows Sandbox instance.
 
