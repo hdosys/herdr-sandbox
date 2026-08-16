@@ -17,6 +17,13 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Add a public-audience pass to README review.**
+  Evidence: a user-focused rewrite still left an unresolved native acceptance
+  gate in the public README, and the user had to identify it after delivery.
+  Before committing public documentation, retain verification or backlog language
+  only when it gives readers an action or concise engineering value; keep internal
+  status in its canonical owner. Expected benefit: prevent process leakage without
+  stripping useful portfolio-level engineering evidence.
 - **Status: proposed. Bound interactive WinGet validation watching below the session watchdog.**
   Evidence: `gh pr checks --watch --interval 180` waited more than ten minutes
   for Microsoft-owned installer checks, exceeded the session watchdog, and
