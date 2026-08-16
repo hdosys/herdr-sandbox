@@ -1,4 +1,4 @@
-# WinGet submission preparation
+# WinGet package maintenance
 
 `packaging/winget/manifests/` mirrors the exact directory that can be copied into
 the Microsoft community repository. The intended independent package ID is
@@ -9,8 +9,7 @@ dependency.
 
 - Version: `0.0.15`
 - Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.15>
-- Community submission:
-  <https://github.com/microsoft/winget-pkgs/pull/418113>
+- Community package: `hdosys.herdr-sandbox`
 - Installer:
   <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.15/herdr-sandbox_v0.0.15_windows_amd64_setup.exe>
 - Published installer SHA-256:
@@ -18,8 +17,9 @@ dependency.
 - Manifest schema: `1.12.0`
 
 The v0.0.15 package passed the repository release gate, public GitHub asset
-digest verification, WinGetCreate generation, `winget validate`, and submitted
-manifest diff review. The installer is currently not Authenticode-signed.
+digest verification, WinGetCreate generation, `winget validate`, community
+validation, installation, and publication. The installer is currently not
+Authenticode-signed.
 
 ## Validate locally
 
@@ -38,27 +38,21 @@ Never use `--ignore-security-hash` for acceptance.
 Local `validate --manifest`, `download --manifest`, and `install --manifest`
 require an administrator to enable WinGet's `LocalManifestFiles` developer
 setting. Use that setting only in a disposable Windows environment; the official
-community submission pipeline remains the authoritative manifest-install gate.
+community validation pipeline remains the authoritative manifest-install gate.
 
-## Community submission
-
-The 0.0.15 manifest is under review in
-[`microsoft/winget-pkgs#418113`](https://github.com/microsoft/winget-pkgs/pull/418113).
-Until that pull request is merged and published, the community source continues
-to serve the previously accepted release. Install 0.0.15 from its GitHub Release
-when the current version is required immediately.
+## Publish an update
 
 The target path in `microsoft/winget-pkgs` is:
 
 ```text
-manifests/h/hdosys/herdr-sandbox/0.0.15/
+manifests/h/hdosys/herdr-sandbox/<version>/
 ```
 
-The v0.0.15 submission re-downloaded the public installer, recomputed its
-SHA-256, ran `winget validate`, and submitted only that directory through
-WinGetCreate. Do not store or pass a GitHub token in this repository, command
-logs, or manifest files.
+For each release, re-download the public installer, recompute its SHA-256, run
+`winget validate`, review the generated manifest diff, and submit only the
+version directory through WinGetCreate. Do not store or pass a GitHub token in
+this repository, command logs, or manifest files.
 
-This submission contains only Herdr Sandbox. Herdr-Win remains a separate
+The package contains only Herdr Sandbox. Herdr-Win remains a separate
 distribution, is not bundled or declared as a dependency, and does not yet have a
 community-source package.
