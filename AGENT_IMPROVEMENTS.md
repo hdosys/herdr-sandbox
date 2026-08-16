@@ -17,36 +17,25 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
-- **Status: proposed. Add a public-audience pass to README review.**
-  Evidence: a user-focused rewrite still left an unresolved native acceptance
-  gate in the public README, and the user had to identify it after delivery.
-  Before committing public documentation, retain verification or backlog language
-  only when it gives readers an action or concise engineering value; keep internal
-  status in its canonical owner. Expected benefit: prevent process leakage without
+- **Status: done. Add a public-audience pass to README review.**
+  Evidence: `AGENTS.md` now requires every README change to retain only reader
+  action, user value, or concise engineering evidence and routes workflow status
+  to its canonical owner. Expected benefit: prevent process leakage without
   stripping useful portfolio-level engineering evidence.
-- **Status: proposed. Bound interactive WinGet validation watching below the session watchdog.**
-  Evidence: `gh pr checks --watch --interval 180` waited more than ten minutes
-  for Microsoft-owned installer checks, exceeded the session watchdog, and
-  interrupted closeout even though the PR was durable and its first six stages
-  had passed. After one post-submission status read, report any remaining remote
-  stages instead of keeping an interactive watch on the critical path. Expected
-  benefit: preserve accurate validation status without a long process wait or
-  resumable-session interruption.
-- **Status: proposed. Mark `build` as intermediate and `package` as the candidate artifact.**
-  Evidence: a verified CLI was available 9.082 seconds after the source edit but
-  was incorrectly reported as the user artifact; the existing package task later
-  produced the validated installer in 6.640 seconds. Label `build` as intermediate
-  CLI output in task help and successful output, and label `package` as the sole
-  interactive installable-candidate owner. Expected benefit: command-level routing
-  reinforces the existing installer-first workflow without adding another build
-  path.
-- **Status: proposed. Emit commit-keyed native acceptance evidence.**
-  Evidence: the v0.0.13 release audit could not bind prior native coverage to
-  the frozen candidate commit and had to treat `native-all-stacks` as missing.
-  Have the native task emit one bounded structured summary containing the exact
-  commit, platform, command, terminal result, and key acceptance boundaries.
-  Expected benefit: release audits can distinguish current evidence from prose
-  history without adding another persistent state owner.
+- **Status: done. Bound WinGet validation watching below the session watchdog.**
+  Evidence: `AGENTS.md` now requires one post-submission status read and reporting
+  of remaining Microsoft-owned stages instead of an interactive watch. Expected
+  benefit: preserve accurate status without a long process wait.
+- **Status: done. Mark `build` as intermediate and `package` as the candidate artifact.**
+  Evidence: task help and successful output identify `build/bin` as intermediate,
+  while package evidence identifies the validated ZIP and installer as candidate
+  artifacts. Expected benefit: command output reinforces the installer-first
+  workflow without another build path.
+- **Status: done. Emit commit-keyed native acceptance evidence.**
+  Evidence: `native-all-stacks` now requires a clean committed tree and emits one
+  JSON summary with commit, platform, command, terminal result, and covered native
+  boundaries. A focused test owns the schema. Expected benefit: release audits can
+  bind native evidence to one immutable source snapshot without another file owner.
 - **Status: done. Emit structured package artifact evidence.**
   Evidence: the package task emits one JSON object per published artifact with its
   clean path, byte count, and lowercase SHA-256. A focused test validates the exact

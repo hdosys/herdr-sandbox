@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,9 +26,32 @@ const (
 	nativeAllStacksSmokeGuestPath = `C:\Mounts\reference\native-all-stacks-smoke.ps1`
 )
 
+var nativeAcceptanceBoundaries = []string{
+	"fresh-windows-sandbox",
+	"provisioning-ready",
+	"all-built-in-stacks",
+	"managed-ssh",
+	"folder-mounts",
+	"nsis-compile",
+	"owned-shutdown",
+}
+
+type nativeAcceptanceEvidence struct {
+	Kind       string   `json:"kind"`
+	Commit     string   `json:"commit"`
+	Platform   string   `json:"platform"`
+	Command    string   `json:"command"`
+	Result     string   `json:"result"`
+	Boundaries []string `json:"boundaries"`
+}
+
 func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr error) {
 	if runtime.GOOS != "windows" {
 		return errors.New("native-all-stacks requires Windows and Windows Sandbox")
+	}
+	commit, err := nativeAcceptanceCommit(ctx)
+	if err != nil {
+		return err
 	}
 	root, err := filepath.Abs(filepath.Join("build", "native-all-stacks"))
 	if err != nil {
@@ -84,6 +108,36 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	}
 	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, opensrc source inspection, Android CLI and wireless ADB tooling, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
+	}
+	return writeNativeAcceptanceEvidence(stdout, commit)
+}
+
+func nativeAcceptanceCommit(ctx context.Context) (string, error) {
+	commit, err := sourceRevision(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve native acceptance commit: %w", err)
+	}
+	output, err := hiddenCommandContext(ctx, "git", "status", "--porcelain=v1", "--untracked-files=all").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("inspect native acceptance source state: %w", err)
+	}
+	if strings.TrimSpace(string(output)) != "" {
+		return "", errors.New("native-all-stacks requires a clean committed working tree so its evidence identifies one immutable commit")
+	}
+	return commit, nil
+}
+
+func writeNativeAcceptanceEvidence(stdout io.Writer, commit string) error {
+	evidence := nativeAcceptanceEvidence{
+		Kind:       "native-acceptance",
+		Commit:     commit,
+		Platform:   runtime.GOOS + "/" + runtime.GOARCH,
+		Command:    "go run ./cmd/task native-all-stacks",
+		Result:     "passed",
+		Boundaries: append([]string(nil), nativeAcceptanceBoundaries...),
+	}
+	if err := json.NewEncoder(stdout).Encode(evidence); err != nil {
+		return fmt.Errorf("write native acceptance evidence: %w", err)
 	}
 	return nil
 }

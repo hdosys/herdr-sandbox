@@ -24,7 +24,9 @@ func TestRunPrintsHelp(t *testing.T) {
 	if err := run(context.Background(), nil, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("run help: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "go run ./cmd/task") {
+	if !strings.Contains(stdout.String(), "go run ./cmd/task") ||
+		!strings.Contains(stdout.String(), "build intermediate CLI output") ||
+		!strings.Contains(stdout.String(), "validated installable ZIP and NSIS candidate artifacts") {
 		t.Fatalf("help output = %q", stdout.String())
 	}
 }

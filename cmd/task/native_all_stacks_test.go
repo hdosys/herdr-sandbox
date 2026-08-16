@@ -1,15 +1,35 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestWriteNativeAcceptanceEvidenceIsCommitKeyedAndComplete(t *testing.T) {
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	var output bytes.Buffer
+	if err := writeNativeAcceptanceEvidence(&output, commit); err != nil {
+		t.Fatal(err)
+	}
+	var evidence nativeAcceptanceEvidence
+	if err := json.NewDecoder(&output).Decode(&evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Kind != "native-acceptance" || evidence.Commit != commit ||
+		evidence.Platform != runtime.GOOS+"/"+runtime.GOARCH ||
+		evidence.Command != "go run ./cmd/task native-all-stacks" ||
+		evidence.Result != "passed" || !slices.Equal(evidence.Boundaries, nativeAcceptanceBoundaries) {
+		t.Fatalf("native evidence = %#v", evidence)
+	}
+}
 
 func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) {
 	fixture, err := prepareNativeAllStacksFixture(filepath.Join(t.TempDir(), "native"))

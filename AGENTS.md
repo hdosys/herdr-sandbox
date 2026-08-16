@@ -11,6 +11,10 @@ the global workflow or recreate project `.opencode/` configuration.
 - `README.md` owns practical public onboarding plus a portfolio-facing overview
   of product value, engineering decisions, and verification; detailed behavior
   and design remain canonical in the owners below.
+- Before committing README changes, run one public-audience pass. Keep only copy
+  that helps a reader act, understand user value, or assess the engineering;
+  verification assignments, backlog status, and agent-process history stay in
+  their canonical owners.
 - `PRODUCT.md` owns stable user-visible CLI behavior, terminology, and acceptance
   outcomes.
 - `ARCHITECTURE.md` owns technical boundaries, state, external integrations, and
@@ -155,3 +159,7 @@ For long-running GitHub Actions, check status no more than once every two minute
 and fetch detailed logs only after terminal failure. GitHub release artifacts do
 not replace required local/guest evidence unless the boundary is blocked and
 reported.
+
+After submitting a WinGet community update, perform one post-submission status
+read and report any remaining Microsoft-owned stages. Do not keep an interactive
+watch open while those external checks run.

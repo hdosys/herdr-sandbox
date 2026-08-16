@@ -32,10 +32,10 @@ Tasks:
   fmt              format Go source
   test [args...]   run fast product tests with optional go test arguments
   test-integration [args...]  run all Go external-boundary tests
-  build            build build/bin/%s
+  build            build intermediate CLI output at build/bin/%s
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
-  package VERSION  build the canonical ZIP and NSIS installer release artifacts
+  package VERSION  build the validated installable ZIP and NSIS candidate artifacts
   verify           verify format, syntax, tests, vet, and the stable build
   verify-integration run the full nightly/release verification
 `, productidentity.ExecutableName)
@@ -343,6 +343,9 @@ func buildWithIdentity(ctx context.Context, identity buildIdentity, stdout, stde
 		if err := os.WriteFile(filepath.Join(filepath.Dir(output), asset.Name), data, 0o644); err != nil {
 			return fmt.Errorf("write build asset %s: %w", asset.Name, err)
 		}
+	}
+	if _, err := fmt.Fprintf(stdout, "Intermediate CLI build: %s\n", filepath.Clean(output)); err != nil {
+		return fmt.Errorf("write intermediate build result: %w", err)
 	}
 	return nil
 }

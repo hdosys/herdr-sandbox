@@ -284,7 +284,7 @@ func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
 			t.Fatalf("decode artifact evidence %d: %v", index, err)
 		}
 		wantHash := fmt.Sprintf("%x", sha256.Sum256(contents[index]))
-		if evidence.Kind != "release-artifact" || evidence.Path != filepath.Clean(path) ||
+		if evidence.Kind != "candidate-artifact" || evidence.Path != filepath.Clean(path) ||
 			evidence.Bytes != int64(len(contents[index])) || evidence.SHA256 != wantHash ||
 			evidence.SHA256 != strings.ToLower(evidence.SHA256) {
 			t.Fatalf("artifact evidence %d = %#v", index, evidence)

@@ -124,7 +124,7 @@ func writeReleaseArtifactEvidence(stdout io.Writer, paths releasePackagePaths) e
 			return err
 		}
 		evidence := releaseArtifactEvidence{
-			Kind:   "release-artifact",
+			Kind:   "candidate-artifact",
 			Path:   filepath.Clean(path),
 			Bytes:  info.Size(),
 			SHA256: fmt.Sprintf("%x", hash),
