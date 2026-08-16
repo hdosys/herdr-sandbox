@@ -15,7 +15,8 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 - **Repeatable project setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
 - **Fast iteration:** reuse and reprovision a compatible ready guest instead of rebuilding it for every change.
 - **Deliberate persistence:** source, an optional worktree root, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
-- **Explicit opt-ins:** browser automation, TradingView, audio, microphone, and experimental mobile access remain off unless selected.
+- **Mobile access to agents (experimental):** reconnect to Herdr from an approved phone or tablet over Tailscale, check on long-running work, and continue the session without staying at your desk. A device-owned SSH key and secret-free QR code make reconnecting convenient without moving private keys between devices.
+- **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
 
 ## Engineering approach
 
@@ -23,7 +24,7 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 - **One owner per responsibility:** state, process identity, project profiles, installer behavior, and external integrations have explicit boundaries rather than parallel implementations.
 - **Fail-closed lifecycle handling:** cancellation, bounded process trees, atomic state publication, strict parsing, and ownership checks prevent uncertain cleanup or attachment.
 - **Reproducible provisioning:** versions, package identity, hashes, signatures, and realized state are checked where the external boundary supports them. Repeated runs converge without duplicating work.
-- **Real release evidence:** fast tests and static checks cover the control plane; package gates compile and validate the real installer, while opt-in Windows Sandbox acceptance exercises provisioning, SSH, and attach.
+- **Real release evidence:** fast tests and static checks cover the control plane; release checks compile and validate the real installer, while a real Windows Sandbox run exercises provisioning, SSH, and attach.
 
 ## How it works
 
@@ -51,7 +52,7 @@ flowchart LR
     HostHerdr <-->|console-backed attach| Herdr
 ```
 
-The host keeps source, identity, configuration, cache, and bounded run evidence. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
+The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 > [!IMPORTANT]
 > Windows Sandbox separates this work from the normal Windows installation, but selected projects remain writable and guest administrators can access explicitly transferred credentials. Networking is enabled. Keep backups and normal supply-chain controls; see [Security boundaries](#security-boundaries) before using untrusted code.
@@ -234,15 +235,16 @@ and errors go to stderr.
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
 | `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
-| `sandbox attach` | Attaches to a verified ready guest without reprovisioning. |
+| `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. |
 | `sandbox mobile` | Prints the mobile SSH profile and secret-free QR code. |
-| `sandbox down` | Stops only the verified app-owned guest and preserves opted-in Tailscale state. |
-| `sandbox clean` | Removes only proven inactive run state. |
+| `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
+| `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
 
-Lifecycle commands clean only state proven inactive. Changed or uncertain state
-is preserved and reported. Settings that change host mappings or the isolation
-boundary require `sandbox down` before the next `up`.
+Lifecycle commands remove stale data only after verifying that no owned Sandbox
+process still uses it. Changed or uncertain state is preserved and reported.
+Settings that change host mappings or the isolation boundary require
+`sandbox down` before the next `up`.
 
 ## Configuration
 
@@ -333,7 +335,7 @@ replacing it.
 Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
 Copilot CLI, and Pi, with every selection enabled by default. Review these choices
 before the first `up`. Approved files travel over verified SSH; a Git-backed
-configuration root also transfers bounded repository metadata and object history,
+configuration root also transfers repository metadata and object history,
 which may contain old secrets. Disable any root whose complete history is not safe
 for the guest. Private SSH and GPG keys, conversations, logs, caches, and
 machine-bound credentials stay on the host. Agent installation remains a separate
@@ -381,7 +383,7 @@ use.
 Guest processes have administrator access inside Windows Sandbox. Only select host folders deliberately, prefer read-only mounts, and treat every credential copied into the network-enabled guest as accessible to its workloads.
 
 - Writable host access is limited to selected projects, explicit writable mounts,
-  the optional worktree root, cache, and bounded run status.
+  the optional worktree root, cache, and run status.
 - The host home root, general AppData, unselected repositories, and private SSH or
   GPG keys are never mapped.
 - Approved portable credentials travel only over verified SSH and never enter
@@ -444,14 +446,12 @@ repeated. Do not create a second browser or profile for this integration.
 <details>
 <summary><strong>Mobile Herdr over Tailscale (experimental)</strong></summary>
 
-> [!CAUTION]
-> The two-fresh-Sandbox identity and peer-connectivity acceptance gate remains open.
-
-This opt-in joins an existing tailnet and exposes a key-only mobile Herdr endpoint
-on TCP 2222. Prepare a dedicated least-privilege tag and ACL, generate an Ed25519
-key on each mobile device, and create one non-reusable, non-ephemeral,
-pre-authorized Tailscale auth key for `tag:herdr-sandbox`. Never grant mobile peers
-management port 22.
+Use this when agents should keep working while you step away, but you still want
+to check progress or continue the Herdr session from a phone or tablet. The opt-in
+joins an existing tailnet and exposes a key-only mobile Herdr endpoint on TCP 2222.
+Prepare a dedicated least-privilege tag and ACL, generate an Ed25519 key on each
+mobile device, and create one non-reusable, non-ephemeral, pre-authorized Tailscale
+auth key for `tag:herdr-sandbox`. Never grant mobile peers management port 22.
 
 Add only device public keys to `config.json`:
 
@@ -488,7 +488,8 @@ that identity.
 
 ## Troubleshooting
 
-Start with `sandbox status`; it preserves a running guest, removes only proven stale state, and reports the next action.
+Start with `sandbox status`; it preserves a running guest, removes stale data only
+when it is safe, and reports the next action.
 
 | Symptom | Action |
 | --- | --- |
@@ -507,7 +508,8 @@ Start with `sandbox status`; it preserves a running guest, removes only proven s
 
 ## Development
 
-The repository uses one Go task runner for formatting, tests, stable builds, native acceptance, and release packaging.
+The repository uses one Go task runner for formatting, tests, stable builds, real
+Windows Sandbox checks, and release packaging.
 
 ```powershell
 go run ./cmd/task verify
@@ -515,7 +517,7 @@ go run ./cmd/task verify-integration
 go run ./cmd/task native-all-stacks
 ```
 
-- `verify` is the fast local gate: formatting, PowerShell parsing, focused tests,
+- `verify` is the fast local check: formatting, PowerShell parsing, focused tests,
   `go vet`, and the stable `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
