@@ -1,12 +1,10 @@
 # Herdr Sandbox
 
-**A disposable native Windows development environment for coding agents, with MSVC, Windows SDKs, .NET, installers, and GUI tooling controlled from the normal host terminal.**
+**Run coding agents in a disposable, native Windows development environment without RDP, broad home-directory mounts, or host toolchain drift.**
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.4](https://img.shields.io/badge/Go-1.26.4-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Herdr Sandbox is a project-oriented, Windows-native counterpart to a [dev container](https://containers.dev/). It runs workloads inside Microsoft's disposable Windows Sandbox, not a Linux guest. Use it when compilation, tests, packaging, or GUI behavior must actually be Windows. If Linux or OCI is sufficient, a Linux container or microVM runtime is a better fit.
-
-Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
+Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
 [Capabilities](#key-capabilities) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
