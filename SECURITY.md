@@ -125,8 +125,6 @@ These are deliberate non-guarantees:
   to the guest workload. Configuration sync refuses to replace those cookies while
   guest TradingView Desktop is running rather than terminating the application.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
-- Tailscale identity restoration remains experimental until the documented native
-  two-fresh-Sandbox and peer-connectivity gate passes.
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
   authorized mobile private key and tailnet reachability can open Herdr as the
   guest administrator user and access every resource available to that guest.

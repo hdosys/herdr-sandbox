@@ -15,7 +15,7 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 - **Repeatable project setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
 - **Fast iteration:** reuse and reprovision a compatible ready guest instead of rebuilding it for every change.
 - **Deliberate persistence:** source, an optional worktree root, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
-- **Mobile access to agents (experimental):** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
+- **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
 
 ## Engineering approach
@@ -444,7 +444,7 @@ repeated. Do not create a second browser or profile for this integration.
 </details>
 
 <details>
-<summary><strong>Mobile Herdr over Tailscale (experimental)</strong></summary>
+<summary><strong>Mobile Herdr over Tailscale</strong></summary>
 
 This opt-in lets a phone or tablet access Herdr over an existing tailnet to review
 notifications, answer agent questions, and run project commands. It exposes a
