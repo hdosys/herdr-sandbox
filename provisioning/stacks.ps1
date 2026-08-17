@@ -2204,23 +2204,25 @@ function Get-TradingViewDesktopPortableMetadata {
     )
 
     $packageID = 'TradingView.TradingViewDesktop'
-    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
-    $metadata = Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' -Id $packageID `
-        -Version $Version -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'
-    $installerURI = [Uri][string]$metadata.Url
-    if ([string]$metadata.Id -cne $packageID -or
-        [string]$metadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-        [string]$metadata.Architecture -cne 'x64' -or
-        [string]$metadata.InstallerType -cne 'msix' -or
-        -not [string]::IsNullOrEmpty([string]$metadata.Scope) -or
-        [string]$metadata.PayloadName -cne 'payload.msix' -or
-        $installerURI.Scheme -cne 'https' -or
-        $installerURI.Host -cne 'tvd-packages.tradingview.com' -or
-        -not $installerURI.AbsolutePath.StartsWith('/stable/', [StringComparison]::Ordinal) -or
-        [IO.Path]::GetExtension($installerURI.AbsolutePath) -cne '.msix') {
-        throw "TradingView Desktop WinGet metadata identity is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Url)"
+    $pinnedVersion = '3.3.0.7992'
+    $resolvedVersion = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
+    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
+        $resolvedVersion = $pinnedVersion
     }
-    return $metadata
+    if ($resolvedVersion -cne $pinnedVersion) {
+        throw "TradingView Desktop version $resolvedVersion is unsupported; this release owns $pinnedVersion."
+    }
+    $null = Get-ProvisioningToolVersion -Tool $packageID -Requested $resolvedVersion
+    return [pscustomobject]@{
+        Id = $packageID
+        Version = $resolvedVersion
+        Architecture = 'x64'
+        InstallerType = 'msix'
+        Scope = ''
+        Url = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
+        Sha256 = '96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF'
+        PayloadName = 'payload.msix'
+    }
 }
 
 function Install-TradingViewActiveSessionLauncher {

@@ -25,8 +25,7 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 	for _, required := range []string{
 		"function Get-TradingViewDesktopPortableMetadata",
 		"TradingView.TradingViewDesktop",
-		"Get-ProvisioningWinGetMetadata",
-		"-Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'",
+		"96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF",
 		"tvd-packages.tradingview.com",
 		"-DownloadSource 'Direct' -Adapter 'Portable'",
 		"-PortableVersionSource 'File'",
@@ -73,8 +72,8 @@ func TestTradingViewStackOwnsExactDesktopAndGuestLocalTVControl(t *testing.T) {
 		"$tvBin -cne $tvControlBin",
 		"-ArgumentList @($cliEntryPath, '--help')",
 		"Get-AppxPackage", "Add-AppxPackage", "-Adapter 'MSIX'", "$minimumWindowsBuild",
-		"Search-ProvisioningWinGetPackages", "raw.githubusercontent.com/microsoft/winget-pkgs", "Invoke-WebRequest",
-		"3.3.0.7992",
+		"Get-ProvisioningWinGetMetadata", "Search-ProvisioningWinGetPackages",
+		"raw.githubusercontent.com/microsoft/winget-pkgs", "Invoke-WebRequest",
 	} {
 		if strings.Contains(block, forbidden) {
 			t.Fatalf("TradingView stack contains forbidden runtime/project path %q", forbidden)
@@ -270,7 +269,7 @@ if (@(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Name -
 	}
 }
 
-func TestTradingViewPortableMetadataReusesWinGetResolutionInWindowsPowerShell51(t *testing.T) {
+func TestTradingViewPortableMetadataUsesReleasePinInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 metadata regression")
 	}
@@ -286,58 +285,25 @@ func TestTradingViewPortableMetadataReusesWinGetResolutionInWindowsPowerShell51(
 	)
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
-$script:metadataCalls = 0
-$script:metadataURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
-$script:lastMetadataCall = ''
-function Get-ProvisioningWinGetMetadata {
-    param(
-        [string]$Role,
-        [string]$Id,
-        [string]$Version = '',
-        [string]$Architecture,
-        [string]$InstallerType,
-        [string]$Scope = '',
-        [string]$PayloadExtension = ''
-    )
-    $script:metadataCalls += 1
-    $script:lastMetadataCall = @($Role, $Id, $Version, $Architecture, $InstallerType, $Scope, $PayloadExtension) -join '|'
-    $resolvedVersion = if ([string]::IsNullOrWhiteSpace($Version)) { '3.3.0.7992' } else { $Version }
-    return [pscustomobject]@{
-        Id = $Id
-        Version = $resolvedVersion
-        Architecture = $Architecture
-        InstallerType = $InstallerType
-        Scope = $Scope
-        Url = $script:metadataURL
-        Sha256 = 'A' * 64
-        PayloadName = 'payload' + $PayloadExtension
-    }
-}
 $metadata = Get-TradingViewDesktopPortableMetadata
-if ($script:metadataCalls -ne 1 -or
-    $script:lastMetadataCall -cne 'TradingView Desktop|TradingView.TradingViewDesktop||x64|msix||.msix' -or
-    [string]$metadata.Id -cne 'TradingView.TradingViewDesktop' -or
+if ([string]$metadata.Id -cne 'TradingView.TradingViewDesktop' -or
     [string]$metadata.Version -cne '3.3.0.7992' -or
     [string]$metadata.Url -cne 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix' -or
-    [string]$metadata.Sha256 -cne ('A' * 64) -or
+    [string]$metadata.Sha256 -cne '96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF' -or
     [string]$metadata.PayloadName -cne 'payload.msix') {
     throw "Unexpected TradingView metadata: $($metadata | ConvertTo-Json -Compress)"
 }
-$script:metadataURL = 'https://example.invalid/stable/TradingView.msix'
 $rejected = $false
 try {
-    Get-TradingViewDesktopPortableMetadata -Version '3.3.0.7992' | Out-Null
+    Get-TradingViewDesktopPortableMetadata -Version '3.3.0.7993' | Out-Null
 } catch {
-    if ([string]$_.Exception.Message -notmatch 'metadata identity is unsupported') { throw }
+    if ([string]$_.Exception.Message -notmatch 'version 3\.3\.0\.7993 is unsupported') { throw }
     $rejected = $true
 }
-if (-not $rejected -or $script:metadataCalls -ne 2 -or
-    $script:lastMetadataCall -cne 'TradingView Desktop|TradingView.TradingViewDesktop|3.3.0.7992|x64|msix||.msix') {
-    throw 'TradingView metadata did not preserve exact versioning and vendor URL validation.'
-}
+if (-not $rejected) { throw 'TradingView metadata accepted a version outside this release pin.' }
 `, functionSetup)
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("TradingView WinGet metadata regression: %v: %s", err, output)
+		t.Fatalf("TradingView pinned metadata regression: %v: %s", err, output)
 	}
 }

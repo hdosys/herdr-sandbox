@@ -8,8 +8,8 @@ artifacts remain available on the
 
 ### Fixed
 
-- TradingView stack provisioning now resolves installer metadata in one request,
-  avoiding repeat failures from a redundant external manifest lookup.
+- TradingView stack provisioning now uses release-pinned installer metadata,
+  avoiding runtime catalog and manifest lookups before the verified download.
 
 ## v0.0.15
 
