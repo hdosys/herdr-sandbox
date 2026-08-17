@@ -18,15 +18,24 @@ Open, planned, blocked, or deferred product features and fixes only. User-visibl
   the stack default; present selected files remain bounded, safe, and strict, with
   guest-side recheck where the mapped file affects the immutable plan. Errors must
   name the workspace, host path, owner, and correction.
-- Move the verified SSH connection to the earliest practical guest bootstrap
-  boundary, then run Base, development provisioning, configuration sync, and
-  their external package/API operations as host-managed idempotent phases for
-  both fresh and retained runs. Every post-SSH failure must preserve the same
-  live connectable Sandbox, exact failed phase, and bounded diagnostic; a later
-  `up` retries or resumes only unfinished work from the last verified boundary.
-  Treat transient provider availability as retryable without silently skipping
-  credentials, integrity checks, or functional verification. Require no `down`,
-  GUI input, watcher, daemon, second provisioner, or fresh launch; keep the
+- Make verified management SSH the first functional guest capability. Before
+  implementation, explicitly challenge this target against unavoidable bootstrap
+  prerequisites, partial-guest attach semantics, security, connection recovery,
+  and whether a simpler reconnectable phase model preserves the same outcome.
+  Record the better design rather than assuming a long-lived transport is
+  inherently correct. Limit the pre-SSH bootstrap to the minimum required to
+  establish and publish that secure channel; do not run Base, development
+  provisioning, or configuration sync there. Immediately provision and start
+  Herdr over SSH, establish one host-owned running Herdr/SSH control session, and
+  make the guest attachable before continuing setup through that same session.
+  Run every remaining script and external package/API operation as a
+  host-invokable idempotent phase for fresh and retained guests. Keep the control
+  channel available or re-establish it against the same live guest so `up` can
+  retry or resume unfinished work from the last verified boundary. Every post-SSH
+  failure must preserve the connectable Sandbox, exact failed phase, and bounded
+  diagnostic. Treat transient provider availability as retryable without silently
+  skipping credentials, integrity checks, or functional verification. Require no
+  `down`, GUI input, watcher, daemon, second provisioner, or fresh launch; keep the
   unavoidable pre-SSH failure window minimal and explicit.
 - Automate the official Playwright Extension token handoff. Keep the unmodified
   Chrome Web Store extension, existing headed main-user Edge profile, and
