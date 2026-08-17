@@ -165,7 +165,7 @@ func detectHostWindowsTerminal(localAppData string) (windowsTerminalConfiguratio
 			candidate.Theme = windowsTerminalDarkTheme
 			return candidate, nil
 		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, os.ErrNotExist) {
 			return windowsTerminalConfiguration{}, fmt.Errorf("inspect host Windows Terminal %s package: %w", candidate.Edition, err)
 		}
 	}

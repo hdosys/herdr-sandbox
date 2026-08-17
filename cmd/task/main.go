@@ -138,6 +138,10 @@ func verify(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 	if err := runCommand(ctx, stdout, stderr, "go", "tool", "staticcheck", "-checks=all", "./..."); err != nil {
 		return err
 	}
+	fmt.Fprintln(stdout, "Running nilness analysis...")
+	if err := runCommand(ctx, stdout, stderr, "go", "tool", "nilness", "./..."); err != nil {
+		return err
+	}
 	fmt.Fprintln(stdout, "Checking Windows PowerShell syntax...")
 	if err := checkPowerShell(ctx, stdout, stderr); err != nil {
 		return err

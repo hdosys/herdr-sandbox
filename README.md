@@ -521,7 +521,8 @@ go run ./cmd/task native-all-stacks
 ```
 
 - `verify` is the fast local check: formatting, Go modernization, Staticcheck,
-  PowerShell parsing, focused tests, `go vet`, and the stable `build\bin` artifact.
+  nilness analysis, PowerShell parsing, focused tests, `go vet`, and the stable
+  `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the

@@ -13,4 +13,7 @@ require (
 	honnef.co/go/tools v0.7.0 // indirect
 )
 
-tool honnef.co/go/tools/cmd/staticcheck
+tool (
+	golang.org/x/tools/go/analysis/passes/nilness/cmd/nilness
+	honnef.co/go/tools/cmd/staticcheck
+)

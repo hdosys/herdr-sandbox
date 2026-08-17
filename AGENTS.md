@@ -147,10 +147,10 @@ Use repository-owned tasks and the smallest ladder covering the change:
    real interactive remote-attach check when attach behavior changed.
 
 `go run ./cmd/task verify` is the normal iteration gate covering formatting, a
-clean Go modernization diff, pinned Staticcheck with all checks enabled, one
-batched PowerShell parse, fast product tests, `go vet`, and the stable build
-artifact. It must remain within a five-minute hard deadline and should normally
-finish within three minutes. `go run ./cmd/task test-integration` and
+clean Go modernization diff, pinned Staticcheck with all checks enabled, the
+pinned Go nilness analyzer, one batched PowerShell parse, fast product tests,
+`go vet`, and the stable build artifact. It must remain within a five-minute hard
+deadline and should normally finish within three minutes. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
 the full nightly/release matrix. Do not run them while a user waits for an
 ordinary build or installer. Unit tests do not replace the native gate when the
