@@ -8,6 +8,8 @@ artifacts remain available on the
 
 ### Fixed
 
+- Host GitHub CLI credential transfer no longer performs a redundant `/user` API
+  lookup before the existing strict guest import and verification.
 - TradingView stack provisioning now uses release-pinned installer metadata,
   avoiding runtime catalog and manifest lookups before the verified download.
 

@@ -57,7 +57,6 @@ const (
 	maximumGitHubCLIAccounts                          = 32
 	maximumGitHubCLIStatusSize                        = 256 * 1024
 	maximumGitHubCLITokenSize                         = 16 * 1024
-	maximumGitHubCLILoginSize                         = 1024
 	maximumConfigurationFiles                         = 4096
 )
 
@@ -466,23 +465,9 @@ func exportGitHubCLIAuthentication(ctx context.Context, configurationDirectory s
 			if err := validateGitHubCLIAccount(account, true); err != nil {
 				return nil, 0, fmt.Errorf("validate one exported host GitHub CLI credential: %w", err)
 			}
-			tokenEnvironment := append([]string(nil), environment...)
-			tokenEnvironment = append(tokenEnvironment, "GH_TOKEN="+account.Token, "GH_ENTERPRISE_TOKEN="+account.Token)
-			loginOutput, err := runBoundedGitHubCLI(ctx, executable, tokenEnvironment, maximumGitHubCLILoginSize,
-				"api", "--hostname", account.Hostname, "/user", "--jq", ".login")
-			for index := range tokenEnvironment {
-				tokenEnvironment[index] = ""
-			}
-			if err != nil {
-				return nil, 0, fmt.Errorf("resolve canonical host GitHub CLI account login: %w", err)
-			}
-			account, err = withCanonicalGitHubCLIAccountLogin(account, loginOutput)
-			if err != nil {
-				return nil, 0, err
-			}
 			identity := strings.ToLower(account.Hostname) + "\x00" + strings.ToLower(account.Login)
 			if seenAccounts[identity] {
-				return nil, 0, errors.New("duplicate canonical host GitHub CLI account metadata")
+				return nil, 0, errors.New("duplicate host GitHub CLI account metadata")
 			}
 			seenAccounts[identity] = true
 			authentication.Accounts = append(authentication.Accounts, account)
@@ -513,14 +498,6 @@ func emptyGitHubCLIAuthenticationPayload() ([]byte, int, error) {
 		return nil, 0, fmt.Errorf("encode empty host GitHub CLI authentication: %w", err)
 	}
 	return payload, 0, nil
-}
-
-func withCanonicalGitHubCLIAccountLogin(account githubCLIAccount, output []byte) (githubCLIAccount, error) {
-	account.Login = strings.TrimSpace(string(output))
-	if err := validateGitHubCLIAccount(account, true); err != nil {
-		return githubCLIAccount{}, fmt.Errorf("validate canonical host GitHub CLI account: %w", err)
-	}
-	return account, nil
 }
 
 func githubCLICommandEnvironment(configurationDirectory string) []string {
