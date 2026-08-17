@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -314,7 +315,7 @@ func validateInspectedStacks(stacks []projectStack, role string) ([]projectStack
 		}
 		seen[stack] = true
 	}
-	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	slices.Sort(result)
 	return result, nil
 }
 
@@ -358,13 +359,13 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 			if strings.EqualFold(requirement.Tool, "rust-toolchain") {
 				workspace, found := workspaceByName[project.Name]
 				if !found {
-					return nil, fmt.Errorf("Rust project workspace is missing for project %q", project.Name)
+					return nil, fmt.Errorf("workspace for Rust project %q is missing", project.Name)
 				}
 				root := requirement.ProjectDirectory
 				if root == "$ProjectDirectory" {
 					root = workspace.HostDirectory
 				} else if root != "" && !hostPathContains(workspace.HostDirectory, root) {
-					return nil, fmt.Errorf("Rust project directory for project %q must stay within its mapped workspace: %s", project.Name, root)
+					return nil, fmt.Errorf("directory for Rust project %q must stay within its mapped workspace: %s", project.Name, root)
 				}
 				if requirement.Source == "handy" && root != "" {
 					root = filepath.Join(root, "src-tauri")
@@ -465,7 +466,7 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 		if identity == "python" && requirement.Version != "" {
 			parts := strings.Split(requirement.Version, ".")
 			if len(parts) < 3 {
-				return nil, fmt.Errorf("Python version %q from %s is invalid", requirement.Version, requirement.owner)
+				return nil, fmt.Errorf("version %q for Python from %s is invalid", requirement.Version, requirement.owner)
 			}
 			derived := parts[0] + "." + parts[1]
 			values.series[derived] = append(values.series[derived], requirement.owner)
@@ -545,7 +546,7 @@ func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
 		return "", false, nil
 	}
 	if !filepath.IsAbs(projectDirectory) {
-		return "", false, fmt.Errorf("Rust project directory must be absolute: %s", projectDirectory)
+		return "", false, fmt.Errorf("project directory for Rust must be absolute: %s", projectDirectory)
 	}
 	if _, err := os.Stat(projectDirectory); errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
@@ -553,7 +554,7 @@ func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
 		return "", false, err
 	}
 	if err := rejectMappedPathReparsePoints(projectDirectory); err != nil {
-		return "", false, fmt.Errorf("Rust project directory is unsafe: %w", err)
+		return "", false, fmt.Errorf("project directory for Rust is unsafe: %w", err)
 	}
 	path := filepath.Join(projectDirectory, "rust-toolchain.toml")
 	info, err := os.Lstat(path)
@@ -568,7 +569,7 @@ func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
 		return "", false, err
 	}
 	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64*1024 {
-		return "", false, fmt.Errorf("Rust toolchain file must be one bounded regular non-reparse file: %s", path)
+		return "", false, fmt.Errorf("toolchain file for Rust must be one bounded regular non-reparse file: %s", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -576,7 +577,7 @@ func readProjectRustToolchain(projectDirectory string) (string, bool, error) {
 	}
 	matches := regexp.MustCompile(`(?m)^\s*channel\s*=\s*"([^"]+)"\s*$`).FindAllSubmatch(data, -1)
 	if len(matches) != 1 || !regexp.MustCompile(`^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`).Match(matches[0][1]) {
-		return "", false, fmt.Errorf("Rust toolchain file must declare exactly one literal x.y.z channel: %s", path)
+		return "", false, fmt.Errorf("toolchain file for Rust must declare exactly one literal x.y.z channel: %s", path)
 	}
 	return string(matches[0][1]), true, nil
 }
@@ -639,7 +640,7 @@ func readProjectPlaywrightVersion(projectDirectory string) (string, error) {
 	if !projectToolValuePattern.MatchString(version) || !stableSemanticVersionPattern.MatchString(version) ||
 		testPackage.Dependencies["playwright"] != version || playwrightPackage.Version != version ||
 		playwrightPackage.Dependencies["playwright-core"] != version || corePackage.Version != version {
-		return "", errors.New("Playwright package-lock versions are missing or inconsistent")
+		return "", errors.New("package-lock versions for Playwright are missing or inconsistent")
 	}
 	return version, nil
 }
@@ -687,12 +688,7 @@ func validateResolvedToolVersionPlan(tools []resolvedToolVersion) error {
 
 func validateGitShellPackageRequirement(workspaces []workspacePlan, userStacks []projectStack, packages wingetPackagePlan) error {
 	requiresGitShell := func(stacks []projectStack) bool {
-		for _, stack := range stacks {
-			if stack == stackGitSH {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(stacks, stackGitSH)
 	}
 	required := requiresGitShell(userStacks)
 	for _, workspace := range workspaces {

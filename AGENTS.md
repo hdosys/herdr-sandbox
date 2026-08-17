@@ -146,7 +146,8 @@ Use repository-owned tasks and the smallest ladder covering the change:
    WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
    real interactive remote-attach check when attach behavior changed.
 
-`go run ./cmd/task verify` is the normal iteration gate covering formatting, one
+`go run ./cmd/task verify` is the normal iteration gate covering formatting, a
+clean Go modernization diff, pinned Staticcheck with all checks enabled, one
 batched PowerShell parse, fast product tests, `go vet`, and the stable build
 artifact. It must remain within a five-minute hard deadline and should normally
 finish within three minutes. `go run ./cmd/task test-integration` and

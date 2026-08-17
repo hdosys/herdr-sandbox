@@ -2790,7 +2790,7 @@ func TestDiscoverWorkspacePlansRejectsInvalidRootsChildrenAndCollisions(t *testi
 
 	t.Run("workspace limit", func(t *testing.T) {
 		root := t.TempDir()
-		for index := 0; index < 17; index++ {
+		for index := range 17 {
 			_ = createWorkspaceFixture(t, root, fmt.Sprintf("project-%02d", index))
 		}
 		_, err := discoverWorkspacePlans(&workspaceDiscoveryConfiguration{Root: root, Exclude: []string{}})

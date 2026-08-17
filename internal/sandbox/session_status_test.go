@@ -33,7 +33,7 @@ func TestEnrichSessionStatusKeepsGuestReadinessSeparateFromLatestOperation(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err = finishSessionOperation(runDirectory, operation, operationStateFailed,
+	_, err = finishSessionOperation(runDirectory, operation, operationStateFailed,
 		"failed", "The latest retained reprovision failed.")
 	if err != nil {
 		t.Fatal(err)

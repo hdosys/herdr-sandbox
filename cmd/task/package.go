@@ -286,8 +286,7 @@ func writeReleaseZIP(stageDirectory, outputPath string) (resultErr error) {
 	}()
 	modTime := time.Date(1980, time.January, 1, 0, 0, 0, 0, time.UTC)
 	for _, file := range releasePackageFiles {
-		header := &zip.FileHeader{Name: file.Name, Method: zip.Deflate}
-		header.SetModTime(modTime)
+		header := &zip.FileHeader{Name: file.Name, Method: zip.Deflate, Modified: modTime}
 		header.SetMode(file.Mode)
 		destination, err := archive.CreateHeader(header)
 		if err != nil {

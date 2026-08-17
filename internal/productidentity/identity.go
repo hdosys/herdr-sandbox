@@ -1,3 +1,4 @@
+// Package productidentity owns the shared application and build identity.
 package productidentity
 
 // Machine-facing paths use ApplicationName. Windows-facing labels and the

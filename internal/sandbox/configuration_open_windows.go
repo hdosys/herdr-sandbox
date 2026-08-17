@@ -64,5 +64,5 @@ func shellExecuteResultError(result uintptr) error {
 	if result == shellNoAssociation {
 		return errors.New("no application is registered to open .json files")
 	}
-	return fmt.Errorf("Windows Shell open failed with code %d", result)
+	return fmt.Errorf("shell open on Windows failed with code %d", result)
 }

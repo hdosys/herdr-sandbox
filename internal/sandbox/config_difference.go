@@ -83,13 +83,13 @@ func normalizeWSBAudioSelections(command string) string {
 func decodeWSBConfiguration(data []byte) (wsbConfiguration, error) {
 	var configuration wsbConfiguration
 	if len(bytes.TrimSpace(data)) == 0 {
-		return configuration, errors.New("Sandbox launch contract is empty")
+		return configuration, errors.New("launch contract for Sandbox is empty")
 	}
 	if err := xml.Unmarshal(data, &configuration); err != nil {
 		return configuration, err
 	}
 	if configuration.XMLName.Local != "Configuration" {
-		return configuration, fmt.Errorf("Sandbox launch root = %q", configuration.XMLName.Local)
+		return configuration, fmt.Errorf("launch root for Sandbox = %q", configuration.XMLName.Local)
 	}
 	return configuration, nil
 }

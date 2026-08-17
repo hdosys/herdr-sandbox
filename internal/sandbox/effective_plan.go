@@ -170,12 +170,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		})
 	}
 	for _, mount := range provisioning.Mounts {
-		plan.Mounts = append(plan.Mounts, EffectiveMount{
-			Name:           mount.Name,
-			HostDirectory:  mount.HostDirectory,
-			GuestDirectory: mount.GuestDirectory,
-			ReadOnly:       mount.ReadOnly,
-		})
+		plan.Mounts = append(plan.Mounts, EffectiveMount(mount))
 	}
 	selectedStacks := make(map[projectStack]bool)
 	for _, stack := range userStacks {

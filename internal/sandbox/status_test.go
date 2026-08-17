@@ -66,7 +66,7 @@ func TestWaitForReadyReturnsGuestFailure(t *testing.T) {
 	})
 
 	_, err := waitForReady(context.Background(), directory, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), `Sandbox phase "openssh" failed`) {
+	if err == nil || !strings.Contains(err.Error(), `phase "openssh" in Sandbox failed`) {
 		t.Fatalf("waitForReady error = %v", err)
 	}
 }

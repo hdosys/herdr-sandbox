@@ -1107,7 +1107,7 @@ func buildGuestHerdrConfigWithWorktreeDirectory(path, worktreeDirectory string) 
 		return nil, fmt.Errorf("inspect Herdr config: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
-		return nil, fmt.Errorf("Herdr config is not a bounded regular file: %s", path)
+		return nil, fmt.Errorf("config for Herdr is not a bounded regular file: %s", path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -1122,7 +1122,7 @@ func patchGuestHerdrConfig(contents []byte) ([]byte, error) {
 
 func patchGuestHerdrConfigWithWorktreeDirectory(contents []byte, worktreeDirectory string) ([]byte, error) {
 	if bytes.IndexByte(contents, 0) >= 0 {
-		return nil, errors.New("Herdr config contains a NUL byte")
+		return nil, errors.New("config for Herdr contains a NUL byte")
 	}
 	text := strings.ReplaceAll(string(contents), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
@@ -1159,7 +1159,7 @@ func rejectAmbiguousHerdrWorktreeDefinitions(lines []string) error {
 		if strings.HasPrefix(trimmed, "[") {
 			header, exact := herdrConfigHeader(trimmed)
 			if !exact && herdrConfigHeaderTargetsWorktrees(header) {
-				return errors.New("Herdr config has an ambiguous worktrees definition")
+				return errors.New("config for Herdr has an ambiguous worktrees definition")
 			}
 			if !exact {
 				inWorktreeSection = false
@@ -1169,7 +1169,7 @@ func rejectAmbiguousHerdrWorktreeDefinitions(lines []string) error {
 			atRoot = false
 			inWorktreeSection = herdrConfigSectionName(header) == "worktrees"
 			if !inWorktreeSection && herdrConfigHeaderTargetsWorktrees(header) {
-				return errors.New("Herdr config has an ambiguous worktrees definition")
+				return errors.New("config for Herdr has an ambiguous worktrees definition")
 			}
 			continue
 		}
@@ -1177,7 +1177,7 @@ func rejectAmbiguousHerdrWorktreeDefinitions(lines []string) error {
 			continue
 		}
 		if atRoot && herdrConfigAssignmentTargetsWorktrees(trimmed) {
-			return errors.New("Herdr config has an ambiguous worktrees definition")
+			return errors.New("config for Herdr has an ambiguous worktrees definition")
 		}
 	}
 	return nil
@@ -1251,7 +1251,7 @@ func upsertHerdrConfigValue(lines []string, sectionName, key, replacement string
 			}
 			if section == sectionName {
 				if sectionStart >= 0 {
-					return nil, fmt.Errorf("Herdr config contains duplicate [%s] sections", sectionName)
+					return nil, fmt.Errorf("config for Herdr contains duplicate [%s] sections", sectionName)
 				}
 				sectionStart = index
 				sectionEnd = len(lines)
@@ -1264,7 +1264,7 @@ func upsertHerdrConfigValue(lines []string, sectionName, key, replacement string
 			if strings.HasPrefix(withoutLeadingSpace, key) {
 				separator := strings.Index(withoutLeadingSpace, "=")
 				if separator < 0 || strings.TrimSpace(withoutLeadingSpace[:separator]) != key || keyLine >= 0 {
-					return nil, fmt.Errorf("Herdr config has an ambiguous %s.%s", sectionName, key)
+					return nil, fmt.Errorf("config for Herdr has an ambiguous %s.%s", sectionName, key)
 				}
 				keyLine = index
 			}
@@ -1292,7 +1292,7 @@ func buildGuestWindowsTerminalSettings(path, startingDirectory string) ([]byte, 
 		return nil, fmt.Errorf("inspect Windows Terminal settings: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
-		return nil, fmt.Errorf("Windows Terminal settings are not a bounded regular file: %s", path)
+		return nil, fmt.Errorf("settings for Windows Terminal are not a bounded regular file: %s", path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -1335,16 +1335,16 @@ func patchGuestWindowsTerminalSettings(contents []byte, startingDirectory string
 	}
 	list, ok := listValue.([]any)
 	if !ok {
-		return nil, errors.New("Windows Terminal profiles.list is not an array")
+		return nil, errors.New("profiles.list in Windows Terminal is not an array")
 	}
 	powerShellFound := false
 	for index, value := range list {
 		profile, ok := value.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("Windows Terminal profile %d is not an object", index)
+			return nil, fmt.Errorf("profile %d in Windows Terminal is not an object", index)
 		}
 		if err := patchGuestTerminalFont(profile); err != nil {
-			return nil, fmt.Errorf("Windows Terminal profile %d: %w", index, err)
+			return nil, fmt.Errorf("profile %d in Windows Terminal: %w", index, err)
 		}
 		profile["startingDirectory"] = startingDirectory
 		guid, _ := profile["guid"].(string)
@@ -1380,7 +1380,7 @@ func terminalSettingsObject(parent map[string]any, name string) (map[string]any,
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("Windows Terminal %s is not an object", name)
+		return nil, fmt.Errorf("%s in Windows Terminal is not an object", name)
 	}
 	return object, nil
 }

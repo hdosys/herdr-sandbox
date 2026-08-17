@@ -75,7 +75,7 @@ func TestWithSandboxProcessExitCancelsProvisioning(t *testing.T) {
 		t.Fatal("Sandbox process exit did not cancel provisioning")
 	}
 	stop()
-	if cause := context.Cause(ctx); cause == nil || !strings.Contains(cause.Error(), "Windows Sandbox exited before provisioning completed: launcher fixture") {
+	if cause := context.Cause(ctx); cause == nil || !strings.Contains(cause.Error(), "provisioning did not complete before Windows Sandbox exited: launcher fixture") {
 		t.Fatalf("process exit cause = %v", cause)
 	}
 }

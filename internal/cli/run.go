@@ -1,3 +1,4 @@
+// Package cli implements the Herdr Sandbox command-line interface.
 package cli
 
 import (

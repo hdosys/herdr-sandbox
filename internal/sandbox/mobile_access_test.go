@@ -159,7 +159,7 @@ func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
 		}
 	}
 	quietWidth := 2 * mobileSSHQRQuietZone
-	for index := 0; index < mobileSSHQRQuietZone; index++ {
+	for index := range mobileSSHQRQuietZone {
 		if strings.TrimSpace(lines[index]) != "" || strings.TrimSpace(lines[len(lines)-1-index]) != "" {
 			t.Fatalf("QR quiet row %d is not white", index)
 		}
@@ -171,8 +171,8 @@ func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
 	}
 	// Every QR code begins with a 7x7 finder whose outer ring is black.
 	origin := mobileSSHQRQuietZone
-	for y := 0; y < 7; y++ {
-		for x := 0; x < 7; x++ {
+	for y := range 7 {
+		for x := range 7 {
 			outer := x == 0 || x == 6 || y == 0 || y == 6
 			center := x >= 2 && x <= 4 && y >= 2 && y <= 4
 			module := lines[origin+y][2*(origin+x) : 2*(origin+x+1)]

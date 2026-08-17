@@ -1,3 +1,4 @@
+// Package sandbox owns Herdr Sandbox configuration, lifecycle, and guest integration.
 package sandbox
 
 import (
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,7 +28,7 @@ const (
 	sshTargetName               = "sandbox"
 )
 
-var errSandboxExitedBeforeProvisioning = errors.New("Windows Sandbox exited before provisioning completed")
+var errSandboxExitedBeforeProvisioning = errors.New("provisioning did not complete before Windows Sandbox exited")
 
 //go:embed assets/bootstrap.ps1
 var bootstrapScript []byte
@@ -105,16 +107,16 @@ func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Co
 
 func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Connection, resultErr error) {
 	if runtime.GOOS != "windows" {
-		return Connection{}, errors.New("Windows Sandbox is available only on Windows")
+		return Connection{}, errors.New("this command requires Windows Sandbox on Windows")
 	}
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
 	if options.MemoryMB != 0 && options.MemoryMB < 2048 {
-		return Connection{}, fmt.Errorf("Sandbox memory must be at least 2048 MB, got %d", options.MemoryMB)
+		return Connection{}, fmt.Errorf("memory for Sandbox must be at least 2048 MB, got %d", options.MemoryMB)
 	}
 	if options.Timeout < 0 {
-		return Connection{}, errors.New("Sandbox timeout must be positive when set")
+		return Connection{}, errors.New("timeout for Sandbox must be positive when set")
 	}
 	if err := hostHerdr.validate(); err != nil {
 		return Connection{}, fmt.Errorf("validate compatible host Herdr: %w", err)
@@ -843,17 +845,8 @@ func applyWorkspaceRequirements(plan *runPlan) {
 	}
 }
 
-func workspaceHasStack(workspace workspacePlan, expected projectStack) bool {
-	return stacksContain(workspace.Stacks, expected)
-}
-
 func stacksContain(stacks []projectStack, expected projectStack) bool {
-	for _, stack := range stacks {
-		if stack == expected {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(stacks, expected)
 }
 
 func stacksRequireVisualStudioLayout(stacks []projectStack) bool {
@@ -878,7 +871,7 @@ func windowsSandboxExecutable() (string, error) {
 		return "", fmt.Errorf("inspect Windows Sandbox executable: %w", err)
 	}
 	if !exists {
-		return "", errors.New("Windows Sandbox is unavailable; enable Containers-DisposableClientVM and reboot")
+		return "", errors.New("required Windows Sandbox is unavailable; enable Containers-DisposableClientVM and reboot")
 	}
 	return path, nil
 }

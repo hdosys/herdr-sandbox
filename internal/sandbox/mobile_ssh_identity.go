@@ -135,7 +135,7 @@ func (identity mobileSSHIdentity) validate() error {
 		return errors.New("privateKey body is empty")
 	}
 	body = bytes.TrimSuffix(body, []byte{'\n'})
-	for _, line := range bytes.Split(body, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(body, []byte{'\n'}) {
 		if len(line) == 0 || len(line) > 128 || strings.Trim(string(line), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") != "" {
 			return errors.New("privateKey body is not canonical base64 text")
 		}

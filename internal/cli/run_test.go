@@ -47,7 +47,7 @@ func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.
 	trailing := "all|handy|herdr|python-ai"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
-			for _, line := range strings.Split(text, "\n") {
+			for line := range strings.SplitSeq(text, "\n") {
 				if strings.HasPrefix(strings.TrimSpace(line), "sandbox init ") {
 					text = line
 					break
@@ -55,7 +55,7 @@ func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.
 			}
 		}
 		previous := -1
-		for _, stack := range strings.Split(standalone+"|"+trailing, "|") {
+		for stack := range strings.SplitSeq(standalone+"|"+trailing, "|") {
 			index := strings.Index(text, stack)
 			if index <= previous {
 				t.Fatalf("%s stack order is invalid at %q: %q", name, stack, text)

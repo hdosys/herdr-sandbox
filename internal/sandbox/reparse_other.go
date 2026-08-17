@@ -23,7 +23,3 @@ func mappedDirectoryPhysicalIdentity(path string) (string, error) {
 	}
 	return strings.ToLower(filepath.Clean(resolved)), nil
 }
-
-func resolvedDirectoryPath(path string) (string, error) {
-	return filepath.EvalSymlinks(path)
-}

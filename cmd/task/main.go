@@ -36,7 +36,7 @@ Tasks:
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the validated installable ZIP and NSIS candidate artifacts
-  verify           verify format, syntax, tests, vet, and the stable build
+  verify           verify format, modernization, analysis, tests, and the stable build
   verify-integration run the full nightly/release verification
 `, productidentity.ExecutableName)
 
@@ -130,6 +130,14 @@ func verify(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 	if err := checkGoFormat(ctx, stderr); err != nil {
 		return err
 	}
+	fmt.Fprintln(stdout, "Checking Go modernization...")
+	if err := runCommand(ctx, stdout, stderr, "go", "fix", "-diff", "./..."); err != nil {
+		return fmt.Errorf("source has pending Go modernization fixes; run `go fix ./...` and resolve any reported conflicts: %w", err)
+	}
+	fmt.Fprintln(stdout, "Running Staticcheck...")
+	if err := runCommand(ctx, stdout, stderr, "go", "tool", "staticcheck", "-checks=all", "./..."); err != nil {
+		return err
+	}
 	fmt.Fprintln(stdout, "Checking Windows PowerShell syntax...")
 	if err := checkPowerShell(ctx, stdout, stderr); err != nil {
 		return err
@@ -214,7 +222,7 @@ func checkGoFormat(ctx context.Context, stderr io.Writer) error {
 		return fmt.Errorf("check Go formatting: %w", err)
 	}
 	if unformatted := strings.TrimSpace(output.String()); unformatted != "" {
-		return fmt.Errorf("Go files need formatting:\n%s", unformatted)
+		return fmt.Errorf("files need Go formatting:\n%s", unformatted)
 	}
 	return nil
 }
@@ -315,7 +323,7 @@ func normalizeSourceRevision(value string) (string, error) {
 	revision := strings.TrimSpace(value)
 	decoded, err := hex.DecodeString(revision)
 	if err != nil || len(decoded) != 20 {
-		return "", fmt.Errorf("Git HEAD is not one full SHA-1 revision: %q", revision)
+		return "", fmt.Errorf("source revision is not one full SHA-1 Git commit ID: %q", revision)
 	}
 	return strings.ToLower(revision), nil
 }

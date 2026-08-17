@@ -495,13 +495,13 @@ func (status explorerRestartStatus) validate() error {
 	if status.SchemaVersion != explorerRestartStatusSchema || status.SessionID <= 0 ||
 		strings.TrimSpace(status.RestartID) != status.RestartID || status.RestartID == "" || len(status.RestartID) > 128 ||
 		status.TaskName != "HerdrSandbox-ExplorerRestart-"+status.RestartID {
-		return errors.New("Explorer restart status schema or session is invalid")
+		return errors.New("restart status for Explorer has an invalid schema or session")
 	}
 	validatePIDs := func(name string, values []int) error {
 		seen := make(map[int]bool, len(values))
 		for _, value := range values {
 			if value <= 0 || seen[value] {
-				return fmt.Errorf("Explorer restart status %s PIDs are invalid", name)
+				return fmt.Errorf("restart status for Explorer has invalid %s PIDs", name)
 			}
 			seen[value] = true
 		}
@@ -528,7 +528,7 @@ func (status explorerRestartStatus) validate() error {
 		}
 		for _, value := range status.StartedPIDs {
 			if stopped[value] {
-				return errors.New("Explorer restart status reused one stopped PID")
+				return errors.New("restart status for Explorer reused one stopped PID")
 			}
 		}
 	case explorerRestartStatusFailed:
@@ -536,7 +536,7 @@ func (status explorerRestartStatus) validate() error {
 			return errors.New("failed Explorer restart status message is invalid")
 		}
 	default:
-		return fmt.Errorf("Explorer restart status state is invalid: %q", status.State)
+		return fmt.Errorf("restart status for Explorer has invalid state %q", status.State)
 	}
 	return nil
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -200,7 +200,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 	if seen[stackHerdrPreset] && seen[stackPythonAIPreset] {
 		return nil, nil, fmt.Errorf("stacks %q and %q both include stack %q", stackHerdrPreset, stackPythonAIPreset, stackPython)
 	}
-	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	slices.Sort(result)
 	labels := make([]string, len(result))
 	for index, stack := range result {
 		label := string(stack)

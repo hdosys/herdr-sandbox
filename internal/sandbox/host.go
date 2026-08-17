@@ -97,7 +97,7 @@ func ensureNoRunningSandbox(ctx context.Context) error {
 	for _, process := range processes {
 		descriptions = append(descriptions, fmt.Sprintf("%s:%d", process.Name, process.PID))
 	}
-	return fmt.Errorf("Windows Sandbox is already running (%s); close it before starting a new session", strings.Join(descriptions, ", "))
+	return fmt.Errorf("an instance of Windows Sandbox is already running (%s); close it before starting a new session", strings.Join(descriptions, ", "))
 }
 
 type runningSandboxProcess struct {
@@ -163,7 +163,7 @@ func windowsPowerShellExecutable() (string, error) {
 	if exists, err := regularFileExists(path); err != nil {
 		return "", err
 	} else if !exists {
-		return "", fmt.Errorf("Windows PowerShell 5.1 is unavailable: %s", path)
+		return "", fmt.Errorf("PowerShell 5.1 for Windows is unavailable: %s", path)
 	}
 	return path, nil
 }

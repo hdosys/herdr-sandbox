@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,12 +172,8 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 	}
 
 	effective := make(map[string]string, len(defaults)+len(additions))
-	for identity, id := range defaults {
-		effective[identity] = id
-	}
-	for identity, id := range additions {
-		effective[identity] = id
-	}
+	maps.Copy(effective, defaults)
+	maps.Copy(effective, additions)
 	versions := map[string]string{}
 	seenVersions := map[string]bool{}
 	for id, version := range configuration.Versions {

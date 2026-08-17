@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -122,13 +123,7 @@ func updateHostConfigurationGitRepository(ctx context.Context, directory string)
 	}
 	remoteRef := string(upstreamFields[1])
 	upstreamRemote := string(upstreamFields[0])
-	remoteConfigured := false
-	for _, remote := range configuredRemotes {
-		if remote == upstreamRemote {
-			remoteConfigured = true
-			break
-		}
-	}
+	remoteConfigured := slices.Contains(configuredRemotes, upstreamRemote)
 	if !remoteConfigured {
 		return false, fmt.Errorf("host configuration upstream does not use a configured remote: %q", upstreamRemote)
 	}
@@ -214,7 +209,7 @@ func findAgentGitExecutable() (string, error) {
 		gitExecutable, err = exec.LookPath("git")
 	}
 	if err != nil {
-		return "", errors.New("Git is required to inspect or update an agent configuration repository")
+		return "", errors.New("git is required to inspect or update an agent configuration repository")
 	}
 	return gitExecutable, nil
 }
@@ -248,7 +243,7 @@ func listAgentGitTrackedFiles(ctx context.Context, gitExecutable, directory stri
 		}
 		separator := bytes.IndexByte(record, '\t')
 		if separator < 0 || !utf8.Valid(record[separator+1:]) {
-			return nil, errors.New("Git returned an invalid tracked agent configuration entry")
+			return nil, errors.New("git returned an invalid tracked agent configuration entry")
 		}
 		fields := bytes.Fields(record[:separator])
 		if len(fields) != 3 || string(fields[2]) != "0" {
@@ -290,13 +285,11 @@ func cleanAgentGitRelativePath(value string) (string, error) {
 
 func blockedAgentGitTrackedPath(archiveRoot, relative string) string {
 	normalized := strings.ToLower(filepath.ToSlash(relative))
-	for _, exact := range []string{
+	if slices.Contains([]string{
 		".claude.json", ".credentials.json", ".env", ".env.local", "auth.json",
 		"credentials.json", "history.json", "history.jsonl", "secrets.json",
-	} {
-		if normalized == exact {
-			return "credential or runtime file"
-		}
+	}, normalized) {
+		return "credential or runtime file"
 	}
 	for _, prefix := range []string{"cache", "caches", "log", "logs", "projects", "session-state", "sessions", "temp", "tmp"} {
 		if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") {
@@ -309,10 +302,8 @@ func blockedAgentGitTrackedPath(archiveRoot, relative string) string {
 	if archiveRoot == "codex" && (normalized == "skills/.system" || strings.HasPrefix(normalized, "skills/.system/")) {
 		return "generated system skill"
 	}
-	for _, component := range strings.Split(normalized, "/") {
-		if component == "node_modules" {
-			return "generated package state"
-		}
+	if slices.Contains(strings.Split(normalized, "/"), "node_modules") {
+		return "generated package state"
 	}
 	name := filepath.Base(normalized)
 	for _, suffix := range []string{".key", ".log", ".p12", ".pem", ".pfx"} {

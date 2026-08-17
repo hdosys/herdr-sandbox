@@ -98,7 +98,7 @@ func waitForGuestStatus[T any](
 			if err := failure.validate(); err != nil {
 				return zero, fmt.Errorf("validate Sandbox failure status: %w", err)
 			}
-			return zero, fmt.Errorf("Sandbox phase %q failed: %s", failure.Phase, failure.Message)
+			return zero, fmt.Errorf("phase %q in Sandbox failed: %s", failure.Phase, failure.Message)
 		}
 
 		if target, ok, err := readOptionalStatus[T](filepath.Join(statusDirectory, targetFileName)); err != nil {

@@ -332,7 +332,7 @@ func TestInspectProjectProvisioningPlanRejectsInvalidProjectPlaywrightLock(t *te
 	writeTestFile(t, profile, "Install-NodeStack -PlaywrightVersion $projectPlaywrightVersion\n")
 	_, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
 		[]workspacePlan{{Name: "jobs", HostDirectory: projectDirectory, ProvisioningPath: profile}})
-	if err == nil || !strings.Contains(err.Error(), "Playwright package-lock versions are missing or inconsistent") {
+	if err == nil || !strings.Contains(err.Error(), "package-lock versions for Playwright are missing or inconsistent") {
 		t.Fatalf("invalid Playwright package lock error = %v", err)
 	}
 }
@@ -345,7 +345,7 @@ func TestReadProjectPlaywrightVersionRejectsPrerelease(t *testing.T) {
 	}
 	writeTestFile(t, filepath.Join(frontendDirectory, "package-lock.json"), playwrightPackageLock("1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1", "1.62.0-beta.1"))
 	_, err := readProjectPlaywrightVersion(projectDirectory)
-	if err == nil || !strings.Contains(err.Error(), "Playwright package-lock versions are missing or inconsistent") {
+	if err == nil || !strings.Contains(err.Error(), "package-lock versions for Playwright are missing or inconsistent") {
 		t.Fatalf("prerelease Playwright package lock error = %v", err)
 	}
 }

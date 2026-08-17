@@ -1,3 +1,4 @@
+// Package hiddenprocess launches bounded process trees without visible console windows.
 package hiddenprocess
 
 import (

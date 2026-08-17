@@ -37,7 +37,7 @@ func prepareVisualStudioLayout(ctx context.Context, plan runPlan, output io.Writ
 		return nil
 	}
 	if !filepath.IsAbs(plan.CacheDirectory) || !filepath.IsAbs(plan.RunDirectory) {
-		return fmt.Errorf("Visual Studio layout preparation requires absolute run and cache directories")
+		return fmt.Errorf("layout preparation for Visual Studio requires absolute run and cache directories")
 	}
 	powerShell, err := windowsPowerShellExecutable()
 	if err != nil {

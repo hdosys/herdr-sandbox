@@ -339,7 +339,7 @@ func verifySSH(ctx context.Context, connection Connection) error {
 		return fmt.Errorf("verify host-to-Sandbox SSH: %w: %s", err, boundedText(output))
 	}
 	found := false
-	for _, line := range strings.Split(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.ReplaceAll(string(output), "\r\n", "\n"), "\n") {
 		if strings.TrimSpace(line) == "SANDBOX_SSH_READY" {
 			found = true
 			break

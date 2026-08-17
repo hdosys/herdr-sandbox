@@ -681,8 +681,6 @@ func removeManagedSSHInclude(existing, managedPath string) (string, bool, error)
 		return "", false, errors.New("managed Sandbox SSH include end line is malformed")
 	}
 	remaining = remaining[len(lineEnding):]
-	if strings.HasPrefix(remaining, lineEnding) {
-		remaining = remaining[len(lineEnding):]
-	}
+	remaining = strings.TrimPrefix(remaining, lineEnding)
 	return remaining, true, nil
 }

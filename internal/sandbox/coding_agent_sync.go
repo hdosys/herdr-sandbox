@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -362,9 +363,7 @@ func archiveOptionalConfigurationTree(directory, archiveRoot string, excludedDir
 		return err
 	}
 	excluded := make(map[string]bool, len(excludedDirectoryNames)+2)
-	for name, value := range excludedDirectoryNames {
-		excluded[name] = value
-	}
+	maps.Copy(excluded, excludedDirectoryNames)
 	excluded["node_modules"] = true
 	excluded[".git"] = true
 	return addConfigurationTree(directory, archiveRoot, excluded, add)
@@ -404,7 +403,7 @@ func buildClaudeCodeUserState(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("inspect Claude Code user state: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() > maximumConfigurationFileSize {
-		return nil, false, fmt.Errorf("Claude Code user state is not a bounded regular file: %s", path)
+		return nil, false, fmt.Errorf("user state for Claude Code is not a bounded regular file: %s", path)
 	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -427,7 +426,7 @@ func buildClaudeCodeUserState(path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	if _, ok := mcpServers.(map[string]any); !ok {
-		return nil, false, errors.New("Claude Code user MCP configuration is not an object")
+		return nil, false, errors.New("user MCP configuration for Claude Code is not an object")
 	}
 	portable, err := json.MarshalIndent(map[string]any{"mcpServers": mcpServers}, "", "  ")
 	if err != nil {

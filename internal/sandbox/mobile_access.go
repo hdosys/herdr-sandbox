@@ -246,7 +246,7 @@ func mobileTailscaleDNSName(identity tailscaleIdentity) (string, error) {
 	if len(dnsName) == 0 || len(dnsName) > 253 || !strings.HasPrefix(dnsName, tailscaleHostName+".") || !strings.HasSuffix(dnsName, ".ts.net") {
 		return "", errors.New("mobile SSH access requires the stable herdr-sandbox MagicDNS name")
 	}
-	for _, label := range strings.Split(dnsName, ".") {
+	for label := range strings.SplitSeq(dnsName, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return "", errors.New("mobile SSH access MagicDNS name is invalid")
 		}

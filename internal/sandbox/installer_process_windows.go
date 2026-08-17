@@ -201,10 +201,10 @@ func closeInstallerProcessHandle(role string, handle syscall.Handle) error {
 
 func installerProcessCallError(callErr error) error {
 	if errno, ok := callErr.(syscall.Errno); ok && errno == 0 {
-		return errors.New("Windows process operation failed without an error code")
+		return errors.New("process operation on Windows failed without an error code")
 	}
 	if callErr == nil {
-		return errors.New("Windows process operation failed without an error code")
+		return errors.New("process operation on Windows failed without an error code")
 	}
 	return callErr
 }

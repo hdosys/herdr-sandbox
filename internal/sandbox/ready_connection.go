@@ -61,7 +61,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 		return Connection{}, err
 	}
 	if status.State != SessionReady {
-		return Connection{}, fmt.Errorf("Sandbox state is %s, not ready; run `sandbox status`", status.State)
+		return Connection{}, fmt.Errorf("state of Sandbox is %s, not ready; run `sandbox status`", status.State)
 	}
 	runDirectory := filepath.Join(dataDirectory, "runs", active.RunID)
 	readyPath := filepath.Join(runDirectory, "status", readyFileName)
@@ -132,15 +132,15 @@ func (connection Connection) validate() error {
 		"guest Herdr executable": connection.guestHerdrPath,
 	} {
 		if !filepath.IsAbs(path) {
-			return fmt.Errorf("Herdr connection %s is not absolute: %q", role, path)
+			return fmt.Errorf("connection for Herdr has non-absolute %s: %q", role, path)
 		}
 	}
 	if connection.SSHTarget != sshTargetName || connection.GuestIP == "" || connection.WinGetVersion == "" ||
 		connection.HerdrVersion == "" || connection.herdrRuntimeVersion == "" || connection.HerdrProtocol < 1 {
-		return errors.New("Herdr connection identity is incomplete")
+		return errors.New("connection identity for Herdr is incomplete")
 	}
 	if err := validateGuestHerdrBinary(connection.guestHerdrPath); err != nil {
-		return fmt.Errorf("Herdr connection guest executable is invalid: %w", err)
+		return fmt.Errorf("guest executable in Herdr connection is invalid: %w", err)
 	}
 	return nil
 }

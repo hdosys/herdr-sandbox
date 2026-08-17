@@ -79,10 +79,10 @@ func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDir
 		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
 	}
 	if !filepath.IsAbs(inputDirectory) {
-		return nil, errors.New("Sandbox input directory must be absolute")
+		return nil, errors.New("input directory for Sandbox must be absolute")
 	}
 	if !filepath.IsAbs(statusDirectory) {
-		return nil, errors.New("Sandbox status directory must be absolute")
+		return nil, errors.New("status directory for Sandbox must be absolute")
 	}
 	if !filepath.IsAbs(cacheDirectory) {
 		return nil, errors.New("herdr-sandbox cache directory must be absolute")
@@ -102,12 +102,12 @@ func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDir
 	for left := range hostMappings {
 		for right := left + 1; right < len(hostMappings); right++ {
 			if hostPathsOverlap(hostMappings[left], hostMappings[right]) {
-				return nil, errors.New("Sandbox input, status, cache, and worktree directories must not overlap")
+				return nil, errors.New("input, status, cache, and worktree directories for Sandbox must not overlap")
 			}
 		}
 	}
 	if memoryMB < 2048 {
-		return nil, fmt.Errorf("Sandbox memory must be at least 2048 MB, got %d", memoryMB)
+		return nil, fmt.Errorf("memory for Sandbox must be at least 2048 MB, got %d", memoryMB)
 	}
 
 	mappings := []wsbMappedFolder{{HostFolder: cleanInput, SandboxFolder: guestInputDirectory, ReadOnly: true}}

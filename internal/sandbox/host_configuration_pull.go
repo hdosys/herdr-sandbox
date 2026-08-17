@@ -26,11 +26,11 @@ type hostConfigurationPullState struct {
 }
 
 func PullHostConfiguration(ctx context.Context) (HostConfigurationPullResult, error) {
-	configuration, path, err := loadDefaultGlobalConfiguration()
+	_, path, err := loadDefaultGlobalConfiguration()
 	if err != nil {
 		return HostConfigurationPullResult{}, err
 	}
-	return pullSelectedHostConfiguration(ctx, configuration, path, nil)
+	return pullSelectedHostConfiguration(ctx, path, nil)
 }
 
 func PullHostConfigurationOnUp(ctx context.Context) (HostConfigurationPullResult, error) {
@@ -41,7 +41,7 @@ func PullHostConfigurationOnUp(ctx context.Context) (HostConfigurationPullResult
 	if !configuration.ConfigurationSync.PullHostGitRepositoriesOnUp {
 		return HostConfigurationPullResult{}, nil
 	}
-	return pullSelectedHostConfiguration(ctx, configuration, path, func(current globalConfiguration) bool {
+	return pullSelectedHostConfiguration(ctx, path, func(current globalConfiguration) bool {
 		return current.ConfigurationSync.PullHostGitRepositoriesOnUp
 	})
 }
@@ -54,12 +54,12 @@ func PullHostConfigurationOnDown(ctx context.Context) (HostConfigurationPullResu
 	if !configuration.ConfigurationSync.PullHostGitRepositoriesOnDown {
 		return HostConfigurationPullResult{}, nil
 	}
-	return pullSelectedHostConfiguration(ctx, configuration, path, func(current globalConfiguration) bool {
+	return pullSelectedHostConfiguration(ctx, path, func(current globalConfiguration) bool {
 		return current.ConfigurationSync.PullHostGitRepositoriesOnDown
 	})
 }
 
-func pullSelectedHostConfiguration(ctx context.Context, configuration globalConfiguration, configurationPath string, continueAfterReload func(globalConfiguration) bool) (HostConfigurationPullResult, error) {
+func pullSelectedHostConfiguration(ctx context.Context, configurationPath string, continueAfterReload func(globalConfiguration) bool) (HostConfigurationPullResult, error) {
 	state := &hostConfigurationPullState{Result: HostConfigurationPullResult{Pulled: []string{}, Skipped: []string{}}}
 	err := pullHostConfigurationGitRootsInto(ctx, []hostConfigurationGitRoot{{
 		Name:      "Herdr Sandbox configuration",
@@ -68,7 +68,7 @@ func pullSelectedHostConfiguration(ctx context.Context, configuration globalConf
 	if err != nil {
 		return state.Result, err
 	}
-	configuration, err = loadGlobalConfiguration(configurationPath)
+	configuration, err := loadGlobalConfiguration(configurationPath)
 	if err != nil {
 		return state.Result, fmt.Errorf("reload Herdr Sandbox configuration after host Git pull: %w", err)
 	}
@@ -103,10 +103,6 @@ func defaultHostConfigurationSourcesForPull(configuration globalConfiguration) (
 		return hostConfigurationSources{}, err
 	}
 	return defaultHostConfigurationSources(terminal, packages, configuration.CodingAgentSync, false)
-}
-
-func pullHostConfigurationSources(ctx context.Context, sources hostConfigurationSources) (HostConfigurationPullResult, error) {
-	return pullHostConfigurationGitRoots(ctx, hostConfigurationGitRoots(sources))
 }
 
 func hostConfigurationGitRoots(sources hostConfigurationSources) []hostConfigurationGitRoot {

@@ -24,7 +24,7 @@ const (
 	maximumTailscaleCaptureResultBytes      = maximumTailscaleIdentityBytes
 )
 
-var errTailscaleIdentityNotEstablished = errors.New("Tailscale enrollment did not establish a tagged running identity")
+var errTailscaleIdentityNotEstablished = errors.New("enrollment through Tailscale did not establish a tagged running identity")
 
 type tailscaleBootstrap struct {
 	Enabled  bool
@@ -167,14 +167,14 @@ func captureAndStoreTailscaleAgainst(ctx context.Context, connection Connection,
 
 func applyAndCaptureTailscale(ctx context.Context, connection Connection, request tailscaleApplyRequest) (tailscaleIdentity, error) {
 	if request.SchemaVersion != tailscaleApplySchemaVersion || (request.Mode != tailscaleApplyModeEnroll && request.Mode != tailscaleApplyModeRestore) {
-		return tailscaleIdentity{}, errors.New("Tailscale apply request is invalid")
+		return tailscaleIdentity{}, errors.New("apply request for Tailscale is invalid")
 	}
 	if request.Mode == tailscaleApplyModeEnroll {
 		if len(request.AuthKey) == 0 || len(request.AuthKey) > maximumTailscaleAuthKeyBytes || len(request.State) != 0 || request.WindowsUserSID != "" {
-			return tailscaleIdentity{}, errors.New("Tailscale enrollment request is invalid")
+			return tailscaleIdentity{}, errors.New("enrollment request for Tailscale is invalid")
 		}
 	} else if len(request.State) == 0 || len(request.State) > maximumTailscaleStateBytes || len(request.AuthKey) != 0 || !windowsSIDPattern.MatchString(request.WindowsUserSID) {
-		return tailscaleIdentity{}, errors.New("Tailscale restoration request is invalid")
+		return tailscaleIdentity{}, errors.New("restoration request for Tailscale is invalid")
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -235,7 +235,7 @@ func restartTailscaleAfterFailedDown(connection Connection) error {
 func decodeTailscaleStateCaptureResult(data []byte) (tailscaleStateCapture, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || len(trimmed) > maximumTailscaleCaptureResultBytes {
-		return tailscaleStateCapture{}, errors.New("Tailscale state capture result size is invalid")
+		return tailscaleStateCapture{}, errors.New("state capture result from Tailscale has invalid size")
 	}
 	if err := validateExactJSONObjectShape(trimmed, "Tailscale state capture result", []string{"windowsUserSID", "state"}); err != nil {
 		return tailscaleStateCapture{}, fmt.Errorf("decode Tailscale state capture result: %w", err)
@@ -255,7 +255,7 @@ func decodeTailscaleStateCaptureResult(data []byte) (tailscaleStateCapture, erro
 func decodeTailscaleIdentityResult(data []byte) (tailscaleIdentity, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || len(trimmed) > maximumTailscaleCaptureResultBytes {
-		return tailscaleIdentity{}, errors.New("Tailscale identity result size is invalid")
+		return tailscaleIdentity{}, errors.New("identity result from Tailscale has invalid size")
 	}
 	if err := validateExactJSONObjectShape(trimmed, "Tailscale identity result", []string{
 		"schemaVersion", "windowsUserSID", "nodeID", "nodeKey", "ipv4", "dnsName", "hostName", "tailscaleVersion", "tags", "state",
