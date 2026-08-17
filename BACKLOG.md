@@ -19,11 +19,15 @@ Open, planned, blocked, or deferred product features and fixes only. User-visibl
   guest-side recheck where the mapped file affects the immutable plan. Errors must
   name the workspace, host path, owner, and correction.
 - Move the verified SSH connection to the earliest practical guest bootstrap
-  boundary, then run the existing idempotent Base and development provisioning
-  through that channel for both fresh and retained runs. A failure after SSH must
-  be retryable in the same live Sandbox without `down`, GUI input, a watcher or
-  daemon, a second provisioner, or a fresh launch; keep the unavoidable pre-SSH
-  failure window minimal and explicit.
+  boundary, then run Base, development provisioning, configuration sync, and
+  their external package/API operations as host-managed idempotent phases for
+  both fresh and retained runs. Every post-SSH failure must preserve the same
+  live connectable Sandbox, exact failed phase, and bounded diagnostic; a later
+  `up` retries or resumes only unfinished work from the last verified boundary.
+  Treat transient provider availability as retryable without silently skipping
+  credentials, integrity checks, or functional verification. Require no `down`,
+  GUI input, watcher, daemon, second provisioner, or fresh launch; keep the
+  unavoidable pre-SSH failure window minimal and explicit.
 - Automate the official Playwright Extension token handoff. Keep the unmodified
   Chrome Web Store extension, existing headed main-user Edge profile, and
   `playwright-cli.cmd -s=edge-main attach --extension=msedge` contract; extract
