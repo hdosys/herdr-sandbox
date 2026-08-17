@@ -6,6 +6,11 @@ artifacts remain available on the
 
 ## Unreleased
 
+### Fixed
+
+- TradingView stack provisioning now resolves installer metadata in one request,
+  avoiding repeat failures from a redundant external manifest lookup.
+
 ## v0.0.15
 
 ### Added

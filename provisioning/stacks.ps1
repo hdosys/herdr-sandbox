@@ -2205,74 +2205,22 @@ function Get-TradingViewDesktopPortableMetadata {
 
     $packageID = 'TradingView.TradingViewDesktop'
     $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
-    $resolvedVersion = $Version
-    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
-        $packageMatches = @(Search-ProvisioningWinGetPackages -Role 'TradingView Desktop' `
-            -IdQuery $packageID -Exact)
-        if ($packageMatches.Count -ne 1 -or [string]$packageMatches[0].Id -cne $packageID -or
-            [string]$packageMatches[0].Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-            throw "TradingView Desktop latest WinGet version did not resolve one exact package $packageID."
-        }
-        $resolvedVersion = [string]$packageMatches[0].Version
-    }
-    $null = Get-ProvisioningToolVersion -Tool $packageID -Requested $resolvedVersion
-
-    $manifestName = 'TradingView.TradingViewDesktop.installer.yaml'
-    $manifestURL = 'https://raw.githubusercontent.com/microsoft/winget-pkgs/master/' +
-        "manifests/t/TradingView/TradingViewDesktop/$resolvedVersion/$manifestName"
-    $manifestResponse = Invoke-WebRequest -Uri $manifestURL -UseBasicParsing
-    $manifestContent = [string]$manifestResponse.Content
-    if ([int]$manifestResponse.StatusCode -ne 200 -or $manifestContent.Length -le 0 -or
-        $manifestContent.Length -gt 65536) {
-        throw "TradingView Desktop WinGet manifest response is invalid: $manifestURL"
-    }
-    $lines = @($manifestContent -split '\r?\n')
-    $manifestID = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageIdentifier' `
-        -Pattern '^PackageIdentifier:\s*([A-Za-z0-9._-]+)\s*$'
-    $manifestVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
-        -Pattern '^PackageVersion:\s*(\d+\.\d+\.\d+\.\d+)\s*$'
-    $packageFamilyName = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageFamilyName' `
-        -Pattern '^PackageFamilyName:\s*([A-Za-z0-9._-]+)\s*$'
-    $minimumOSVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'MinimumOSVersion' `
-        -Pattern '^MinimumOSVersion:\s*(\d+\.\d+\.\d+\.\d+)\s*$'
-    $installerType = Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerType' `
-        -Pattern '^InstallerType:\s*([A-Za-z0-9]+)\s*$'
-    $architecture = Get-ProvisioningMetadataValue -Lines $lines -Name 'Architecture' `
-        -Pattern '^\s*-\s*Architecture:\s*([A-Za-z0-9]+)\s*$'
-    $installerURL = Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerUrl' `
-        -Pattern '^\s*InstallerUrl:\s*(https://\S+)\s*$'
-    $installerSHA256 = (Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerSha256' `
-        -Pattern '^\s*InstallerSha256:\s*([A-Fa-f0-9]{64})\s*$').ToUpperInvariant()
-    $null = Get-ProvisioningMetadataValue -Lines $lines -Name 'SignatureSha256' `
-        -Pattern '^\s*SignatureSha256:\s*([A-Fa-f0-9]{64})\s*$'
-    $manifestType = Get-ProvisioningMetadataValue -Lines $lines -Name 'ManifestType' `
-        -Pattern '^ManifestType:\s*(\S+)\s*$'
-    $schemaVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'ManifestVersion' `
-        -Pattern '^ManifestVersion:\s*(\d+\.\d+\.\d+)\s*$'
-    $installerURI = [Uri]$installerURL
-    if ($manifestID -cne $packageID -or $manifestVersion -cne $resolvedVersion -or
-        $packageFamilyName -cne 'TradingView.Desktop_n534cwy3pjxzj' -or
-        $minimumOSVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-        $installerType -cne 'msix' -or $architecture -cne 'x64' -or
-        $manifestType -cne 'installer' -or $schemaVersion -cne '1.12.0' -or
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' -Id $packageID `
+        -Version $Version -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'
+    $installerURI = [Uri][string]$metadata.Url
+    if ([string]$metadata.Id -cne $packageID -or
+        [string]$metadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+        [string]$metadata.Architecture -cne 'x64' -or
+        [string]$metadata.InstallerType -cne 'msix' -or
+        -not [string]::IsNullOrEmpty([string]$metadata.Scope) -or
+        [string]$metadata.PayloadName -cne 'payload.msix' -or
         $installerURI.Scheme -cne 'https' -or
         $installerURI.Host -cne 'tvd-packages.tradingview.com' -or
         -not $installerURI.AbsolutePath.StartsWith('/stable/', [StringComparison]::Ordinal) -or
         [IO.Path]::GetExtension($installerURI.AbsolutePath) -cne '.msix') {
-        throw "TradingView Desktop WinGet manifest identity is unsupported: $manifestURL"
+        throw "TradingView Desktop WinGet metadata identity is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Url)"
     }
-    return [pscustomobject]@{
-        Id = $manifestID
-        Version = $manifestVersion
-        Architecture = $architecture
-        InstallerType = $installerType
-        Scope = ''
-        Url = $installerURL
-        Sha256 = $installerSHA256
-        PayloadName = 'payload.msix'
-        PackageFamilyName = $packageFamilyName
-        DeclaredMinimumOSVersion = $minimumOSVersion
-    }
+    return $metadata
 }
 
 function Install-TradingViewActiveSessionLauncher {
@@ -2466,6 +2414,7 @@ function Install-TradingViewStack {
     }
     if ([string]$desktopManifest.Package.Identity.Name -cne 'TradingView.Desktop' -or
         [string]$desktopManifest.Package.Identity.Version -cne [string]$desktopMetadata.Version -or
+        [string]$desktopManifest.Package.Identity.ProcessorArchitecture -cne 'x64' -or
         [string]$desktopManifest.Package.Identity.Publisher -cne 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US') {
         throw "TradingView Desktop package identity does not match $($desktopMetadata.Version)."
     }
