@@ -11,7 +11,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - `internal/sandbox` owns Windows Sandbox planning, generated configuration, guest bootstrap assets, terminal status handling, Herdr/SSH connection material, and the concrete native workflow.
 - Read-only effective planning and exclusive project-profile initialization reuse those same configuration, workspace, package, and direct-stack owners. They do not introduce another config model, profile DSL, or host provisioner.
 - `cmd/task` is a small Go-only repository task runner for recurring test, verification, and build commands.
-- There is one concrete Windows happy path. No provider/plugin framework, compatibility adapter, persistence service, daemon, frontend, or alternate provisioner exists in the MVP.
+- There is one concrete Windows happy path. No provider/plugin framework, compatibility adapter, persistence service, daemon, frontend, or alternate provisioner exists in the current product.
 
 ### Go And PowerShell Ownership
 
