@@ -22,6 +22,13 @@ cross-project workflow in the global OpenCode configuration repository.
   action, user value, or concise engineering evidence and routes workflow status
   to its canonical owner. Expected benefit: prevent process leakage without
   stripping useful portfolio-level engineering evidence.
+- **Status: proposed. Validate GitHub README video embeds with the target renderer.**
+  Evidence: a repository-relative MP4 passed media checks but rendered only as a
+  linked preview, while the native player required a bare GitHub user-attachment
+  URL. A WebP fallback added conversion time and produced an unusable 130 MB
+  artifact. Add a focused `gh api markdown` check for one controlled video element
+  before committing README video changes. Expected benefit: catch non-playing
+  embeds before push and avoid unnecessary conversion work.
 - **Status: done. Bound WinGet validation watching below the session watchdog.**
   Evidence: `AGENTS.md` now requires one post-submission status read and reporting
   of remaining Microsoft-owned stages instead of an interactive watch. Expected
