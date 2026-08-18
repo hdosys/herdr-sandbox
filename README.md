@@ -6,7 +6,13 @@
 
 Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
-[Value](#what-you-get) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Troubleshooting](#troubleshooting)
+[Demo](#see-it-in-action) · [Value](#what-you-get) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Troubleshooting](#troubleshooting)
+
+## See it in action
+
+[![Two Windows terminals showing the same OpenCode agent session in Herdr](docs/assets/herdr-sandbox-showcase-preview.webp)](docs/assets/herdr-sandbox-showcase.mp4)
+
+[Watch the 21-second showcase](docs/assets/herdr-sandbox-showcase.mp4): detach and reconnect to the same OpenCode session through Herdr's managed Windows Sandbox connection, without switching to an RDP workflow.
 
 ## What you get
 
