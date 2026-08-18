@@ -10,9 +10,9 @@ Herdr Sandbox is a Windows-native counterpart to a [dev container](https://conta
 
 ## See it in action
 
-[![Two Windows terminals showing the same OpenCode agent session in Herdr](docs/assets/herdr-sandbox-showcase-preview.webp)](docs/assets/herdr-sandbox-showcase.mp4)
+https://github.com/user-attachments/assets/b6c02367-683b-4a1f-94e6-b662149d89d9
 
-[Watch the 21-second showcase](docs/assets/herdr-sandbox-showcase.mp4): detach and reconnect to the same OpenCode session through Herdr's managed Windows Sandbox connection, without switching to an RDP workflow.
+Detach and reconnect to the same OpenCode session through Herdr's managed Windows Sandbox connection, without switching to an RDP workflow.
 
 ## What you get
 
