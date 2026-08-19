@@ -6,6 +6,8 @@ artifacts remain available on the
 
 ## Unreleased
 
+## v0.0.16
+
 ### Fixed
 
 - Host GitHub CLI credential transfer no longer performs a redundant `/user` API
