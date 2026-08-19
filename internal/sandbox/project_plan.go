@@ -30,6 +30,7 @@ const (
 	toolVersionSourceSelectedProject     = "explicit-project-version"
 	toolVersionSourceProject             = "project-version-file"
 	toolVersionSourceDefault             = "stack-default"
+	defaultPythonSeries                  = "3.14"
 )
 
 //go:embed assets/project-provisioning-plan.ps1
@@ -492,6 +493,9 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 		}
 		if len(values.versions) == 0 && len(values.series) == 0 {
 			source = toolVersionSourceDefault
+			if identity == "python" {
+				values.series[defaultPythonSeries] = nil
+			}
 		}
 		if len(values.versions) > 1 {
 			kind := "versions"

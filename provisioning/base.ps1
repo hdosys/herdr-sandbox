@@ -813,72 +813,6 @@ function Get-ProvisioningMetadataValue {
     return $values[0].Trim()
 }
 
-function Search-ProvisioningWinGetPackages {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Role,
-        [Parameter(Mandatory = $true)]
-        [string]$IdQuery,
-        [switch]$Exact
-    )
-
-    $arguments = @(
-        'search', '--id', $IdQuery, '--source', 'winget', '--count', '1000',
-        '--accept-source-agreements', '--disable-interactivity', '--no-progress'
-    )
-    if ($Exact) { $arguments += '--exact' }
-    $lines = @(Invoke-ProvisioningNative -Role "$Role package search" -FilePath 'winget.exe' -ArgumentList $arguments |
-        ForEach-Object { ([string]$_).TrimEnd() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $sourceUpdateFailures = @($lines | Where-Object {
-            $_ -match '^Failed in attempting to update the source:\s*\S(?:.*\S)?\s*$'
-        })
-    if ($sourceUpdateFailures.Count -ne 0) {
-        $diagnostic = [string]$sourceUpdateFailures[0]
-        if ($diagnostic.Length -gt 512) { $diagnostic = $diagnostic.Substring(0, 512) }
-        throw "$Role WinGet source update failed before package search: $diagnostic"
-    }
-    $header = if ($lines.Count -gt 0) { [string]$lines[0] } else { '' }
-    $idColumn = $header.IndexOf('Id', [StringComparison]::Ordinal)
-    $versionColumn = $header.IndexOf('Version', [StringComparison]::Ordinal)
-    if ($lines.Count -lt 3 -or -not $header.StartsWith('Name', [StringComparison]::Ordinal) -or
-        $idColumn -le 4 -or $versionColumn -le ($idColumn + 2) -or
-        $header.Substring(4, $idColumn - 4).Trim().Length -ne 0 -or
-        $header.Substring($idColumn + 2, $versionColumn - ($idColumn + 2)).Trim().Length -ne 0 -or
-        $lines[1].Length -lt ($versionColumn + 'Version'.Length) -or $lines[1] -cnotmatch '^-+$') {
-        throw "$Role WinGet search output header is unsupported: lines=$($lines.Count) header=[$header]"
-    }
-    $results = @()
-    $seen = @{}
-    foreach ($line in @($lines | Select-Object -Skip 2)) {
-        if ($line -match '[^\x20-\x7E]') {
-            throw "$Role WinGet search output contains a control or non-ASCII character."
-        }
-        if ($line.Length -le $versionColumn) {
-            throw "$Role WinGet search output row is unsupported: $line"
-        }
-        $name = $line.Substring(0, $idColumn).Trim()
-        $id = $line.Substring($idColumn, $versionColumn - $idColumn).Trim()
-        $version = $line.Substring($versionColumn).Trim()
-        if ([string]::IsNullOrWhiteSpace($name) -or $id -notmatch '^[A-Za-z0-9._-]+$' -or
-            [string]::IsNullOrWhiteSpace($version) -or $version -match '\s') {
-            throw "$Role WinGet search output row is unsupported: $line"
-        }
-        if ($seen.ContainsKey($id)) {
-            throw "$Role WinGet search returned duplicate package $id."
-        }
-        $seen[$id] = $true
-        $results += [pscustomobject]@{
-            Name = $name
-            Id = $id
-            Version = $version
-        }
-    }
-    if ($results.Count -eq 0) {
-        throw "$Role WinGet search returned no packages."
-    }
-    return @($results)
-}
-
 function Get-ProvisioningWinGetMetadata {
     param(
         [Parameter(Mandatory = $true)]
@@ -886,6 +820,7 @@ function Get-ProvisioningWinGetMetadata {
         [Parameter(Mandatory = $true)]
         [string]$Id,
         [string]$Version = '',
+        [string]$VersionTool = '',
         [ValidateSet('x64', 'x86')]
         [string]$Architecture = 'x64',
         [Parameter(Mandatory = $true)]
@@ -936,7 +871,8 @@ function Get-ProvisioningWinGetMetadata {
     if ($extension -notin $supportedExtensions) {
         throw "$Role installer URL has an unsupported extension: $extension"
     }
-    $null = Get-ProvisioningToolVersion -Tool $Id -Requested $resolvedVersion
+    $tool = if ([string]::IsNullOrWhiteSpace($VersionTool)) { $Id } else { $VersionTool }
+    $null = Get-ProvisioningToolVersion -Tool $tool -Requested $resolvedVersion
     return [pscustomobject]@{
         Id = $resolvedID
         Version = $resolvedVersion
@@ -1273,9 +1209,14 @@ function Test-ProvisioningWinGetListOutput {
         [object]$Metadata
     )
 
+    $versionPattern = if ([string]::IsNullOrWhiteSpace([string]$Metadata.Version)) {
+        '\S+'
+    } else {
+        [Regex]::Escape([string]$Metadata.Version)
+    }
     $linePattern = '(?:^|\s)' + [Regex]::Escape([string]$Metadata.Id) + '\s+' +
-        [Regex]::Escape([string]$Metadata.Version) + '(?:\s|$)'
-    return @($Lines | Where-Object { $_ -match $linePattern }).Count -eq 1
+        $versionPattern + '(?:\s|$)'
+    return @($Lines | Where-Object { $_ -match $linePattern }).Count -ge 1
 }
 
 function Test-ProvisioningWinGetPackageInstalled {
@@ -1960,6 +1901,7 @@ function Install-ProvisioningWinGetPackage {
         [Parameter(Mandatory = $true)]
         [string]$Id,
         [string]$Version = '',
+        [string]$VersionTool = '',
         [ValidateSet('x64', 'x86')]
         [string]$Architecture = 'x64',
         [Parameter(Mandatory = $true)]
@@ -1976,7 +1918,7 @@ function Install-ProvisioningWinGetPackage {
         [switch]$RequireAuthenticodeSignature
     )
 
-    $metadata = Get-ProvisioningWinGetMetadata -Role $Role -Id $Id -Version $Version `
+    $metadata = Get-ProvisioningWinGetMetadata -Role $Role -Id $Id -Version $Version -VersionTool $VersionTool `
         -Architecture $Architecture -InstallerType $InstallerType -Scope $Scope
     Install-ProvisioningCachedPackage -Role $Role -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
@@ -2052,26 +1994,25 @@ function Install-ProvisioningOnlineWinGetPackage {
         [string]$Override = ''
     )
 
-    $resolvedVersion = $Version
-    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
-        $matches = @(Search-ProvisioningWinGetPackages -Role $Role -IdQuery $Id -Exact)
-        if ($matches.Count -ne 1 -or [string]$matches[0].Id -cne $Id -or
-            [string]::IsNullOrWhiteSpace([string]$matches[0].Version)) {
-            throw "$Role latest WinGet version did not resolve one exact package $Id."
-        }
-        $resolvedVersion = [string]$matches[0].Version
+    $metadata = [pscustomobject]@{ Id = $Id; Version = $Version }
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $null = Get-ProvisioningToolVersion -Tool $Id -Requested $Version
     }
-    $null = Get-ProvisioningToolVersion -Tool $Id -Requested $resolvedVersion
-    $metadata = [pscustomobject]@{ Id = $Id; Version = $resolvedVersion }
     if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata) {
-        Write-Host "$Role online package already matches requested version: $resolvedVersion"
+        if ([string]::IsNullOrWhiteSpace($Version)) {
+            Write-Host "$Role online package is already installed."
+        } else {
+            Write-Host "$Role online package already matches requested version: $Version"
+        }
         return
     }
     $arguments = @(
         'install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
-        '--version', $resolvedVersion,
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     )
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $arguments += @('--version', $Version)
+    }
     if (-not [string]::IsNullOrWhiteSpace($Override)) {
         $arguments += @('--override', $Override)
     }

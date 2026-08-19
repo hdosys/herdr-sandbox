@@ -100,6 +100,29 @@ func TestInspectProjectProvisioningPlanAcceptsEmptyGoProject(t *testing.T) {
 	}
 }
 
+func TestInspectProjectProvisioningPlanDefaultsPythonToCurrentSeries(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "project.ps1")
+	writeTestFile(t, profile, "Install-PythonStack\n")
+	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "project", ProvisioningPath: profile}})
+	if err != nil {
+		t.Fatalf("default Python inspection: %v", err)
+	}
+	if len(inspection.ToolVersions) != 1 || inspection.ToolVersions[0].Tool != "Python" ||
+		inspection.ToolVersions[0].Version != "" || inspection.ToolVersions[0].Series != "3.14" ||
+		inspection.ToolVersions[0].Source != toolVersionSourceDefault {
+		t.Fatalf("default Python tool plan = %#v", inspection.ToolVersions)
+	}
+}
+
 func TestValidateGitShellPackageRequirementRequiresRetainedGit(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	withoutGit, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit}}, terminal)

@@ -2581,44 +2581,10 @@ function Resolve-StackPythonPackage {
         return [pscustomobject]@{ Series = $derivedSeries; Version = $Version }
     }
 
-    $query = if ([string]::IsNullOrWhiteSpace($Series)) { 'Python.Python.' } else { "Python.Python.$Series" }
-    $rows = @(Search-ProvisioningWinGetPackages -Role 'Python' -IdQuery $query -Exact:(-not [string]::IsNullOrWhiteSpace($Series)))
-    $candidates = @()
-    foreach ($row in $rows) {
-        $idMatch = [regex]::Match([string]$row.Id, '^Python\.Python\.(?<major>[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)$')
-        $versionMatch = [regex]::Match([string]$row.Version, $versionPattern)
-        if (-not $idMatch.Success) {
-            $majorOnlyID = [regex]::Match([string]$row.Id, '^Python\.Python\.(?<major>[1-9][0-9]*)$')
-            if ($majorOnlyID.Success -and $versionMatch.Success -and
-                $majorOnlyID.Groups['major'].Value -ceq $versionMatch.Groups['major'].Value) {
-                continue
-            }
-            throw "Python WinGet search returned an unsupported package identity: $($row.Id) $($row.Version)"
-        }
-        if (-not $versionMatch.Success -or
-            $idMatch.Groups['major'].Value -cne $versionMatch.Groups['major'].Value -or
-            $idMatch.Groups['minor'].Value -cne $versionMatch.Groups['minor'].Value) {
-            throw "Python WinGet search returned an unsupported package identity: $($row.Id) $($row.Version)"
-        }
-        $candidateSeries = $idMatch.Groups['major'].Value + '.' + $idMatch.Groups['minor'].Value
-        if (-not [string]::IsNullOrWhiteSpace($Series) -and $candidateSeries -cne $Series) {
-            throw "Python WinGet exact search returned $($row.Id) instead of Python.Python.$Series."
-        }
-        $candidates += [pscustomobject]@{
-            Series = $candidateSeries
-            Version = [string]$row.Version
-            Major = [int64]$idMatch.Groups['major'].Value
-            Minor = [int64]$idMatch.Groups['minor'].Value
-        }
+    if ([string]::IsNullOrWhiteSpace($Series)) {
+        throw 'Python series was not resolved before provisioning.'
     }
-    if (-not [string]::IsNullOrWhiteSpace($Series) -and $candidates.Count -ne 1) {
-        throw "Python series $Series resolved $($candidates.Count) WinGet packages; expected one."
-    }
-    $selected = @($candidates | Sort-Object -Property @{ Expression = 'Major'; Descending = $true }, @{ Expression = 'Minor'; Descending = $true } | Select-Object -First 1)
-    if ($selected.Count -ne 1) {
-        throw 'Python latest stable package could not be resolved.'
-    }
-    return [pscustomobject]@{ Series = $selected[0].Series; Version = $selected[0].Version }
+    return [pscustomobject]@{ Series = $Series; Version = '' }
 }
 
 function Install-PythonStack {
@@ -2636,16 +2602,20 @@ function Install-PythonStack {
     $Series = [string]$pythonSelection.Series
     $Version = [string]$pythonSelection.Version
     $null = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
-    $null = Get-ProvisioningToolVersion -Tool 'Python' -Requested $Version
     $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
     $pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'
     $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
     $pythonSourceExclusions = @('*\Microsoft\WindowsApps\python.exe', $pythonAlias)
-    Write-Output "Installing Python $Version..."
+    $pythonTarget = if ([string]::IsNullOrWhiteSpace($Version)) { $Series } else { $Version }
+    Write-Output "Installing Python $pythonTarget..."
     Install-ProvisioningWinGetPackage -Role 'Python' -Id "Python.Python.$Series" -Version $Version `
-        -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
+        -VersionTool 'Python' -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
         -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' -DeferCommandReadiness `
         -RequireAuthenticodeSignature
+    $Version = Get-ProvisioningToolVersion -Tool 'Python'
+    $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
+    $Series = [string]$pythonSelection.Series
+    $Version = [string]$pythonSelection.Version
     $pythonPath = Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
         -CommandSourceExclusion $pythonSourceExclusions
     $runtimeVersion = ($Version -split '\.')[0..2] -join '.'
