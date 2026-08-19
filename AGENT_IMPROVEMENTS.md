@@ -65,3 +65,11 @@ cross-project workflow in the global OpenCode configuration repository.
   file and renames it into place before the reader can observe it. Repeated focused
   execution passes. Expected benefit: deterministic process-tree tests without
   masking product verification.
+- **Status: proposed. Add a focused retained Base provisioning gate.**
+  Evidence: three native checks of one Base package boundary took 158.993, 149.192,
+  and 405.072 seconds because `sandbox up --no-attach` continued into unrelated
+  project stacks after reaching that boundary; the last run later hit an unrelated
+  Visual Studio readiness timeout. Add one bounded repository task that exercises
+  Base in the existing ready guest without replacing it or running project stacks.
+  Expected benefit: preserve real SSH, WinGet, and guest evidence while avoiding
+  unrelated stack delay and failure during Base-only iteration.
