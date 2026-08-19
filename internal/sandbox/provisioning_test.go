@@ -1155,6 +1155,7 @@ func TestDefaultStackLibraryExposesFineGrainedFunctionsAndHerdrVirtualStack(t *t
 		"function Install-BunStack",
 		"function Install-HandyStack",
 		"function Install-HerdrStack",
+		"function Install-HyperFramesStack",
 		"function Install-StackVisualStudioBuildTools",
 		"Assert-ProvisioningCacheTree -Path $slot",
 		"Get-StackRustManifestSnapshot -Channel 'stable'",

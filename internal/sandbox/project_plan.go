@@ -47,6 +47,7 @@ const (
 	stackGitSH         projectStack = "git-sh"
 	stackGo            projectStack = "go"
 	stackHandy         projectStack = "handy"
+	stackHyperFrames   projectStack = "hyperframes"
 	stackJava          projectStack = "java"
 	stackJust          projectStack = "just"
 	stackNode          projectStack = "node"
@@ -110,6 +111,8 @@ var (
 		"astral-sh.uv":                   "astral-sh.uv",
 		"casey.just":                     "Casey.Just",
 		"golang.go":                      "GoLang.Go",
+		"gyan.ffmpeg":                    "Gyan.FFmpeg",
+		"hyperframes":                    "hyperframes",
 		"khronosgroup.vulkansdk":         "KhronosGroup.VulkanSDK",
 		"kitware.cmake":                  "Kitware.CMake",
 		"microsoft.dotnet.sdk.10":        "Microsoft.DotNet.SDK.10",
@@ -131,7 +134,7 @@ var (
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackAndroid, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackJava, stackJust, stackNode, stackNSIS, stackNushell, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
+	case stackAndroid, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackNushell, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false
@@ -690,16 +693,23 @@ func validateResolvedToolVersionPlan(tools []resolvedToolVersion) error {
 	return nil
 }
 
-func validateGitShellPackageRequirement(workspaces []workspacePlan, userStacks []projectStack, packages wingetPackagePlan) error {
-	requiresGitShell := func(stacks []projectStack) bool {
-		return slices.Contains(stacks, stackGitSH)
+func validateGitPackageRequirement(workspaces []workspacePlan, userStacks []projectStack, packages wingetPackagePlan) error {
+	requires := func(stacks []projectStack) (bool, bool) {
+		return slices.Contains(stacks, stackGitSH), slices.Contains(stacks, stackHyperFrames)
 	}
-	required := requiresGitShell(userStacks)
+	requiresShell, requiresSkills := requires(userStacks)
 	for _, workspace := range workspaces {
-		required = required || requiresGitShell(workspace.Stacks)
+		workspaceShell, workspaceSkills := requires(workspace.Stacks)
+		requiresShell = requiresShell || workspaceShell
+		requiresSkills = requiresSkills || workspaceSkills
 	}
-	if required && !packages.enabled(packageGit) {
-		return errors.New("the selected project requires Git for Windows sh.exe; restore Base package Git.Git by removing it from wingetPackages.remove")
+	if !packages.enabled(packageGit) {
+		if requiresShell {
+			return errors.New("the selected project requires Git for Windows sh.exe; restore Base package Git.Git by removing it from wingetPackages.remove")
+		}
+		if requiresSkills {
+			return errors.New("the selected HyperFrames project requires Git for Windows to install global agent skills; restore Base package Git.Git by removing it from wingetPackages.remove")
+		}
 	}
 	return nil
 }

@@ -40,7 +40,7 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndComplete(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"Install-AndroidStack", "Install-CppStack", "Install-DotNetStack", "Install-GoStack", "Install-HerdrStack", "Install-JavaStack", "Install-NSISStack", "Install-NushellStack", "Install-Uv", "Install-NodeStack", "Install-PlaywrightCLIStack", "Install-TradingViewStack"} {
+	for _, call := range []string{"Install-AndroidStack", "Install-CppStack", "Install-DotNetStack", "Install-GoStack", "Install-HerdrStack", "Install-HyperFramesStack", "Install-JavaStack", "Install-NSISStack", "Install-NushellStack", "Install-Uv", "Install-NodeStack", "Install-PlaywrightCLIStack", "Install-TradingViewStack"} {
 		if !strings.Contains(string(profile), call) {
 			t.Fatalf("native fixture profile is missing %s", call)
 		}

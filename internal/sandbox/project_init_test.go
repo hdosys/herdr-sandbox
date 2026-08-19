@@ -96,7 +96,7 @@ func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
 		}
 		last = index
 	}
-	for _, shortcut := range []string{"Install-HandyStack", "Install-HerdrStack", "Install-PythonAIStack"} {
+	for _, shortcut := range []string{"Install-HandyStack", "Install-HerdrStack", "Install-HyperFramesStack", "Install-PythonAIStack"} {
 		if strings.Contains(text, shortcut) {
 			t.Fatalf("all profile contains project-specific shortcut %q: %s", shortcut, text)
 		}
@@ -147,6 +147,30 @@ func TestInitializeProjectWritesHandyVirtualStack(t *testing.T) {
 	for _, expanded := range []string{"Install-BunStack", "Install-RustMSVCStack", "Kitware.CMake", "KhronosGroup.VulkanSDK"} {
 		if strings.Contains(text, expanded) {
 			t.Fatalf("init duplicated virtual stack implementation %q: %s", expanded, text)
+		}
+	}
+}
+
+func TestInitializeProjectWritesHyperFramesVirtualStack(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"hyperframes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "hyperframes" {
+		t.Fatalf("stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Install-HyperFramesStack") {
+		t.Fatalf("HyperFrames virtual profile = %s", text)
+	}
+	for _, expanded := range []string{"Install-NodeRuntime", "Gyan.FFmpeg", "npm install", "hyperframes@"} {
+		if strings.Contains(text, expanded) {
+			t.Fatalf("init duplicated HyperFrames implementation %q: %s", expanded, text)
 		}
 	}
 }

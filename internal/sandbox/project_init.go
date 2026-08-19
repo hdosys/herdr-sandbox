@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	stackHandyPreset    projectStack = "handy"
-	stackHerdrPreset    projectStack = "herdr"
-	stackPythonAIPreset projectStack = "python-ai"
+	stackHandyPreset       projectStack = "handy"
+	stackHerdrPreset       projectStack = "herdr"
+	stackHyperFramesPreset projectStack = "hyperframes"
+	stackPythonAIPreset    projectStack = "python-ai"
 )
 
 var allProjectInitStacks = []projectStack{
@@ -134,7 +135,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, or python-ai")
+		return nil, nil, errors.New("select at least one stack: android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, hyperframes, or python-ai")
 	}
 	for _, value := range requested {
 		if strings.EqualFold(strings.TrimSpace(value), "all") {
@@ -151,6 +152,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		"go":             stackGo,
 		"handy":          stackHandyPreset,
 		"herdr":          stackHerdrPreset,
+		"hyperframes":    stackHyperFramesPreset,
 		"java":           stackJava,
 		"node":           stackNode,
 		"nsis":           stackNSIS,
@@ -169,7 +171,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, or python-ai", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, hyperframes, or python-ai", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -245,6 +247,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-HandyStack -ProjectDirectory $ProjectDirectory"
 		case stackHerdrPreset:
 			call = "Install-HerdrStack -ProjectDirectory $ProjectDirectory"
+		case stackHyperFramesPreset:
+			call = "Install-HyperFramesStack"
 		case stackJava:
 			call = "Install-JavaStack"
 		case stackJust:

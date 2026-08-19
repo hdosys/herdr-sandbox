@@ -223,10 +223,17 @@ Project shortcuts package complex repository setups:
 | --- | --- |
 | `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
 | `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
+| `hyperframes` | A global HyperFrames authoring and rendering environment with Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and skills for every supported coding agent |
 | `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
 
 Dependencies and application commands remain project-owned. `sandbox plan`
 expands each shortcut without executing the profile.
+
+The HyperFrames shortcut resolves the latest stable CLI and full FFmpeg release
+when the profile does not request versions. Provisioning runs HyperFrames doctor,
+checks its managed browser and global skills, and proves a software H.264 encode
+with `libx264`. Browser GPU acceleration and FFmpeg hardware encoding are separate;
+the Sandbox profile does not claim a hardware encoder.
 
 ## Commands
 

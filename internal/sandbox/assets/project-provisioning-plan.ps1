@@ -22,6 +22,7 @@ $knownStacks = @{
     'Install-GoStack' = 'go'
     'Install-HandyStack' = @('bun', 'handy', 'rust-msvc')
     'Install-HerdrStack' = @('bun', 'cargo-nextest', 'git-sh', 'just', 'python', 'rust-msvc', 'zig')
+    'Install-HyperFramesStack' = 'hyperframes'
     'Install-JavaStack' = 'java'
     'Install-Just' = 'just'
     'Install-NodeStack' = 'node'
@@ -173,6 +174,16 @@ function Get-CommandToolRequirements {
                 (New-ToolRequirement 'Oven-sh.Bun' '' '' 'herdr'),
                 (New-ToolRequirement 'nextest.cargo-nextest' '' '' 'herdr'),
                 (New-ToolRequirement 'Casey.Just' '' '' 'herdr')
+            )
+        }
+        'Install-HyperFramesStack' {
+            $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'FFmpegVersion', 'Version') 'NodeVersion' $Role
+            $ffmpeg = Get-LiteralCommandParameter $Command @('NodeVersion', 'FFmpegVersion', 'Version') 'FFmpegVersion' $Role
+            $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'FFmpegVersion', 'Version') 'Version' $Role
+            return @(
+                (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'hyperframes'),
+                (New-ToolRequirement 'Gyan.FFmpeg' $ffmpeg '' 'hyperframes'),
+                (New-ToolRequirement 'hyperframes' $version '' 'hyperframes')
             )
         }
         'Install-JavaStack' {

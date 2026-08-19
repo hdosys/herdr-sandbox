@@ -31,7 +31,7 @@ const (
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 53"
-	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 18"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 19"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 3"
 	activeSessionLaunchContract        = "# herdr-sandbox-active-session-launch-contract: 1"

@@ -29,6 +29,7 @@ const (
 	packageVulkanRuntime   = "KhronosGroup.VulkanRT"
 	packageWinDirStat      = "WinDirStat.WinDirStat"
 	packageFilePilot       = "Voidstar.FilePilot"
+	packageFFmpeg          = "Gyan.FFmpeg"
 	packageTerminalXAML    = "Microsoft.UI.Xaml.2.8"
 	packageTerminalStable  = "Microsoft.WindowsTerminal"
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
@@ -63,6 +64,7 @@ var projectStackPackageIDs = []string{
 	packageOpenJDK25,
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
+	packageFFmpeg,
 	packageNSIS,
 	packageNushell,
 	"Oven-sh.Bun",

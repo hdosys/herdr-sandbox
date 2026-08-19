@@ -6,6 +6,14 @@ artifacts remain available on the
 
 ## Unreleased
 
+### Added
+
+- A new optional `hyperframes` project shortcut provisions the latest stable
+  HyperFrames CLI, Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless
+  Shell, and global skills for every supported coding agent. Provisioning checks
+  the core doctor boundary and a software H.264 encode without claiming hardware
+  encoder availability.
+
 ## v0.0.16
 
 ### Fixed

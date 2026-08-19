@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
+		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -44,7 +44,7 @@ func TestRunPrintsHelp(t *testing.T) {
 
 func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.T) {
 	standalone := "android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig"
-	trailing := "all|handy|herdr|python-ai"
+	trailing := "all|handy|herdr|hyperframes|python-ai"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
 			for line := range strings.SplitSeq(text, "\n") {

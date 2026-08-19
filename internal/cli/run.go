@@ -23,7 +23,7 @@ const usage = `Usage:
   sandbox version
   sandbox --version
   sandbox plan
-  sandbox init [--stack android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig|all|handy|herdr|python-ai]...
+  sandbox init [--stack android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig|all|handy|herdr|hyperframes|python-ai]...
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
   sandbox attach
   sandbox status
@@ -65,7 +65,7 @@ const (
 	installerStopProcessesTimeout  = 5 * time.Second
 )
 
-const stackSelectionHelp = "android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, python-ai"
+const stackSelectionHelp = "android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, hyperframes, python-ai"
 
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return runWithCommandDependencies(ctx, args, stdin, stdout, stderr, defaultCommandDependencies())

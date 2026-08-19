@@ -289,6 +289,7 @@ Install-DotNetStack
 Install-AndroidStack
 Install-GoStack
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
+Install-HyperFramesStack
 Install-CppStack
 Install-JavaStack
 Install-NSISStack

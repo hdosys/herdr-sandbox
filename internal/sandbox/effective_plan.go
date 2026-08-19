@@ -95,7 +95,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		applyWorkspaceRequirements(&requirements)
 		requiresVisualStudio = requirements.RequiresVisualStudioLayout || stacksRequireVisualStudioLayout(userStacks)
 	}
-	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
+	if err := validateGitPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
 		return EffectivePlan{}, err
 	}
 	cacheDirectory, err := effectiveCacheDirectory(provisioning.CacheDirectory)
@@ -234,6 +234,8 @@ func effectiveStackPackageOwner(stack projectStack) string {
 		return "GoLang.Go"
 	case stackHandy:
 		return packageCMake + " + " + packageVulkanSDK + " 1.4.309.0 + " + packageWebView2
+	case stackHyperFrames:
+		return "OpenJS.NodeJS.LTS + Gyan.FFmpeg full + hyperframes@latest + global HyperFrames skills"
 	case stackJava:
 		return packageOpenJDK25
 	case stackJust:

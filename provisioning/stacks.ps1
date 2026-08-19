@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 18
+# herdr-sandbox-stacks-contract: 19
 
 function Get-StackWebResponseText {
     param(
@@ -2195,6 +2195,366 @@ function Install-PlaywrightCLIStack {
 
     Write-Output "Playwright CLI ready: $Version"
     Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
+}
+
+function Assert-StackHyperFramesSoftwareEncode {
+    param(
+        [Parameter(Mandatory = $true)][string]$FFmpeg,
+        [Parameter(Mandatory = $true)][string]$FFprobe
+    )
+
+    $probeRoot = Join-Path 'C:\HerdrSandbox\staging' ('hyperframes-encode-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
+    try {
+        $outputPath = Join-Path $probeRoot 'software-h264.mp4'
+        Invoke-ProvisioningNative -Role 'HyperFrames libx264 software encode' -FilePath $FFmpeg `
+            -ArgumentList @('-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+                'color=c=black:s=64x64:r=1:d=1', '-frames:v', '1', '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p', '-y', $outputPath) -TimeoutSeconds 60 | Out-Null
+        if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+            throw 'HyperFrames software encode did not create an MP4 file.'
+        }
+        $outputInfo = Get-Item -LiteralPath $outputPath -Force
+        if (($outputInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $outputInfo.Length -le 0) {
+            throw 'HyperFrames software encode created an unsafe or empty MP4 file.'
+        }
+        $probeJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames software encode probe' `
+            -FilePath $FFprobe -ArgumentList @('-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=codec_name,width,height,pix_fmt', '-of', 'json', $outputPath) `
+            -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        try {
+            $probe = $probeJSON | ConvertFrom-Json
+        } catch {
+            throw "HyperFrames software encode probe returned invalid JSON: $($_.Exception.Message)"
+        }
+        $streams = @($probe.streams)
+        if ($streams.Count -ne 1 -or [string]$streams[0].codec_name -cne 'h264' -or
+            [int]$streams[0].width -ne 64 -or [int]$streams[0].height -ne 64 -or
+            [string]$streams[0].pix_fmt -cne 'yuv420p') {
+            throw "HyperFrames software encode identity is unexpected: $probeJSON"
+        }
+    } finally {
+        if (Test-Path -LiteralPath $probeRoot) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force
+        }
+    }
+}
+
+function Assert-StackHyperFramesAgentSkills {
+    param(
+        [Parameter(Mandatory = $true)][object]$Report,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SkillRoots
+    )
+
+    $skills = @($Report.skills)
+    if ($Report.updateAvailable -ne $false -or $null -eq $Report.summary -or
+        [int]$Report.summary.outdated -ne 0 -or [int]$Report.summary.missing -ne 0 -or
+        [int]$Report.summary.removed -ne 0 -or $skills.Count -le 0) {
+        throw 'HyperFrames global skills are not current and complete.'
+    }
+    $skillNames = @($skills | ForEach-Object {
+            if ([string]$_.status -cne 'current' -or [string]$_.name -notmatch '^[a-z0-9][a-z0-9._-]*$') {
+                throw "HyperFrames skill report entry is invalid: $($_ | ConvertTo-Json -Compress)"
+            }
+            [string]$_.name
+        } | Sort-Object -Unique)
+    if ($skillNames.Count -ne $skills.Count) {
+        throw 'HyperFrames skill report contains duplicate names.'
+    }
+    foreach ($entry in $SkillRoots.GetEnumerator()) {
+        $root = [IO.Path]::GetFullPath([string]$entry.Value)
+        if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+            ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "HyperFrames skills are unavailable for $($entry.Key): $root"
+        }
+        foreach ($name in $skillNames) {
+            $skillFile = Join-Path (Join-Path $root $name) 'SKILL.md'
+            if (-not (Test-Path -LiteralPath $skillFile -PathType Leaf) -or
+                ((Get-Item -LiteralPath $skillFile -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "HyperFrames skill $name is unavailable for $($entry.Key): $skillFile"
+            }
+        }
+    }
+    return $skillNames
+}
+
+function Install-HyperFramesStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$NodeVersion = '',
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$')]
+        [string]$FFmpegVersion = '',
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
+    )
+
+    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $NodeVersion
+    $FFmpegVersion = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion
+    $Version = Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version
+
+    if (-not [string]::IsNullOrWhiteSpace($NodeVersion) -and
+        ($NodeVersion -notmatch '^(?<major>\d+)\.\d+\.\d+$' -or [int]$Matches['major'] -lt 22)) {
+        throw "HyperFrames requires Node.js 22 or newer; requested $NodeVersion."
+    }
+
+    Install-NodeRuntime -Version $NodeVersion
+    $nodeTools = Get-StackNodeTools
+    $node = $nodeTools.Node
+    $npmCLI = $nodeTools.NpmCLI
+    $nodeVersionText = ((Invoke-ProvisioningNative -Role 'HyperFrames Node.js readiness' -FilePath $node `
+        -ArgumentList @('--version')) -join [Environment]::NewLine).Trim()
+    if ($nodeVersionText -notmatch '^v(?<major>\d+)\.\d+\.\d+$' -or [int]$Matches['major'] -lt 22) {
+        throw "HyperFrames requires Node.js 22 or newer; found $nodeVersionText."
+    }
+
+    $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $git) {
+        throw 'HyperFrames global skills require Base package Git.Git.'
+    }
+
+    $ffmpegMetadata = Get-ProvisioningWinGetMetadata -Role 'HyperFrames FFmpeg full build' `
+        -Id 'Gyan.FFmpeg' -Version $FFmpegVersion -Architecture 'x64' -InstallerType 'zip'
+    $ffmpegURI = [Uri][string]$ffmpegMetadata.Url
+    $FFmpegVersion = [string]$ffmpegMetadata.Version
+    $expectedFFmpegPath = "/GyanD/codexffmpeg/releases/download/$FFmpegVersion/ffmpeg-$FFmpegVersion-full_build.zip"
+    if ([string]$ffmpegMetadata.Id -cne 'Gyan.FFmpeg' -or
+        $FFmpegVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$' -or
+        [string]$ffmpegMetadata.Architecture -cne 'x64' -or
+        [string]$ffmpegMetadata.InstallerType -cne 'zip' -or
+        $ffmpegURI.Scheme -cne 'https' -or $ffmpegURI.Host -cne 'github.com' -or
+        $ffmpegURI.AbsolutePath -cne $expectedFFmpegPath) {
+        throw 'Gyan.FFmpeg metadata does not describe the current stable x64 full build.'
+    }
+    $null = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion
+    Install-ProvisioningCachedPackage -Role 'HyperFrames FFmpeg full build' -Metadata $ffmpegMetadata `
+        -DownloadSource 'WinGet' -Adapter 'Portable' -ExecutableName 'ffmpeg.exe' `
+        -PortableVersionArguments @('-version')
+    $ffmpeg = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $ffprobe = Get-Command 'ffprobe.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    if ((Split-Path -Parent $ffmpeg.Source) -ine (Split-Path -Parent $ffprobe.Source)) {
+        throw 'HyperFrames FFmpeg and FFprobe resolved from different distributions.'
+    }
+    $ffmpegSuffix = '(?:[-+][^ ]*)? Copyright \(c\) \d{4}-\d{4} the FFmpeg developers'
+    $ffmpegVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFmpeg' -Name 'ffmpeg.exe' `
+        -VersionArguments @('-version') `
+        -ExpectedPattern ('^ffmpeg version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
+    $ffprobeVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFprobe' -Name 'ffprobe.exe' `
+        -VersionArguments @('-version') `
+        -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
+
+    $toolRoot = 'C:\HerdrSandbox\tools\hyperframes'
+    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
+    $stagingRoot = 'C:\HerdrSandbox\staging'
+    foreach ($directory in @('C:\HerdrSandbox\tools', $npmCache, $stagingRoot)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "HyperFrames guest-local directory is unsafe: $directory"
+        }
+    }
+
+    $environmentNames = @('npm_config_cache', 'npm_config_update_notifier', 'npm_config_yes',
+        'npm_config_engine_strict', 'HYPERFRAMES_NO_TELEMETRY', 'HYPERFRAMES_BROWSER_PATH')
+    $previousEnvironment = @{}
+    foreach ($name in $environmentNames) {
+        $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
+    try {
+        $env:npm_config_cache = $npmCache
+        $env:npm_config_update_notifier = 'false'
+        $env:npm_config_yes = 'true'
+        $env:npm_config_engine_strict = 'true'
+        $env:HYPERFRAMES_NO_TELEMETRY = '1'
+        Remove-Item Env:\HYPERFRAMES_BROWSER_PATH -ErrorAction SilentlyContinue
+
+        if ([string]::IsNullOrWhiteSpace($Version)) {
+            $versionJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames latest version resolution' `
+                -FilePath $node -ArgumentList @($npmCLI, 'view', 'hyperframes@latest', 'version', '--json') `
+                -WorkingDirectory $stagingRoot -TimeoutSeconds 60) -join [Environment]::NewLine).Trim()
+            try {
+                $resolvedVersion = $versionJSON | ConvertFrom-Json
+            } catch {
+                throw "HyperFrames latest version resolution returned invalid JSON: $($_.Exception.Message)"
+            }
+            if ($resolvedVersion -isnot [string] -or
+                [string]$resolvedVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+                throw "HyperFrames latest version resolution returned an invalid stable version: $resolvedVersion"
+            }
+            $Version = [string]$resolvedVersion
+            $null = Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version
+        }
+
+        if (Test-Path -LiteralPath $toolRoot) {
+            $rootInfo = Get-Item -LiteralPath $toolRoot -Force
+            $rootItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
+            if (-not $rootInfo.PSIsContainer -or
+                ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                @($rootItems | Where-Object {
+                        ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                    }).Count -ne 0) {
+                throw "HyperFrames tool root is unsafe: $toolRoot"
+            }
+        } else {
+            New-Item -ItemType Directory -Path $toolRoot | Out-Null
+        }
+
+        Write-Output "Installing HyperFrames CLI $Version globally in the Sandbox..."
+        Invoke-ProvisioningNative -Role 'HyperFrames CLI global installation' -FilePath $node -ArgumentList @(
+            $npmCLI,
+            'install',
+            '--global',
+            '--prefix', $toolRoot,
+            '--omit=dev',
+            '--no-audit',
+            '--no-fund',
+            '--package-lock=false',
+            "hyperframes@$Version"
+        ) -WorkingDirectory $stagingRoot -TimeoutSeconds 600 | Out-Null
+
+        $packageDirectory = Join-Path $toolRoot 'node_modules\hyperframes'
+        $packagePath = Join-Path $packageDirectory 'package.json'
+        $cliCommand = Join-Path $toolRoot 'hyperframes.cmd'
+        foreach ($path in @($packagePath, $cliCommand)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+                ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "HyperFrames package command is missing or unsafe: $path"
+            }
+        }
+        try {
+            $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+        } catch {
+            throw "HyperFrames package identity is unreadable: $($_.Exception.Message)"
+        }
+        $engine = [string]$package.engines.node
+        $binRelative = [string]$package.bin.hyperframes
+        if ($engine -notmatch '^>=\s*(?<major>\d+)(?:\.0(?:\.0)?)?\s*$') {
+            throw "HyperFrames package Node.js engine is unsupported: $engine"
+        }
+        $minimumNodeMajor = [int]$Matches['major']
+        if ([string]$package.name -cne 'hyperframes' -or [string]$package.version -cne $Version -or
+            $minimumNodeMajor -lt 22 -or [string]::IsNullOrWhiteSpace($binRelative) -or
+            [IO.Path]::IsPathRooted($binRelative) -or
+            @($binRelative -split '[/\\]' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) {
+            throw "HyperFrames package identity does not match version $Version and Node.js 22+ readiness."
+        }
+        $cliEntry = [IO.Path]::GetFullPath((Join-Path $packageDirectory ($binRelative -replace '/', '\')))
+        $packageRoot = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\')
+        if (-not $cliEntry.StartsWith($packageRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $cliEntry -PathType Leaf) -or
+            ((Get-Item -LiteralPath $cliEntry -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "HyperFrames CLI entry is missing or unsafe: $cliEntry"
+        }
+        $powerShellShim = Join-Path $toolRoot 'hyperframes.ps1'
+        if (Test-Path -LiteralPath $powerShellShim) {
+            $powerShellShimInfo = Get-Item -LiteralPath $powerShellShim -Force
+            if ($powerShellShimInfo.PSIsContainer -or
+                ($powerShellShimInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "HyperFrames PowerShell shim is unsafe: $powerShellShim"
+            }
+            Remove-Item -LiteralPath $powerShellShim -Force
+        }
+        Add-ProvisioningMachinePath -Directory $toolRoot
+        $resolvedCLI = Wait-ProvisioningCommandAvailable -Role 'HyperFrames CLI command' -Name 'hyperframes.cmd'
+        if ([IO.Path]::GetFullPath($resolvedCLI) -ine [IO.Path]::GetFullPath($cliCommand)) {
+            throw "HyperFrames CLI command resolved from an unexpected path: $resolvedCLI"
+        }
+        $cliVersion = ((Invoke-ProvisioningNative -Role 'HyperFrames CLI version check' -FilePath $node `
+            -ArgumentList @($cliEntry, '--version') -WorkingDirectory $stagingRoot -TimeoutSeconds 30) `
+            -join [Environment]::NewLine).Trim()
+        if ($cliVersion -cne $Version) {
+            throw "HyperFrames CLI version output is unexpected: $cliVersion"
+        }
+
+        Invoke-ProvisioningNative -Role 'HyperFrames managed Chrome Headless Shell installation' `
+            -FilePath $node -ArgumentList @($cliEntry, 'browser', 'ensure') `
+            -WorkingDirectory $stagingRoot -TimeoutSeconds 600 | Out-Null
+        $browserPath = ((Invoke-ProvisioningNative -Role 'HyperFrames managed browser path check' `
+            -FilePath $node -ArgumentList @($cliEntry, 'browser', 'path') `
+            -WorkingDirectory $stagingRoot -TimeoutSeconds 60) -join [Environment]::NewLine).Trim()
+        $browserRoot = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.cache\hyperframes\chrome')).TrimEnd('\')
+        if ([string]::IsNullOrWhiteSpace($browserPath) -or -not [IO.Path]::IsPathRooted($browserPath)) {
+            throw "HyperFrames managed browser path is invalid: $browserPath"
+        }
+        $browserPath = [IO.Path]::GetFullPath($browserPath)
+        if (-not $browserPath.StartsWith($browserRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+            [IO.Path]::GetFileName($browserPath) -ine 'chrome-headless-shell.exe' -or
+            -not (Test-Path -LiteralPath $browserPath -PathType Leaf) -or
+            ((Get-Item -LiteralPath $browserPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "HyperFrames did not prepare its managed Chrome Headless Shell: $browserPath"
+        }
+        $browserVersion = ((Invoke-ProvisioningNative -Role 'HyperFrames managed browser launch check' `
+            -FilePath $browserPath -ArgumentList @('--version') -WorkingDirectory $stagingRoot `
+            -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+        if ($browserVersion -notmatch '(?i)(?:chrome|chromium).*\d+\.\d+\.\d+\.\d+') {
+            throw "HyperFrames managed Chrome Headless Shell version is unexpected: $browserVersion"
+        }
+
+        $skillRoots = [ordered]@{
+            'OpenCode' = Join-Path $env:USERPROFILE '.config\opencode\skills'
+            'Claude Code' = Join-Path $env:USERPROFILE '.claude\skills'
+            'Codex' = Join-Path $env:USERPROFILE '.codex\skills'
+            'GitHub Copilot' = Join-Path $env:USERPROFILE '.copilot\skills'
+            'Pi' = Join-Path $env:USERPROFILE '.pi\agent\skills'
+            'Universal agents' = Join-Path $env:USERPROFILE '.agents\skills'
+        }
+        foreach ($root in @($skillRoots.Values)) {
+            $parent = Split-Path -Parent ([string]$root)
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            $parentInfo = Get-Item -LiteralPath $parent -Force
+            if (-not $parentInfo.PSIsContainer -or
+                ($parentInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "HyperFrames global agent directory is unsafe: $parent"
+            }
+        }
+        Invoke-ProvisioningNative -Role 'HyperFrames global agent skills installation' -FilePath $node `
+            -ArgumentList @($cliEntry, 'skills') -WorkingDirectory $stagingRoot -TimeoutSeconds 600 | Out-Null
+        $skillsJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames global agent skills check' `
+            -FilePath $node -ArgumentList @($cliEntry, 'skills', 'check', '--json') `
+            -WorkingDirectory $stagingRoot -TimeoutSeconds 120) -join [Environment]::NewLine).Trim()
+        try {
+            $skillsReport = $skillsJSON | ConvertFrom-Json
+        } catch {
+            throw "HyperFrames global skills check returned invalid JSON: $($_.Exception.Message)"
+        }
+        $skillNames = @(Assert-StackHyperFramesAgentSkills -Report $skillsReport -SkillRoots $skillRoots)
+
+        $doctorJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
+            -ArgumentList @($cliEntry, 'doctor', '--json') -WorkingDirectory $stagingRoot -TimeoutSeconds 180) `
+            -join [Environment]::NewLine).Trim()
+        try {
+            $doctor = $doctorJSON | ConvertFrom-Json
+        } catch {
+            throw "HyperFrames doctor returned invalid JSON: $($_.Exception.Message)"
+        }
+        foreach ($requiredCheck in @('Node.js', 'FFmpeg', 'FFprobe', 'Chrome')) {
+            $matches = @($doctor.checks | Where-Object { [string]$_.name -ceq $requiredCheck })
+            if ($matches.Count -ne 1 -or $matches[0].ok -ne $true) {
+                throw "HyperFrames doctor did not confirm $requiredCheck readiness: $doctorJSON"
+            }
+        }
+
+        Assert-StackHyperFramesSoftwareEncode -FFmpeg ([string]$ffmpeg.Source) `
+            -FFprobe ([string]$ffprobe.Source)
+        Write-Output "HyperFrames CLI ready: $cliVersion"
+        Write-Output "HyperFrames managed Chrome Headless Shell ready: $browserPath"
+        Write-Output "HyperFrames skills ready for all supported agents: $($skillNames.Count)"
+        Write-Output "HyperFrames FFmpeg ready: $($ffmpegVersionText.Split([Environment]::NewLine)[0])"
+        Write-Output "HyperFrames FFprobe ready: $($ffprobeVersionText.Split([Environment]::NewLine)[0])"
+        Write-Output 'HyperFrames rendering ready with verified libx264 software encoding. Browser GPU acceleration may be available; FFmpeg hardware encoding is not claimed.'
+    } finally {
+        foreach ($name in $environmentNames) {
+            $previous = $previousEnvironment[$name]
+            if ($null -eq $previous) {
+                Remove-Item "Env:\$name" -ErrorAction SilentlyContinue
+            } else {
+                [Environment]::SetEnvironmentVariable($name, [string]$previous, 'Process')
+            }
+        }
+    }
 }
 
 function Get-TradingViewDesktopPortableMetadata {

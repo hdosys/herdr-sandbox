@@ -45,6 +45,7 @@ Install-AndroidStack
 Install-CppStack
 Install-DotNetStack
 Install-HandyStack -ProjectDirectory $ProjectDirectory
+Install-HyperFramesStack
 Install-JavaStack
 Install-NSISStack
 Install-NushellStack
@@ -66,7 +67,7 @@ throw 'the AST adapter must not execute project code'
 	}
 	got := inspection.Workspaces
 	userStacks := inspection.UserStacks
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
@@ -123,25 +124,60 @@ func TestInspectProjectProvisioningPlanDefaultsPythonToCurrentSeries(t *testing.
 	}
 }
 
-func TestValidateGitShellPackageRequirementRequiresRetainedGit(t *testing.T) {
+func TestValidateGitPackageRequirementRequiresRetainedGit(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	withoutGit, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit}}, terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspaces := []workspacePlan{{Name: "herdr", Stacks: []projectStack{stackGitSH}}}
-	if err := validateGitShellPackageRequirement(workspaces, nil, withoutGit); err == nil || !strings.Contains(err.Error(), packageGit) {
+	if err := validateGitPackageRequirement(workspaces, nil, withoutGit); err == nil || !strings.Contains(err.Error(), packageGit) {
 		t.Fatalf("missing Git shell requirement error = %v", err)
 	}
 	defaults, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateGitShellPackageRequirement(workspaces, nil, defaults); err != nil {
+	if err := validateGitPackageRequirement(workspaces, nil, defaults); err != nil {
 		t.Fatalf("retained Git package rejected: %v", err)
 	}
-	if err := validateGitShellPackageRequirement([]workspacePlan{{Name: "plain"}}, nil, withoutGit); err != nil {
+	if err := validateGitPackageRequirement([]workspacePlan{{Name: "hyperframes", Stacks: []projectStack{stackHyperFrames}}}, nil, withoutGit); err == nil ||
+		!strings.Contains(err.Error(), packageGit) || !strings.Contains(err.Error(), "global agent skills") {
+		t.Fatalf("missing HyperFrames Git requirement error = %v", err)
+	}
+	if err := validateGitPackageRequirement([]workspacePlan{{Name: "plain"}}, nil, withoutGit); err != nil {
 		t.Fatalf("unrelated project rejected without Git: %v", err)
+	}
+}
+
+func TestInspectProjectProvisioningPlanDefaultsHyperFramesToolsToLatestStable(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "hyperframes.ps1")
+	writeTestFile(t, profile, "Install-HyperFramesStack\n")
+	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "hyperframes", ProvisioningPath: profile}})
+	if err != nil {
+		t.Fatalf("HyperFrames inspection: %v", err)
+	}
+	if strings.Join(projectStackStrings(inspection.Workspaces[0].Stacks), "|") != "hyperframes" {
+		t.Fatalf("HyperFrames stacks = %v", inspection.Workspaces[0].Stacks)
+	}
+	wantTools := []string{"Gyan.FFmpeg", "hyperframes", "OpenJS.NodeJS.LTS"}
+	if len(inspection.ToolVersions) != len(wantTools) {
+		t.Fatalf("HyperFrames tool plan = %#v", inspection.ToolVersions)
+	}
+	for index, want := range wantTools {
+		tool := inspection.ToolVersions[index]
+		if tool.Tool != want || tool.Version != "" || tool.Series != "" || tool.Source != toolVersionSourceDefault {
+			t.Fatalf("HyperFrames tool %d = %#v, want latest stable %s", index, tool, want)
+		}
 	}
 }
 

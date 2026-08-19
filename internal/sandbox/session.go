@@ -764,7 +764,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	if err := os.WriteFile(toolVersionPlanPath, toolPlanData, 0o600); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("write tool version plan: %w", err)
 	}
-	if err := validateGitShellPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
+	if err := validateGitPackageRequirement(workspaces, userStacks, provisioning.Packages); err != nil {
 		return provisioningSnapshot{}, err
 	}
 	requirements := runPlan{Workspaces: workspaces}
