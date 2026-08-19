@@ -2431,6 +2431,10 @@ function Install-HyperFramesStack {
         }
         $engine = [string]$package.engines.node
         $binRelative = [string]$package.bin.hyperframes
+        if ($binRelative.StartsWith('./', [StringComparison]::Ordinal) -or
+            $binRelative.StartsWith('.\', [StringComparison]::Ordinal)) {
+            $binRelative = $binRelative.Substring(2)
+        }
         if ($engine -notmatch '^>=\s*(?<major>\d+)(?:\.0(?:\.0)?)?\s*$') {
             throw "HyperFrames package Node.js engine is unsupported: $engine"
         }
@@ -2522,8 +2526,19 @@ function Install-HyperFramesStack {
         }
         $skillNames = @(Assert-StackHyperFramesAgentSkills -Report $skillsReport -SkillRoots $skillRoots)
 
-        $doctorJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
-            -ArgumentList @($cliEntry, 'doctor', '--json') -WorkingDirectory $stagingRoot -TimeoutSeconds 180) `
+        $doctorLines = @(Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
+            -ArgumentList @($cliEntry, 'doctor', '--json') -WorkingDirectory $stagingRoot -TimeoutSeconds 180)
+        $doctorJSONStart = -1
+        for ($index = 0; $index -lt $doctorLines.Count; $index += 1) {
+            if ([string]$doctorLines[$index] -ceq '{') {
+                $doctorJSONStart = $index
+                break
+            }
+        }
+        if ($doctorJSONStart -lt 0) {
+            throw "HyperFrames doctor did not return a JSON object: $($doctorLines -join [Environment]::NewLine)"
+        }
+        $doctorJSON = (($doctorLines[$doctorJSONStart..($doctorLines.Count - 1)]) `
             -join [Environment]::NewLine).Trim()
         try {
             $doctor = $doctorJSON | ConvertFrom-Json
