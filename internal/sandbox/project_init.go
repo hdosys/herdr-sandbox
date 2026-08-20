@@ -18,21 +18,22 @@ const (
 
 var allProjectInitStacks = []projectStack{
 	stackAndroid,
+	stackAudio,
 	stackBun,
 	stackCargoNextest,
 	stackCpp,
 	stackDotNet,
 	stackGo,
+	stackHyperFramesPreset,
 	stackJava,
 	stackJust,
 	stackNode,
 	stackNSIS,
 	stackNushell,
 	stackPlaywrightCLI,
-	stackPython,
+	stackPythonAIPreset,
 	stackRustMSVC,
 	stackTradingView,
-	stackUV,
 	stackZig,
 }
 
@@ -135,12 +136,12 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, audio, handy, herdr, hyperframes, or python-ai")
+		return nil, nil, errors.New("select at least one stack: android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, nushell, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr")
 	}
 	for _, value := range requested {
 		if strings.EqualFold(strings.TrimSpace(value), "all") {
 			if len(requested) != 1 {
-				return nil, nil, errors.New("stack \"all\" already includes every standalone technology and tool stack")
+				return nil, nil, errors.New("stack \"all\" is exclusive and already includes every generic stack")
 			}
 			return append([]projectStack(nil), allProjectInitStacks...), []string{"all"}, nil
 		}
@@ -172,7 +173,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, audio, handy, herdr, hyperframes, or python-ai", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, nushell, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)

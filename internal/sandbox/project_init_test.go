@@ -52,7 +52,7 @@ func TestInitializeProjectWritesDeterministicDirectStackCalls(t *testing.T) {
 	}
 }
 
-func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
+func TestInitializeProjectAllWritesEveryGenericStackOnce(t *testing.T) {
 	project := t.TempDir()
 	result, err := InitializeProject(project, []string{"ALL"})
 	if err != nil {
@@ -68,21 +68,22 @@ func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
 	text := string(data)
 	calls := []string{
 		"Install-AndroidStack",
+		"Install-AudioStack",
 		"Install-BunStack",
 		"Install-CargoNextest",
 		"Install-CppStack",
 		"Install-DotNetStack",
 		"Install-GoStack",
+		"Install-HyperFramesStack",
 		"Install-JavaStack",
 		"Install-Just",
 		"Install-NodeStack",
 		"Install-NSISStack",
 		"Install-NushellStack",
 		"Install-PlaywrightCLIStack",
-		"Install-PythonStack",
+		"Install-PythonAIStack",
 		"Install-RustMSVCStack -ProjectDirectory $ProjectDirectory",
 		"Install-TradingViewStack",
-		"Install-Uv",
 		"Install-ZigStack",
 	}
 	last := -1
@@ -96,9 +97,9 @@ func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
 		}
 		last = index
 	}
-	for _, shortcut := range []string{"Install-AudioStack", "Install-HandyStack", "Install-HerdrStack", "Install-HyperFramesStack", "Install-PythonAIStack"} {
-		if strings.Contains(text, shortcut) {
-			t.Fatalf("all profile contains project-specific shortcut %q: %s", shortcut, text)
+	for _, excluded := range []string{"Install-HandyStack", "Install-HerdrStack", "Install-PythonStack", "Install-Uv"} {
+		if strings.Contains(text, excluded) {
+			t.Fatalf("all profile contains excluded or redundant call %q: %s", excluded, text)
 		}
 	}
 }

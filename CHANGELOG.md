@@ -8,12 +8,12 @@ artifacts remain available on the
 
 ### Added
 
-- A new optional `audio` project shortcut provisions REAPER plus AudioGridder
+- A new optional `audio` stack provisions REAPER plus AudioGridder
   Server and clients, making the Sandbox the VST execution machine. Project
   provisioning owns the guest VST set, while the production host DAW client is a
   manual prerequisite; native acceptance inserts the guest client in REAPER and
   requires a real local AudioGridder worker connection.
-- A new optional `hyperframes` project shortcut provisions the latest stable
+- A new optional `hyperframes` stack provisions the latest stable
   HyperFrames CLI, Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless
   Shell, and global skills for every supported coding agent. Provisioning checks
   the core doctor boundary and a software H.264 encode without claiming hardware
@@ -21,6 +21,9 @@ artifacts remain available on the
 
 ### Fixed
 
+- `sandbox init --stack all` now includes every generic stack, including Audio,
+  HyperFrames, and Python AI; only checkout-specific Handy and Herdr remain
+  explicit selections.
 - Retained Android provisioning now reuses fully verified Platform Tools instead
   of rerunning the Android package operation that can fast-fail on an already
   provisioned guest.

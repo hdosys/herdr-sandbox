@@ -42,9 +42,9 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 }
 
-func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.T) {
-	standalone := "android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig"
-	trailing := "all|audio|handy|herdr|hyperframes|python-ai"
+func TestStackHelpListsGenericStacksBeforeMetaAndCheckoutShortcuts(t *testing.T) {
+	generic := "android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|nushell|playwright-cli|python|python-ai|rust|tradingview|zig"
+	trailing := "all|handy|herdr"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
 			for line := range strings.SplitSeq(text, "\n") {
@@ -55,7 +55,7 @@ func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.
 			}
 		}
 		previous := -1
-		for stack := range strings.SplitSeq(standalone+"|"+trailing, "|") {
+		for stack := range strings.SplitSeq(generic+"|"+trailing, "|") {
 			index := strings.Index(text, stack)
 			if index <= previous {
 				t.Fatalf("%s stack order is invalid at %q: %q", name, stack, text)

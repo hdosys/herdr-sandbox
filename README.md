@@ -194,45 +194,49 @@ terminal. Plain `ssh sandbox` remains available for diagnostics.
 
 ## Supported stacks
 
-`sandbox init --stack` accepts the individual stack names below, the exclusive `all` selection, and separate project shortcuts.
+`sandbox init --stack` accepts the generic stack names below, the exclusive `all`
+selection, and separate checkout-specific shortcuts.
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every standalone built-in: Android, Bun, Cargo Nextest, C/C++, .NET, Go, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python, Rust/MSVC, TradingView, uv, and Zig; project shortcuts remain separate |
+| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with Python 3.13 and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
 | `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
+| `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
 | `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
 | `go` | Go |
+| `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and HyperFrames skills for every supported coding agent |
 | `java` | Microsoft OpenJDK 25 LTS |
 | `node` | Node.js LTS, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
 | `nushell` | Latest stable Nushell command-line shell |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
+| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
 | `rust` | Rust with MSVC Build Tools |
 | `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
 | `zig` | Zig |
 
 Project profiles may also call direct Bun, Cargo Nextest, Just, and uv helpers.
 
-### Project shortcuts
+The `all` expansion uses the Python AI composition as its single Python and uv
+owner, avoiding redundant standalone calls.
 
-Project shortcuts package complex repository setups:
+### Checkout-specific shortcuts
+
+These shortcuts package repository-specific setups and remain outside `all`:
 
 | Shortcut | Intended setup |
 | --- | --- |
-| `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
 | `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
 | `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
-| `hyperframes` | A global HyperFrames authoring and rendering environment with Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and skills for every supported coding agent |
-| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
 
 Dependencies and application commands remain project-owned. `sandbox plan`
-expands each shortcut without executing the profile.
+expands each composition without executing the profile.
 
 ### AudioGridder server workflow
 
-The `audio` shortcut makes Windows Sandbox the production plugin server. VSTs run
+The `audio` stack makes Windows Sandbox the production plugin server. VSTs run
 in the guest, while the normal host DAW loads the AudioGridder client:
 
 1. Install the AudioGridder 1.2.0 client plugin in the host DAW. Herdr Sandbox
@@ -256,7 +260,7 @@ server/client path, configures server ID 0, and opens guest TCP 55056 plus
 without requiring host DAW automation. Production VST packages remain explicit
 project or user provisioning choices.
 
-The HyperFrames shortcut resolves the latest stable CLI and full FFmpeg release
+The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
 when the profile does not request versions. Provisioning runs HyperFrames doctor,
 checks its managed browser and global skills, and proves a software H.264 encode
 with `libx264`. Browser GPU acceleration and FFmpeg hardware encoding are separate;
