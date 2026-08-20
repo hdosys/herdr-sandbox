@@ -798,6 +798,8 @@ func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testin
 		"[string]::Equals($credentialHelper, $expectedCredentialHelper, [StringComparison]::Ordinal)",
 		"$matches[0].tokenSource",
 		"Join-Path $githubCLIDestination 'hosts.yml'",
+		"[string]::Equals([string]$_.Name, [string]$account.hostname, [StringComparison]::OrdinalIgnoreCase)",
+		"[string]::Equals([string]$_.login, [string]$account.login, [StringComparison]::OrdinalIgnoreCase)",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("guest GitHub CLI authentication is missing %q", required)
@@ -809,6 +811,10 @@ func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testin
 		"$credentialHelper.StartsWith('!')",
 		"$credentialHelper.IndexOf('gh.exe'",
 		"$credentialHelper.EndsWith(' auth git-credential'",
+		"$_.Name -ceq [string]$account.hostname",
+		"[string]$_.login -ceq [string]$account.login",
+		"$_.Name -ieq [string]$account.hostname",
+		"[string]$_.login -ieq [string]$account.login",
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("guest GitHub CLI authentication retains broad helper check %q", forbidden)

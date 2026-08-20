@@ -1062,11 +1062,15 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $statusOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI authentication verification' -Arguments @('auth', 'status', '--json', 'hosts'))
         $githubStatus = (($statusOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) | ConvertFrom-Json
         foreach ($account in $githubAccounts) {
-            $hostProperties = @($githubStatus.hosts.PSObject.Properties | Where-Object { $_.Name -ceq [string]$account.hostname })
+            $hostProperties = @($githubStatus.hosts.PSObject.Properties | Where-Object {
+                    [string]::Equals([string]$_.Name, [string]$account.hostname, [StringComparison]::OrdinalIgnoreCase)
+                })
             if ($hostProperties.Count -ne 1) {
                 throw 'GitHub CLI authentication verification is missing one expected host.'
             }
-            $matches = @($hostProperties[0].Value | Where-Object { [string]$_.login -ceq [string]$account.login })
+            $matches = @($hostProperties[0].Value | Where-Object {
+                    [string]::Equals([string]$_.login, [string]$account.login, [StringComparison]::OrdinalIgnoreCase)
+                })
             if ($matches.Count -ne 1 -or [string]$matches[0].state -cne 'success' -or
                 [bool]$matches[0].active -ne [bool]$account.active -or
                 -not [string]::Equals([string]$matches[0].tokenSource, (Join-Path $githubCLIDestination 'hosts.yml'), [StringComparison]::OrdinalIgnoreCase)) {
