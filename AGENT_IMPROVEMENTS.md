@@ -77,13 +77,18 @@ cross-project workflow in the global OpenCode configuration repository.
   488.701 seconds; the normal `verify` gate remained separate at 58.506 seconds.
   Expected benefit: real provisioning evidence without a nested Sandbox or slower
   standard iteration.
-- **Status: proposed. Make the exact installed candidate a release acceptance owner.**
+- **Status: done. Make the exact installed candidate a release acceptance owner.**
   Evidence: WinGet validation and community publication accepted a v0.0.15
   manifest whose ProductCode differed from the uninstall identity registered by
   its exact public installer; only a disposable installed-artifact check exposed
   the mismatch. Install the candidate, compare its registered identity with the
   manifest, run the focused native path through installed files, and quietly
-  uninstall before publication. Expected benefit: catch packaging and installed
+  uninstall before publication. The package gate now rejects any checked-in
+  WinGet ProductCode that differs from the canonical uninstall identity, while
+  `package-current-sandbox` installs the exact candidate, checks its registered
+  identity and payload, provisions through those installed files, preserves SSH,
+  Herdr, and user configuration, then quietly uninstalls it. The first complete
+  pass took 552.332 seconds. Expected benefit: catch packaging and installed
   lifecycle defects that compilation, source checks, and manifest syntax miss.
 - **Status: proposed. Retire low-value source-coupled tests in favor of unique behavior signal.**
   Evidence: the repository has 18,112 lines of Go tests for 20,365 lines of

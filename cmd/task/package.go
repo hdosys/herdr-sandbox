@@ -70,6 +70,9 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	if err := validateWingetManifestProductCodes(); err != nil {
+		return err
+	}
 	if err := buildRelease(ctx, version, stdout, stderr); err != nil {
 		return err
 	}
@@ -104,6 +107,37 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	}
 	if err := writeReleaseArtifactEvidence(stdout, paths); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateWingetManifestProductCodes() error {
+	pattern := filepath.Join("packaging", "winget", "manifests", "*", "*", "*", "*", "*.installer.yaml")
+	manifests, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("find WinGet installer manifests: %w", err)
+	}
+	if len(manifests) == 0 {
+		return errors.New("package requires at least one WinGet installer manifest")
+	}
+	expected := "ProductCode: '" + productidentity.UninstallKeyName + "'"
+	for _, manifest := range manifests {
+		contents, err := os.ReadFile(manifest)
+		if err != nil {
+			return fmt.Errorf("read WinGet installer manifest %s: %w", manifest, err)
+		}
+		count := 0
+		for line := range strings.SplitSeq(string(contents), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "ProductCode:") {
+				count++
+				if strings.TrimSpace(line) != expected {
+					return fmt.Errorf("WinGet installer manifest %s ProductCode must equal %s", manifest, productidentity.UninstallKeyName)
+				}
+			}
+		}
+		if count != 1 {
+			return fmt.Errorf("WinGet installer manifest %s has %d ProductCode fields, want 1", manifest, count)
+		}
 	}
 	return nil
 }

@@ -146,7 +146,10 @@ Use repository-owned tasks and the smallest ladder covering the change:
    all-stack acceptance inside the active development Sandbox. It must never run
    bootstrap, reprovision SSH or Herdr, or change the existing SSH service, Herdr
    server, or remote-client bridge identities.
-5. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
+5. `go run ./cmd/task package-current-sandbox VERSION` for exact installer,
+   registered identity, installed-payload provisioning, preservation, and quiet
+   uninstall acceptance inside the active disposable Sandbox.
+6. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
    WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
    real interactive remote-attach check when attach behavior changed.
 
@@ -156,10 +159,11 @@ pinned Go nilness analyzer, one batched PowerShell parse, fast product tests,
 `go vet`, and the stable build artifact. It must remain within a five-minute hard
 deadline and should normally finish within three minutes. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
-the full nightly/release matrix. `native-current-sandbox` is also explicit and
-never part of normal iteration. Do not run these slower gates while a user waits
-for an ordinary build or installer. Unit tests do not replace the applicable
-native gate when changed behavior depends on that boundary.
+the full nightly/release matrix. `native-current-sandbox` and
+`package-current-sandbox` are also explicit and never part of normal iteration.
+Do not run these slower gates while a user waits for an ordinary build or
+installer. Unit tests do not replace the applicable native gate when changed
+behavior depends on that boundary.
 
 For long-running GitHub Actions, check status no more than once every two minutes
 and fetch detailed logs only after terminal failure. GitHub release artifacts do

@@ -54,6 +54,9 @@ func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	if got := taskTimeoutFor([]string{"native-current-sandbox"}); got != currentSandboxTaskTimeout {
 		t.Fatalf("current-Sandbox timeout = %s", got)
 	}
+	if got := taskTimeoutFor([]string{"package-current-sandbox", "v0.0.1"}); got != currentPackageTaskTimeout {
+		t.Fatalf("current-Sandbox package timeout = %s", got)
+	}
 	if got := taskTimeoutFor([]string{"verify"}); got != taskTimeout {
 		t.Fatalf("ordinary timeout = %s", got)
 	}

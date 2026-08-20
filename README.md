@@ -531,6 +531,7 @@ Windows Sandbox checks, and release packaging.
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
 go run ./cmd/task native-current-sandbox
+go run ./cmd/task package-current-sandbox v0.0.RELEASE_ID
 go run ./cmd/task native-all-stacks
 ```
 
@@ -542,6 +543,9 @@ go run ./cmd/task native-all-stacks
 - `native-current-sandbox` replays real Base and every project stack inside the
   active development Sandbox without launching a nested Sandbox or restarting
   its existing SSH and Herdr processes.
+- `package-current-sandbox` builds and installs the exact candidate, provisions
+  through its installed files, preserves the existing development environment,
+  then quietly uninstalls and verifies cleanup.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the
   complete toolchain, managed SSH, and a real NSIS compile without installing a
   release candidate.
