@@ -65,11 +65,30 @@ cross-project workflow in the global OpenCode configuration repository.
   file and renames it into place before the reader can observe it. Repeated focused
   execution passes. Expected benefit: deterministic process-tree tests without
   masking product verification.
-- **Status: proposed. Add a focused retained Base provisioning gate.**
+- **Status: proposed. Add focused retained and fresh Base provisioning gates.**
   Evidence: three native checks of one Base package boundary took 158.993, 149.192,
   and 405.072 seconds because `sandbox up --no-attach` continued into unrelated
   project stacks after reaching that boundary; the last run later hit an unrelated
-  Visual Studio readiness timeout. Add one bounded repository task that exercises
-  Base in the existing ready guest without replacing it or running project stacks.
-  Expected benefit: preserve real SSH, WinGet, and guest evidence while avoiding
-  unrelated stack delay and failure during Base-only iteration.
+  Visual Studio readiness timeout. A later 580.735-second integration pass was
+  green but could not close eight deferred host-to-guest assignments. Add one
+  bounded retained-guest task for Base iteration and one minimal fresh-guest task
+  for launch, SSH, provisioning, ready status, and one selected outcome. Keep the
+  all-stack task as breadth acceptance. Expected benefit: preserve real native
+  evidence with faster attribution and without unrelated stack delay or failure.
+- **Status: proposed. Make the exact installed candidate a release acceptance owner.**
+  Evidence: WinGet validation and community publication accepted a v0.0.15
+  manifest whose ProductCode differed from the uninstall identity registered by
+  its exact public installer; only a disposable installed-artifact check exposed
+  the mismatch. Install the candidate, compare its registered identity with the
+  manifest, run the focused native path through installed files, and quietly
+  uninstall before publication. Expected benefit: catch packaging and installed
+  lifecycle defects that compilation, source checks, and manifest syntax miss.
+- **Status: proposed. Retire low-value source-coupled tests in favor of unique behavior signal.**
+  Evidence: the repository has 18,112 lines of Go tests for 20,365 lines of
+  production Go, including at least 68 source-only tests and roughly 2,600 lines
+  centered on copied tokens, ordering, or implementation absence. Delete tests of
+  test fixtures, external-tool semantics, copied source inventories, and wiring
+  already exercised by a stronger owner; consolidate repeated table cases; retain
+  product decisions, unsafe-boundary checks, and unique failure contracts.
+  Expected benefit: lower maintenance and cognitive cost while shifting confidence
+  toward executable product and native outcomes.

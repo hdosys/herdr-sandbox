@@ -9,7 +9,7 @@ Scope: user
 UpgradeBehavior: install
 Commands:
 - sandbox
-ProductCode: '{F845EA2A-FF3F-465B-95FA-49B1BAF63B17}'
+ProductCode: '{BF6EF455-61AF-43BD-8A25-521C6C7E13F9}'
 UnsupportedArguments:
 - log
 - location
