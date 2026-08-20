@@ -172,13 +172,13 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	restart := buildTailscaleRestartLauncher()
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
-		"$expectedLength = [long]12345",
+		"-ExpectedLength 12345",
 		digest,
 		"EncryptState",
 		"HardwareAttestation",
 		"--auth-key=file:",
 		"status --json --peers=false",
-		"exit 42",
+		"-IdentityNotEstablishedExitCode 42",
 		"Join-Path $env:ProgramData 'Tailscale\\server-state.conf'",
 		"Stop-TailscaleService",
 		"Start-TailscaleService",

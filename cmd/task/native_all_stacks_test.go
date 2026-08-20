@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,7 +12,18 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
+
+func encodeNativePowerShell(script string) string {
+	codeUnits := utf16.Encode([]rune(script))
+	bytes := make([]byte, len(codeUnits)*2)
+	for index, value := range codeUnits {
+		bytes[index*2] = byte(value)
+		bytes[index*2+1] = byte(value >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(bytes)
+}
 
 func TestWriteNativeAcceptanceEvidenceIsCommitKeyedAndComplete(t *testing.T) {
 	const commit = "0123456789abcdef0123456789abcdef01234567"
