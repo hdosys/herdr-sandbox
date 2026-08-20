@@ -15,6 +15,7 @@ if (-not (Test-Path -LiteralPath $ProjectsDirectory -PathType Container)) {
 
 $knownStacks = @{
     'Install-AndroidStack' = 'android'
+    'Install-AudioStack' = 'audio'
     'Install-BunStack' = 'bun'
     'Install-CargoNextest' = 'cargo-nextest'
     'Install-CppStack' = 'cpp'
@@ -137,6 +138,12 @@ function Get-CommandToolRequirements {
     $version = ''
     $series = ''
     switch ($name) {
+        'Install-AudioStack' {
+            return @(
+                (New-ToolRequirement 'Cockos.REAPER' '7.78' '' 'audio'),
+                (New-ToolRequirement 'AudioGridder' '1.2.0' '' 'audio')
+            )
+        }
         'Install-BunStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'Oven-sh.Bun' $version '' 'bun')

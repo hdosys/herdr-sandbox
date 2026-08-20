@@ -76,6 +76,14 @@ These are deliberate non-guarantees:
 - Networking is enabled. A credential deliberately copied into the guest can be
   used or exfiltrated by a compromised agent or project. Herdr Sandbox currently
   has no offline mode.
+- The optional `audio` project stack runs AudioGridder Server and the selected
+  VSTs inside Windows Sandbox. It opens exact guest firewall rules for server TCP
+  55056 and workers 55088 through 56088, scoped to the current default host
+  gateway and the pinned server executable. The separately installed host DAW
+  client can therefore send plugin state, MIDI, audio, and control traffic into
+  the guest. Project or user provisioning owns the VST binaries that process that
+  data. Herdr Sandbox adds no authentication to AudioGridder's external protocol,
+  so do not broaden the firewall source and do not select untrusted VST payloads.
 - Imported GitHub CLI tokens are intentionally stored in the disposable guest's
   `hosts.yml`, not Windows Credential Manager, so noninteractive provisioning and
   Git HTTPS never open a credential dialog. Any guest administrator can read that

@@ -143,15 +143,17 @@ Use repository-owned tasks and the smallest ladder covering the change:
 3. `go run ./cmd/task build` and the stable CLI under `build/bin` when binary
    behavior changed.
 4. `go run ./cmd/task native-current-sandbox` for explicit in-place Base/package/
-   all-stack acceptance inside the active development Sandbox. It must never run
-   bootstrap, reprovision SSH or Herdr, or change the existing SSH service, Herdr
-   server, or remote-client bridge identities.
+   all-stack acceptance plus a task-owned REAPER-to-AudioGridder connection inside
+   the active development Sandbox. It must never run bootstrap, reprovision SSH or
+   Herdr, or change the existing SSH service, Herdr server, or remote-client bridge
+   identities.
 5. `go run ./cmd/task package-current-sandbox VERSION` for exact installer,
    registered identity, installed-payload provisioning, preservation, and quiet
    uninstall acceptance inside the active disposable Sandbox.
 6. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
-   WinGet + all-stack + guest Herdr server + managed SSH smoke, followed by a
-   real interactive remote-attach check when attach behavior changed.
+   WinGet + all-stack + task-owned REAPER-to-AudioGridder connection + guest Herdr
+   server + managed SSH smoke, followed by a real interactive remote-attach check
+   when attach behavior changed.
 
 `go run ./cmd/task verify` is the normal iteration gate covering formatting, a
 clean Go modernization diff, pinned Staticcheck with all checks enabled, the

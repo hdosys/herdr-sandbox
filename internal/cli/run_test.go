@@ -44,7 +44,7 @@ func TestRunPrintsHelp(t *testing.T) {
 
 func TestStackHelpListsStandaloneStacksBeforeMetaAndProjectShortcuts(t *testing.T) {
 	standalone := "android|cpp|dotnet|go|java|node|nsis|nushell|playwright-cli|python|rust|tradingview|zig"
-	trailing := "all|handy|herdr|hyperframes|python-ai"
+	trailing := "all|audio|handy|herdr|hyperframes|python-ai"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
 			for line := range strings.SplitSeq(text, "\n") {
@@ -750,6 +750,7 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		{name: "all", args: []string{"init", "--stack", "all"}, want: "all"},
 		{name: "C and C++", args: []string{"init", "--stack", "cpp"}, want: "cpp"},
 		{name: "android", args: []string{"init", "--stack", "android"}, want: "android"},
+		{name: "audio virtual", args: []string{"init", "--stack", "audio"}, want: "audio"},
 		{name: "handy virtual", args: []string{"init", "--stack", "handy"}, want: "handy"},
 		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "java", args: []string{"init", "--stack", "java"}, want: "java"},

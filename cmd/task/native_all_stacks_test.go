@@ -67,9 +67,15 @@ func TestPrepareNativeAllStacksFixtureIsCredentialFreeAndUsesNarrowMounts(t *tes
 		configuration.Mounts["worktrees"].ReadOnly || configuration.Workspaces["handy"] != fixture.HandyProject {
 		t.Fatalf("native fixture configuration = %#v", configuration)
 	}
-	smokeScript, err := os.ReadFile(filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"))
-	if err != nil || string(smokeScript) != nativeAllStacksSmokeScript {
-		t.Fatalf("native smoke fixture script does not match its repository owner: %v", err)
+	for name, want := range map[string]string{
+		"native-all-stacks-smoke.ps1":       nativeAllStacksSmokeScript,
+		"native-audio-connection-smoke.ps1": nativeAudioConnectionSmokeScript,
+		"native-audio-reaper-smoke.lua":     nativeAudioReaperSmokeScript,
+	} {
+		contents, err := os.ReadFile(filepath.Join(fixture.ReadOnlyMount, name))
+		if err != nil || string(contents) != want {
+			t.Fatalf("native fixture asset %s does not match its repository owner: %v", name, err)
+		}
 	}
 	for _, absent := range []string{
 		filepath.Join(fixture.AppData, "GitHub CLI", "hosts.yml"),
@@ -98,6 +104,24 @@ func TestNativeAllStacksSmokeCommandUsesReadOnlyFixtureScript(t *testing.T) {
 	}
 	if command.Stdin != nil || strings.Contains(want, "-EncodedCommand") || strings.Contains(want, nativeAllStacksSmokeScript) {
 		t.Fatal("native smoke payload remains on the SSH command line or standard input")
+	}
+}
+
+func TestNativeAudioConnectionSmokeCommandUsesReadOnlyFixtureScripts(t *testing.T) {
+	sshConfig := `C:\Runs\native\.ssh\config`
+	command := nativeAudioConnectionSmokeCommand(context.Background(), "ssh.exe", sshConfig)
+	want := strings.Join([]string{
+		"-T", "-F", sshConfig, "sandbox",
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass", "-File", nativeAudioSmokeGuestPath,
+		"-ReaperScriptPath", nativeAudioReaperGuestPath,
+	}, "\x00")
+	if got := strings.Join(command.Args[1:], "\x00"); got != want {
+		t.Fatalf("native audio smoke SSH arguments = %q, want %q", got, want)
+	}
+	if command.Stdin != nil || strings.Contains(want, "-EncodedCommand") ||
+		strings.Contains(want, nativeAudioConnectionSmokeScript) || strings.Contains(want, nativeAudioReaperSmokeScript) {
+		t.Fatal("native audio smoke payload remains on the SSH command line or standard input")
 	}
 }
 
@@ -135,9 +159,14 @@ if ($errors.Count -gt 0) {
     $errors | ForEach-Object { [Console]::Error.WriteLine($_.Message) }
     exit 1
 }`
-	command := hiddenCommandContext(context.Background(), "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeNativePowerShell(parser))
-	command.Env = append(os.Environ(), "HERDR_SANDBOX_NATIVE_SCRIPT="+nativeAllStacksSmokeScript)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("parse native all-stack smoke script: %v: %s", err, output)
+	for name, script := range map[string]string{
+		"all-stack": nativeAllStacksSmokeScript,
+		"audio":     nativeAudioConnectionSmokeScript,
+	} {
+		command := hiddenCommandContext(context.Background(), "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeNativePowerShell(parser))
+		command.Env = append(os.Environ(), "HERDR_SANDBOX_NATIVE_SCRIPT="+script)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("parse native %s smoke script: %v: %s", name, err, output)
+		}
 	}
 }

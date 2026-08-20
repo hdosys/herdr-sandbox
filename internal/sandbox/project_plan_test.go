@@ -30,6 +30,7 @@ $dynamic = 'Install-ZigStack'
 Install-RustMSVCStack -ProjectDirectory 'C:\Workspaces\global'
 Install-Uv
 Install-AndroidStack
+Install-AudioStack
 Install-CppStack
 `)
 	writeTestFile(t, projectsDirectory+`\alpha.ps1`, `$dynamic = 'Install-RustMSVCStack'
@@ -67,7 +68,7 @@ throw 'the AST adapter must not execute project code'
 	}
 	got := inspection.Workspaces
 	userStacks := inspection.UserStacks
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|audio|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
@@ -178,6 +179,35 @@ func TestInspectProjectProvisioningPlanDefaultsHyperFramesToolsToLatestStable(t 
 		if tool.Tool != want || tool.Version != "" || tool.Series != "" || tool.Source != toolVersionSourceDefault {
 			t.Fatalf("HyperFrames tool %d = %#v, want latest stable %s", index, tool, want)
 		}
+	}
+}
+
+func TestInspectProjectProvisioningPlanOwnsExactAudioTools(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AST regression")
+	}
+	runDirectory := t.TempDir()
+	projectsDirectory := t.TempDir()
+	userScript := filepath.Join(runDirectory, userProvisioningName)
+	writeTestFile(t, userScript, userProvisioningContract+"\n")
+	profile := filepath.Join(projectsDirectory, "audio.ps1")
+	writeTestFile(t, profile, "Install-AudioStack\n")
+	inspection, err := inspectProjectProvisioningPlan(context.Background(), runDirectory, userScript, projectsDirectory,
+		[]workspacePlan{{Name: "audio", ProvisioningPath: profile}})
+	if err != nil {
+		t.Fatalf("audio inspection: %v", err)
+	}
+	if strings.Join(projectStackStrings(inspection.Workspaces[0].Stacks), "|") != "audio" {
+		t.Fatalf("audio stacks = %v", inspection.Workspaces[0].Stacks)
+	}
+	if len(inspection.ToolVersions) != 2 || inspection.ToolVersions[0].Tool != "AudioGridder" ||
+		inspection.ToolVersions[0].Version != "1.2.0" || inspection.ToolVersions[1].Tool != packageREAPER ||
+		inspection.ToolVersions[1].Version != "7.78" {
+		t.Fatalf("audio tool plan = %#v", inspection.ToolVersions)
+	}
+	if !projectStackOwnsPackage(packageREAPER) {
+		t.Fatalf("REAPER package is not audio-stack-owned: %s", packageREAPER)
 	}
 }
 

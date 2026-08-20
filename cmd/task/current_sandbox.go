@@ -22,6 +22,7 @@ const (
 )
 
 var currentSandboxFixtureSafeDirectories = []string{
+	"C:/Workspaces/herdr-sandbox-native-audio",
 	"C:/Workspaces/herdr-sandbox-native-core",
 	"C:/Workspaces/herdr-sandbox-native-handy",
 	"C:/Workspaces/herdr-sandbox-native-herdr",
@@ -64,6 +65,10 @@ func nativeCurrentSandbox(ctx context.Context, stdout, stderr io.Writer, payload
 	command.Stderr = stderr
 	command.Stdin = os.Stdin
 	runErr := command.Run()
+	var audioErr error
+	if runErr == nil {
+		audioErr = runCurrentSandboxAudioSmoke(ctx, stdout, stderr)
+	}
 	gitRestoreErr := restoreGlobalGitSafeDirectories(ctx, gitSafeDirectories)
 	after, identityErr := inspectCurrentSandboxIdentity(ctx)
 	if identityErr == nil {
@@ -72,11 +77,37 @@ func nativeCurrentSandbox(ctx context.Context, stdout, stderr io.Writer, payload
 	if runErr != nil {
 		runErr = fmt.Errorf("run current-Sandbox provisioning: %w", runErr)
 	}
-	if err := errors.Join(runErr, gitRestoreErr, identityErr); err != nil {
+	if err := errors.Join(runErr, audioErr, gitRestoreErr, identityErr); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, "Current-Sandbox provisioning passed without restarting SSH or Herdr.")
+	_, err = fmt.Fprintln(stdout, "Current-Sandbox provisioning and REAPER-to-AudioGridder connection passed without restarting SSH or Herdr.")
 	return err
+}
+
+func runCurrentSandboxAudioSmoke(ctx context.Context, stdout, stderr io.Writer) error {
+	smokeScript, err := filepath.Abs(filepath.Join("cmd", "task", "assets", "native-audio-connection-smoke.ps1"))
+	if err != nil {
+		return fmt.Errorf("resolve current-Sandbox audio smoke script: %w", err)
+	}
+	reaperScript, err := filepath.Abs(filepath.Join("cmd", "task", "assets", "native-audio-reaper-smoke.lua"))
+	if err != nil {
+		return fmt.Errorf("resolve current-Sandbox REAPER smoke script: %w", err)
+	}
+	for _, path := range []string{smokeScript, reaperScript} {
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("find current-Sandbox audio smoke asset %s: %w", path, err)
+		}
+	}
+	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	command := hiddenCommandContext(ctx, powerShell,
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+		"-File", smokeScript, "-ReaperScriptPath", reaperScript)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("run current-Sandbox REAPER-to-AudioGridder connection smoke: %w", err)
+	}
+	return nil
 }
 
 func readGlobalGitSafeDirectories(ctx context.Context) ([]string, error) {
@@ -109,10 +140,8 @@ func restoreGlobalGitSafeDirectories(ctx context.Context, expected []string) err
 	if err != nil || slices.Equal(current, expected) {
 		return err
 	}
-	for _, value := range current {
-		if !slices.Contains(currentSandboxFixtureSafeDirectories, value) {
-			return fmt.Errorf("refuse to overwrite concurrently changed global Git safe directories: %q", current)
-		}
+	if !slices.Equal(current, currentSandboxFixtureSafeDirectories) {
+		return fmt.Errorf("refuse to overwrite concurrently changed global Git safe directories: %q", current)
 	}
 	if len(expected) == 0 {
 		command := hiddenCommandContext(ctx, "git", "config", "--global", "--unset-all", "safe.directory")

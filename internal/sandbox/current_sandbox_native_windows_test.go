@@ -30,6 +30,7 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 
 	const workspacesRoot = `C:\Workspaces`
 	workspaces := map[string][]string{
+		"herdr-sandbox-native-audio": {"audio"},
 		"herdr-sandbox-native-core": {
 			"dotnet", "android", "go", "hyperframes", "cpp", "java", "nsis", "nushell", "playwright-cli", "tradingview",
 		},

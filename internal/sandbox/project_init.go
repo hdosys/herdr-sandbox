@@ -135,7 +135,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, hyperframes, or python-ai")
+		return nil, nil, errors.New("select at least one stack: android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, audio, handy, herdr, hyperframes, or python-ai")
 	}
 	for _, value := range requested {
 		if strings.EqualFold(strings.TrimSpace(value), "all") {
@@ -147,6 +147,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 	}
 	aliases := map[string]projectStack{
 		"android":        stackAndroid,
+		"audio":          stackAudio,
 		"cpp":            stackCpp,
 		"dotnet":         stackDotNet,
 		"go":             stackGo,
@@ -171,7 +172,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, handy, herdr, hyperframes, or python-ai", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose android, cpp, dotnet, go, java, node, nsis, nushell, playwright-cli, python, rust, tradingview, zig, all, audio, handy, herdr, hyperframes, or python-ai", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -233,6 +234,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 		switch stack {
 		case stackAndroid:
 			call = "Install-AndroidStack"
+		case stackAudio:
+			call = "Install-AudioStack"
 		case stackBun:
 			call = "Install-BunStack"
 		case stackCargoNextest:

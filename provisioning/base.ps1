@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 54
+# herdr-sandbox-base-contract: 55
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -627,7 +627,15 @@ function Stop-ProvisioningNativeGroup {
 function Update-ProvisioningPath {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = @($machinePath, $userPath) -join ';'
+    $entries = @($machinePath, $userPath)
+    $windowsApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    if ((Test-Path -LiteralPath $windowsApps -PathType Container) -and
+        @(@($entries -join ';') -split ';' | Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and $_.TrimEnd('\') -ieq $windowsApps.TrimEnd('\')
+            }).Count -eq 0) {
+        $entries += $windowsApps
+    }
+    $env:Path = @($entries | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';'
 }
 
 function Wait-ProvisioningCommandAvailable {
@@ -2449,7 +2457,7 @@ public static class HerdrSandboxShellWindow {
 function Ensure-ProvisioningStartShortcut {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('File Pilot', 'TradingView')]
+        [ValidateSet('AudioGridder Server', 'File Pilot', 'REAPER', 'TradingView')]
         [string]$DisplayName,
         [Parameter(Mandatory = $true)]
         [string]$Executable,

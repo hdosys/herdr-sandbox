@@ -87,6 +87,87 @@ $androidCLI = (Get-Command 'android.exe' -CommandType Application -ErrorAction S
 $adb = (Get-Command 'adb.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $openSrc = (Get-Command 'opensrc.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 
+$reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
+$reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
+$reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
+if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+    [string]$reaperInfo.VersionInfo.FileVersion -cne '7.78' -or
+    $reaperSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+    $reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
+    throw 'REAPER 7.78 installation identity is invalid.'
+}
+$audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
+$audioGridderCopies = [ordered]@{
+    'bin\AudioGridderPluginTray.exe' = 'C:\Program Files\AudioGridderPluginTray\AudioGridderPluginTray.exe'
+    'bin\crashpad_handler.exe' = 'C:\Program Files\AudioGridderPluginTray\crashpad_handler.exe'
+    'lib\VST\AudioGridder.dll' = 'C:\Program Files\VstPlugins\AudioGridder.dll'
+    'lib\VST\AudioGridderInst.dll' = 'C:\Program Files\VstPlugins\AudioGridderInst.dll'
+    'lib\VST\AudioGridderMidi.dll' = 'C:\Program Files\VstPlugins\AudioGridderMidi.dll'
+    'lib\VST3\AudioGridder.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridder.vst3'
+    'lib\VST3\AudioGridderInst.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridderInst.vst3'
+    'lib\VST3\AudioGridderMidi.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridderMidi.vst3'
+}
+$audioGridderRootPath = [IO.Path]::GetFullPath($audioGridderRoot).TrimEnd('\')
+$audioGridderActual = @(Get-ChildItem -LiteralPath $audioGridderRoot -File -Recurse -Force |
+    ForEach-Object { $_.FullName.Substring($audioGridderRootPath.Length + 1) } | Sort-Object)
+if (($audioGridderActual -join '|') -cne (@(@($audioGridderCopies.Keys) + 'bin\AudioGridderServer.exe' | Sort-Object) -join '|') -or
+    (Test-Path -LiteralPath (Join-Path $audioGridderRoot 'lib\AAX'))) {
+    throw 'AudioGridder retained server/client payload contains missing or unsupported files.'
+}
+foreach ($entry in $audioGridderCopies.GetEnumerator()) {
+    $source = Join-Path $audioGridderRoot ([string]$entry.Key)
+    $destination = [string]$entry.Value
+    if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) {
+        throw "AudioGridder installed client file is invalid: $destination"
+    }
+}
+$audioGridderServer = Get-Item -LiteralPath (Join-Path $audioGridderRoot 'bin\AudioGridderServer.exe') -Force
+$audioGridderTray = Get-Item -LiteralPath 'C:\Program Files\AudioGridderPluginTray\AudioGridderPluginTray.exe' -Force
+if ([string]$audioGridderServer.VersionInfo.FileVersion -cne '1.2.0' -or
+    [string]$audioGridderServer.VersionInfo.ProductName -cne 'AudioGridderServer' -or
+    [string]$audioGridderTray.VersionInfo.FileVersion -cne '1.2.0' -or
+    [string]$audioGridderTray.VersionInfo.ProductName -cne 'AudioGridderPluginTray') {
+    throw 'AudioGridder server or Plugin Tray identity is invalid.'
+}
+$audioGridderPluginConfiguration = [IO.File]::ReadAllText((Join-Path $env:APPDATA 'AudioGridder\audiogridderplugin.cfg')) | ConvertFrom-Json
+$audioGridderServerConfiguration = [IO.File]::ReadAllText((Join-Path $env:APPDATA 'AudioGridder\audiogridderserver.cfg')) | ConvertFrom-Json
+$audioGridderGateways = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object {
+        $null -ne $_.IPv4DefaultGateway -and [string]$_.NetAdapter.Status -ceq 'Up'
+    } | ForEach-Object { @($_.IPv4DefaultGateway) | ForEach-Object { [string]$_.NextHop } } |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -cne '0.0.0.0' } | Sort-Object -Unique)
+$audioGridderServers = @($audioGridderPluginConfiguration.Servers | ForEach-Object { [string]$_ })
+if ($audioGridderGateways.Count -ne 1 -or $audioGridderServers.Count -ne 1 -or
+    $audioGridderServers[0] -cne '127.0.0.1:0' -or
+    [string]$audioGridderPluginConfiguration.LastServer -cne '127.0.0.1:0:::0:0:00000000-0000-0000-0000-000000000000') {
+    throw 'AudioGridder local REAPER endpoint is invalid.'
+}
+$audioGridderVST2Folders = @($audioGridderServerConfiguration.VST2Folders | ForEach-Object { [string]$_ })
+$audioGridderVST3Folders = @($audioGridderServerConfiguration.VST3Folders | ForEach-Object { [string]$_ })
+if ([int]$audioGridderServerConfiguration.ID -ne 0 -or [string]$audioGridderServerConfiguration.NAME -cne 'Herdr Sandbox' -or
+    -not [bool]$audioGridderServerConfiguration.VST -or -not [bool]$audioGridderServerConfiguration.VST2 -or
+    -not [bool]$audioGridderServerConfiguration.VSTNoStandardFolders -or -not [bool]$audioGridderServerConfiguration.ScanForPlugins -or
+    -not [bool]$audioGridderServerConfiguration.Logger -or [bool]$audioGridderServerConfiguration.CrashReporting -or
+    [int]$audioGridderServerConfiguration.SandboxMode -ne 1 -or [bool]$audioGridderServerConfiguration.ScreenLocalMode -or
+    $audioGridderVST2Folders.Count -ne 1 -or $audioGridderVST2Folders[0] -cne 'C:\Program Files\VstPlugins' -or
+    $audioGridderVST3Folders.Count -ne 1 -or $audioGridderVST3Folders[0] -cne 'C:\Program Files\Common Files\VST3') {
+    throw 'AudioGridder server-0 VST execution configuration is invalid.'
+}
+foreach ($ruleName in @('HerdrSandbox-AudioGridder-Server0', 'HerdrSandbox-AudioGridder-Workers')) {
+    $rules = @(Get-NetFirewallRule -Name $ruleName -ErrorAction Stop)
+    $application = @($rules | Get-NetFirewallApplicationFilter -ErrorAction Stop)
+    $address = @($rules | Get-NetFirewallAddressFilter -ErrorAction Stop)
+    if ($rules.Count -ne 1 -or $application.Count -ne 1 -or $address.Count -ne 1 -or
+        [string]$rules[0].Enabled -cne 'True' -or [string]$rules[0].Direction -cne 'Inbound' -or
+        [string]$rules[0].Action -cne 'Allow' -or
+        [IO.Path]::GetFullPath([string]$application[0].Program) -ine $audioGridderServer.FullName -or
+        [string]@($address[0].RemoteAddress)[0] -cne $audioGridderGateways[0]) {
+        throw "AudioGridder guest firewall rule is invalid: $ruleName"
+    }
+}
+[Console]::Out.WriteLine("[all-stacks] audio: REAPER 7.78, AudioGridder server 0, local clients, and host-gateway firewall ready")
+
 $expectedOpenSrc = 'C:\HerdrSandbox\tools\vercel-labs.opensrc\opensrc.exe'
 $expectedOpenSrcHome = 'C:\HerdrSandbox\cache\opensrc'
 if ([IO.Path]::GetFullPath($openSrc) -ine $expectedOpenSrc -or
@@ -437,5 +518,5 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: opensrc, Android, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: opensrc, Android, Audio, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')

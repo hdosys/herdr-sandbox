@@ -23,15 +23,24 @@ const (
 	nativeAllStacksMarkerContents = "herdr-sandbox native-all-stacks fixture v1\n"
 	nativeAllStacksUpTimeout      = "90m"
 	nativeAllStacksSmokeGuestPath = `C:\Mounts\reference\native-all-stacks-smoke.ps1`
+	nativeAudioSmokeGuestPath     = `C:\Mounts\reference\native-audio-connection-smoke.ps1`
+	nativeAudioReaperGuestPath    = `C:\Mounts\reference\native-audio-reaper-smoke.lua`
 )
 
 //go:embed assets/native-all-stacks-smoke.ps1
 var nativeAllStacksSmokeScript string
 
+//go:embed assets/native-audio-connection-smoke.ps1
+var nativeAudioConnectionSmokeScript string
+
+//go:embed assets/native-audio-reaper-smoke.lua
+var nativeAudioReaperSmokeScript string
+
 var nativeAcceptanceBoundaries = []string{
 	"fresh-windows-sandbox",
 	"provisioning-ready",
 	"all-built-in-stacks",
+	"audio-reaper-connection",
 	"managed-ssh",
 	"folder-mounts",
 	"nsis-compile",
@@ -108,7 +117,7 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err := runNativeAllStacksCLI(ctx, fixture.Project, environment, stdout, stderr, executable, "down"); err != nil {
 		return fmt.Errorf("stop successful native all-stack Sandbox: %w", err)
 	}
-	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, opensrc source inspection, Android CLI and wireless ADB tooling, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
+	if _, err := fmt.Fprintln(stdout, "Native all-stack test passed: folder mounts, opensrc source inspection, Android CLI and wireless ADB tooling, REAPER-to-AudioGridder connection, C/C++, Java, NSIS, dotnet, go, Handy and Herdr virtual stacks, node with Playwright Chromium, Playwright CLI registration, Terminal, and Starship."); err != nil {
 		return err
 	}
 	return writeNativeAcceptanceEvidence(stdout, commit)
@@ -268,9 +277,11 @@ func prepareNativeAllStacksFixture(root string) (nativeAllStacksFixture, error) 
   }
 }
 `, fixture.ReadOnlyMount, fixture.WritableMount, fixture.HandyProject),
-		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"):          "read-only-mount-ok\n",
-		filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"): nativeAllStacksSmokeScript,
-		filepath.Join(fixture.WritableMount, "host-worktrees.txt"):          "read-write-mount-ok\n",
+		filepath.Join(fixture.ReadOnlyMount, "host-reference.txt"):                "read-only-mount-ok\n",
+		filepath.Join(fixture.ReadOnlyMount, "native-all-stacks-smoke.ps1"):       nativeAllStacksSmokeScript,
+		filepath.Join(fixture.ReadOnlyMount, "native-audio-connection-smoke.ps1"): nativeAudioConnectionSmokeScript,
+		filepath.Join(fixture.ReadOnlyMount, "native-audio-reaper-smoke.lua"):     nativeAudioReaperSmokeScript,
+		filepath.Join(fixture.WritableMount, "host-worktrees.txt"):                "read-write-mount-ok\n",
 		filepath.Join(fixture.AppData, "herdr-sandbox", "user.ps1"): `# herdr-sandbox-user-contract: 1
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -289,6 +300,7 @@ Set-StrictMode -Version 2.0
 
 Install-DotNetStack
 Install-AndroidStack
+Install-AudioStack
 Install-GoStack
 Install-HerdrStack -ProjectDirectory $ProjectDirectory
 Install-HyperFramesStack
@@ -557,6 +569,14 @@ func runNativeAllStacksSmoke(ctx context.Context, fixture nativeAllStacksFixture
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("run all-stack smoke over managed SSH: %w", err)
 	}
+	command = nativeAudioConnectionSmokeCommand(ctx, ssh, sshConfig)
+	command.Dir = fixture.Project
+	command.Env = environment
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("run native audio connection smoke over managed SSH: %w", err)
+	}
 	return nil
 }
 
@@ -565,4 +585,12 @@ func nativeAllStacksSmokeCommand(ctx context.Context, ssh, sshConfig string) *hi
 		"-T", "-F", sshConfig, "sandbox",
 		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
 		"-ExecutionPolicy", "Bypass", "-File", nativeAllStacksSmokeGuestPath)
+}
+
+func nativeAudioConnectionSmokeCommand(ctx context.Context, ssh, sshConfig string) *hiddenprocess.Command {
+	return hiddenCommandContext(ctx, ssh,
+		"-T", "-F", sshConfig, "sandbox",
+		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass", "-File", nativeAudioSmokeGuestPath,
+		"-ReaperScriptPath", nativeAudioReaperGuestPath)
 }

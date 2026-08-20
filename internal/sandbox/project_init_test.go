@@ -96,7 +96,7 @@ func TestInitializeProjectAllWritesEveryStandaloneStackOnce(t *testing.T) {
 		}
 		last = index
 	}
-	for _, shortcut := range []string{"Install-HandyStack", "Install-HerdrStack", "Install-HyperFramesStack", "Install-PythonAIStack"} {
+	for _, shortcut := range []string{"Install-AudioStack", "Install-HandyStack", "Install-HerdrStack", "Install-HyperFramesStack", "Install-PythonAIStack"} {
 		if strings.Contains(text, shortcut) {
 			t.Fatalf("all profile contains project-specific shortcut %q: %s", shortcut, text)
 		}
@@ -172,6 +172,25 @@ func TestInitializeProjectWritesHyperFramesVirtualStack(t *testing.T) {
 		if strings.Contains(text, expanded) {
 			t.Fatalf("init duplicated HyperFrames implementation %q: %s", expanded, text)
 		}
+	}
+}
+
+func TestInitializeProjectWritesAudioVirtualStack(t *testing.T) {
+	project := t.TempDir()
+	result, err := InitializeProject(project, []string{"audio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.Stacks, "|") != "audio" {
+		t.Fatalf("audio stacks = %v", result.Stacks)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Install-AudioStack") || strings.Contains(text, "Install-NodeStack") {
+		t.Fatalf("audio virtual profile = %s", text)
 	}
 }
 

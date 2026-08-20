@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 21
+# herdr-sandbox-stacks-contract: 22
 
 function Get-StackWebResponseText {
     param(
@@ -1527,6 +1527,476 @@ function Install-AndroidStack {
         }
     }
     Write-Output "Android ready: CLI $androidVersion, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
+}
+
+function Get-StackAudioGridderFiles {
+    return [ordered]@{
+        'bin\AudioGridderPluginTray.exe' = '681626482BC2A084D439D1D29F42E874DADF41A3DB342156B8B6F35F65CCC280'
+        'bin\AudioGridderServer.exe' = '6C1A125EE26977DA22C95086B710C5DBF4667AA253EEEBBFB540EE8D4EACB52E'
+        'bin\crashpad_handler.exe' = '1ED7B6EB8BE0ABC034A6630199A38A925395758D3B476160BC0A01BFE037D441'
+        'lib\VST\AudioGridder.dll' = 'B349EAE03268F4D521D8741B0BA4A7366102D1BF2C7B2959962706FB37AC1C1A'
+        'lib\VST\AudioGridderInst.dll' = 'B45F4F0FB66C82BD8575E993AF7277185A5C98C4D23FF1B0C4462A0B7FA6F3F9'
+        'lib\VST\AudioGridderMidi.dll' = '68DAF126507A60598BA94C24322F441DBCA46B4C76632EBFCDB4F5CCFD5FE3E2'
+        'lib\VST3\AudioGridder.vst3' = '59D8054E7C094178DE35ADE6F92EEE5ED256D7785739DCC795EDFC0F7839EBBF'
+        'lib\VST3\AudioGridderInst.vst3' = 'EA89147EB0460852033076AC1C5DD9571B879936805BDFD29139D52D8BD13782'
+        'lib\VST3\AudioGridderMidi.vst3' = '2D163D7B9E7D9CAE4D7B62FDB05473AD811C418897E573903B514DC04E7E6CCB'
+    }
+}
+
+function Test-StackAudioGridderPayload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $false }
+        $rootInfo = Get-Item -LiteralPath $Root -Force
+        if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        $expected = Get-StackAudioGridderFiles
+        $files = @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force)
+        if (@($files | Where-Object {
+                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                }).Count -ne 0) {
+            return $false
+        }
+        $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+        $actualNames = @($files | ForEach-Object {
+                $_.FullName.Substring($rootPath.Length + 1)
+            } | Sort-Object)
+        $expectedNames = @($expected.Keys | Sort-Object)
+        if (($actualNames -join '|') -cne ($expectedNames -join '|')) { return $false }
+        foreach ($entry in $expected.GetEnumerator()) {
+            $path = Join-Path $rootPath ([string]$entry.Key)
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($hash -cne [string]$entry.Value) { return $false }
+        }
+        $server = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderServer.exe') -Force
+        $tray = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderPluginTray.exe') -Force
+        return [string]$server.VersionInfo.FileVersion -ceq '1.2.0' -and
+            [string]$server.VersionInfo.ProductName -ceq 'AudioGridderServer' -and
+            [string]$tray.VersionInfo.FileVersion -ceq '1.2.0' -and
+            [string]$tray.VersionInfo.ProductName -ceq 'AudioGridderPluginTray'
+    } catch {
+        return $false
+    }
+}
+
+function Remove-StackAudioGridderRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    $expectedRoot = 'C:\HerdrSandbox\tools\AudioGridder'
+    if ([IO.Path]::GetFullPath($Root).TrimEnd('\') -ine $expectedRoot) {
+        throw "AudioGridder root is not app-owned: $Root"
+    }
+    if (-not (Test-Path -LiteralPath $Root)) { return }
+    $items = @((Get-Item -LiteralPath $Root -Force)) + @(Get-ChildItem -LiteralPath $Root -Recurse -Force)
+    if (@($items | Where-Object {
+                ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+            }).Count -ne 0) {
+        throw "AudioGridder root contains a reparse point: $Root"
+    }
+    Remove-Item -LiteralPath $Root -Recurse -Force
+}
+
+function Install-StackAudioGridderClientFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot
+    )
+
+    $expected = Get-StackAudioGridderFiles
+    $destinations = [ordered]@{
+        'bin\AudioGridderPluginTray.exe' = 'C:\Program Files\AudioGridderPluginTray\AudioGridderPluginTray.exe'
+        'bin\crashpad_handler.exe' = 'C:\Program Files\AudioGridderPluginTray\crashpad_handler.exe'
+        'lib\VST\AudioGridder.dll' = 'C:\Program Files\VstPlugins\AudioGridder.dll'
+        'lib\VST\AudioGridderInst.dll' = 'C:\Program Files\VstPlugins\AudioGridderInst.dll'
+        'lib\VST\AudioGridderMidi.dll' = 'C:\Program Files\VstPlugins\AudioGridderMidi.dll'
+        'lib\VST3\AudioGridder.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridder.vst3'
+        'lib\VST3\AudioGridderInst.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridderInst.vst3'
+        'lib\VST3\AudioGridderMidi.vst3' = 'C:\Program Files\Common Files\VST3\AudioGridderMidi.vst3'
+    }
+    foreach ($entry in $destinations.GetEnumerator()) {
+        $source = Join-Path $SourceRoot ([string]$entry.Key)
+        $destination = [string]$entry.Value
+        $directory = Split-Path -Parent $destination
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "AudioGridder plugin directory is unsafe: $directory"
+        }
+        if (Test-Path -LiteralPath $destination) {
+            $destinationInfo = Get-Item -LiteralPath $destination -Force
+            if ($destinationInfo.PSIsContainer -or
+                ($destinationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "AudioGridder plugin destination is unsafe: $destination"
+            }
+        }
+        $expectedHash = [string]$expected[[string]$entry.Key]
+        $actualHash = if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToUpperInvariant()
+        } else { '' }
+        if ($actualHash -cne $expectedHash) {
+            Copy-Item -LiteralPath $source -Destination $destination -Force
+        }
+        $installedHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($installedHash -cne $expectedHash) {
+            throw "AudioGridder plugin copy verification failed: $destination"
+        }
+    }
+}
+
+function Get-StackAudioGridderNetwork {
+    $configurations = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object {
+            $null -ne $_.IPv4DefaultGateway -and [string]$_.NetAdapter.Status -ceq 'Up'
+        })
+    if ($configurations.Count -ne 1) {
+        throw "AudioGridder expected one Windows Sandbox default IPv4 interface; found: $($configurations.InterfaceAlias -join ', ')"
+    }
+    $gateways = @(@($configurations[0].IPv4DefaultGateway) | ForEach-Object { [string]$_.NextHop } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -cne '0.0.0.0' } | Sort-Object -Unique)
+    $guestAddresses = @(@($configurations[0].IPv4Address) | ForEach-Object { [string]$_.IPAddress } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -cne '0.0.0.0' } | Sort-Object -Unique)
+    if ($gateways.Count -ne 1 -or $guestAddresses.Count -ne 1) {
+        throw "AudioGridder expected one host gateway and guest IPv4 address; found gateways=$($gateways -join ', ') addresses=$($guestAddresses -join ', ')"
+    }
+    foreach ($value in @($gateways[0], $guestAddresses[0])) {
+        $address = $null
+        if (-not [Net.IPAddress]::TryParse($value, [ref]$address) -or
+            $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+            [Net.IPAddress]::IsLoopback($address)) {
+            throw "AudioGridder network address is invalid: $value"
+        }
+        $octets = $address.GetAddressBytes()
+        if ($octets[0] -eq 0 -or $octets[0] -ge 224 -or
+            ($octets[0] -eq 169 -and $octets[1] -eq 254)) {
+            throw "AudioGridder network address is not routable: $value"
+        }
+    }
+    return [pscustomobject]@{ HostGateway = $gateways[0]; GuestAddress = $guestAddresses[0] }
+}
+
+function ConvertTo-StackAudioGridderJSONValue {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    return ConvertTo-Json -InputObject $Value -Depth 20 -Compress
+}
+
+function Set-StackAudioGridderConfiguration {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('audiogridderplugin.cfg', 'audiogridderserver.cfg')]
+        [string]$FileName,
+        [Parameter(Mandatory = $true)]
+        [Collections.IDictionary]$Values,
+        [Parameter(Mandatory = $true)]
+        [string[]]$BlockingProcesses,
+        [Parameter(Mandatory = $true)]
+        [string]$BlockingMessage
+    )
+
+    $configurationRoot = Join-Path $env:APPDATA 'AudioGridder'
+    $configurationPath = Join-Path $configurationRoot $FileName
+    New-Item -ItemType Directory -Path $configurationRoot -Force | Out-Null
+    $rootInfo = Get-Item -LiteralPath $configurationRoot -Force
+    if (-not $rootInfo.PSIsContainer -or
+        ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "AudioGridder configuration root is unsafe: $configurationRoot"
+    }
+    $configuration = [pscustomobject]@{}
+    if (Test-Path -LiteralPath $configurationPath) {
+        $file = Get-Item -LiteralPath $configurationPath -Force
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $file.Length -le 0 -or $file.Length -gt 1048576) {
+            throw "AudioGridder configuration is unsafe: $configurationPath"
+        }
+        try {
+            $configuration = [IO.File]::ReadAllText($configurationPath) | ConvertFrom-Json
+        } catch {
+            throw "AudioGridder configuration is invalid: $($_.Exception.Message)"
+        }
+        if ($configuration -isnot [pscustomobject]) {
+            throw 'AudioGridder configuration must be one JSON object.'
+        }
+    }
+    $matches = $true
+    foreach ($entry in $Values.GetEnumerator()) {
+        $property = $configuration.PSObject.Properties[[string]$entry.Key]
+        if ($null -eq $property -or
+            (ConvertTo-StackAudioGridderJSONValue -Value $property.Value) -cne
+            (ConvertTo-StackAudioGridderJSONValue -Value $entry.Value)) {
+            $matches = $false
+            break
+        }
+    }
+    if ($matches) {
+        return
+    }
+    if (@(Get-Process -Name $BlockingProcesses -ErrorAction SilentlyContinue).Count -ne 0) {
+        throw $BlockingMessage
+    }
+    foreach ($entry in $Values.GetEnumerator()) {
+        $configuration | Add-Member -NotePropertyName ([string]$entry.Key) -NotePropertyValue $entry.Value -Force
+    }
+    $contents = ($configuration | ConvertTo-Json -Depth 20 -Compress) + [Environment]::NewLine
+    $temporary = Join-Path $configurationRoot ('audiogridder-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $backup = ''
+    try {
+        [IO.File]::WriteAllText($temporary, $contents, (New-Object Text.UTF8Encoding($false)))
+        if (Test-Path -LiteralPath $configurationPath) {
+            $backup = Join-Path $configurationRoot ('audiogridder-' + [Guid]::NewGuid().ToString('N') + '.bak')
+            [IO.File]::Replace($temporary, $configurationPath, $backup, $true)
+        } else {
+            [IO.File]::Move($temporary, $configurationPath)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force
+        }
+        if (-not [string]::IsNullOrWhiteSpace($backup) -and (Test-Path -LiteralPath $backup)) {
+            Remove-Item -LiteralPath $backup -Force
+        }
+    }
+    $verified = [IO.File]::ReadAllText($configurationPath) | ConvertFrom-Json
+    foreach ($entry in $Values.GetEnumerator()) {
+        $property = $verified.PSObject.Properties[[string]$entry.Key]
+        if ($null -eq $property -or
+            (ConvertTo-StackAudioGridderJSONValue -Value $property.Value) -cne
+            (ConvertTo-StackAudioGridderJSONValue -Value $entry.Value)) {
+            throw "AudioGridder configuration read-back failed for $($entry.Key)."
+        }
+    }
+}
+
+function Set-StackAudioGridderServerConfiguration {
+    $values = [ordered]@{
+        ID = 0
+        NAME = 'Herdr Sandbox'
+        VST = $true
+        VST3Folders = @('C:\Program Files\Common Files\VST3')
+        VST2 = $true
+        VST2Folders = @('C:\Program Files\VstPlugins')
+        VSTNoStandardFolders = $true
+        ScanForPlugins = $true
+        Logger = $true
+        CrashReporting = $false
+        SandboxMode = 1
+        ScreenLocalMode = $false
+    }
+    Set-StackAudioGridderConfiguration -FileName 'audiogridderserver.cfg' -Values $values `
+        -BlockingProcesses @('AudioGridderServer') `
+        -BlockingMessage 'Close AudioGridder Server before changing its server-0 configuration.'
+}
+
+function Set-StackAudioGridderClientConfiguration {
+    $values = [ordered]@{
+        Servers = @('127.0.0.1:0')
+        LastServer = '127.0.0.1:0:::0:0:00000000-0000-0000-0000-000000000000'
+    }
+    Set-StackAudioGridderConfiguration -FileName 'audiogridderplugin.cfg' -Values $values `
+        -BlockingProcesses @('reaper', 'AudioGridderPluginTray') `
+        -BlockingMessage 'Close REAPER and AudioGridder Plugin Tray before changing the local test endpoint.'
+}
+
+function Test-StackAudioGridderFirewallRule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$Rules,
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$Program,
+        [Parameter(Mandatory = $true)]
+        [string]$LocalPort,
+        [Parameter(Mandatory = $true)]
+        [string]$RemoteAddress
+    )
+
+    if ($Rules.Count -ne 1) { return $false }
+    $candidate = $Rules[0]
+    try {
+        $application = @($candidate | Get-NetFirewallApplicationFilter -ErrorAction Stop)
+        $address = @($candidate | Get-NetFirewallAddressFilter -ErrorAction Stop)
+        $port = @($candidate | Get-NetFirewallPortFilter -ErrorAction Stop)
+        $service = @($candidate | Get-NetFirewallServiceFilter -ErrorAction Stop)
+        $interface = @($candidate | Get-NetFirewallInterfaceFilter -ErrorAction Stop)
+        $interfaceType = @($candidate | Get-NetFirewallInterfaceTypeFilter -ErrorAction Stop)
+        $security = @($candidate | Get-NetFirewallSecurityFilter -ErrorAction Stop)
+        if ($application.Count -ne 1 -or $address.Count -ne 1 -or $port.Count -ne 1 -or
+            $service.Count -ne 1 -or $interface.Count -ne 1 -or $interfaceType.Count -ne 1 -or
+            $security.Count -ne 1) {
+            return $false
+        }
+        $actualProgram = [IO.Path]::GetFullPath([string]$application[0].Program)
+        $expectedProgram = [IO.Path]::GetFullPath($Program)
+    } catch {
+        return $false
+    }
+    return [string]$candidate.Name -ceq $Name -and [string]$candidate.DisplayName -ceq $Name -and
+        [string]$candidate.Enabled -ceq 'True' -and [string]$candidate.Profile -ceq 'Any' -and
+        [string]$candidate.Direction -ceq 'Inbound' -and [string]$candidate.Action -ceq 'Allow' -and
+        [string]$candidate.EdgeTraversalPolicy -ceq 'Block' -and
+        [string]$candidate.LooseSourceMapping -ceq 'False' -and
+        [string]$candidate.LocalOnlyMapping -ceq 'False' -and
+        [string]::IsNullOrEmpty([string]$candidate.Owner) -and
+        [string]::Equals($actualProgram, $expectedProgram, [StringComparison]::OrdinalIgnoreCase) -and
+        ([string]::IsNullOrEmpty([string]$application[0].Package) -or
+            [string]$application[0].Package -ceq 'Any') -and
+        (Test-StackFirewallValue -Value $address[0].LocalAddress -Expected 'Any') -and
+        (Test-StackFirewallValue -Value $address[0].RemoteAddress -Expected $RemoteAddress) -and
+        [string]$port[0].Protocol -ceq 'TCP' -and
+        (Test-StackFirewallValue -Value $port[0].LocalPort -Expected $LocalPort) -and
+        (Test-StackFirewallValue -Value $port[0].RemotePort -Expected 'Any') -and
+        (Test-StackFirewallValue -Value $port[0].IcmpType -Expected 'Any') -and
+        ([string]::IsNullOrEmpty([string]$port[0].DynamicTarget) -or
+            [string]$port[0].DynamicTarget -ceq 'Any') -and
+        [string]$service[0].Service -ceq 'Any' -and
+        (Test-StackFirewallValue -Value $interface[0].InterfaceAlias -Expected 'Any') -and
+        [string]$interfaceType[0].InterfaceType -ceq 'Any' -and
+        [string]$security[0].Authentication -ceq 'NotRequired' -and
+        [string]$security[0].Encryption -ceq 'NotRequired' -and
+        [string]$security[0].OverrideBlockRules -ceq 'False' -and
+        [string]$security[0].LocalUser -ceq 'Any' -and
+        [string]$security[0].RemoteUser -ceq 'Any' -and
+        [string]$security[0].RemoteMachine -ceq 'Any'
+}
+
+function Set-StackAudioGridderFirewallRule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$Program,
+        [Parameter(Mandatory = $true)]
+        [string]$LocalPort,
+        [Parameter(Mandatory = $true)]
+        [string]$RemoteAddress
+    )
+
+    $existing = @(Get-NetFirewallRule -Name $Name -ErrorAction SilentlyContinue)
+    if (Test-StackAudioGridderFirewallRule -Rules $existing -Name $Name -Program $Program `
+            -LocalPort $LocalPort -RemoteAddress $RemoteAddress) {
+        return
+    }
+    if (@(Get-Process -Name 'AudioGridderServer' -ErrorAction SilentlyContinue).Count -ne 0) {
+        throw 'Close AudioGridder Server before changing its guest firewall rules.'
+    }
+    if ($existing.Count -gt 0) {
+        $existing | Remove-NetFirewallRule -ErrorAction Stop
+    }
+    New-NetFirewallRule -Name $Name -DisplayName $Name -Enabled True -Profile Any -Direction Inbound `
+        -Action Allow -Program $Program -LocalAddress Any -RemoteAddress $RemoteAddress -Protocol TCP `
+        -LocalPort $LocalPort -RemotePort Any -Service Any -InterfaceType Any | Out-Null
+    $verified = @(Get-NetFirewallRule -Name $Name -ErrorAction Stop)
+    if (-not (Test-StackAudioGridderFirewallRule -Rules $verified -Name $Name -Program $Program `
+                -LocalPort $LocalPort -RemoteAddress $RemoteAddress)) {
+        throw "AudioGridder firewall rule verification failed: $Name"
+    }
+}
+
+function Install-AudioStack {
+    [CmdletBinding()]
+    param()
+
+    $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER' -Requested '7.78'
+    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder' -Requested '1.2.0'
+    if ($reaperVersion -cne '7.78' -or $audioGridderVersion -cne '1.2.0') {
+        throw "Audio stack version plan is unsupported: REAPER=$reaperVersion AudioGridder=$audioGridderVersion"
+    }
+
+    $reaperMetadata = Get-ProvisioningWinGetMetadata -Role 'REAPER' -Id 'Cockos.REAPER' `
+        -Version $reaperVersion -Architecture 'x64' -InstallerType 'exe' -Scope 'machine' -PayloadExtension '.exe'
+    $reaperURI = [Uri][string]$reaperMetadata.Url
+    if ([string]$reaperMetadata.Id -cne 'Cockos.REAPER' -or
+        [string]$reaperMetadata.Version -cne '7.78' -or
+        [string]$reaperMetadata.Architecture -cne 'x64' -or
+        [string]$reaperMetadata.InstallerType -cne 'exe' -or
+        [string]$reaperMetadata.Scope -cne 'machine' -or
+        [string]$reaperMetadata.Sha256 -cne 'E7AD77BDD572C35D205034F871181C7B4D9A4110798131B60ACD54CD44453947' -or
+        $reaperURI.Scheme -cne 'https' -or $reaperURI.Host -cne 'www.reaper.fm' -or
+        $reaperURI.AbsolutePath -cne '/files/7.x/reaper778_x64-install.exe') {
+        throw 'REAPER metadata does not match the approved 7.78 x64 installer.'
+    }
+    Write-Output 'Installing REAPER 7.78...'
+    Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
+        -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223) `
+        -RequireAuthenticodeSignature
+    $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
+    $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
+    if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        [string]$reaperInfo.VersionInfo.FileVersion -cne '7.78') {
+        throw "REAPER installation identity is invalid: $reaper"
+    }
+    Assert-ProvisioningAuthenticodeSignature -Role 'REAPER executable' -Path $reaper
+    $reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
+    if ($reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
+        throw 'REAPER executable signer is not Cockos Incorporated.'
+    }
+    Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
+
+    $audioGridderMetadata = [pscustomobject]@{
+        Id = 'AudioGridder'
+        Version = '1.2.0'
+        Architecture = 'x64'
+        InstallerType = 'zip'
+        Scope = ''
+        Url = 'https://github.com/apohl79/audiogridder/releases/download/release_1_2_0/AudioGridder_1.2.0-Windows.zip'
+        Sha256 = '97E1B9484257B4A6B4A33FCFD7906DDE737513E26AE756B2E42E9466B0637D7D'
+        PayloadName = 'AudioGridder_1.2.0-Windows.zip'
+    }
+    $audioGridderURI = [Uri][string]$audioGridderMetadata.Url
+    if ($audioGridderURI.Scheme -cne 'https' -or $audioGridderURI.Host -cne 'github.com' -or
+        $audioGridderURI.AbsolutePath -cne '/apohl79/audiogridder/releases/download/release_1_2_0/AudioGridder_1.2.0-Windows.zip') {
+        throw 'AudioGridder metadata does not match the official 1.2.0 Windows release.'
+    }
+    $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
+    if ((Test-Path -LiteralPath $audioGridderRoot) -and
+        -not (Test-StackAudioGridderPayload -Root $audioGridderRoot)) {
+        Remove-StackAudioGridderRoot -Root $audioGridderRoot
+    }
+    Write-Output 'Installing AudioGridder 1.2.0 server and VST2/VST3 clients...'
+    Install-ProvisioningCachedPackage -Role 'AudioGridder' -Metadata $audioGridderMetadata `
+        -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'AudioGridderServer.exe' `
+        -PortableVersionSource 'File'
+    $aax = Join-Path $audioGridderRoot 'lib\AAX'
+    if (Test-Path -LiteralPath $aax) {
+        $unwantedItems = @((Get-Item -LiteralPath $aax -Force))
+        if ($unwantedItems[0].PSIsContainer) {
+            $unwantedItems += @(Get-ChildItem -LiteralPath $aax -Recurse -Force)
+        }
+        if (@($unwantedItems | Where-Object {
+                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                }).Count -ne 0) {
+            throw "AudioGridder AAX payload contains a reparse point: $aax"
+        }
+        Remove-Item -LiteralPath $aax -Recurse -Force
+    }
+    if (-not (Test-StackAudioGridderPayload -Root $audioGridderRoot)) {
+        throw 'AudioGridder payload does not match the approved server and VST2/VST3 release.'
+    }
+    Install-StackAudioGridderClientFiles -SourceRoot $audioGridderRoot
+    $server = Join-Path $audioGridderRoot 'bin\AudioGridderServer.exe'
+    Ensure-ProvisioningStartShortcut -DisplayName 'AudioGridder Server' -Executable $server -ShortcutArguments '-id 0'
+    Set-StackAudioGridderServerConfiguration
+    Set-StackAudioGridderClientConfiguration
+    $network = Get-StackAudioGridderNetwork
+    Set-StackAudioGridderFirewallRule -Name 'HerdrSandbox-AudioGridder-Server0' -Program $server `
+        -LocalPort '55056' -RemoteAddress $network.HostGateway
+    Set-StackAudioGridderFirewallRule -Name 'HerdrSandbox-AudioGridder-Workers' -Program $server `
+        -LocalPort '55088-56088' -RemoteAddress $network.HostGateway
+
+    Write-Output "REAPER ready: $reaper"
+    Write-Output "AudioGridder server 0 and local REAPER clients ready; start the server from the guest Start menu."
+    Write-Output "Manual host client endpoint: $($network.GuestAddress):0"
+    Write-Output 'Install production VST2/VST3 payloads through project or user provisioning in the guest.'
 }
 
 function Install-DotNetStack {

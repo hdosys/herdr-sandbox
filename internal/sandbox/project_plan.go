@@ -40,6 +40,7 @@ type projectStack string
 
 const (
 	stackAndroid       projectStack = "android"
+	stackAudio         projectStack = "audio"
 	stackBun           projectStack = "bun"
 	stackCargoNextest  projectStack = "cargo-nextest"
 	stackCpp           projectStack = "cpp"
@@ -108,8 +109,10 @@ var (
 	projectToolNames             = map[string]string{
 		"@ferroxlabs/tvcontrol":          "@ferroxlabs/tvcontrol",
 		"@playwright/cli":                "@playwright/cli",
+		"audiogridder":                   "AudioGridder",
 		"astral-sh.uv":                   "astral-sh.uv",
 		"casey.just":                     "Casey.Just",
+		"cockos.reaper":                  "Cockos.REAPER",
 		"golang.go":                      "GoLang.Go",
 		"gyan.ffmpeg":                    "Gyan.FFmpeg",
 		"hyperframes":                    "hyperframes",
@@ -134,7 +137,7 @@ var (
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackAndroid, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackNushell, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
+	case stackAndroid, stackAudio, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackNushell, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false

@@ -41,6 +41,7 @@ const (
 	packageCMake           = "Kitware.CMake"
 	packageVulkanSDK       = "KhronosGroup.VulkanSDK"
 	packageWebView2        = "Microsoft.EdgeWebView2Runtime"
+	packageREAPER          = "Cockos.REAPER"
 )
 
 var basePackageIDs = []string{
@@ -77,6 +78,7 @@ var projectStackPackageIDs = []string{
 	packageCMake,
 	packageVulkanSDK,
 	packageWebView2,
+	packageREAPER,
 }
 
 type wingetPackageConfiguration struct {

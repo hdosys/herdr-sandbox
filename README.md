@@ -221,6 +221,7 @@ Project shortcuts package complex repository setups:
 
 | Shortcut | Intended setup |
 | --- | --- |
+| `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
 | `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
 | `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
 | `hyperframes` | A global HyperFrames authoring and rendering environment with Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and skills for every supported coding agent |
@@ -228,6 +229,32 @@ Project shortcuts package complex repository setups:
 
 Dependencies and application commands remain project-owned. `sandbox plan`
 expands each shortcut without executing the profile.
+
+### AudioGridder server workflow
+
+The `audio` shortcut makes Windows Sandbox the production plugin server. VSTs run
+in the guest, while the normal host DAW loads the AudioGridder client:
+
+1. Install the AudioGridder 1.2.0 client plugin in the host DAW. Herdr Sandbox
+   does not change host DAW or plugin state.
+2. Run `sandbox init --stack audio`, then add the desired VST installation to
+   that project profile or the user provisioning file. Use
+   `C:\Program Files\VstPlugins` for VST2 and
+   `C:\Program Files\Common Files\VST3` for VST3.
+3. Review `sandbox plan`, run `sandbox up`, then start **AudioGridder Server**
+   from the guest Start menu.
+4. Run `sandbox status`, take its **Guest IP**, and add `<Guest IP>:0` as the
+   server endpoint in the host AudioGridder client.
+5. Set global config `"audio": true` only when guest-local REAPER playback
+   should be audible. This is separate from network processing and requires a
+   fresh guest when changed.
+
+Provisioning installs REAPER 7.78 and the complete AudioGridder 1.2.0
+server/client path, configures server ID 0, and opens guest TCP 55056 plus
+55088 through 56088 only to the host gateway. REAPER points its local client at
+`127.0.0.1:0`, which lets native acceptance prove the same server connection
+without requiring host DAW automation. Production VST packages remain explicit
+project or user provisioning choices.
 
 The HyperFrames shortcut resolves the latest stable CLI and full FFmpeg release
 when the profile does not request versions. Provisioning runs HyperFrames doctor,
@@ -513,6 +540,7 @@ when it is safe, and reports the next action.
 | `up` refuses an existing Sandbox | Run `sandbox status` and follow its next action. Use `down` only when it identifies the app-owned guest. |
 | Automatic attach is unavailable in a headless process | Run `sandbox up --no-attach`, then use `sandbox attach` from a real terminal. |
 | Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
+| The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
 | `ssh sandbox` no longer connects | Run `sandbox status`. If the guest is gone, run `sandbox up` to create a verified target. |
 | Mobile access is not ready | Check `tailscale`, `mobileSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox mobile`. |
 | The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
@@ -541,14 +569,15 @@ go run ./cmd/task native-all-stacks
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
 - `native-current-sandbox` replays real Base and every project stack inside the
-  active development Sandbox without launching a nested Sandbox or restarting
-  its existing SSH and Herdr processes.
+  active development Sandbox, then proves a task-owned REAPER client connection
+  to AudioGridder server 0 without launching a nested Sandbox or restarting its
+  existing SSH and Herdr processes.
 - `package-current-sandbox` builds and installs the exact candidate, provisions
   through its installed files, preserves the existing development environment,
   then quietly uninstalls and verifies cleanup.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the
-  complete toolchain, managed SSH, and a real NSIS compile without installing a
-  release candidate.
+  complete toolchain, managed SSH, REAPER-to-AudioGridder connection, and a real
+  NSIS compile without installing a release candidate.
 
 Packaging uses the same task runner and writes the installer and portable ZIP to
 `build\dist`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification
