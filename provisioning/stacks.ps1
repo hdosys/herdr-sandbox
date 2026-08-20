@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 20
+# herdr-sandbox-stacks-contract: 21
 
 function Get-StackWebResponseText {
     param(
@@ -556,7 +556,7 @@ function Install-StackVisualStudioBuildTools {
             if ($null -eq $RustToolchainTask) {
                 Invoke-ProvisioningNative -Role 'Visual Studio Build Tools offline installation' `
                     -FilePath $guestLayoutBootstrapper -ArgumentList $installationArguments `
-                    -WorkingDirectory $guestLayout -TimeoutSeconds 900 -WaitForProcessTree | Out-Null
+                    -WorkingDirectory $guestLayout -TimeoutSeconds 900 | Out-Null
             } else {
                 $installationGroup = Start-ProvisioningNativeGroup -Tasks @(
                     $RustToolchainTask,
@@ -1614,7 +1614,7 @@ function Remove-StackJavaPreviousInstallation {
             'uninstall', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--scope', 'machine', '--all-versions', '--silent', '--accept-source-agreements',
             '--disable-interactivity'
-        ) -TimeoutSeconds 600 -WaitForProcessTree | Out-Null
+        ) -TimeoutSeconds 600 | Out-Null
     $remainingVersions = @(Get-StackJavaInstalledVersions -Metadata $Metadata)
     if ($remainingVersions.Count -ne 0) {
         throw "Microsoft OpenJDK 25 previous-version uninstall left installed versions: $($remainingVersions -join ', ')"

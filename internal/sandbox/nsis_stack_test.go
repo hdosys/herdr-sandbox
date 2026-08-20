@@ -5,66 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
-
-func TestNSISStackInstallsAndExercisesLatestStableCompiler(t *testing.T) {
-	text := readDefaultStackProvisioning(t)
-	start := strings.Index(text, "function Install-NSISStack")
-	end := strings.Index(text, "function Install-GoStack")
-	if start < 0 || end <= start {
-		t.Fatal("NSIS stack owner is missing")
-	}
-	section := text[start:end]
-	for _, required := range []string{
-		"$packageID = 'NSIS.NSIS'",
-		"-Architecture 'x86' -InstallerType 'nullsoft' -Scope 'machine' -PayloadExtension '.exe'",
-		"-DownloadSource 'WinGet'",
-		"-Adapter 'NSIS'",
-		"Join-Path ${env:ProgramFiles(x86)} 'NSIS'",
-		"Join-Path $installRoot 'makensis.exe'",
-		"Add-ProvisioningMachinePath -Directory $installRoot",
-		"NSIS compiler version verification",
-		"-ArgumentList @('/VERSION') -TimeoutSeconds 30",
-		"NSIS compiler probe",
-		"@('/WX', '/V2', '/NOCONFIG', $scriptPath)",
-		"RequestExecutionLevel user",
-		"SilentInstall silent",
-		"NSIS compiler probe produced an invalid Windows executable",
-	} {
-		if !strings.Contains(section, required) {
-			t.Errorf("NSIS stack is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"3.12", "NSIS_URL", "curl.exe", "Invoke-WebRequest"} {
-		if strings.Contains(section, forbidden) {
-			t.Errorf("NSIS stack contains a pinned or alternate package path %q", forbidden)
-		}
-	}
-	if effectiveStackPackageOwner(stackNSIS) != packageNSIS || !projectStackOwnsPackage(packageNSIS) {
-		t.Fatalf("NSIS package owner = %q, reserved = %t", effectiveStackPackageOwner(stackNSIS), projectStackOwnsPackage(packageNSIS))
-	}
-}
-
-func TestCachedWinGetMetadataSupportsExplicitX86InstallerArchitecture(t *testing.T) {
-	base := readDefaultBaseProvisioning(t)
-	for _, required := range []string{
-		"[ValidateSet('x64', 'x86')]",
-		"[string]$Architecture = 'x64'",
-		"'--architecture', $Architecture",
-		"Architecture = $Architecture",
-		"[string]$PayloadExtension = ''",
-		"-Architecture $Architecture -InstallerType $InstallerType -Scope $Scope",
-		"[ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup'",
-		"'NSIS' {",
-		"-ArgumentList @('/S') -WaitForProcessTree",
-	} {
-		if !strings.Contains(base, required) {
-			t.Errorf("cached WinGet owner is missing %q", required)
-		}
-	}
-}
 
 func TestWinGetMetadataAcceptsExplicitExtensionForSourceForgeDownloadURL(t *testing.T) {
 	if runtime.GOOS != "windows" {

@@ -40,7 +40,6 @@ namespace HerdrSandbox
     {
         public const int ContractVersion = 3;
         public const int MaximumGroupTasks = 2;
-        public const int MaximumConcurrentDownloads = 3;
 
         public static ProvisioningProcessResult Run(ProvisioningProcessSpec spec)
         {
@@ -48,11 +47,6 @@ namespace HerdrSandbox
             {
                 return task.Complete();
             }
-        }
-
-        public static ProvisioningProcessTask Start(ProvisioningProcessSpec spec)
-        {
-            return ProvisioningProcessTask.Start(spec);
         }
 
         public static ProvisioningProcessGroup StartGroup(ProvisioningProcessSpec[] specs)
@@ -334,7 +328,7 @@ namespace HerdrSandbox
         }
     }
 
-    public sealed class ProvisioningProcessTask : IDisposable
+    internal sealed class ProvisioningProcessTask : IDisposable
     {
         private const int MaximumOutputBytes = 1024 * 1024;
         private const int CleanupTimeoutMilliseconds = 30000;

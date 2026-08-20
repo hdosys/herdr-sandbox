@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -743,16 +742,6 @@ func TestLifecycleLockSerializesMutations(t *testing.T) {
 	}
 	if err := secondRelease(); err != nil {
 		t.Fatalf("release second lifecycle lock: %v", err)
-	}
-}
-
-func TestLifecycleTestsUseProcessIsolatedMutex(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows named-mutex boundary")
-	}
-	production := `Local\` + applicationName + `-lifecycle-v1`
-	if lifecycleMutexName == production || !strings.Contains(lifecycleMutexName, strconv.Itoa(os.Getpid())) {
-		t.Fatalf("test lifecycle mutex = %q, production = %q", lifecycleMutexName, production)
 	}
 }
 

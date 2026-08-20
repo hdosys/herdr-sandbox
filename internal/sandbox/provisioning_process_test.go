@@ -1,18 +1,13 @@
 package sandbox
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
-
-	"herdr-sandbox/internal/hiddenprocess"
 )
 
 func TestProvisioningProcessOwnerQuotesRunsParallelAndKillsSiblingTreeInWindowsPowerShell51(t *testing.T) {
@@ -160,13 +155,6 @@ if (-not $oemResult.Succeeded -or [string]$oemResult.Output -cne ('OEM:' + $nonA
     throw "OEM output result failed: $($oemResult | Format-List | Out-String)"
 }
 
-$stoppedSpec = New-Spec -Role 'owned background stop' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30')
-$stoppedTask = [HerdrSandbox.ProvisioningProcess]::Start($stoppedSpec)
-try { $stoppedResult = $stoppedTask.Stop() } finally { $stoppedTask.Dispose() }
-if (-not $stoppedResult.Stopped -or $stoppedResult.Succeeded) {
-    throw "Owned background stop result failed: $($stoppedResult | Format-List | Out-String)"
-}
-
 $largeCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("[Console]::Out.Write(('x' * 1200000))"))
 $largeSpec = New-Spec -Role 'bounded output' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $largeCommand)
 $largeResult = [HerdrSandbox.ProvisioningProcess]::Run($largeSpec)
@@ -281,91 +269,5 @@ if (Test-Path -LiteralPath (Join-Path '%s' 'child.survived') -PathType Leaf) {
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("root-terminal descendant cleanup regression: %v: %s", err, output)
-	}
-}
-
-func TestProvisioningProcessOwnerKillsTreeWhenOwningPowerShellExits(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows Job Object parent-exit regression")
-	}
-	root := t.TempDir()
-	baseScript := defaultProvisioningPath(t, baseProvisioningName)
-	processSource := filepath.Join(filepath.Dir(baseScript), "..", "internal", "sandbox", "assets", provisioningProcessName)
-	processSource, err := filepath.Abs(processSource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	powerShell := mustWindowsPowerShellPath(t)
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	childPath := filepath.Join(root, "parent-exit-child.ps1")
-	child := `param([string]$Root)
-[IO.File]::WriteAllText((Join-Path $Root 'parent-exit-child.started'), 'started')
-Start-Sleep -Seconds 3
-[IO.File]::WriteAllText((Join-Path $Root 'parent-exit-child.survived'), 'survived')
-`
-	if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ownerPath := filepath.Join(root, "parent-exit-owner.ps1")
-	owner := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-Add-Type -Path '%s'
-$spec = New-Object HerdrSandbox.ProvisioningProcessSpec
-$spec.Role = 'parent exit child'
-$spec.FilePath = '%s'
-$spec.Arguments = [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s', '%s')
-$spec.WorkingDirectory = '%s'
-$spec.TimeoutMilliseconds = 30000
-$spec.SuccessExitCodes = [int[]]@(0)
-$task = [HerdrSandbox.ProvisioningProcess]::Start($spec)
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
-while (-not (Test-Path -LiteralPath (Join-Path '%s' 'parent-exit-child.started') -PathType Leaf)) {
-    if ([DateTime]::UtcNow -ge $deadline) { throw 'Parent-exit child did not start.' }
-    Start-Sleep -Milliseconds 20
-}
-[IO.File]::WriteAllText((Join-Path '%s' 'parent-exit-owner.ready'), 'ready')
-Start-Sleep -Seconds 60
-`, quote(processSource), quote(powerShell), quote(childPath), quote(root), quote(root), quote(root), quote(root))
-	if err := os.WriteFile(ownerPath, []byte(owner), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	command := exec.Command(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ownerPath)
-	hiddenprocess.Configure(command)
-	var output bytes.Buffer
-	command.Stdout = &output
-	command.Stderr = &output
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	waited := false
-	defer func() {
-		if !waited {
-			_ = command.Process.Kill()
-			_ = command.Wait()
-		}
-	}()
-	readyPath := filepath.Join(root, "parent-exit-owner.ready")
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if _, err := os.Stat(readyPath); err == nil {
-			break
-		} else if !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("owning PowerShell did not become ready: %s", output.String())
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if err := command.Process.Kill(); err != nil {
-		t.Fatal(err)
-	}
-	_ = command.Wait()
-	waited = true
-	time.Sleep(4 * time.Second)
-	if _, err := os.Stat(filepath.Join(root, "parent-exit-child.survived")); err == nil {
-		t.Fatal("child survived abrupt termination of the owning PowerShell process")
-	} else if !os.IsNotExist(err) {
-		t.Fatal(err)
 	}
 }

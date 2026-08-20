@@ -5,11 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image/png"
 	"io"
 	"os"
 	"path/filepath"
@@ -296,81 +294,6 @@ func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
 	}
 }
 
-func TestInstallerWelcomeArtworkAssets(t *testing.T) {
-	root := filepath.Join("..", "..")
-	assetDirectory := filepath.Join(root, "packaging", "windows", "assets")
-	sourceName := "installer-welcome-finish-source.png"
-	source, err := os.ReadFile(filepath.Join(assetDirectory, sourceName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != "cda0b672eb6ba9d912bc9c422b2ee53fc96aa8b9b1d751b4f653d9b6d0be4b27" {
-		t.Fatalf("%s SHA-256 = %s", sourceName, got)
-	}
-	config, err := png.DecodeConfig(bytes.NewReader(source))
-	if err != nil {
-		t.Fatalf("decode %s: %v", sourceName, err)
-	}
-	if config.Width != 906 || config.Height != 1736 || len(source) < 29 || source[24] != 8 || source[25] != 2 || source[28] != 0 {
-		t.Fatalf("%s contract = %dx%d depth=%d color-type=%d interlace=%d", sourceName, config.Width, config.Height, source[24], source[25], source[28])
-	}
-
-	variants := []struct {
-		name   string
-		width  int
-		height int
-		hash   string
-	}{
-		{name: "installer-welcome-finish-164x314.bmp", width: 164, height: 314, hash: "c9ebaec9dd686eb18e943eada7d51f474e0367771719b8a4918b8fc3812481fd"},
-		{name: "installer-welcome-finish-205x393.bmp", width: 205, height: 393, hash: "a2b880e59fa15b1f8f51e5824c7e7c4f90eeb50f3cd649c58beeb5eefe7c64b0"},
-		{name: "installer-welcome-finish-246x471.bmp", width: 246, height: 471, hash: "04615093017767a7320c5580368f2aaa92e4f33d4ad1fb42309ee6afa570b927"},
-		{name: "installer-welcome-finish-287x550.bmp", width: 287, height: 550, hash: "8912c6dcee700825c4463704841f777e248d807f48cbe5db3ceb1b87c8d96127"},
-		{name: "installer-welcome-finish-328x628.bmp", width: 328, height: 628, hash: "b3b5bfaa3b07dd7eb8441f81bf733de86e31b8c37ec60ac3832a824c10e1cd3b"},
-	}
-	entries, err := os.ReadDir(assetDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".bmp") {
-			names = append(names, entry.Name())
-		}
-	}
-	slices.Sort(names)
-	wantNames := make([]string, 0, len(variants))
-	for _, variant := range variants {
-		wantNames = append(wantNames, variant.name)
-	}
-	if !slices.Equal(names, wantNames) {
-		t.Fatalf("installer BMP assets = %v, want %v", names, wantNames)
-	}
-
-	for _, variant := range variants {
-		data, err := os.ReadFile(filepath.Join(assetDirectory, variant.name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != variant.hash {
-			t.Fatalf("%s SHA-256 = %s", variant.name, got)
-		}
-		rowSize := (variant.width*3 + 3) &^ 3
-		pixelSize := rowSize * variant.height
-		if len(data) != 54+pixelSize || string(data[:2]) != "BM" ||
-			int(binary.LittleEndian.Uint32(data[2:6])) != len(data) ||
-			binary.LittleEndian.Uint32(data[10:14]) != 54 ||
-			binary.LittleEndian.Uint32(data[14:18]) != 40 ||
-			int(int32(binary.LittleEndian.Uint32(data[18:22]))) != variant.width ||
-			int(int32(binary.LittleEndian.Uint32(data[22:26]))) != variant.height ||
-			binary.LittleEndian.Uint16(data[26:28]) != 1 ||
-			binary.LittleEndian.Uint16(data[28:30]) != 24 ||
-			binary.LittleEndian.Uint32(data[30:34]) != 0 ||
-			int(binary.LittleEndian.Uint32(data[34:38])) != pixelSize {
-			t.Fatalf("%s is not an exact uncompressed 24-bit BMP3 at %dx%d", variant.name, variant.width, variant.height)
-		}
-	}
-}
-
 func TestInstallerTemplateExposesSandboxIntegrationContract(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "installer.nsi"))
 	if err != nil {
@@ -587,93 +510,6 @@ if (-not [string]::Equals([string]$unicode.Value, $decomposed, [StringComparison
 	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("PATH regression: %v: %s", err, output)
-	}
-}
-
-func TestPackageTaskSuppliesCanonicalInstallerIdentity(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("package.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(data)
-	for _, want := range []string{
-		`"herdr-sandbox/internal/productidentity"`,
-		`"/WX"`,
-		`installerBuildValidatorName`,
-		`"-WindowStyle", "Hidden"`,
-		`"-AppApplicationName", productidentity.ApplicationName`,
-		`"-AssetsDirectory", assetsDirectory`,
-		`validate NSIS installer inputs`,
-		`"/DAPP_NAME=" + productidentity.CommandName`,
-		`"/DAPP_APPLICATION_NAME=" + productidentity.ApplicationName`,
-		`"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName`,
-		`"/DAPP_EXECUTABLE=" + productidentity.ExecutableName`,
-		`"/DAPP_BASE_SCRIPT=" + productidentity.BaseScriptName`,
-		`"/DAPP_STACK_SCRIPT=" + productidentity.StackScriptName`,
-		`"/DAPP_LICENSE=" + productidentity.LicenseName`,
-		`"/DAPP_CONFIG_FILE=" + productidentity.ConfigurationName`,
-		`"/DAPP_USER_SCRIPT=" + productidentity.UserScriptName`,
-		`"/DAPP_PROJECT_DIRECTORY=" + productidentity.ProjectDirectoryName`,
-		`"/DAPP_INSTALL_DIRECTORY=" + productidentity.InstallDirectoryName`,
-		`"/DAPP_PUBLISHER=" + productidentity.Publisher`,
-		`"/DAPP_PRODUCT_URL=" + productidentity.ProductURL`,
-		`"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID`,
-		`"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName`,
-		`"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName`,
-		`"/DAPP_COPYRIGHT=" + productidentity.Copyright`,
-		`"/DPATH_HELPER=" + pathHelper`,
-		`"/DQUIET_UNINSTALL_HELPER=" + quietUninstallHelper`,
-		`"/DASSETS_DIR=" + assetsDirectory`,
-		`"-InstallerScript", script`,
-		`"/DOUTPUT_FILE_NAME=" + filepath.Base(outputPath)`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("package task is missing canonical installer identity input %q", want)
-		}
-	}
-	for _, forbidden := range []string{"LegacyUninstallKeyName", "legacyInstaller", "APP_LEGACY_UNINSTALL_KEY", "ReplacedExecutableName", "APP_REPLACED_EXECUTABLE", "installerDefinition", "installer-state.ps1"} {
-		if strings.Contains(source, forbidden) {
-			t.Fatalf("package task still carries installer backward compatibility %q", forbidden)
-		}
-	}
-}
-
-func TestQuietUninstallWrapperOwnsPrivateTemporaryCopyAndExitCode(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "uninstall.ps1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := string(data)
-	for _, want := range []string{
-		`function Get-FileSHA256`,
-		`[Security.Cryptography.SHA256]::Create()`,
-		`$hasher.ComputeHash($stream)`,
-		`$hasher.Dispose()`,
-		`$stream.Dispose()`,
-		`function Stop-OwnedProcessTree`,
-		`System32\taskkill.exe`,
-		`@('/PID', [string]$Process.Id, '/T', '/F')`,
-		`[Diagnostics.Stopwatch]::StartNew()`,
-		`$termination.WaitForExit(2500)`,
-		`5000 - [int]$cleanup.ElapsedMilliseconds`,
-		`$tempDirectory = Join-Path $tempRoot`,
-		`$tempUninstaller = Join-Path $tempDirectory 'uninstall.exe'`,
-		`$startInfo.Arguments = '/S _?=' + $installPath`,
-		`25000 - [int]$total.ElapsedMilliseconds`,
-		`$process.WaitForExit($operationBudget)`,
-		`Quiet uninstall exceeded its 30-second total limit.`,
-		`$exitCode = $process.ExitCode`,
-		`Remove-Item -LiteralPath $tempDirectory -Recurse -Force`,
-	} {
-		if !strings.Contains(source, want) {
-			t.Fatalf("quiet uninstall helper is missing %q", want)
-		}
-	}
-	if strings.Contains(source, `$process.Kill()`) {
-		t.Fatal("quiet uninstall must terminate the owned process tree, not only the immediate uninstaller")
-	}
-	if strings.Contains(source, `Get-FileHash`) {
-		t.Fatal("quiet uninstall must not depend on PowerShell module auto-loading for SHA-256 verification")
 	}
 }
 

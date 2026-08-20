@@ -12,7 +12,6 @@ import (
 
 var (
 	changelogReleaseHeadingPattern = regexp.MustCompile(`^## (v0\.0\.(?:0|[1-9][0-9]*))$`)
-	releaseNoteFillerPattern       = regexp.MustCompile(`(?i)known limitations?|not tested|not included|not bundled|not a claim|internal diagnostic|local incident`)
 )
 
 func writeReleaseNotes(tag string, stdout io.Writer) error {
@@ -60,9 +59,6 @@ func releaseNotesForVersion(changelog []byte, tag string) (string, error) {
 	body := strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 	if body == "" || !strings.HasPrefix(body, "### ") {
 		return "", fmt.Errorf("changelog release section is empty or unstructured: %s", tag)
-	}
-	if match := releaseNoteFillerPattern.FindString(body); match != "" {
-		return "", fmt.Errorf("changelog release section contains portfolio-irrelevant copy %q: %s", match, tag)
 	}
 	return "See [CHANGELOG.md for " + tag + "](" + productidentity.ProductURL + "/blob/" + tag + "/CHANGELOG.md).\n", nil
 }

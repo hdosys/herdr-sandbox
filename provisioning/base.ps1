@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 53
+# herdr-sandbox-base-contract: 54
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -31,8 +31,7 @@ if ($null -eq ('HerdrSandbox.ProvisioningProcess' -as [type])) {
     Add-Type -Path $ProcessOwnerPath
 }
 if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 3 -or
-    [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2 -or
-    [HerdrSandbox.ProvisioningProcess]::MaximumConcurrentDownloads -ne 3) {
+    [HerdrSandbox.ProvisioningProcess]::MaximumGroupTasks -ne 2) {
     throw 'Provisioning process owner contract is invalid.'
 }
 $global:HerdrSandboxActiveProvisioningNativeGroup = $null
@@ -483,7 +482,6 @@ function Invoke-ProvisioningNativeResult {
         [AllowEmptyCollection()]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
-        [switch]$WaitForProcessTree,
         [switch]$TerminateDescendantsAfterRootExit,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
@@ -514,16 +512,14 @@ function Invoke-ProvisioningNative {
         [AllowEmptyCollection()]
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
-        [switch]$WaitForProcessTree,
         [switch]$TerminateDescendantsAfterRootExit,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
 
     # Every invocation owns the complete tree. The opt-in cleanup applies only after the root is terminal.
-    # WaitForProcessTree remains a source-compatible marker.
     $result = Invoke-ProvisioningNativeResult -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
-        -SuccessExitCodes $SuccessExitCodes -WaitForProcessTree:$WaitForProcessTree `
+        -SuccessExitCodes $SuccessExitCodes `
         -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $output = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
@@ -1621,25 +1617,22 @@ function Install-ProvisioningPackagePayload {
             }
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
                 -ArgumentList $InstallerArguments `
-                -SuccessExitCodes $InstallerSuccessExitCodes `
-                -WaitForProcessTree | Out-Null
+                -SuccessExitCodes $InstallerSuccessExitCodes | Out-Null
         }
         'Inno' {
             if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
                 throw "$Role Inno adapter requires ExecutableName."
             }
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
-                -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') `
-                -WaitForProcessTree | Out-Null
+                -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
         }
         'NSIS' {
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
-                -ArgumentList @('/S') -WaitForProcessTree | Out-Null
+                -ArgumentList @('/S') | Out-Null
         }
         'MSI' {
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath "$env:SystemRoot\System32\msiexec.exe" `
-                -ArgumentList (@('/i', $PayloadPath, '/quiet', '/norestart') + $InstallerArguments) `
-                -WaitForProcessTree | Out-Null
+                -ArgumentList (@('/i', $PayloadPath, '/quiet', '/norestart') + $InstallerArguments) | Out-Null
         }
         'Burn' {
             $burnArguments = if ($InstallerArguments.Count -eq 0) {
@@ -1649,8 +1642,7 @@ function Install-ProvisioningPackagePayload {
             }
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
                 -ArgumentList $burnArguments `
-                -SuccessExitCodes $InstallerSuccessExitCodes `
-                -WaitForProcessTree | Out-Null
+                -SuccessExitCodes $InstallerSuccessExitCodes | Out-Null
         }
         'MSIX' {
             Add-AppxPackage -Path $PayloadPath -ErrorAction Stop | Out-Null

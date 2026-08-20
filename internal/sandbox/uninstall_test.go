@@ -51,24 +51,6 @@ func TestRemoveManagedSSHIncludeRejectsChangedOwnedBlock(t *testing.T) {
 	}
 }
 
-func TestInstallerCleanupNeverOwnsSandboxTermination(t *testing.T) {
-	source, err := os.ReadFile("uninstall.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{
-		"downAtWithExecutable",
-		"ensureNoRunningSandboxProcesses",
-		"runningSandboxProcesses(",
-		"windowsSandboxExecutable(",
-		"expectedWindowsSandboxExecutable(",
-	} {
-		if strings.Contains(string(source), forbidden) {
-			t.Errorf("installer cleanup retains Sandbox lifecycle path %q", forbidden)
-		}
-	}
-}
-
 func TestCleanInstallerDataWithLockHeldDoesNotReacquireLifecycleLock(t *testing.T) {
 	paths := installerCleanPaths{
 		DataDirectory:          filepath.Join(t.TempDir(), "data"),

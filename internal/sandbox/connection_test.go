@@ -80,23 +80,6 @@ func TestGuestHerdrStatusScriptUsesPublishedProvisionedBinary(t *testing.T) {
 	}
 }
 
-func TestGuestHerdrStatusUsesSeparatedSSHOutputOwner(t *testing.T) {
-	data, err := os.ReadFile("connection.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	start := strings.Index(text, "func readGuestHerdrStatus")
-	end := strings.Index(text[start:], "func validateGuestHerdrStatus")
-	if start < 0 || end < 0 {
-		t.Fatal("guest Herdr status owner is missing")
-	}
-	section := text[start : start+end]
-	if !strings.Contains(section, "runSSHPowerShell") || strings.Contains(section, "CombinedOutput") {
-		t.Fatalf("guest Herdr status does not keep SSH stderr outside JSON: %s", section)
-	}
-}
-
 func TestGuestHerdrPublicationAddsExactSidecarDirectoryToMachinePath(t *testing.T) {
 	executable := `C:\Users\WDAGUtilityAccount\.herdr\remote\build-id\herdr.exe`
 	script := guestHerdrPublicationScript(executable)

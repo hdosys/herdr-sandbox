@@ -1,7 +1,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -257,15 +256,6 @@ exit 0
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("bootstrap cache HTTP requests = %d, want 2 (miss + corrupt repair)", got)
-	}
-}
-
-func TestBootstrapAndReleaseMetadataAreEmbedded(t *testing.T) {
-	if len(bytes.TrimSpace(bootstrapScript)) == 0 {
-		t.Fatal("bootstrap script is empty")
-	}
-	if len(bytes.TrimSpace(bootstrapReleaseJSON)) == 0 {
-		t.Fatal("bootstrap release metadata is empty")
 	}
 }
 

@@ -9,51 +9,6 @@ import (
 	"testing"
 )
 
-func TestJavaStackInstallsMicrosoftOpenJDK25LTSAndCompilesAProgram(t *testing.T) {
-	text := readDefaultStackProvisioning(t)
-	start := strings.Index(text, "function Get-StackJavaInstalledVersions")
-	end := strings.Index(text, "function Install-GoStack")
-	if start < 0 || end <= start {
-		t.Fatal("Java stack owner is missing")
-	}
-	section := text[start:end]
-	for _, required := range []string{
-		"$packageID = 'Microsoft.OpenJDK.25'",
-		"-InstallerType 'wix' -Scope 'machine'",
-		"-DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe'",
-		"ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome",
-		"-RequireAuthenticodeSignature",
-		"Remove-StackJavaPreviousInstallation -Metadata $metadata",
-		"'uninstall', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget'",
-		"'--scope', 'machine', '--all-versions', '--silent'",
-		"Microsoft OpenJDK 25 previous-version uninstall",
-		"[Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')",
-		"Join-Path $javaBin 'java.exe'",
-		"Join-Path $javaBin 'javac.exe'",
-		"Java runtime version verification",
-		"Java compiler version verification",
-		"Java compiler probe",
-		"Java runtime probe",
-		"HerdrJavaStackProbe.java",
-		"java-stack-ok",
-	} {
-		if !strings.Contains(section, required) {
-			t.Errorf("Java stack is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{
-		"Microsoft.OpenJDK.11", "Microsoft.OpenJDK.17", "Microsoft.OpenJDK.21",
-		"EclipseAdoptium", "Oracle.JDK", "JAVA_HOME = 'C:", "25.0.4.7", "'--force'",
-	} {
-		if strings.Contains(section, forbidden) {
-			t.Errorf("Java stack contains a legacy, alternate, or pinned path %q", forbidden)
-		}
-	}
-	if effectiveStackPackageOwner(stackJava) != "Microsoft.OpenJDK.25" {
-		t.Fatalf("Java package owner = %q", effectiveStackPackageOwner(stackJava))
-	}
-}
-
 func TestJavaStackUninstallsPreviousVersionsBeforeInstallInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 Java upgrade regression")
@@ -88,7 +43,7 @@ function Invoke-ProvisioningNativeResult {
     return [pscustomobject]@{ ExitCode = 0; Output = ($rows -join [Environment]::NewLine) }
 }
 function Invoke-ProvisioningNative {
-    param($Role, $FilePath, [object[]]$ArgumentList, $TimeoutSeconds, [switch]$WaitForProcessTree)
+    param($Role, $FilePath, [object[]]$ArgumentList, $TimeoutSeconds)
     $script:uninstallCalls += 1
     $script:uninstallArguments = @($ArgumentList)
     $script:versions = @()

@@ -30,8 +30,8 @@ const (
 	sampleConfigurationName            = productidentity.SampleConfigurationName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 53"
-	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 20"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 54"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 21"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 3"
 	activeSessionLaunchContract        = "# herdr-sandbox-active-session-launch-contract: 1"

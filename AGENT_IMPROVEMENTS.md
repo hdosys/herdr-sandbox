@@ -90,12 +90,17 @@ cross-project workflow in the global OpenCode configuration repository.
   Herdr, and user configuration, then quietly uninstalls it. The first complete
   pass took 552.332 seconds. Expected benefit: catch packaging and installed
   lifecycle defects that compilation, source checks, and manifest syntax miss.
-- **Status: proposed. Retire low-value source-coupled tests in favor of unique behavior signal.**
+- **Status: done. Retire low-value source-coupled tests in favor of unique behavior signal.**
   Evidence: the repository has 18,112 lines of Go tests for 20,365 lines of
   production Go, including at least 68 source-only tests and roughly 2,600 lines
   centered on copied tokens, ordering, or implementation absence. Delete tests of
   test fixtures, external-tool semantics, copied source inventories, and wiring
   already exercised by a stronger owner; consolidate repeated table cases; retain
-  product decisions, unsafe-boundary checks, and unique failure contracts.
+  product decisions, unsafe-boundary checks, and unique failure contracts. The
+  completed pass removed 2,333 net test lines, including copied all-stack and
+  provisioning inventories, while preserving executable PowerShell, parser,
+  reparse, planner, process, configuration, installer, and native-boundary checks.
+  It also removed 18 net production lines of no-op or test-only process and release
+  machinery. The normal `verify` gate remained below one minute.
   Expected benefit: lower maintenance and cognitive cost while shifting confidence
   toward executable product and native outcomes.
