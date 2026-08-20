@@ -782,6 +782,24 @@ func TestGitHubCLICommandEnvironmentRemovesTokenOverrides(t *testing.T) {
 	}
 }
 
+func TestCanonicalGitHubCLIAccountLoginHandlesRenamedAccount(t *testing.T) {
+	account := githubCLIAccount{
+		Hostname: "github.com", Login: "legacy-user", Active: true,
+		GitProtocol: "https", Token: "fixture-token",
+	}
+	canonical, err := withCanonicalGitHubCLIAccountLogin(account, []byte("current-user\r\n"))
+	if err != nil {
+		t.Fatalf("withCanonicalGitHubCLIAccountLogin: %v", err)
+	}
+	if canonical.Login != "current-user" || canonical.Hostname != account.Hostname ||
+		canonical.Active != account.Active || canonical.GitProtocol != account.GitProtocol || canonical.Token != account.Token {
+		t.Fatalf("canonical account = %#v", canonical)
+	}
+	if _, err := withCanonicalGitHubCLIAccountLogin(account, []byte("invalid\nlogin")); err == nil {
+		t.Fatal("invalid canonical login unexpectedly succeeded")
+	}
+}
+
 func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testing.T) {
 	script := string(configurationSyncScript)
 	for _, required := range []string{
@@ -855,6 +873,30 @@ func TestNativeGitHubCLIAuthenticationExport(t *testing.T) {
 		if account.Token == "" {
 			t.Fatal("exported GitHub CLI account has no token")
 		}
+	}
+
+	account := authentication.Accounts[0]
+	staleLogin := "herdr-sandbox-renamed-account-fixture"
+	quotedHost, _ := json.Marshal(account.Hostname)
+	quotedStaleLogin, _ := json.Marshal(staleLogin)
+	quotedToken, _ := json.Marshal(account.Token)
+	quotedProtocol, _ := json.Marshal(account.GitProtocol)
+	fixture := fmt.Sprintf("%s:\n    users:\n        %s:\n            oauth_token: %s\n    user: %s\n    oauth_token: %s\n    git_protocol: %s\n",
+		quotedHost, quotedStaleLogin, quotedToken, quotedStaleLogin, quotedToken, quotedProtocol)
+	fixtureDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fixtureDirectory, "hosts.yml"), []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	renamePayload, renameCount, err := exportGitHubCLIAuthentication(context.Background(), fixtureDirectory)
+	if err != nil {
+		t.Fatalf("export renamed GitHub CLI account: %v", err)
+	}
+	renamed, err := decodeGitHubCLIAuthentication(renamePayload)
+	if err != nil {
+		t.Fatalf("decode renamed GitHub CLI account: %v", err)
+	}
+	if renameCount != 1 || len(renamed.Accounts) != 1 || renamed.Accounts[0].Login != account.Login || renamed.Accounts[0].Login == staleLogin {
+		t.Fatalf("renamed GitHub CLI account was not canonicalized")
 	}
 }
 

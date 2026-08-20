@@ -21,9 +21,9 @@ artifacts remain available on the
 
 ### Fixed
 
-- GitHub CLI account transfer now imports each host's selected account last and
-  verifies account identity case-insensitively, avoiding redundant switching and
-  false failures when GitHub canonicalizes username casing.
+- GitHub CLI account transfer now resolves each token's current login before guest
+  import, preserving selected accounts while avoiding failures after account renames
+  or username case normalization.
 - `sandbox init --stack all` now includes every generic stack, including Audio,
   HyperFrames, and Python AI; only checkout-specific Handy and Herdr remain
   explicit selections.
