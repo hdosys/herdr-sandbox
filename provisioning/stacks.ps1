@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 19
+# herdr-sandbox-stacks-contract: 20
 
 function Get-StackWebResponseText {
     param(
@@ -1347,6 +1347,32 @@ function Install-StackAndroidDirectArchive {
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
 }
 
+function Assert-StackAndroidPlatformTools {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    Assert-StackAndroidTree -Root $Root `
+        -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties')
+    $properties = [IO.File]::ReadAllText((Join-Path $Root 'source.properties'))
+    if ($properties -notmatch '(?m)^Pkg\.Revision=(?<version>\d+\.\d+\.\d+)\r?$') {
+        throw 'Android Platform Tools source identity is unexpected.'
+    }
+    $version = [string]$Matches['version']
+    $adb = Join-Path $Root 'adb.exe'
+    $reportedVersion = ((Invoke-ProvisioningNative -Role 'Android ADB version verification' -FilePath $adb `
+            -ArgumentList @('version') -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
+    $help = ((Invoke-ProvisioningNative -Role 'Android wireless ADB command verification' -FilePath $adb `
+            -ArgumentList @('help') -TimeoutSeconds 30) -join [Environment]::NewLine)
+    if ($reportedVersion -notmatch ('(?m)^Version ' + [regex]::Escape($version) + '-') -or
+        $help -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
+        $help -notmatch '(?m)^\s*connect HOST\[:PORT\]') {
+        throw 'Android wireless ADB verification failed.'
+    }
+    return $version
+}
+
 function Install-AndroidStack {
     [CmdletBinding()]
     param()
@@ -1392,6 +1418,8 @@ function Install-AndroidStack {
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
     $androidCLIBin = Join-Path $androidCLIRoot 'bin'
     $androidCLI = Join-Path $androidCLIBin 'android.exe'
+    $platformTools = Join-Path $androidSDK 'platform-tools'
+    $adb = Join-Path $platformTools 'adb.exe'
     $jdkRoot = 'C:\HerdrSandbox\toolchains\android-jdk-17'
     $androidUserHome = 'C:\HerdrSandbox\build\android-user'
     Write-Output "Installing Android SDK Command-line Tools $androidCLIRevision and Microsoft OpenJDK $jdkVersion..."
@@ -1459,12 +1487,18 @@ function Install-AndroidStack {
     }
 
     $previousJavaHome = [string]$env:JAVA_HOME
+    $platformToolsVersion = ''
     try {
         $env:JAVA_HOME = $jdkRoot
         $androidJVMWarning = 'OpenJDK 64-Bit Server VM warning: The UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.'
-        Invoke-ProvisioningNative -Role 'Android Platform Tools installation' -FilePath $androidCLI `
-            -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
-            -TimeoutSeconds 600 | Out-Null
+        if (Test-Path -LiteralPath $platformTools -PathType Container) {
+            $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
+            Write-Output "Android Platform Tools already verified: $platformToolsVersion"
+        } else {
+            Invoke-ProvisioningNative -Role 'Android Platform Tools installation' -FilePath $androidCLI `
+                -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
+                -TimeoutSeconds 600 | Out-Null
+        }
         $androidVersion = (@(Invoke-ProvisioningNative -Role 'Android CLI version verification' `
                     -FilePath $androidCLI -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | `
                     Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
@@ -1480,23 +1514,8 @@ function Install-AndroidStack {
         [IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
         throw "Android SDK verification failed: cli=$androidVersion sdk=$reportedSDK"
     }
-    $platformTools = Join-Path $androidSDK 'platform-tools'
-    $adb = Join-Path $platformTools 'adb.exe'
-    Assert-StackAndroidTree -Root $platformTools `
-        -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties')
-    $platformProperties = [IO.File]::ReadAllText((Join-Path $platformTools 'source.properties'))
-    if ($platformProperties -notmatch '(?m)^Pkg\.Revision=(?<version>\d+\.\d+\.\d+)\r?$') {
-        throw 'Android Platform Tools source identity is unexpected.'
-    }
-    $platformToolsVersion = [string]$Matches['version']
-    $adbVersion = ((Invoke-ProvisioningNative -Role 'Android ADB version verification' -FilePath $adb `
-            -ArgumentList @('version') -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
-    $adbHelp = ((Invoke-ProvisioningNative -Role 'Android wireless ADB command verification' -FilePath $adb `
-            -ArgumentList @('help') -TimeoutSeconds 30) -join [Environment]::NewLine)
-    if ($adbVersion -notmatch ('(?m)^Version ' + [regex]::Escape($platformToolsVersion) + '-') -or
-        $adbHelp -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
-        $adbHelp -notmatch '(?m)^\s*connect HOST\[:PORT\]') {
-        throw 'Android wireless ADB verification failed.'
+    if ([string]::IsNullOrWhiteSpace($platformToolsVersion)) {
+        $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
     }
     Add-ProvisioningMachinePath -Directory $androidCLIBin
     Add-ProvisioningMachinePath -Directory $platformTools

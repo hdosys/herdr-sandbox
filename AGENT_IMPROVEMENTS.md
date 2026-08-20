@@ -65,16 +65,18 @@ cross-project workflow in the global OpenCode configuration repository.
   file and renames it into place before the reader can observe it. Repeated focused
   execution passes. Expected benefit: deterministic process-tree tests without
   masking product verification.
-- **Status: proposed. Add focused retained and fresh Base provisioning gates.**
+- **Status: done. Add an in-place current-Sandbox provisioning gate.**
   Evidence: three native checks of one Base package boundary took 158.993, 149.192,
   and 405.072 seconds because `sandbox up --no-attach` continued into unrelated
   project stacks after reaching that boundary; the last run later hit an unrelated
   Visual Studio readiness timeout. A later 580.735-second integration pass was
-  green but could not close eight deferred host-to-guest assignments. Add one
-  bounded retained-guest task for Base iteration and one minimal fresh-guest task
-  for launch, SSH, provisioning, ready status, and one selected outcome. Keep the
-  all-stack task as breadth acceptance. Expected benefit: preserve real native
-  evidence with faster attribution and without unrelated stack delay or failure.
+  green but could not close eight native assignments from inside the development
+  Sandbox. `native-current-sandbox` now executes real Base, package adapters, and
+  every direct and virtual stack in the active guest while proving that SSH and
+  Herdr process identities remain unchanged. A passing warm-cache run took
+  488.701 seconds; the normal `verify` gate remained separate at 58.506 seconds.
+  Expected benefit: real provisioning evidence without a nested Sandbox or slower
+  standard iteration.
 - **Status: proposed. Make the exact installed candidate a release acceptance owner.**
   Evidence: WinGet validation and community publication accepted a v0.0.15
   manifest whose ProductCode differed from the uninstall identity registered by

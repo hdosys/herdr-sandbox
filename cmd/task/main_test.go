@@ -39,7 +39,7 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 }
 
 func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
-	for _, task := range []string{"fmt", "build", "verify", "verify-integration", "native-all-stacks"} {
+	for _, task := range []string{"fmt", "build", "verify", "verify-integration", "native-current-sandbox", "native-all-stacks"} {
 		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
 			t.Fatalf("run %s error = %v", task, err)
@@ -50,6 +50,9 @@ func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
 func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	if got := taskTimeoutFor([]string{"native-all-stacks"}); got != nativeAllStacksTaskTimeout {
 		t.Fatalf("native timeout = %s", got)
+	}
+	if got := taskTimeoutFor([]string{"native-current-sandbox"}); got != currentSandboxTaskTimeout {
+		t.Fatalf("current-Sandbox timeout = %s", got)
 	}
 	if got := taskTimeoutFor([]string{"verify"}); got != taskTimeout {
 		t.Fatalf("ordinary timeout = %s", got)

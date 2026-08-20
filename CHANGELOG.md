@@ -14,6 +14,12 @@ artifacts remain available on the
   the core doctor boundary and a software H.264 encode without claiming hardware
   encoder availability.
 
+### Fixed
+
+- Retained Android provisioning now reuses fully verified Platform Tools instead
+  of rerunning the Android package operation that can fast-fail on an already
+  provisioned guest.
+
 ## v0.0.16
 
 ### Fixed

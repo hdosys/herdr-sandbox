@@ -22,6 +22,7 @@ import (
 const (
 	taskTimeout                = 5 * time.Minute
 	integrationTaskTimeout     = 30 * time.Minute
+	currentSandboxTaskTimeout  = 45 * time.Minute
 	nativeAllStacksTaskTimeout = 2 * time.Hour
 	fastTestsEnvironment       = "HERDR_SANDBOX_FAST_TESTS"
 )
@@ -33,6 +34,7 @@ Tasks:
   test [args...]   run fast product tests with optional go test arguments
   test-integration [args...]  run all Go external-boundary tests
   build            build intermediate CLI output at build/bin/%s
+  native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the validated installable ZIP and NSIS candidate artifacts
@@ -90,6 +92,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("native-all-stacks accepts no arguments")
 		}
 		return nativeAllStacks(ctx, stdout, stderr)
+	case "native-current-sandbox":
+		if len(args) != 1 {
+			return errors.New("native-current-sandbox accepts no arguments")
+		}
+		return nativeCurrentSandbox(ctx, stdout, stderr, "")
 	case "package":
 		if len(args) != 2 {
 			return errors.New("package requires one v0.0.RELEASE_ID version")
@@ -118,6 +125,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 func taskTimeoutFor(args []string) time.Duration {
 	if len(args) > 0 && args[0] == "native-all-stacks" {
 		return nativeAllStacksTaskTimeout
+	}
+	if len(args) > 0 && args[0] == "native-current-sandbox" {
+		return currentSandboxTaskTimeout
 	}
 	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "verify-integration") {
 		return integrationTaskTimeout
@@ -233,7 +243,7 @@ func checkGoFormat(ctx context.Context, stderr io.Writer) error {
 
 func checkPowerShell(ctx context.Context, stdout, stderr io.Writer) error {
 	scripts := []string{}
-	for _, pattern := range []string{filepath.Join("internal", "sandbox", "assets", "*.ps1"), filepath.Join("provisioning", "*.ps1"), filepath.Join(".herdr-sandbox", "*.ps1"), filepath.Join("packaging", "windows", "*.ps1")} {
+	for _, pattern := range []string{filepath.Join("cmd", "task", "assets", "*.ps1"), filepath.Join("internal", "sandbox", "assets", "*.ps1"), filepath.Join("provisioning", "*.ps1"), filepath.Join(".herdr-sandbox", "*.ps1"), filepath.Join("packaging", "windows", "*.ps1")} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			return fmt.Errorf("find PowerShell scripts matching %s: %w", pattern, err)

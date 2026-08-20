@@ -530,6 +530,7 @@ Windows Sandbox checks, and release packaging.
 ```powershell
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
+go run ./cmd/task native-current-sandbox
 go run ./cmd/task native-all-stacks
 ```
 
@@ -538,6 +539,9 @@ go run ./cmd/task native-all-stacks
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
+- `native-current-sandbox` replays real Base and every project stack inside the
+  active development Sandbox without launching a nested Sandbox or restarting
+  its existing SSH and Herdr processes.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the
   complete toolchain, managed SSH, and a real NSIS compile without installing a
   release candidate.
