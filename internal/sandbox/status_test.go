@@ -31,7 +31,7 @@ func TestWaitForReadyReportsProgressAndReturnsReady(t *testing.T) {
 		HerdrVersion:        "herdr 0.7.5-nightly.test",
 		HerdrRuntimeVersion: "0.7.5-nightly.test+build",
 		HerdrProtocol:       17,
-		HerdrBinary:         `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`,
+		HerdrBinary:         guestHerdrExecutable,
 	}
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -117,7 +117,7 @@ func TestWaitForReadyToleratesTransientProgressReadFailure(t *testing.T) {
 		HerdrVersion:        "herdr 0.7.5-nightly.test",
 		HerdrRuntimeVersion: "0.7.5-nightly.test+build",
 		HerdrProtocol:       17,
-		HerdrBinary:         `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`,
+		HerdrBinary:         guestHerdrExecutable,
 	}
 	go func() {
 		time.Sleep(750 * time.Millisecond)
@@ -138,7 +138,7 @@ func TestWaitForReadyToleratesTransientProgressReadFailure(t *testing.T) {
 
 func TestReadyStatusRejectsUnknownField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), readyFileName)
-	data := `{"schemaVersion":3,"ip":"172.24.16.3","sshUser":"WDAGUtilityAccount","sshHostKey":"` + testHostKey + `","wingetVersion":"1","herdrVersion":"1","herdrRuntimeVersion":"runtime","herdrProtocol":17,"herdrBinary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build\\herdr.exe","unexpected":true}`
+	data := `{"schemaVersion":3,"ip":"172.24.16.3","sshUser":"WDAGUtilityAccount","sshHostKey":"` + testHostKey + `","wingetVersion":"1","herdrVersion":"1","herdrRuntimeVersion":"runtime","herdrProtocol":17,"herdrBinary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\herdr.exe","unexpected":true}`
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestReadyStatusValidatesBoundaryFields(t *testing.T) {
 		HerdrVersion:        "1",
 		HerdrRuntimeVersion: "runtime",
 		HerdrProtocol:       17,
-		HerdrBinary:         `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`,
+		HerdrBinary:         guestHerdrExecutable,
 	}
 	tests := []struct {
 		name   string
@@ -204,7 +204,7 @@ func TestGuestDisplayStatusRejectsTerminalControls(t *testing.T) {
 }
 
 func TestReadyStatusRejectsOldSchemaAndAmbiguousJSON(t *testing.T) {
-	valid := `{"schemaVersion":3,"ip":"172.24.16.3","sshUser":"WDAGUtilityAccount","sshHostKey":"` + testHostKey + `","wingetVersion":"1","herdrVersion":"1","herdrRuntimeVersion":"runtime","herdrProtocol":17,"herdrBinary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build\\herdr.exe"}`
+	valid := `{"schemaVersion":3,"ip":"172.24.16.3","sshUser":"WDAGUtilityAccount","sshHostKey":"` + testHostKey + `","wingetVersion":"1","herdrVersion":"1","herdrRuntimeVersion":"runtime","herdrProtocol":17,"herdrBinary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\herdr.exe"}`
 	tests := map[string]string{
 		"case variant": strings.Replace(valid, `"ip"`, `"IP"`, 1),
 		"duplicate":    strings.TrimSuffix(valid, "}") + `,"ip":"172.24.16.4"}`,
@@ -230,7 +230,7 @@ func TestReadyStatusRejectsOldSchemaAndAmbiguousJSON(t *testing.T) {
 		HerdrVersion:        "1",
 		HerdrRuntimeVersion: "runtime",
 		HerdrProtocol:       17,
-		HerdrBinary:         `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`,
+		HerdrBinary:         guestHerdrExecutable,
 	}
 	if err := old.validate(); err == nil || !strings.Contains(err.Error(), "want 3") {
 		t.Fatalf("old ready schema validation error = %v", err)
@@ -281,7 +281,7 @@ func TestReadyIdentityMustMatchConnectableIdentity(t *testing.T) {
 		HerdrVersion:        "herdr 0.7.5-nightly.test",
 		HerdrRuntimeVersion: "0.7.5-nightly.test+build",
 		HerdrProtocol:       18,
-		HerdrBinary:         `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`,
+		HerdrBinary:         guestHerdrExecutable,
 	}
 	if !sameConnectionIdentity(connectable, ready) {
 		t.Fatal("matching identities did not compare equal")

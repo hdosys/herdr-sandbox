@@ -80,8 +80,8 @@ func TestGuestHerdrStatusScriptUsesPublishedProvisionedBinary(t *testing.T) {
 	}
 }
 
-func TestGuestHerdrPublicationAddsExactSidecarDirectoryToMachinePath(t *testing.T) {
-	executable := `C:\Users\WDAGUtilityAccount\.herdr\remote\build-id\herdr.exe`
+func TestGuestHerdrPublicationAddsExactRuntimeDirectoryToMachinePath(t *testing.T) {
+	executable := guestHerdrExecutable
 	script := guestHerdrPublicationScript(executable)
 	for _, required := range []string{
 		"SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine')",
@@ -101,7 +101,7 @@ func TestGuestHerdrPublicationAddsExactSidecarDirectoryToMachinePath(t *testing.
 }
 
 func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
-	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\build\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
+	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
 	status, err := decodeGuestHerdrStatus(valid)
 	if err != nil || !status.Running || status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon {
 		t.Fatalf("guest status = %#v, err = %v", status, err)

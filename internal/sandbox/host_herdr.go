@@ -564,13 +564,8 @@ func validateGuestHerdrBinary(path string) error {
 		strings.TrimSpace(path) != path || strings.ContainsAny(path, "\x00\r\n") || len(path) > 32767 {
 		return errors.New("want one absolute Windows herdr.exe path")
 	}
-	relative, err := filepath.Rel(guestHerdrRemoteRoot, filepath.Clean(path))
-	if err != nil {
-		return fmt.Errorf("resolve below the guest Herdr remote root: %w", err)
-	}
-	parts := strings.Split(filepath.ToSlash(relative), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[0] == "." || parts[0] == ".." || !strings.EqualFold(parts[1], "herdr.exe") {
-		return fmt.Errorf("want one versioned sidecar below %s", guestHerdrRemoteRoot)
+	if !strings.EqualFold(filepath.Clean(path), guestHerdrExecutable) {
+		return fmt.Errorf("want the stable guest Herdr executable at %s", guestHerdrExecutable)
 	}
 	return nil
 }

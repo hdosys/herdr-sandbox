@@ -595,7 +595,7 @@ func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	ready := readyStatus{SchemaVersion: readyStatusSchemaVersion, IP: connectable.IP, SSHUser: connectable.SSHUser,
 		SSHHostKey: connectable.SSHHostKey, WinGetVersion: connectable.WinGetVersion, HerdrVersion: "herdr 1.0.0",
 		HerdrRuntimeVersion: "1.0.0+build", HerdrProtocol: 18,
-		HerdrBinary: `C:\Users\WDAGUtilityAccount\.herdr\remote\build\herdr.exe`}
+		HerdrBinary: guestHerdrExecutable}
 	writeJSON(t, filepath.Join(statusDirectory, readyFileName), ready)
 	status, err = classifyManagedSession(root, active)
 	if err != nil || status.State != SessionReady || status.GuestIP != ready.IP ||

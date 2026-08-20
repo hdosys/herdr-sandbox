@@ -21,6 +21,9 @@ artifacts remain available on the
 
 ### Fixed
 
+- Fresh and retained `sandbox up` now accept Herdr-Win's stable guest runtime path,
+  allowing provisioning to continue into initial workspace creation instead of
+  stopping after the server starts.
 - GitHub CLI account transfer now resolves each token's current login before guest
   import, preserving selected accounts while avoiding failures after account renames
   or username case normalization.

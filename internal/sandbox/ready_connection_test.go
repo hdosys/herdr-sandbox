@@ -19,7 +19,7 @@ func TestConnectionValidationRequiresCompleteAbsoluteIdentity(t *testing.T) {
 		HerdrProtocol:       18,
 		privateKeyPath:      filepath.Join(root, "identity", "id_ed25519"),
 		herdrExecutable:     filepath.Join(root, "herdr.exe"),
-		guestHerdrPath:      guestHerdrRemoteRoot + `\build\herdr.exe`,
+		guestHerdrPath:      guestHerdrExecutable,
 		herdrRuntimeVersion: "1.0.0",
 	}
 	if err := valid.validate(); err != nil {
