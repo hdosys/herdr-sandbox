@@ -21,6 +21,9 @@ artifacts remain available on the
 
 ### Fixed
 
+- GitHub CLI account transfer now imports each host's selected account last,
+  avoiding a redundant account-switch command that could abort configuration
+  sync.
 - `sandbox init --stack all` now includes every generic stack, including Audio,
   HyperFrames, and Python AI; only checkout-specific Handy and Herdr remain
   explicit selections.

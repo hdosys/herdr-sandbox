@@ -1017,7 +1017,9 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     [Console]::Error.WriteLine('[config-sync] apply-github-authentication')
     $githubAccountIdentities = @{}
     $githubAccountHosts = @{}
-    foreach ($account in $githubAccounts) {
+    $githubImportAccounts = @($githubAccounts | Where-Object { -not [bool]$_.active })
+    $githubImportAccounts += @($githubAccounts | Where-Object { [bool]$_.active })
+    foreach ($account in $githubImportAccounts) {
         $accountProperties = @($account.PSObject.Properties.Name | Sort-Object)
         $hostname = [string]$account.hostname
         $login = [string]$account.login
@@ -1040,9 +1042,6 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             '--with-token', '--insecure-storage', '--skip-ssh-key')
         $loginOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI authentication import' -Arguments $loginArguments -InputText $token -UseStandardInput)
         $account.token = ''
-    }
-    foreach ($account in @($githubAccounts | Where-Object { [bool]$_.active })) {
-        $switchOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI active-account selection' -Arguments @('auth', 'switch', '--hostname', [string]$account.hostname, '--user', [string]$account.login))
     }
     foreach ($hostname in @($githubAccountHosts.Keys | Sort-Object)) {
         $setupGitOutput = @(Invoke-GuestGitHubCLI -Role 'GitHub CLI Git credential-helper setup' -Arguments @('auth', 'setup-git', '--hostname', [string]$hostname))

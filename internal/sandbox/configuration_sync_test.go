@@ -785,6 +785,8 @@ func TestGitHubCLICommandEnvironmentRemovesTokenOverrides(t *testing.T) {
 func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testing.T) {
 	script := string(configurationSyncScript)
 	for _, required := range []string{
+		"$githubImportAccounts = @($githubAccounts | Where-Object { -not [bool]$_.active })",
+		"$githubImportAccounts += @($githubAccounts | Where-Object { [bool]$_.active })",
 		"'--with-token', '--insecure-storage', '--skip-ssh-key'",
 		"'auth', 'setup-git', '--hostname'",
 		"GitHub CLI Git credential-helper setup",
@@ -802,6 +804,8 @@ func TestGuestGitHubCLIAuthenticationAvoidsCredentialUIAndOwnsGitHTTPS(t *testin
 		}
 	}
 	for _, forbidden := range []string{
+		"GitHub CLI active-account selection",
+		"'auth', 'switch'",
 		"$credentialHelper.StartsWith('!')",
 		"$credentialHelper.IndexOf('gh.exe'",
 		"$credentialHelper.EndsWith(' auth git-credential'",
