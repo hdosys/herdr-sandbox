@@ -167,6 +167,14 @@ Do not run these slower gates while a user waits for an ordinary build or
 installer. Unit tests do not replace the applicable native gate when changed
 behavior depends on that boundary.
 
+For installer work, `go run ./cmd/task package VERSION` owns the early
+user-testable candidate. Never run `package-current-sandbox` from a dirty or
+pre-commit checkout. Freeze production source, complete the focused gates, commit
+and push, rebuild once from that immutable commit, then run exactly one
+`package-current-sandbox VERSION` acceptance. A later production-relevant edit
+requires a new commit and candidate; unchanged inputs never justify repeating the
+installed-candidate gate.
+
 For long-running GitHub Actions, check status no more than once every two minutes
 and fetch detailed logs only after terminal failure. GitHub release artifacts do
 not replace required local/guest evidence unless the boundary is blocked and

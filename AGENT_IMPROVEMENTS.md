@@ -90,14 +90,15 @@ cross-project workflow in the global OpenCode configuration repository.
   Herdr, and user configuration, then quietly uninstalls it. The first complete
   pass took 552.332 seconds. Expected benefit: catch packaging and installed
   lifecycle defects that compilation, source checks, and manifest syntax miss.
-- **Status: proposed. Run the expensive installed-candidate gate only on the immutable commit.**
+- **Status: done. Run the expensive installed-candidate gate only on the immutable commit.**
   Evidence: a pre-commit candidate passed `package-current-sandbox` in 587.203
   seconds but embedded the prior `HEAD` revision, so the unchanged product source
-  needed another 622.120-second installed gate after commit. Report the fast
-  pre-commit `package` artifact, then commit and push, rebuild once from that
-  immutable revision, and run `package-current-sandbox` only on the final candidate.
-  Expected benefit: preserve early user testing while removing one roughly
-  ten-minute duplicate install, provisioning, native, and uninstall cycle.
+  needed another 622.120-second installed gate after commit. `AGENTS.md` now makes
+  `package` the early candidate owner and permits `package-current-sandbox` only
+  after production source is frozen, committed, pushed, and rebuilt from that
+  immutable revision. Expected benefit: preserve early user testing while
+  removing one roughly ten-minute duplicate install, provisioning, native, and
+  uninstall cycle.
 - **Status: done. Retire low-value source-coupled tests in favor of unique behavior signal.**
   Evidence: the repository has 18,112 lines of Go tests for 20,365 lines of
   production Go, including at least 68 source-only tests and roughly 2,600 lines
