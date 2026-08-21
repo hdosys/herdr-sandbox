@@ -553,8 +553,8 @@ func (result remoteProvisionResult) validate(host HostHerdr, target string) erro
 	if result.BinaryOutcome == remoteProvisionBinaryInstalled && result.ServerOutcome == remoteProvisionServerReloaded {
 		return errors.New("an installed binary cannot report an unchanged-server reload")
 	}
-	if result.Version != host.version || result.Protocol != host.protocol {
-		return fmt.Errorf("version/protocol = %q/%d, want %q/%d", result.Version, result.Protocol, host.version, host.protocol)
+	if result.Version != host.runtimeVersion || result.Protocol != host.protocol {
+		return fmt.Errorf("version/protocol = %q/%d, want %q/%d", result.Version, result.Protocol, host.runtimeVersion, host.protocol)
 	}
 	return nil
 }

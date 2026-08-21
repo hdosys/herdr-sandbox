@@ -24,9 +24,10 @@ artifacts remain available on the
 - Current TVControl releases no longer fail provisioning on an obsolete source
   digest and launch TradingView Desktop directly from the interactive agent
   session.
-- Fresh and retained `sandbox up` now use the verified guest runtime location
-  returned by Herdr-Win instead of assuming its directory layout, allowing
-  provisioning to continue into initial workspace creation after the server starts.
+- Fresh and retained `sandbox up` now validate Herdr-Win provisioning against
+  its matching runtime identity and use the verified guest executable location,
+  allowing provisioning to continue into initial workspace creation after the
+  server starts.
 - GitHub CLI account transfer now resolves each token's current login before guest
   import, preserving selected accounts while avoiding failures after account renames
   or username case normalization.

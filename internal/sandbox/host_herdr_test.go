@@ -306,8 +306,12 @@ func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *test
 }
 
 func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testing.T) {
-	host := HostHerdr{version: "herdr-win local (Herdr 0.8.0, build build-id)", protocol: 42}
-	valid := []byte(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"installed","server_outcome":"started","version":"herdr-win local (Herdr 0.8.0, build build-id)","protocol":42}`)
+	host := HostHerdr{
+		version:        "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)",
+		runtimeVersion: "local+346411fa21af.f32339bad77e",
+		protocol:       42,
+	}
+	valid := []byte(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"installed","server_outcome":"started","version":"local+346411fa21af.f32339bad77e","protocol":42}`)
 	result, err := decodeRemoteProvisionResult(valid)
 	if err != nil {
 		t.Fatalf("decode valid remote provision result: %v", err)
@@ -322,13 +326,13 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 	}
 
 	invalid := []remoteProvisionResult{
-		{Target: "other", Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "linux-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `relative\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `\\server\share\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `C:\HerdrManaged\build\..\current\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: "copied", ServerOutcome: remoteProvisionServerStarted, Version: host.version, Protocol: host.protocol},
-		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerReloaded, Version: host.version, Protocol: host.protocol},
+		{Target: "other", Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "linux-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `relative\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `\\server\share\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: `C:\HerdrManaged\build\..\current\herdr.exe`, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: "copied", ServerOutcome: remoteProvisionServerStarted, Version: host.runtimeVersion, Protocol: host.protocol},
+		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerReloaded, Version: host.runtimeVersion, Protocol: host.protocol},
 		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: "other", Protocol: host.protocol},
 	}
 	for _, candidate := range invalid {
@@ -356,7 +360,7 @@ func TestHostHerdrProvisionKeepsSuccessfulDiagnosticOutOfJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.version, host.protocol)
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
 	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "# independent successful diagnostic")
 	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
@@ -378,7 +382,7 @@ func TestHostHerdrProvisionRejectsCombinedOutputOverLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.version, host.protocol)
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
 	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", strings.Repeat("x", maximumRemoteProvisionOutput-1))
 	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
