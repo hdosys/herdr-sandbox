@@ -24,7 +24,7 @@ $herdr = @()
 foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name='herdr.exe'" -ErrorAction Stop)) {
     $commandLine = [string]$process.CommandLine
     $role = ''
-    if ($commandLine -match '(?:^|\s)server(?:\s|$)') {
+    if ($commandLine -match '(?:^|\s)(?:server|--herdr-private-interactive-server-bootstrap-v1)(?:\s|$)') {
         $role = 'server'
     } elseif ($commandLine -match '(?:^|\s)remote-client-bridge(?:\s|$)') {
         $role = 'remote-client-bridge'
