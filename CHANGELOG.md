@@ -6,6 +6,8 @@ artifacts remain available on the
 
 ## Unreleased
 
+## v0.0.17
+
 ### Added
 
 - A new optional `audio` stack provisions REAPER plus AudioGridder
