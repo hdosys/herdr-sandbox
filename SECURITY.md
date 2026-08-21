@@ -167,7 +167,9 @@ non-HTTPS redirects, user curl configuration, inherited custom CA files, and TLS
 key logging, and requires GitHub's asset
 digest plus the exact release `.sha256` sidecar. It then checks the bounded ZIP,
 embedded file manifest, immutable model revision and SHA-256 values, and reference
-audio before publishing the read-only guest input. This protects integrity for
+audio before publishing the read-only guest input. The admitted archive may contain
+only the CPU runtime, and provisioning removes prior VoxCPM2 Vulkan selection state
+before publishing the CPU server. This protects integrity for
 the selected release channel, but GitHub and the named upstream repositories
 remain trusted distribution authorities. Disable the setting when that dynamic
 release policy or outbound download is outside the accepted threat model.

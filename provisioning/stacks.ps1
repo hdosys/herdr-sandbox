@@ -2692,7 +2692,6 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
     $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
-        $Entry.StartsWith('runtime/vulkan/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('licenses/', [StringComparison]::Ordinal)
     if ([string]::IsNullOrWhiteSpace($Entry) -or $Entry.Contains('\') -or
         $Entry.StartsWith('/', [StringComparison]::Ordinal) -or $Entry -match '^[A-Za-z]:' -or
@@ -2925,7 +2924,7 @@ function Install-StackHyperFramesVoxCPM2 {
         }
         foreach ($required in @('engine/audio/scripts/audio.mjs', 'engine/audio/scripts/lib/tts.mjs',
                 'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
-                'runtime/vulkan/llama-tts-server.exe', 'THIRD_PARTY_NOTICES.md')) {
+                'THIRD_PARTY_NOTICES.md')) {
             if (-not $seen.ContainsKey($required)) { throw "HyperFrames VoxCPM2 payload is missing $required" }
         }
         if (Test-Path -LiteralPath $destination) {
@@ -2947,15 +2946,12 @@ function Install-StackHyperFramesVoxCPM2 {
     $engine = Join-Path $destination 'engine\audio'
     $provider = Join-Path $engine 'scripts\lib\voxcpm2.mjs'
     $cpuServer = Join-Path $destination 'runtime\cpu\llama-tts-server.exe'
-    $vulkanServer = Join-Path $destination 'runtime\vulkan\llama-tts-server.exe'
     Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider syntax' -FilePath $Node `
         -ArgumentList @('--check', $provider) -TimeoutSeconds 30 | Out-Null
-    foreach ($server in @($cpuServer, $vulkanServer)) {
-        $version = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 server identity' `
-                -FilePath $server -ArgumentList @('--version') -TimeoutSeconds 30) -join "`n")
-        if ($version -notmatch [regex]::Escape(([string]$descriptor.runtimeCommit).Substring(0, 7))) {
-            throw "HyperFrames VoxCPM2 server identity is unexpected: $server"
-        }
+    $version = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server identity' `
+            -FilePath $cpuServer -ArgumentList @('--version') -TimeoutSeconds 30) -join "`n")
+    if ($version -notmatch [regex]::Escape(([string]$descriptor.runtimeCommit).Substring(0, 7))) {
+        throw "HyperFrames VoxCPM2 CPU server identity is unexpected: $cpuServer"
     }
 
     $stateRoot = 'C:\HerdrSandbox\state\hyperframes-voxcpm2'
@@ -2966,12 +2962,13 @@ function Install-StackHyperFramesVoxCPM2 {
         'HF_VOXCPM2_ACOUSTIC' = Join-Path $modelRoot 'VoxCPM2-Acoustic-F16.gguf'
         'HF_VOXCPM2_REFERENCE_AUDIO' = Join-Path $modelRoot 'reference_speaker.wav'
         'HF_VOXCPM2_SERVER_CPU' = $cpuServer
-        'HF_VOXCPM2_SERVER_VULKAN' = $vulkanServer
-        'HF_VOXCPM2_BACKEND' = 'auto'
         'HF_VOXCPM2_MODEL_ID' = "$($descriptor.models.repository)@$($descriptor.models.revision)"
         'HF_VOXCPM2_STATE_DIR' = $stateRoot
     }
-    Remove-Item Env:\HF_VOXCPM2_ENDPOINT -ErrorAction SilentlyContinue
+    foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
+        Remove-Item -LiteralPath ('Env:\' + $name) -ErrorAction SilentlyContinue
+        [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
+    }
     foreach ($entry in $settings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
     }
@@ -2979,11 +2976,10 @@ function Install-StackHyperFramesVoxCPM2 {
     $availabilityScript = "import { voxcpm2Available } from '$providerURL'; if (!voxcpm2Available()) process.exit(1);"
     Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider availability' -FilePath $Node `
         -ArgumentList @('--input-type=module', '--eval', $availabilityScript) -TimeoutSeconds 30 | Out-Null
-    [Environment]::SetEnvironmentVariable('HF_VOXCPM2_ENDPOINT', $null, 'Machine')
     foreach ($entry in $settings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
     }
-    Write-Output "HyperFrames VoxCPM2 ready: $($descriptor.tag), models $($descriptor.models.revision)"
+    Write-Output "HyperFrames VoxCPM2 CPU ready: $($descriptor.tag), models $($descriptor.models.revision)"
 }
 
 function Assert-StackHyperFramesSoftwareEncode {

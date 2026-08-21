@@ -272,8 +272,9 @@ Herdr Sandbox securely downloads and verifies the latest stable
 [`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
 bundle plus its exact models, then maps that folder read-only at
 `C:\HerdrSandbox\models\voxcpm2`. The HyperFrames stack verifies and installs the
-matching CPU and Vulkan runtime inside the guest. Leave the setting empty to keep
-VoxCPM2 disabled and avoid its roughly 5 GB model download.
+matching CPU-only runtime inside the guest and launches it with GPU layers disabled.
+VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime package. Leave the
+setting empty to keep VoxCPM2 disabled and avoid its roughly 5 GB model download.
 
 ## Commands
 

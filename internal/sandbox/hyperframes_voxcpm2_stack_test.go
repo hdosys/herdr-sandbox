@@ -57,6 +57,9 @@ foreach ($name in @('Test-StackHyperFramesVoxCPM2ArchiveEntry', 'Assert-StackHyp
     Invoke-Expression $definition.Extent.Text
 }
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/cpu/llama-tts-server.exe'
+$vulkanRejected = $false
+try { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/vulkan/llama-tts-server.exe' } catch { $vulkanRejected = $true }
+if (-not $vulkanRejected) { throw 'HyperFrames VoxCPM2 accepted a Vulkan runtime.' }
 $rejected = $false
 try { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/../escape.exe' } catch { $rejected = $true }
 if (-not $rejected) { throw 'Unsafe HyperFrames VoxCPM2 archive entry was accepted.' }

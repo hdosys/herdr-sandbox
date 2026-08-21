@@ -117,7 +117,6 @@ func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 		"engine/audio/scripts/lib/tts.mjs":     []byte("tts"),
 		"engine/audio/scripts/lib/voxcpm2.mjs": []byte("provider"),
 		"runtime/cpu/llama-tts-server.exe":     []byte("cpu"),
-		"runtime/vulkan/llama-tts-server.exe":  []byte("vulkan"),
 	}
 	manifest := voxcpm2CoreManifest{
 		SchemaVersion:  1,
@@ -172,5 +171,11 @@ func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 	}
 	if _, err := inspectVoxCPM2CoreArchive(archive, "v1.2.3"); err != nil {
 		t.Fatalf("inspect exact archive: %v", err)
+	}
+	manifest.Files = append(manifest.Files, voxcpm2ManifestFile{
+		Path: "runtime/vulkan/llama-tts-server.exe", Size: 1, SHA256: strings.Repeat("d", 64),
+	})
+	if err := validateVoxCPM2CoreManifest(manifest, "v1.2.3"); err == nil || !strings.Contains(err.Error(), "non-CPU runtime") {
+		t.Fatalf("Vulkan runtime error = %v", err)
 	}
 }

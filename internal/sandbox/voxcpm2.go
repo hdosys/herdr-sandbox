@@ -470,10 +470,12 @@ func validateVoxCPM2CoreManifest(manifest voxcpm2CoreManifest, tag string) error
 		"engine/audio/scripts/lib/tts.mjs",
 		"engine/audio/scripts/lib/voxcpm2.mjs",
 		"runtime/cpu/llama-tts-server.exe",
-		"runtime/vulkan/llama-tts-server.exe",
 	}
 	paths := make([]string, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
+		if strings.HasPrefix(file.Path, "runtime/") && !strings.HasPrefix(file.Path, "runtime/cpu/") {
+			return fmt.Errorf("HyperFrames VoxCPM2 archive manifest contains a non-CPU runtime: %s", file.Path)
+		}
 		paths = append(paths, file.Path)
 	}
 	for _, requiredPath := range required {
