@@ -2686,6 +2686,306 @@ function Install-PlaywrightCLIStack {
     Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
 }
 
+function Test-StackHyperFramesVoxCPM2ArchiveEntry {
+    param([Parameter(Mandatory = $true)][string]$Entry)
+
+    $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
+        $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
+        $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
+        $Entry.StartsWith('runtime/vulkan/', [StringComparison]::Ordinal) -or
+        $Entry.StartsWith('licenses/', [StringComparison]::Ordinal)
+    if ([string]::IsNullOrWhiteSpace($Entry) -or $Entry.Contains('\') -or
+        $Entry.StartsWith('/', [StringComparison]::Ordinal) -or $Entry -match '^[A-Za-z]:' -or
+        @($Entry.TrimEnd('/') -split '/' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0 -or
+        -not $allowed) {
+        throw "HyperFrames VoxCPM2 archive entry is unsafe: $Entry"
+    }
+}
+
+function Assert-StackHyperFramesVoxCPM2Artifact {
+    param(
+        [Parameter(Mandatory = $true)][object]$Artifact,
+        [Parameter(Mandatory = $true)][string]$ExpectedHost
+    )
+
+    $properties = @($Artifact.PSObject.Properties.Name | Sort-Object)
+    if (($properties -join '|') -cne 'name|sha256|size|url' -or
+        [string]$Artifact.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
+        [long]$Artifact.size -le 0 -or [long]$Artifact.size -gt 17179869184 -or
+        [string]$Artifact.sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'HyperFrames VoxCPM2 artifact metadata is invalid.'
+    }
+    try { $uri = [Uri][string]$Artifact.url } catch { throw 'HyperFrames VoxCPM2 artifact URL is invalid.' }
+    if ($uri.Scheme -cne 'https' -or $uri.Host -ine $ExpectedHost -or
+        -not [string]::IsNullOrWhiteSpace($uri.UserInfo) -or
+        [IO.Path]::GetFileName($uri.AbsolutePath) -cne [string]$Artifact.name) {
+        throw "HyperFrames VoxCPM2 artifact URL is invalid: $($Artifact.name)"
+    }
+}
+
+function Get-StackHyperFramesVoxCPM2Descriptor {
+    param([Parameter(Mandatory = $true)][string]$ModelRoot)
+
+    $releaseRoot = Join-Path $ModelRoot '.herdr-sandbox\hyperframes-voxcpm2'
+    $descriptorPath = Join-Path $releaseRoot 'current.json'
+    if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+        throw "HyperFrames VoxCPM2 release descriptor is missing: $descriptorPath"
+    }
+    $descriptorInfo = Get-Item -LiteralPath $descriptorPath -Force
+    if (($descriptorInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $descriptorInfo.Length -le 0 -or $descriptorInfo.Length -gt 1048576) {
+        throw 'HyperFrames VoxCPM2 release descriptor is unsafe.'
+    }
+    try { $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json } catch {
+        throw "HyperFrames VoxCPM2 release descriptor is invalid: $($_.Exception.Message)"
+    }
+    $properties = @($descriptor.PSObject.Properties.Name | Sort-Object)
+    if (($properties -join '|') -cne 'archiveName|archiveSha256|archiveSize|hyperframesVersion|models|referenceAudio|runtimeCommit|schemaVersion|tag' -or
+        [int]$descriptor.schemaVersion -ne 1 -or
+        [string]$descriptor.tag -notmatch '^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
+        [string]$descriptor.archiveName -cne "hyperframes-voxcpm2-$($descriptor.tag)-windows-x64.zip" -or
+        [long]$descriptor.archiveSize -le 0 -or [long]$descriptor.archiveSize -gt 268435456 -or
+        [string]$descriptor.archiveSha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]$descriptor.hyperframesVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
+        [string]$descriptor.runtimeCommit -notmatch '^[0-9a-f]{40}$' -or
+        [string]$descriptor.models.repository -eq '' -or
+        [string]$descriptor.models.revision -notmatch '^[0-9a-f]{40}$' -or
+        @($descriptor.models.files).Count -ne 2) {
+        throw 'HyperFrames VoxCPM2 release descriptor identity is invalid.'
+    }
+    $modelNames = @($descriptor.models.files | ForEach-Object {
+            Assert-StackHyperFramesVoxCPM2Artifact -Artifact $_ -ExpectedHost 'huggingface.co'
+            [string]$_.name
+        } | Sort-Object)
+    if (($modelNames -join '|') -cne 'VoxCPM2-Acoustic-F16.gguf|VoxCPM2-BaseLM-F16.gguf') {
+        throw 'HyperFrames VoxCPM2 release descriptor selected unexpected model files.'
+    }
+    Assert-StackHyperFramesVoxCPM2Artifact -Artifact $descriptor.referenceAudio `
+        -ExpectedHost 'raw.githubusercontent.com'
+    if ([string]$descriptor.referenceAudio.name -cne 'reference_speaker.wav') {
+        throw 'HyperFrames VoxCPM2 release descriptor selected unexpected reference audio.'
+    }
+    return $descriptor
+}
+
+function Assert-StackHyperFramesVoxCPM2Models {
+    param(
+        [Parameter(Mandatory = $true)][string]$ModelRoot,
+        [Parameter(Mandatory = $true)][object]$Descriptor
+    )
+
+    $completionPath = Join-Path $ModelRoot 'herdr-sandbox-voxcpm2.json'
+    if (-not (Test-Path -LiteralPath $completionPath -PathType Leaf)) {
+        throw "HyperFrames VoxCPM2 model completion is missing: $completionPath"
+    }
+    $completionInfo = Get-Item -LiteralPath $completionPath -Force
+    if (($completionInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $completionInfo.Length -le 0 -or $completionInfo.Length -gt 1048576) {
+        throw 'HyperFrames VoxCPM2 model completion is unsafe.'
+    }
+    try { $completion = [IO.File]::ReadAllText($completionPath) | ConvertFrom-Json } catch {
+        throw "HyperFrames VoxCPM2 model completion is invalid: $($_.Exception.Message)"
+    }
+    $properties = @($completion.PSObject.Properties.Name | Sort-Object)
+    if (($properties -join '|') -cne 'models|referenceAudio|schemaVersion' -or
+        [int]$completion.schemaVersion -ne 1 -or
+        ($completion.models | ConvertTo-Json -Depth 8 -Compress) -cne
+            ($Descriptor.models | ConvertTo-Json -Depth 8 -Compress) -or
+        ($completion.referenceAudio | ConvertTo-Json -Depth 8 -Compress) -cne
+            ($Descriptor.referenceAudio | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'HyperFrames VoxCPM2 model completion does not match the current release.'
+    }
+    foreach ($artifact in @($completion.models.files) + @($completion.referenceAudio)) {
+        $path = Join-Path $ModelRoot ([string]$artifact.name)
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "HyperFrames VoxCPM2 model artifact is missing: $path"
+        }
+        $info = Get-Item -LiteralPath $path -Force
+        if (($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            [long]$info.Length -ne [long]$artifact.size) {
+            throw "HyperFrames VoxCPM2 model artifact identity changed: $path"
+        }
+    }
+}
+
+function Install-StackHyperFramesVoxCPM2 {
+    param(
+        [Parameter(Mandatory = $true)][string]$Node,
+        [Parameter(Mandatory = $true)][string]$HyperFramesVersion
+    )
+
+    $modelRoot = 'C:\HerdrSandbox\models\voxcpm2'
+    if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
+        Write-Output 'HyperFrames VoxCPM2 disabled: set hyperframesVoxCPM2ModelDirectory in the host configuration to enable it.'
+        return
+    }
+    $modelRootInfo = Get-Item -LiteralPath $modelRoot -Force
+    if (($modelRootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'HyperFrames VoxCPM2 model mapping is unsafe.'
+    }
+    $descriptor = Get-StackHyperFramesVoxCPM2Descriptor -ModelRoot $modelRoot
+    if ([string]$descriptor.hyperframesVersion -cne $HyperFramesVersion) {
+        throw "Latest HyperFrames VoxCPM2 release requires HyperFrames $($descriptor.hyperframesVersion), but the stack selected $HyperFramesVersion."
+    }
+    Assert-StackHyperFramesVoxCPM2Models -ModelRoot $modelRoot -Descriptor $descriptor
+
+    $releaseRoot = Join-Path $modelRoot '.herdr-sandbox\hyperframes-voxcpm2'
+    $archivePath = Join-Path (Join-Path $releaseRoot 'releases') `
+        (Join-Path ([string]$descriptor.tag) ([string]$descriptor.archiveName))
+    $sidecarPath = "$archivePath.sha256"
+    foreach ($path in @($archivePath, $sidecarPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "HyperFrames VoxCPM2 release file is missing or unsafe: $path"
+        }
+    }
+    $archiveInfo = Get-Item -LiteralPath $archivePath -Force
+    $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedSidecar = "$($descriptor.archiveSha256)  $($descriptor.archiveName)`n"
+    $actualSidecar = [IO.File]::ReadAllText($sidecarPath).Replace("`r`n", "`n")
+    if ([long]$archiveInfo.Length -ne [long]$descriptor.archiveSize -or
+        $archiveHash -cne [string]$descriptor.archiveSha256 -or $actualSidecar -cne $expectedSidecar) {
+        throw 'HyperFrames VoxCPM2 release archive identity does not match its host-verified descriptor.'
+    }
+
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    $entries = @(Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 archive inspection' -FilePath $tar `
+        -ArgumentList @('-tf', $archivePath) -TimeoutSeconds 60 | ForEach-Object { [string]$_ })
+    if ($entries.Count -le 0 -or $entries.Count -gt 4096) {
+        throw "HyperFrames VoxCPM2 archive entry count is invalid: $($entries.Count)"
+    }
+    foreach ($entry in $entries) { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry $entry }
+
+    $staging = Join-Path 'C:\HerdrSandbox\staging' ('hyperframes-voxcpm2-' + [Guid]::NewGuid().ToString('N'))
+    $destination = 'C:\HerdrSandbox\tools\hyperframes-voxcpm2'
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    $promoted = $false
+    try {
+        Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 archive extraction' -FilePath $tar `
+            -ArgumentList @('-xf', $archivePath, '-C', $staging) -TimeoutSeconds 120 | Out-Null
+        foreach ($item in @(Get-ChildItem -LiteralPath $staging -Recurse -Force)) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "HyperFrames VoxCPM2 extracted tree contains a reparse point: $($item.FullName)"
+            }
+        }
+        $manifestPath = Join-Path $staging 'manifest.json'
+        try { $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json } catch {
+            throw "HyperFrames VoxCPM2 archive manifest is invalid: $($_.Exception.Message)"
+        }
+        $manifestModels = @($manifest.models.files)
+        $descriptorModels = @($descriptor.models.files)
+        if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.platform -cne 'windows-x64' -or
+            [string]$manifest.releaseVersion -cne ([string]$descriptor.tag).Substring(1) -or
+            [string]$manifest.hyperframes.version -cne [string]$descriptor.hyperframesVersion -or
+            [string]$manifest.runtime.commit -cne [string]$descriptor.runtimeCommit -or
+            [string]$manifest.models.repository -cne [string]$descriptor.models.repository -or
+            [string]$manifest.models.revision -cne [string]$descriptor.models.revision -or
+            $manifestModels.Count -ne $descriptorModels.Count) {
+            throw 'HyperFrames VoxCPM2 archive manifest does not match the host-verified descriptor.'
+        }
+        for ($index = 0; $index -lt $manifestModels.Count; $index++) {
+            $manifestModel = $manifestModels[$index]
+            $descriptorModel = $descriptorModels[$index]
+            if ([string]$manifestModel.name -cne [string]$descriptorModel.name -or
+                [long]$manifestModel.size -ne [long]$descriptorModel.size -or
+                [string]$manifestModel.sha256 -cne [string]$descriptorModel.sha256 -or
+                [string]$manifestModel.url -cne [string]$descriptorModel.url) {
+                throw 'HyperFrames VoxCPM2 archive model identity does not match the host-verified descriptor.'
+            }
+        }
+        if ([string]$manifest.referenceAudio.name -cne [string]$descriptor.referenceAudio.name -or
+            [long]$manifest.referenceAudio.size -ne [long]$descriptor.referenceAudio.size -or
+            [string]$manifest.referenceAudio.sha256 -cne [string]$descriptor.referenceAudio.sha256 -or
+            [string]$manifest.referenceAudio.url -cne [string]$descriptor.referenceAudio.url) {
+            throw 'HyperFrames VoxCPM2 archive reference audio does not match the host-verified descriptor.'
+        }
+        $actualFiles = @(Get-ChildItem -LiteralPath $staging -File -Recurse | Where-Object {
+                $_.FullName -ine $manifestPath
+            })
+        $manifestFiles = @($manifest.files)
+        if ($manifestFiles.Count -ne $actualFiles.Count) {
+            throw 'HyperFrames VoxCPM2 archive manifest does not enumerate every payload file.'
+        }
+        $seen = @{}
+        foreach ($file in $manifestFiles) {
+            $relative = [string]$file.path
+            Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry $relative
+            if ($seen.ContainsKey($relative)) { throw "HyperFrames VoxCPM2 manifest duplicates $relative" }
+            $seen[$relative] = $true
+            $path = Join-Path $staging ($relative.Replace('/', '\'))
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "HyperFrames VoxCPM2 manifest file is missing: $relative"
+            }
+            $info = Get-Item -LiteralPath $path -Force
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ([long]$info.Length -ne [long]$file.size -or
+                [string]$file.sha256 -notmatch '^[0-9a-f]{64}$' -or $hash -cne [string]$file.sha256) {
+                throw "HyperFrames VoxCPM2 manifest file identity changed: $relative"
+            }
+        }
+        foreach ($required in @('engine/audio/scripts/audio.mjs', 'engine/audio/scripts/lib/tts.mjs',
+                'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
+                'runtime/vulkan/llama-tts-server.exe', 'THIRD_PARTY_NOTICES.md')) {
+            if (-not $seen.ContainsKey($required)) { throw "HyperFrames VoxCPM2 payload is missing $required" }
+        }
+        if (Test-Path -LiteralPath $destination) {
+            foreach ($item in @(Get-ChildItem -LiteralPath $destination -Recurse -Force)) {
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw "Installed HyperFrames VoxCPM2 tree is unsafe: $($item.FullName)"
+                }
+            }
+            Remove-Item -LiteralPath $destination -Recurse -Force
+        }
+        Move-Item -LiteralPath $staging -Destination $destination
+        $promoted = $true
+    } finally {
+        if (-not $promoted -and (Test-Path -LiteralPath $staging)) {
+            Remove-Item -LiteralPath $staging -Recurse -Force
+        }
+    }
+
+    $engine = Join-Path $destination 'engine\audio'
+    $provider = Join-Path $engine 'scripts\lib\voxcpm2.mjs'
+    $cpuServer = Join-Path $destination 'runtime\cpu\llama-tts-server.exe'
+    $vulkanServer = Join-Path $destination 'runtime\vulkan\llama-tts-server.exe'
+    Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider syntax' -FilePath $Node `
+        -ArgumentList @('--check', $provider) -TimeoutSeconds 30 | Out-Null
+    foreach ($server in @($cpuServer, $vulkanServer)) {
+        $version = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 server identity' `
+                -FilePath $server -ArgumentList @('--version') -TimeoutSeconds 30) -join "`n")
+        if ($version -notmatch [regex]::Escape(([string]$descriptor.runtimeCommit).Substring(0, 7))) {
+            throw "HyperFrames VoxCPM2 server identity is unexpected: $server"
+        }
+    }
+
+    $stateRoot = 'C:\HerdrSandbox\state\hyperframes-voxcpm2'
+    New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+    $settings = [ordered]@{
+        'HF_MEDIA_ENGINE' = $engine
+        'HF_VOXCPM2_BASE_LM' = Join-Path $modelRoot 'VoxCPM2-BaseLM-F16.gguf'
+        'HF_VOXCPM2_ACOUSTIC' = Join-Path $modelRoot 'VoxCPM2-Acoustic-F16.gguf'
+        'HF_VOXCPM2_REFERENCE_AUDIO' = Join-Path $modelRoot 'reference_speaker.wav'
+        'HF_VOXCPM2_SERVER_CPU' = $cpuServer
+        'HF_VOXCPM2_SERVER_VULKAN' = $vulkanServer
+        'HF_VOXCPM2_BACKEND' = 'auto'
+        'HF_VOXCPM2_MODEL_ID' = "$($descriptor.models.repository)@$($descriptor.models.revision)"
+        'HF_VOXCPM2_STATE_DIR' = $stateRoot
+    }
+    Remove-Item Env:\HF_VOXCPM2_ENDPOINT -ErrorAction SilentlyContinue
+    foreach ($entry in $settings.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
+    }
+    $providerURL = 'file:///' + ($provider.Replace('\', '/'))
+    $availabilityScript = "import { voxcpm2Available } from '$providerURL'; if (!voxcpm2Available()) process.exit(1);"
+    Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider availability' -FilePath $Node `
+        -ArgumentList @('--input-type=module', '--eval', $availabilityScript) -TimeoutSeconds 30 | Out-Null
+    [Environment]::SetEnvironmentVariable('HF_VOXCPM2_ENDPOINT', $null, 'Machine')
+    foreach ($entry in $settings.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
+    }
+    Write-Output "HyperFrames VoxCPM2 ready: $($descriptor.tag), models $($descriptor.models.revision)"
+}
+
 function Assert-StackHyperFramesSoftwareEncode {
     param(
         [Parameter(Mandatory = $true)][string]$FFmpeg,
@@ -3041,6 +3341,7 @@ function Install-HyperFramesStack {
             }
         }
 
+        Install-StackHyperFramesVoxCPM2 -Node $node -HyperFramesVersion $Version
         Assert-StackHyperFramesSoftwareEncode -FFmpeg ([string]$ffmpeg.Source) `
             -FFprobe ([string]$ffprobe.Source)
         Write-Output "HyperFrames CLI ready: $cliVersion"

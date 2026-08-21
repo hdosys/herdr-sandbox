@@ -2002,6 +2002,8 @@ func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 		"null cache":                   `{"cacheDirectory":null,"workspaces":{}}`,
 		"null worktree directory":      `{"worktreeDirectory":null,"workspaces":{}}`,
 		"nonstring worktree directory": `{"worktreeDirectory":42,"workspaces":{}}`,
+		"null VoxCPM2 model directory": `{"hyperframesVoxCPM2ModelDirectory":null,"workspaces":{}}`,
+		"nonstring VoxCPM2 directory":  `{"hyperframesVoxCPM2ModelDirectory":42,"workspaces":{}}`,
 		"null audio":                   `{"audio":null,"workspaces":{}}`,
 		"nonboolean audio":             `{"audio":"true","workspaces":{}}`,
 		"duplicate audio":              `{"audio":true,"audio":false,"workspaces":{}}`,
@@ -2272,6 +2274,9 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"worktreeDirectory": ""`)) {
 		t.Fatalf("seeded config does not expose the optional worktree directory: %s", seededContents)
 	}
+	if !bytes.Contains(seededContents, []byte(`"hyperframesVoxCPM2ModelDirectory": ""`)) {
+		t.Fatalf("seeded config does not expose the optional HyperFrames VoxCPM2 model directory: %s", seededContents)
+	}
 	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
 		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
 	}
@@ -2289,7 +2294,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		}
 	}
 	remaining := seededContents
-	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"hyperframesVoxCPM2ModelDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)

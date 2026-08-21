@@ -65,6 +65,7 @@ type runPlan struct {
 	StatusDirectory            string
 	CacheDirectory             string
 	WorktreeDirectory          string
+	VoxCPM2ModelDirectory      string
 	Tailscale                  bool
 	MobileSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
@@ -216,6 +217,12 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 			return Connection{}, err
 		}
 		defer tailscaleBootstrap.clear()
+	}
+	if provisioning.VoxCPM2ModelDirectory != "" {
+		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
+		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.VoxCPM2ModelDirectory, options.Output); err != nil {
+			return Connection{}, err
+		}
 	}
 
 	if sessionStatus.State == SessionReady {
@@ -525,6 +532,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
 		WorktreeDirectory:       provisioning.WorktreeDirectory,
+		VoxCPM2ModelDirectory:   provisioning.VoxCPM2ModelDirectory,
 		Mounts:                  provisioning.Mounts,
 		Workspaces:              provisioning.Workspaces,
 		WindowsTerminal:         provisioning.WindowsTerminal,
@@ -557,6 +565,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 			return runPlan{}, err
 		}
 	}
+	if plan.VoxCPM2ModelDirectory != "" {
+		plan.VoxCPM2ModelDirectory, err = canonicalMappedDirectory(plan.VoxCPM2ModelDirectory)
+		if err != nil {
+			return runPlan{}, fmt.Errorf("HyperFrames VoxCPM2 model directory: %w", err)
+		}
+	}
 	plan.Mounts, err = canonicalMountPlans(plan.Mounts)
 	if err != nil {
 		return runPlan{}, err
@@ -565,12 +579,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
-	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.Mounts, plan.Workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.VoxCPM2ModelDirectory, plan.Mounts, plan.Workspaces); err != nil {
 		return runPlan{}, err
 	}
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfigWithWorktreeDirectory(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithMappedDirectories(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.VoxCPM2ModelDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -615,8 +629,8 @@ type physicalMapping struct {
 	identity string
 }
 
-func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
-	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+4)
+func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, voxcpm2ModelDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
+	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+5)
 	for _, mapped := range []struct {
 		role string
 		path string
@@ -633,6 +647,13 @@ func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, ca
 			return fmt.Errorf("worktree directory: %w", err)
 		}
 		mappings = append(mappings, physicalMapping{role: "worktree directory", identity: identity})
+	}
+	if voxcpm2ModelDirectory != "" {
+		identity, err := physicalMappedDirectory(voxcpm2ModelDirectory)
+		if err != nil {
+			return fmt.Errorf("HyperFrames VoxCPM2 model directory: %w", err)
+		}
+		mappings = append(mappings, physicalMapping{role: "HyperFrames VoxCPM2 model directory", identity: identity})
 	}
 	for _, mount := range mounts {
 		identity, err := physicalMappedDirectory(mount.HostDirectory)

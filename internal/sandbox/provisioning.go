@@ -52,7 +52,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"hyperframesVoxCPM2ModelDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -134,6 +134,7 @@ type provisioningPlan struct {
 	UserScript              string
 	CacheDirectory          string
 	WorktreeDirectory       string
+	VoxCPM2ModelDirectory   string
 	MemoryMB                int
 	AudioOutput             bool
 	AudioInput              bool
@@ -151,6 +152,7 @@ type provisioningPlan struct {
 type globalConfiguration struct {
 	CacheDirectory          string                           `json:"cacheDirectory"`
 	WorktreeDirectory       string                           `json:"worktreeDirectory"`
+	VoxCPM2ModelDirectory   string                           `json:"hyperframesVoxCPM2ModelDirectory"`
 	MemoryMB                *int                             `json:"memoryMB,omitempty"`
 	AudioOutput             bool                             `json:"audio"`
 	AudioInput              bool                             `json:"audioInput"`
@@ -434,6 +436,10 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	if err != nil {
 		return provisioningPlan{}, err
 	}
+	voxcpm2ModelDirectory, err := validateConfiguredVoxCPM2ModelDirectory(configuration.VoxCPM2ModelDirectory)
+	if err != nil {
+		return provisioningPlan{}, err
+	}
 	if worktreeDirectory != "" {
 		overlap, err := mappedDirectoriesOverlap(worktreeDirectory, globalRoot)
 		if err != nil {
@@ -441,6 +447,15 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		}
 		if overlap {
 			return provisioningPlan{}, fmt.Errorf("worktreeDirectory overlaps user configuration: %s", worktreeDirectory)
+		}
+	}
+	if voxcpm2ModelDirectory != "" {
+		overlap, err := mappedDirectoriesOverlap(voxcpm2ModelDirectory, globalRoot)
+		if err != nil {
+			return provisioningPlan{}, fmt.Errorf("compare hyperframesVoxCPM2ModelDirectory with user configuration: %w", err)
+		}
+		if overlap {
+			return provisioningPlan{}, fmt.Errorf("hyperframesVoxCPM2ModelDirectory overlaps user configuration: %s", voxcpm2ModelDirectory)
 		}
 	}
 	memoryMB, err := validateConfiguredMemoryMB(configuration.MemoryMB)
@@ -622,6 +637,32 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 			}
 		}
 	}
+	if voxcpm2ModelDirectory != "" {
+		if cacheDirectory != "" && hostPathsOverlap(voxcpm2ModelDirectory, cacheDirectory) {
+			return provisioningPlan{}, fmt.Errorf("hyperframesVoxCPM2ModelDirectory overlaps cache directory: %s", voxcpm2ModelDirectory)
+		}
+		if worktreeDirectory != "" && hostPathsOverlap(voxcpm2ModelDirectory, worktreeDirectory) {
+			return provisioningPlan{}, fmt.Errorf("hyperframesVoxCPM2ModelDirectory overlaps worktreeDirectory: %s", voxcpm2ModelDirectory)
+		}
+		for _, mount := range mounts {
+			overlap, err := mappedDirectoriesOverlap(voxcpm2ModelDirectory, mount.HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare hyperframesVoxCPM2ModelDirectory with folder mount %q: %w", mount.Name, err)
+			}
+			if overlap {
+				return provisioningPlan{}, fmt.Errorf("hyperframesVoxCPM2ModelDirectory overlaps folder mount %q: %s", mount.Name, voxcpm2ModelDirectory)
+			}
+		}
+		for _, workspace := range workspaces {
+			overlap, err := mappedDirectoriesOverlap(voxcpm2ModelDirectory, workspace.HostDirectory)
+			if err != nil {
+				return provisioningPlan{}, fmt.Errorf("compare hyperframesVoxCPM2ModelDirectory with workspace %q: %w", workspace.Name, err)
+			}
+			if overlap {
+				return provisioningPlan{}, fmt.Errorf("hyperframesVoxCPM2ModelDirectory overlaps workspace %q: %s", workspace.Name, voxcpm2ModelDirectory)
+			}
+		}
+	}
 	sort.SliceStable(workspaces, func(left, right int) bool {
 		if workspaces[left].Active != workspaces[right].Active {
 			return workspaces[left].Active
@@ -634,6 +675,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		UserScript:              filepath.Join(globalRoot, userProvisioningName),
 		CacheDirectory:          cacheDirectory,
 		WorktreeDirectory:       worktreeDirectory,
+		VoxCPM2ModelDirectory:   voxcpm2ModelDirectory,
 		MemoryMB:                memoryMB,
 		AudioOutput:             configuration.AudioOutput,
 		AudioInput:              configuration.AudioInput,
@@ -712,6 +754,14 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return err
 			}
 			if err := json.Unmarshal(raw, &config.WorktreeDirectory); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+		case "hyperframesVoxCPM2ModelDirectory":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.VoxCPM2ModelDirectory); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 		case "memoryMB":
@@ -1226,6 +1276,14 @@ func validateConfiguredWorktreeDirectory(directory string) (string, error) {
 		return "", nil
 	}
 	return validateConfiguredMappedDirectory(directory, "worktreeDirectory")
+}
+
+func validateConfiguredVoxCPM2ModelDirectory(directory string) (string, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return "", nil
+	}
+	return validateConfiguredMappedDirectory(directory, "hyperframesVoxCPM2ModelDirectory")
 }
 
 func discoverWorkspacePlans(configuration *workspaceDiscoveryConfiguration) ([]workspacePlan, error) {

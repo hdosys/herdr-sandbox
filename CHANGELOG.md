@@ -6,6 +6,13 @@ artifacts remain available on the
 
 ## Unreleased
 
+### Added
+
+- HyperFrames projects can opt into local VoxCPM2 speech generation with one
+  dedicated host model directory. Herdr Sandbox securely verifies the latest
+  stable Core release and exact models, maps them read-only, and provisions both
+  CPU and Vulkan runtime paths in the existing HyperFrames stack.
+
 ## v0.0.18
 
 ### Added

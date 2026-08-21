@@ -241,6 +241,13 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 			return runPlan{}, nil, err
 		}
 	}
+	voxcpm2ModelDirectory := provisioning.VoxCPM2ModelDirectory
+	if voxcpm2ModelDirectory != "" {
+		voxcpm2ModelDirectory, err = canonicalMappedDirectory(voxcpm2ModelDirectory)
+		if err != nil {
+			return runPlan{}, nil, err
+		}
+	}
 	mounts, err := canonicalMountPlans(provisioning.Mounts)
 	if err != nil {
 		return runPlan{}, nil, err
@@ -256,10 +263,10 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if !sameMobileSSHAuthorizedKeys(runningMobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
 		differences = append(differences, "mobile SSH authorized keys")
 	}
-	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, mounts, workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, voxcpm2ModelDirectory, mounts, workspaces); err != nil {
 		return runPlan{}, nil, err
 	}
-	expectedConfig, err := renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	expectedConfig, err := renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, voxcpm2ModelDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
@@ -282,6 +289,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		StatusDirectory:         statusDirectory,
 		CacheDirectory:          cacheDirectory,
 		WorktreeDirectory:       worktreeDirectory,
+		VoxCPM2ModelDirectory:   voxcpm2ModelDirectory,
 		Tailscale:               active.Tailscale,
 		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
 		Packages:                provisioning.Packages,

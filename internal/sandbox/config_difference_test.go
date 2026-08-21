@@ -99,6 +99,25 @@ func TestDescribeWSBLaunchDifferencesNamesWorktreeDirectoryChanges(t *testing.T)
 	}
 }
 
+func TestDescribeWSBLaunchDifferencesNamesVoxCPM2ModelDirectoryChanges(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	status := filepath.Join(root, "status")
+	cache := filepath.Join(root, "cache")
+	baseline, err := renderConfig(input, status, cache, nil, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := renderConfigWithMappedDirectories(input, status, cache, "", filepath.Join(root, "models"), nil, nil, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differences, err := describeWSBLaunchDifferences(baseline, changed)
+	if err != nil || strings.Join(differences, ",") != "HyperFrames VoxCPM2 model directory" {
+		t.Fatalf("differences = %v, error = %v", differences, err)
+	}
+}
+
 func TestDescribeWSBLaunchDifferencesAllowsEquivalentMappingCaseAndOrder(t *testing.T) {
 	root := t.TempDir()
 	workspaces := []workspacePlan{

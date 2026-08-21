@@ -17,6 +17,7 @@ import (
 const (
 	currentSandboxNativeEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE"
 	currentSandboxPayloadEnvironment = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
+	currentSandboxVoxCPM2Environment = "HERDR_SANDBOX_CURRENT_NATIVE_VOXCPM2_MODELS"
 	currentSandboxFixtureMarker      = "herdr-sandbox current native fixture v1\n"
 )
 
@@ -82,12 +83,19 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 	for name := range workspaces {
 		configured[name] = filepath.Join(workspacesRoot, name)
 	}
-	configuration, err := json.Marshal(map[string]any{
+	configurationValues := map[string]any{
 		"workspaces": configured,
 		"wingetPackages": map[string]any{
 			"remove": []string{}, "add": []string{}, "versions": map[string]string{},
 		},
-	})
+	}
+	if modelRoot := strings.TrimSpace(os.Getenv(currentSandboxVoxCPM2Environment)); modelRoot != "" {
+		if !strings.EqualFold(filepath.Clean(modelRoot), filepath.Clean(guestVoxCPM2Models)) {
+			t.Fatalf("current-Sandbox HyperFrames VoxCPM2 assets must be available at %s", guestVoxCPM2Models)
+		}
+		configurationValues["hyperframesVoxCPM2ModelDirectory"] = modelRoot
+	}
+	configuration, err := json.Marshal(configurationValues)
 	if err != nil {
 		t.Fatal(err)
 	}

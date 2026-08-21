@@ -266,6 +266,15 @@ checks its managed browser and global skills, and proves a software H.264 encode
 with `libx264`. Browser GPU acceleration and FFmpeg hardware encoding are separate;
 the Sandbox profile does not claim a hardware encoder.
 
+To add local VoxCPM2 speech generation, create a dedicated model folder and set
+`hyperframesVoxCPM2ModelDirectory` to its absolute host path. On `sandbox up`,
+Herdr Sandbox securely downloads and verifies the latest stable
+[`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
+bundle plus its exact models, then maps that folder read-only at
+`C:\HerdrSandbox\models\voxcpm2`. The HyperFrames stack verifies and installs the
+matching CPU and Vulkan runtime inside the guest. Leave the setting empty to keep
+VoxCPM2 disabled and avoid its roughly 5 GB model download.
+
 ## Commands
 
 Command output is plain, deterministic, and redirect-safe. Results go to stdout
@@ -330,6 +339,7 @@ PowerShell additions belong in `user.ps1`:
 ```json
 {
   "memoryMB": 16384,
+  "hyperframesVoxCPM2ModelDirectory": "E:\\Models\\VoxCPM2",
   "workspaces": {
     "client": "E:\\Clients\\client"
   },
@@ -359,6 +369,7 @@ become the final guest folder names.
 | --- | --- |
 | `cacheDirectory` | Dedicated package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. Never point it at shared data. |
 | `worktreeDirectory` | Optional dedicated root for persistent Herdr worktrees, mapped at `C:\Worktrees`. |
+| `hyperframesVoxCPM2ModelDirectory` | Optional dedicated VoxCPM2 model root, downloaded on the host and mapped read-only for the HyperFrames stack. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `audio`, `audioInput` | Separate output and microphone opt-ins. Both default to `false`. |
 | `tailscale` | Opts into a stable tagged Tailscale identity. |
@@ -393,6 +404,9 @@ and authentication failures are reported for the user to resolve.
 
 - Prefer read-only `mounts` for reference material. Writable mappings expose host
   data to every guest administrator process.
+- `hyperframesVoxCPM2ModelDirectory` must be a dedicated existing folder. Herdr
+  Sandbox owns its verified VoxCPM2 model and release files, while the guest can
+  only read them.
 - `workspaceDiscovery` selects only direct child directories and supports explicit
   exclusion patterns. The nearest profiled project is included automatically.
 - Audio output and microphone input are separate opt-ins. Changing either requires
@@ -427,7 +441,8 @@ use.
 Guest processes have administrator access inside Windows Sandbox. Only select host folders deliberately, prefer read-only mounts, and treat every credential copied into the network-enabled guest as accessible to its workloads.
 
 - Writable host access is limited to selected projects, explicit writable mounts,
-  the optional worktree root, cache, and run status.
+  the optional worktree root, cache, and run status. The optional VoxCPM2 model
+  root is read-only in the guest.
 - The host home root, general AppData, unselected repositories, and private SSH or
   GPG keys are never mapped.
 - Approved portable credentials travel only over verified SSH and never enter

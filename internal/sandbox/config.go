@@ -15,6 +15,7 @@ const (
 	guestStatusDirectory   = `C:\SandboxStatus`
 	guestRootDirectory     = `C:\HerdrSandbox`
 	guestCacheDirectory    = guestRootDirectory + `\cache`
+	guestVoxCPM2Models     = guestRootDirectory + `\models\voxcpm2`
 	guestWorktreeDirectory = `C:\Worktrees`
 	guestBootstrapScript   = guestInputDirectory + `\bootstrap.ps1`
 )
@@ -70,10 +71,14 @@ func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
 }
 
 func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
-	return renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, "", "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
 }
 
 func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+}
+
+func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, voxcpm2ModelDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
 	if len(mounts) > maximumMounts {
 		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
 	}
@@ -98,10 +103,18 @@ func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDir
 		cleanWorktrees = filepath.Clean(worktreeDirectory)
 		hostMappings = append(hostMappings, cleanWorktrees)
 	}
+	cleanVoxCPM2Models := ""
+	if voxcpm2ModelDirectory != "" {
+		if !filepath.IsAbs(voxcpm2ModelDirectory) {
+			return nil, errors.New("HyperFrames VoxCPM2 model directory must be absolute")
+		}
+		cleanVoxCPM2Models = filepath.Clean(voxcpm2ModelDirectory)
+		hostMappings = append(hostMappings, cleanVoxCPM2Models)
+	}
 	for left := range hostMappings {
 		for right := left + 1; right < len(hostMappings); right++ {
 			if hostPathsOverlap(hostMappings[left], hostMappings[right]) {
-				return nil, errors.New("input, status, cache, and worktree directories for Sandbox must not overlap")
+				return nil, errors.New("input, status, cache, worktree, and HyperFrames VoxCPM2 model directories for Sandbox must not overlap")
 			}
 		}
 	}
@@ -110,9 +123,12 @@ func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDir
 	}
 
 	mappings := []wsbMappedFolder{{HostFolder: cleanInput, SandboxFolder: guestInputDirectory, ReadOnly: true}}
-	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}, strings.ToLower(guestWorktreeDirectory): {}}
+	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}, strings.ToLower(guestVoxCPM2Models): {}, strings.ToLower(guestWorktreeDirectory): {}}
 	if cleanWorktrees != "" {
 		mappings = append(mappings, wsbMappedFolder{HostFolder: cleanWorktrees, SandboxFolder: guestWorktreeDirectory, ReadOnly: false})
+	}
+	if cleanVoxCPM2Models != "" {
+		mappings = append(mappings, wsbMappedFolder{HostFolder: cleanVoxCPM2Models, SandboxFolder: guestVoxCPM2Models, ReadOnly: true})
 	}
 	for _, mount := range mounts {
 		if !workspaceNamePattern.MatchString(mount.Name) {
