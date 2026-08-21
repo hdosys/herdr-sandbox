@@ -7,26 +7,26 @@ dependency.
 
 ## Published release
 
-- Version: `0.0.15`
-- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.15>
+- Version: `0.0.18`
+- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.18>
 - Community package: `hdosys.herdr-sandbox`
 - Installer:
-  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.15/herdr-sandbox_v0.0.15_windows_amd64_setup.exe>
+  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.18/herdr-sandbox_v0.0.18_windows_amd64_setup.exe>
 - Published installer SHA-256:
-  `596c1f374ef532c1f2b413433b9aed86fb59feeb36869cc4fe7e51410bd31bab`
+  `64480ac608a802d9bf905079ff3a95df5363c3c89a2f4a7afc0235bf362efdc6`
 - Manifest schema: `1.12.0`
 
-The v0.0.15 package passed the repository release gate, public GitHub asset
-digest verification, WinGetCreate generation, `winget validate`, community
-validation, installation, and publication. The installer is currently not
-Authenticode-signed.
+The v0.0.18 manifest passed the repository release gate, public GitHub asset
+digest verification, WinGetCreate generation, and `winget validate`. Community
+validation, installation, and publication remain downstream. The installer is
+currently not Authenticode-signed.
 
 ## Validate locally
 
 From the repository root:
 
 ```powershell
-$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.15'
+$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.18'
 winget validate --manifest $manifest --disable-interactivity
 winget install --manifest $manifest --silent --accept-package-agreements `
   --accept-source-agreements --disable-interactivity
