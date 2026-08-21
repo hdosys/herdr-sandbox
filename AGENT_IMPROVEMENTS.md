@@ -119,3 +119,12 @@ cross-project workflow in the global OpenCode configuration repository.
   focused test now keeps those identities distinct and passed in 6.017 seconds.
   Expected benefit: catch this contract drift before expensive native provisioning
   and installer generation.
+- **Status: proposed. Run the exact integration gate before creating release tags.**
+  Evidence: v0.0.17 passed normal verification and the installed-candidate boundary,
+  but its tagged GitHub run failed in the project-plan integration test and consumed
+  the release ID. After correcting two ownership expectations, the exact local
+  `verify-integration` gate passed in 449.277 seconds before v0.0.18 published
+  successfully. Require one frozen-commit `verify-integration` run before the
+  installed-candidate gate and tag, or expose one release-precheck task that invokes
+  the same owner exactly once. Expected benefit: catch GitHub checked-build blockers
+  locally before spending a release ID, an installed gate, and a remote run.
