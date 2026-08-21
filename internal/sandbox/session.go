@@ -696,16 +696,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	if err := validateProvisioningProcessSource(provisioningProcessSource); err != nil {
 		return provisioningSnapshot{}, err
 	}
-	if err := validateActiveSessionLaunchScript(activeSessionLaunchScript); err != nil {
-		return provisioningSnapshot{}, err
-	}
 	processOwnerPath := filepath.Join(snapshotDirectory, provisioningProcessName)
 	if err := os.WriteFile(processOwnerPath, provisioningProcessSource, 0o600); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("write provisioning process snapshot: %w", err)
-	}
-	activeSessionLaunchPath := filepath.Join(snapshotDirectory, activeSessionLaunchName)
-	if err := os.WriteFile(activeSessionLaunchPath, activeSessionLaunchScript, 0o600); err != nil {
-		return provisioningSnapshot{}, fmt.Errorf("write active-session launch snapshot: %w", err)
 	}
 	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
 	if err != nil {

@@ -380,28 +380,12 @@ if ([string]$tvControlPackage.name -cne '@ferroxlabs/tvcontrol' -or
     $tvBin -ceq $tvControlBin) {
     throw 'TVControl installed package identity is invalid.'
 }
-$activeSessionLauncher = Join-Path $tvControlRoot 'active-session-launch.ps1'
-$tvControlHealth = Join-Path $tvControlRoot 'node_modules\@ferroxlabs\tvcontrol\src\core\health.js'
-foreach ($path in @($activeSessionLauncher, $tvControlHealth)) {
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
-        ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "TVControl active-session launch owner is missing or unsafe: $path"
-    }
-}
-$activeSessionLauncherSource = [IO.File]::ReadAllText($activeSessionLauncher)
-$tvControlHealthSource = [IO.File]::ReadAllText($tvControlHealth)
-if (-not $activeSessionLauncherSource.Contains('# herdr-sandbox-active-session-launch-contract: 1') -or
-    [regex]::Matches($tvControlHealthSource, [regex]::Escape("const activeSessionLauncher = 'C:\\HerdrSandbox\\tools\\tvcontrol\\active-session-launch.ps1';")).Count -ne 1 -or
-    -not $tvControlHealthSource.Contains("'-WindowStyle', 'Hidden'") -or
-    -not $tvControlHealthSource.Contains('timeout: 60000')) {
-    throw 'TVControl active-session launch wiring is invalid.'
-}
 $tvHelp = Invoke-SmokeTool 'tvcontrol-help' $tv @('--help')
 Assert-SmokeOutput 'tvcontrol-help' $tvHelp 'Usage: tv <command> [options]'
 foreach ($shim in @((Join-Path $tvControlRoot 'tv.ps1'), (Join-Path $tvControlRoot 'tvcontrol.ps1'))) {
     if (Test-Path -LiteralPath $shim) { throw "TVControl PowerShell shim remains installed: $shim" }
 }
-[Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload, TVControl commands, and active-session launch wiring OK; launch intentionally skipped')
+[Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload and direct TVControl commands OK; launch intentionally skipped')
 
 $null = Invoke-SmokeTool 'python-version' $python @('--version')
 $pythonFile = Join-Path $root 'python\smoke.py'

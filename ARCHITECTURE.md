@@ -155,7 +155,11 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - External command failures preserve the command role, exit status, bounded UTF-8 head and tail, and status path needed for diagnosis. During development provisioning, each native role updates the existing progress status and appends a bounded schema-versioned duration record to the private per-run status directory so cache-hit performance and failures remain measurable. Guest-derived display fields reject nonprinting terminal controls, while host-persisted error summaries replace them before publication. Secrets and private keys are never printed.
 - Application code uses direct process execution with explicit arguments and context cancellation. PowerShell is used where Windows-specific orchestration or file association launch is required.
 
-- The installed TVControl Windows launch branch is an exact, drift-rejecting patch owned by `Install-TradingViewStack`, not a fork or alternate package resolver. The stack copies the embedded `active-session-launch.ps1` beside TVControl. A hidden Windows PowerShell 5.1 process returns bounded JSON synchronously, serializes requests with one global mutex, validates the loopback listener owner and TradingView user agent, and refuses an already-running non-CDP Desktop. A new cross-session launch uses a random one-shot Task Scheduler action with the existing user's interactive token, hidden PowerShell, atomic status, a one-minute task limit, a 20-second CDP deadline, and exact process-tree cleanup on failure. The ready endpoint's owning Session 1 PID is returned; no service, polling daemon, second executable, or package-version fallback is added.
+- `Install-TradingViewStack` leaves the installed upstream TVControl package
+  unmodified, verifies the regular `TradingView.exe`, and exposes it through
+  machine `PATH`. TVControl and the guest agent run in the same interactive
+  Session 1 context, so TVControl's upstream `launch` command and `tv_launch`
+  tool directly spawn the visible Desktop with CDP.
 
 ## Verification Architecture
 

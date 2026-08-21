@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 22
+# herdr-sandbox-stacks-contract: 23
 
 function Get-StackWebResponseText {
     param(
@@ -3089,158 +3089,6 @@ function Get-TradingViewDesktopPortableMetadata {
     }
 }
 
-function Install-TradingViewActiveSessionLauncher {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$TVControlRoot,
-        [Parameter(Mandatory = $true)][string]$PackageDirectory,
-        [Parameter(Mandatory = $true)][string]$LauncherSource,
-        [Parameter(Mandatory = $true)]
-        [ValidatePattern('^[0-9a-f]{64}$')]
-        [string]$ExpectedHealthSHA256
-    )
-
-    foreach ($directory in @($TVControlRoot, $PackageDirectory)) {
-        if (-not [IO.Path]::IsPathRooted($directory) -or
-            -not (Test-Path -LiteralPath $directory -PathType Container) -or
-            ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "TradingView active-session launcher directory is unsafe: $directory"
-        }
-    }
-    if (-not [IO.Path]::IsPathRooted($LauncherSource) -or
-        -not (Test-Path -LiteralPath $LauncherSource -PathType Leaf)) {
-        throw "TradingView active-session launcher source is missing: $LauncherSource"
-    }
-    $launcherSourceInfo = Get-Item -LiteralPath $LauncherSource -Force
-    $launcherSourceText = [IO.File]::ReadAllText($LauncherSource)
-    if (($launcherSourceInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        $launcherSourceInfo.Length -le 0 -or $launcherSourceInfo.Length -gt 262144 -or
-        -not $launcherSourceText.Contains('# herdr-sandbox-active-session-launch-contract: 1')) {
-        throw "TradingView active-session launcher source is unsafe: $LauncherSource"
-    }
-    $launcherDestination = Join-Path $TVControlRoot 'active-session-launch.ps1'
-    if (Test-Path -LiteralPath $launcherDestination) {
-        $launcherDestinationInfo = Get-Item -LiteralPath $launcherDestination -Force
-        if ($launcherDestinationInfo.PSIsContainer -or
-            ($launcherDestinationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "TradingView active-session launcher destination is unsafe: $launcherDestination"
-        }
-    }
-    $launcherBytes = [IO.File]::ReadAllBytes($LauncherSource)
-    $temporaryLauncher = $launcherDestination + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-    $backupLauncher = $launcherDestination + '.' + [Guid]::NewGuid().ToString('N') + '.bak'
-    try {
-        [IO.File]::WriteAllBytes($temporaryLauncher, $launcherBytes)
-        if (Test-Path -LiteralPath $launcherDestination -PathType Leaf) {
-            [IO.File]::Replace($temporaryLauncher, $launcherDestination, $backupLauncher, $true)
-        } else {
-            [IO.File]::Move($temporaryLauncher, $launcherDestination)
-        }
-    } finally {
-        foreach ($temporaryPath in @($temporaryLauncher, $backupLauncher)) {
-            if (Test-Path -LiteralPath $temporaryPath) { [IO.File]::Delete($temporaryPath) }
-        }
-    }
-    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($launcherDestination)) -cne
-        [Convert]::ToBase64String($launcherBytes)) {
-        throw 'TradingView active-session launcher read-back failed.'
-    }
-
-    $healthPath = Join-Path $PackageDirectory 'src\core\health.js'
-    if (-not (Test-Path -LiteralPath $healthPath -PathType Leaf)) {
-        throw "TVControl launch owner is missing: $healthPath"
-    }
-    $healthInfo = Get-Item -LiteralPath $healthPath -Force
-    if (($healthInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        $healthInfo.Length -le 0 -or $healthInfo.Length -gt 1048576) {
-        throw "TVControl launch owner is unsafe: $healthPath"
-    }
-    $healthSource = [IO.File]::ReadAllText($healthPath)
-    $lineEnding = if ($healthSource.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $bridge = @'
-  if (platform === 'win32') {
-    const activeSessionLauncher = 'C:\\HerdrSandbox\\tools\\tvcontrol\\active-session-launch.ps1';
-    if (!deps.existsSync(activeSessionLauncher)) {
-      throw new ClassifiedError(CATEGORIES.TV_NOT_RUNNING, `TradingView active-session launcher is missing: ${activeSessionLauncher}`);
-    }
-    const powershell = pathWin32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const encodedArguments = Buffer.from(JSON.stringify([`--remote-debugging-port=${cdpPort}`]), 'utf8').toString('base64');
-    let launchResult;
-    try {
-      const output = deps.execFileSync(powershell, [
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-        '-File', activeSessionLauncher, '-Executable', tvPath, '-ArgumentsBase64', encodedArguments,
-      ], { encoding: 'utf8', timeout: 60000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
-      launchResult = JSON.parse(output);
-    } catch (error) {
-      const detail = String(error?.stderr || error?.message || error).trim().slice(0, 2000);
-      throw new ClassifiedError(CATEGORIES.TV_NOT_RUNNING, `TradingView active-session launch failed${detail ? `: ${detail}` : '.'}`);
-    }
-    if (launchResult?.schemaVersion !== 1 || !['started', 'already-running'].includes(launchResult.state)
-        || !Number.isInteger(launchResult.pid) || launchResult.pid < 1
-        || !Number.isInteger(launchResult.sessionId) || launchResult.sessionId < 1
-        || launchResult.cdpPort !== cdpPort) {
-      throw new ClassifiedError(CATEGORIES.TV_NOT_RUNNING, 'TradingView active-session launcher returned invalid state.');
-    }
-    const info = await _waitForCdp({ cdpPort, attempts: 2, delay: deps.delay, probeCdp: deps.probeCdp });
-    if (!info) {
-      throw new ClassifiedError(CATEGORIES.TV_NOT_RUNNING, 'TradingView active-session launcher completed without a ready CDP endpoint.');
-    }
-    return {
-      success: true, platform, binary: tvPath, pid: launchResult.pid, session_id: launchResult.sessionId,
-      launch_state: launchResult.state, cdp_port: cdpPort, cdp_url: `http://${CDP_HOST}:${cdpPort}`,
-      browser: info.Browser, user_agent: info['User-Agent'],
-    };
-  }
-'@
-    $bridge = ($bridge -replace '\r?\n', $lineEnding).TrimEnd("`r", "`n")
-    $marker = "const activeSessionLauncher = 'C:\\HerdrSandbox\\tools\\tvcontrol\\active-session-launch.ps1';"
-    $anchor = '  if (killFirst) await killExisting();' + $lineEnding
-    $bridgeInsertion = $lineEnding + $bridge + $lineEnding
-    if ($healthSource.Contains($marker)) {
-        if ([regex]::Matches($healthSource, [regex]::Escape($marker)).Count -ne 1 -or
-            [regex]::Matches($healthSource, [regex]::Escape($bridgeInsertion)).Count -ne 1) {
-            throw 'TVControl active-session launch bridge is partially modified.'
-        }
-        $originalHealthSource = $healthSource.Replace($bridgeInsertion, '')
-        $patchedHealthSource = $healthSource
-    } else {
-        if ([regex]::Matches($healthSource, [regex]::Escape($anchor)).Count -ne 1) {
-            throw 'TVControl launch owner does not match the inspected active-session patch anchor.'
-        }
-        $originalHealthSource = $healthSource
-        $patchedHealthSource = $healthSource.Replace($anchor, $anchor + $bridgeInsertion)
-    }
-    $sha256 = [Security.Cryptography.SHA256]::Create()
-    try {
-        $originalHealthBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($originalHealthSource)
-        $originalHealthSHA256 = ([BitConverter]::ToString($sha256.ComputeHash($originalHealthBytes))).Replace('-', '').ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
-    if ($originalHealthSHA256 -cne $ExpectedHealthSHA256) {
-        throw "TVControl launch owner SHA-256 is unsupported: $originalHealthSHA256"
-    }
-    if ($patchedHealthSource -cne $healthSource) {
-        $temporaryHealth = $healthPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-        $backupHealth = $healthPath + '.' + [Guid]::NewGuid().ToString('N') + '.bak'
-        try {
-            [IO.File]::WriteAllText($temporaryHealth, $patchedHealthSource, (New-Object Text.UTF8Encoding($false)))
-            [IO.File]::Replace($temporaryHealth, $healthPath, $backupHealth, $true)
-        } finally {
-            foreach ($temporaryPath in @($temporaryHealth, $backupHealth)) {
-                if (Test-Path -LiteralPath $temporaryPath) { [IO.File]::Delete($temporaryPath) }
-            }
-        }
-    }
-    $verifiedHealthSource = [IO.File]::ReadAllText($healthPath)
-    if (-not $verifiedHealthSource.Contains($bridge) -or
-        [regex]::Matches($verifiedHealthSource, [regex]::Escape($marker)).Count -ne 1) {
-        throw 'TVControl active-session launch bridge read-back failed.'
-    }
-    Write-Output "TradingView active-session launcher ready: $launcherDestination"
-}
-
 function Install-TradingViewStack {
     [CmdletBinding()]
     param(
@@ -3362,9 +3210,6 @@ function Install-TradingViewStack {
         [string]$package.engines.node -notmatch '^>=\d+\.\d+\.\d+$') {
         throw "TVControl package identity does not match exact version $TVControlVersion."
     }
-    Install-TradingViewActiveSessionLauncher -TVControlRoot $tvControlRoot `
-        -PackageDirectory $packageDirectory -LauncherSource (Join-Path $PSScriptRoot 'active-session-launch.ps1') `
-        -ExpectedHealthSHA256 'b52a90e3fcb5b62a1474865c1818bacae3ef942dfe058b59c3b8574adeae4cbb'
     $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
     foreach ($bin in @($tvBin, $tvControlBin)) {
         if ([string]::IsNullOrWhiteSpace($bin) -or $bin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or
@@ -3417,7 +3262,7 @@ function Install-TradingViewStack {
 
     Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
     Write-Output "TVControl ready: $TVControlVersion"
-    Write-Output 'TradingView remains stopped after provisioning. Its managed shortcut and TVControl active-session launcher enable local CDP on port 9222 when explicitly launched.'
+    Write-Output 'TradingView remains stopped after provisioning. Its managed shortcut and TVControl launch command enable local CDP on port 9222 when explicitly launched.'
 }
 
 function Resolve-StackPythonPackage {

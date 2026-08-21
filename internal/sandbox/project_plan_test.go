@@ -586,13 +586,6 @@ func TestPrepareProvisioningSnapshotWritesMergedToolPlan(t *testing.T) {
 	if string(data) != "{\"schemaVersion\":2,\"tools\":[{\"tool\":\"GoLang.Go\",\"version\":\"1.26.5\",\"series\":\"\",\"source\":\"explicit-provisioning\",\"owners\":[\"project \\\"project\\\" (go)\"]}]}\n" {
 		t.Fatalf("tool version snapshot = %s", data)
 	}
-	launcherData, err := os.ReadFile(filepath.Join(snapshot.Directory, activeSessionLaunchName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(launcherData) != string(activeSessionLaunchScript) {
-		t.Fatal("active-session launcher snapshot differs from its embedded owner")
-	}
 }
 
 func playwrightPackageLock(testVersion, testDependency, playwrightVersion, coreDependency, coreVersion string) string {

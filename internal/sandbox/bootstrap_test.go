@@ -35,7 +35,6 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"tool-versions.json",
 		"user.ps1",
 		"provisioning-process.cs",
-		"active-session-launch.ps1",
 		"workspaces.json",
 		"$unknownProjectScriptNames",
 		"-Phase 'Registry'",

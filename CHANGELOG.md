@@ -21,6 +21,9 @@ artifacts remain available on the
 
 ### Fixed
 
+- Current TVControl releases no longer fail provisioning on an obsolete source
+  digest and launch TradingView Desktop directly from the interactive agent
+  session.
 - Fresh and retained `sandbox up` now use the verified guest runtime location
   returned by Herdr-Win instead of assuming its directory layout, allowing
   provisioning to continue into initial workspace creation after the server starts.

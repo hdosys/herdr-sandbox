@@ -159,7 +159,6 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		stackProvisioningName:                "stacks",
 		userProvisioningName:                 "user",
 		provisioningProcessName:              "process",
-		activeSessionLaunchName:              "launcher",
 		wingetPackagePlanFileName:            "packages",
 		toolVersionPlanFileName:              "tools",
 		workspaceManifestName:                "workspaces",
@@ -281,7 +280,6 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 		taskName,
 		`-UserProvisioningPath (Join-Path $expanded 'user.ps1')`,
 		`-ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs')`,
-		"active-session-launch.ps1",
 		"*>&1",
 	} {
 		if !strings.Contains(launcher, required) {

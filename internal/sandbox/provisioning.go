@@ -24,24 +24,21 @@ const (
 	stackProvisioningName              = productidentity.StackScriptName
 	userProvisioningName               = productidentity.UserScriptName
 	provisioningProcessName            = "provisioning-process.cs"
-	activeSessionLaunchName            = "active-session-launch.ps1"
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	sampleConfigurationName            = productidentity.SampleConfigurationName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 55"
-	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 22"
+	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 23"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 3"
-	activeSessionLaunchContract        = "# herdr-sandbox-active-session-launch-contract: 1"
 	workspaceManifestSchema            = 1
 	maximumBaseScriptSize              = 1024 * 1024
 	maximumStackScriptSize             = 2 * 1024 * 1024
 	maximumUserScriptSize              = 1024 * 1024
 	maximumProjectScriptSize           = 1024 * 1024
 	maximumProvisioningProcessSize     = 512 * 1024
-	maximumActiveSessionLaunchSize     = 256 * 1024
 	maximumMounts                      = 16
 	maximumWorkspaceDiscoveryEntries   = 4096
 	maximumWorkspaceExcludePatterns    = 64
@@ -367,16 +364,6 @@ func validateProvisioningProcessSource(data []byte) error {
 	}
 	if !strings.Contains(string(data), provisioningProcessContract) {
 		return errors.New("embedded provisioning process source has an unsupported contract")
-	}
-	return nil
-}
-
-func validateActiveSessionLaunchScript(data []byte) error {
-	if len(data) == 0 || len(data) > maximumActiveSessionLaunchSize {
-		return fmt.Errorf("embedded active-session launch script must be nonempty and no larger than %d bytes", maximumActiveSessionLaunchSize)
-	}
-	if !strings.Contains(string(data), activeSessionLaunchContract) {
-		return errors.New("embedded active-session launch script has an unsupported contract")
 	}
 	return nil
 }
