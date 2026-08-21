@@ -15,7 +15,6 @@ const (
 	guestStatusDirectory   = `C:\SandboxStatus`
 	guestRootDirectory     = `C:\HerdrSandbox`
 	guestCacheDirectory    = guestRootDirectory + `\cache`
-	guestHerdrExecutable   = `C:\Users\WDAGUtilityAccount\.herdr\remote\herdr.exe`
 	guestWorktreeDirectory = `C:\Worktrees`
 	guestBootstrapScript   = guestInputDirectory + `\bootstrap.ps1`
 )

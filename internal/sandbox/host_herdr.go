@@ -560,12 +560,13 @@ func (result remoteProvisionResult) validate(host HostHerdr, target string) erro
 }
 
 func validateGuestHerdrBinary(path string) error {
-	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Base(path), "herdr.exe") ||
-		strings.TrimSpace(path) != path || strings.ContainsAny(path, "\x00\r\n") || len(path) > 32767 {
-		return errors.New("want one absolute Windows herdr.exe path")
-	}
-	if !strings.EqualFold(filepath.Clean(path), guestHerdrExecutable) {
-		return fmt.Errorf("want the stable guest Herdr executable at %s", guestHerdrExecutable)
+	volume := filepath.VolumeName(path)
+	localDrive := len(volume) == 2 && volume[1] == ':' &&
+		((volume[0] >= 'A' && volume[0] <= 'Z') || (volume[0] >= 'a' && volume[0] <= 'z'))
+	if !localDrive || !filepath.IsAbs(path) || filepath.Clean(path) != path ||
+		!strings.EqualFold(filepath.Base(path), "herdr.exe") || strings.TrimSpace(path) != path ||
+		strings.ContainsAny(path, "\x00\r\n") || len(path) > 32767 {
+		return errors.New("want one canonical absolute local Windows herdr.exe path")
 	}
 	return nil
 }

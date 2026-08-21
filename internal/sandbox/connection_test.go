@@ -81,9 +81,12 @@ func TestGuestHerdrStatusScriptUsesPublishedProvisionedBinary(t *testing.T) {
 }
 
 func TestGuestHerdrPublicationAddsExactRuntimeDirectoryToMachinePath(t *testing.T) {
-	executable := guestHerdrExecutable
+	executable := testGuestHerdrExecutable
 	script := guestHerdrPublicationScript(executable)
 	for _, required := range []string{
+		"[IO.Path]::GetFullPath($path)",
+		"$fileItem = Get-Item -LiteralPath $path -Force -ErrorAction Stop",
+		"Provisioned guest Herdr executable is unsafe.",
 		"SetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', $path, 'Machine')",
 		"SetEnvironmentVariable('Path'",
 		"$publishedEntries[0]",
@@ -101,7 +104,7 @@ func TestGuestHerdrPublicationAddsExactRuntimeDirectoryToMachinePath(t *testing.
 }
 
 func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
-	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\Users\\WDAGUtilityAccount\\.herdr\\remote\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
+	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\HerdrManaged\\current\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
 	status, err := decodeGuestHerdrStatus(valid)
 	if err != nil || !status.Running || status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon {
 		t.Fatalf("guest status = %#v, err = %v", status, err)
@@ -113,6 +116,36 @@ func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
 	} {
 		if _, err := decodeGuestHerdrStatus(invalid); err == nil {
 			t.Fatalf("invalid guest status passed: %s", invalid)
+		}
+	}
+}
+
+func TestValidateGuestHerdrStatusRequiresCanonicalProvisionedBinary(t *testing.T) {
+	connection := Connection{
+		HerdrProtocol:       42,
+		guestHerdrPath:      testGuestHerdrExecutable,
+		herdrRuntimeVersion: "0.8.0+build",
+	}
+	status := guestHerdrStatus{
+		Status:       "running",
+		Running:      true,
+		Version:      connection.herdrRuntimeVersion,
+		Protocol:     connection.HerdrProtocol,
+		Binary:       connection.guestHerdrPath,
+		Capabilities: &guestHerdrCapabilities{DetachedServerDaemon: true},
+		Compatible:   true,
+	}
+	if err := validateGuestHerdrStatus(status, connection); err != nil {
+		t.Fatalf("validate matching guest Herdr status: %v", err)
+	}
+	for _, binary := range []string{
+		`D:\Managed Herdr\current\herdr.exe`,
+		`C:\HerdrManaged\other\..\current\herdr.exe`,
+	} {
+		changed := status
+		changed.Binary = binary
+		if err := validateGuestHerdrStatus(changed, connection); err == nil {
+			t.Fatalf("guest status accepted binary %q", binary)
 		}
 	}
 }

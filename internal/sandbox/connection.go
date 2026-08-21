@@ -377,9 +377,12 @@ func readGuestHerdrStatus(ctx context.Context, connection Connection) (guestHerd
 }
 
 func validateGuestHerdrStatus(status guestHerdrStatus, connection Connection) error {
+	if err := validateGuestHerdrBinary(status.Binary); err != nil {
+		return fmt.Errorf("unexpected guest Herdr binary %q: %w", status.Binary, err)
+	}
 	if !status.Running || status.Status != "running" || status.Version != connection.herdrRuntimeVersion ||
 		status.Protocol != connection.HerdrProtocol || !status.Compatible ||
-		status.Binary == "" || !strings.EqualFold(filepath.Clean(status.Binary), filepath.Clean(connection.guestHerdrPath)) ||
+		!strings.EqualFold(status.Binary, connection.guestHerdrPath) ||
 		status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon || status.RestartNeeded {
 		return fmt.Errorf("unexpected identity or state: status=%q running=%t version=%q protocol=%d binary=%q compatible=%t restart_needed=%t",
 			status.Status, status.Running, status.Version, status.Protocol, status.Binary, status.Compatible, status.RestartNeeded)
@@ -407,7 +410,9 @@ func publishGuestHerdrExecutable(ctx context.Context, connection Connection, exe
 func guestHerdrPublicationScript(executable string) string {
 	quoted := strings.ReplaceAll(executable, "'", "''")
 	return "$path = '" + quoted + "'; " +
-		"if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'Provisioned guest Herdr executable is missing.' }; " +
+		"if ([IO.Path]::GetFullPath($path) -cne $path) { throw 'Provisioned guest Herdr executable path is not canonical.' }; " +
+		"$fileItem = Get-Item -LiteralPath $path -Force -ErrorAction Stop; " +
+		"if ($fileItem.PSIsContainer -or ($fileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Provisioned guest Herdr executable is unsafe.' }; " +
 		"$directory = Split-Path -Parent $path; " +
 		"$directoryItem = Get-Item -LiteralPath $directory -Force; " +
 		"if (-not $directoryItem.PSIsContainer -or ($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Provisioned guest Herdr directory is unsafe.' }; " +
