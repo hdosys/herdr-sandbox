@@ -112,3 +112,10 @@ cross-project workflow in the global OpenCode configuration repository.
   machinery. The normal `verify` gate remained below one minute.
   Expected benefit: lower maintenance and cognitive cost while shifting confidence
   toward executable product and native outcomes.
+- **Status: done. Retier Herdr identity-shape drift to the focused provision contract.**
+  Evidence: a real run failed after 11 minutes because remote JSON reported the
+  machine runtime identity while the validator expected human-readable version
+  output; the prior fixture used the display identity in both places. The existing
+  focused test now keeps those identities distinct and passed in 6.017 seconds.
+  Expected benefit: catch this contract drift before expensive native provisioning
+  and installer generation.
