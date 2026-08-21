@@ -68,13 +68,13 @@ throw 'the AST adapter must not execute project code'
 	}
 	got := inspection.Workspaces
 	userStacks := inspection.UserStacks
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|audio|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|nushell|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {
 		t.Fatalf("herdr stacks = %v", got[1].Stacks)
 	}
-	if strings.Join(projectStackStrings(userStacks), "|") != "android|cpp|rust-msvc|uv" {
+	if strings.Join(projectStackStrings(userStacks), "|") != "android|audio|cpp|rust-msvc|uv" {
 		t.Fatalf("user stacks = %v", userStacks)
 	}
 }

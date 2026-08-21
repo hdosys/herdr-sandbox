@@ -6,7 +6,7 @@ artifacts remain available on the
 
 ## Unreleased
 
-## v0.0.17
+## v0.0.18
 
 ### Added
 
