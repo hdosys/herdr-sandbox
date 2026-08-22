@@ -2960,12 +2960,12 @@ function Install-StackHyperFramesVoxCPM2 {
         'HF_MEDIA_ENGINE' = $engine
         'HF_VOXCPM2_BASE_LM' = Join-Path $modelRoot 'VoxCPM2-BaseLM-F16.gguf'
         'HF_VOXCPM2_ACOUSTIC' = Join-Path $modelRoot 'VoxCPM2-Acoustic-F16.gguf'
-        'HF_VOXCPM2_REFERENCE_AUDIO' = Join-Path $modelRoot 'reference_speaker.wav'
         'HF_VOXCPM2_SERVER_CPU' = $cpuServer
         'HF_VOXCPM2_MODEL_ID' = "$($descriptor.models.repository)@$($descriptor.models.revision)"
         'HF_VOXCPM2_STATE_DIR' = $stateRoot
     }
-    foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
+    foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_REFERENCE_AUDIO',
+            'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
         Remove-Item -LiteralPath ('Env:\' + $name) -ErrorAction SilentlyContinue
         [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
     }

@@ -13,6 +13,12 @@ artifacts remain available on the
   stable Core release and exact models, maps them read-only, and provisions only
   the CPU runtime with GPU layers disabled in the existing HyperFrames stack.
 
+### Changed
+
+- Local VoxCPM2 narration now defaults to a deep, calm male tutorial voice with
+  measured pacing and natural pauses. Selecting an explicit WAV keeps
+  reference-voice cloning available when a particular speaker is needed.
+
 ## v0.0.18
 
 ### Added
