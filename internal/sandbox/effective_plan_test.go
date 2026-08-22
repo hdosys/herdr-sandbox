@@ -60,7 +60,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 	if plan.WorktreeDirectory != filepath.Join(root, "worktrees") || plan.ModelsDirectory != filepath.Join(root, "models") || len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
 		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "android|audio|bun|cpp|dotnet|go|handy|java|nsis|nushell|python|rust-msvc|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
 		len(plan.StackPackages) != 14 || plan.StackPackages[0].PackageOwner != "Android SDK Command-line Tools + Platform Tools + Microsoft OpenJDK 17" ||
-		plan.StackPackages[1].PackageOwner != packageREAPER+" 7.78 + AudioGridder 1.2.0 Server + VST2/VST3 clients" ||
+		plan.StackPackages[1].PackageOwner != packageREAPER+" 7.79 + AudioGridder 1.2.0 Server + VST2/VST3 clients" ||
 		plan.StackPackages[2].PackageOwner != "Oven-sh.Bun" ||
 		plan.StackPackages[3].PackageOwner != "Visual Studio 2022 Build Tools (MSVC + Windows 11 SDK 26100)" ||
 		plan.StackPackages[6].PackageOwner != "Kitware.CMake + KhronosGroup.VulkanSDK 1.4.309.0 + Microsoft.EdgeWebView2Runtime" ||

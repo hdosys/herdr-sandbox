@@ -164,7 +164,7 @@ func TestTradingViewGuestAuthenticationNeverLaunchesOrTerminatesDesktop(t *testi
 		t.Fatal("TradingView authentication apply section is missing")
 	}
 	section := script[start : start+end]
-	for _, required := range []string{"Get-Process -Name 'TradingView'", "close it before reapplying authentication", "TVUserStorage", "tradingview-settings.json", "Existing TradingView user settings"} {
+	for _, required := range []string{"Get-Process -Name 'TradingView'", "close it before reapplying profile configuration", "TVUserStorage", "tradingview-settings.json", "Existing TradingView user settings"} {
 		if !strings.Contains(section, required) {
 			t.Fatalf("TradingView authentication guard is missing %q", required)
 		}

@@ -21,7 +21,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('ConvertTo-StackAudioGridderJSONValue', 'Set-StackAudioGridderConfiguration', 'Set-StackAudioGridderServerConfiguration', 'Set-StackAudioGridderClientConfiguration')) {
+foreach ($name in @('ConvertTo-StackAudioGridderJSONValue', 'Set-StackAudioGridderConfiguration', 'Set-StackAudioGridderServerConfiguration', 'Set-StackAudioGridderClientConfiguration', 'Set-StackREAPERConfiguration')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing AudioGridder configuration helper: $name" }
     Invoke-Expression $definition.Extent.Text
@@ -34,6 +34,18 @@ $initial = [ordered]@{ ZoomFactor = 1.25; Servers = @('old-host:0'); LastServer 
 [IO.File]::WriteAllText($configurationPath, ($initial | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
 $script:ReaperRunning = $true
 function Get-Process { param([string[]]$Name, [object]$ErrorAction) if ($script:ReaperRunning) { [pscustomobject]@{ Id = 7 } } }
+$reaperRoot = Join-Path $env:APPDATA 'REAPER'
+$reaperPath = Join-Path $reaperRoot 'REAPER.ini'
+$null = New-Item -ItemType Directory -Path $reaperRoot -Force
+$reaperInitial = (@('[reaper]', 'lastproject=keep.rpp', '[verchk]', 'lastt=123') -join [Environment]::NewLine) + [Environment]::NewLine
+[IO.File]::WriteAllText($reaperPath, $reaperInitial, (New-Object Text.UTF8Encoding($false)))
+$reaperBefore = [IO.File]::ReadAllBytes($reaperPath)
+$reaperRejected = $false
+try { Set-StackREAPERConfiguration } catch { $reaperRejected = $_.Exception.Message.Contains('Close REAPER') }
+if (-not $reaperRejected -or
+    [Convert]::ToBase64String([IO.File]::ReadAllBytes($reaperPath)) -cne [Convert]::ToBase64String($reaperBefore)) {
+    throw 'REAPER configuration changed while REAPER was running.'
+}
 $before = [IO.File]::ReadAllBytes($configurationPath)
 $rejected = $false
 try { Set-StackAudioGridderClientConfiguration } catch { $rejected = $_.Exception.Message.Contains('Close REAPER') }
@@ -41,6 +53,17 @@ if (-not $rejected -or ([Convert]::ToBase64String([IO.File]::ReadAllBytes($confi
     throw 'AudioGridder endpoint changed while REAPER was running.'
 }
 $script:ReaperRunning = $false
+Set-StackREAPERConfiguration
+$reaperText = [IO.File]::ReadAllText($reaperPath)
+if ($reaperText -notmatch '(?m)^verchk=0\r?$' -or $reaperText -notmatch '(?m)^lastproject=keep\.rpp\r?$' -or
+    $reaperText -notmatch '(?m)^\[verchk\]\r?$' -or $reaperText -notmatch '(?m)^lastt=123\r?$') {
+    throw 'REAPER update-check write did not preserve unrelated settings.'
+}
+$reaperWritten = [IO.File]::ReadAllBytes($reaperPath)
+Set-StackREAPERConfiguration
+if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($reaperPath)) -cne [Convert]::ToBase64String($reaperWritten)) {
+    throw 'REAPER update-check write is not idempotent.'
+}
 Set-StackAudioGridderClientConfiguration
 $written = [IO.File]::ReadAllBytes($configurationPath)
 $configuration = [IO.File]::ReadAllText($configurationPath) | ConvertFrom-Json

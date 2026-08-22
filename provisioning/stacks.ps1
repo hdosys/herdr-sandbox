@@ -1805,6 +1805,96 @@ function Set-StackAudioGridderClientConfiguration {
         -BlockingMessage 'Close REAPER and AudioGridder Plugin Tray before changing the local test endpoint.'
 }
 
+function Set-StackREAPERConfiguration {
+    $running = @(Get-Process -Name 'reaper' -ErrorAction SilentlyContinue)
+    if ($running.Count -ne 0) {
+        throw 'Close REAPER before changing its update-check configuration.'
+    }
+
+    $configurationRoot = Join-Path $env:APPDATA 'REAPER'
+    if (-not (Test-Path -LiteralPath $configurationRoot)) {
+        New-Item -ItemType Directory -Path $configurationRoot -Force | Out-Null
+    }
+    $rootInfo = Get-Item -LiteralPath $configurationRoot -Force
+    if (-not $rootInfo.PSIsContainer -or
+        ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "REAPER configuration root is unsafe: $configurationRoot"
+    }
+
+    $configurationPath = Join-Path $configurationRoot 'REAPER.ini'
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    if (Test-Path -LiteralPath $configurationPath) {
+        $configurationInfo = Get-Item -LiteralPath $configurationPath -Force
+        if ($configurationInfo.PSIsContainer -or
+            ($configurationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $configurationInfo.Length -gt 4194304) {
+            throw "REAPER configuration is unsafe: $configurationPath"
+        }
+        foreach ($line in [IO.File]::ReadAllLines($configurationPath)) { $lines.Add($line) }
+    }
+
+    $sectionIndex = -1
+    $sectionEnd = $lines.Count
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index] -match '^\s*\[reaper\]\s*$') {
+            if ($sectionIndex -ge 0) { throw 'REAPER configuration contains duplicate [reaper] sections.' }
+            $sectionIndex = $index
+            continue
+        }
+        if ($sectionIndex -ge 0 -and $lines[$index] -match '^\s*\[[^\]]+\]\s*$') {
+            $sectionEnd = $index
+            break
+        }
+    }
+    if ($sectionIndex -lt 0) {
+        if ($lines.Count -gt 0 -and -not [string]::IsNullOrEmpty($lines[$lines.Count - 1])) {
+            $lines.Add('')
+        }
+        $lines.Add('[reaper]')
+        $lines.Add('verchk=0')
+    } else {
+        $keys = @()
+        for ($index = $sectionIndex + 1; $index -lt $sectionEnd; $index++) {
+            if ($lines[$index] -match '^\s*verchk\s*=') { $keys += $index }
+        }
+        if ($keys.Count -gt 1) { throw 'REAPER configuration contains duplicate verchk settings.' }
+        if ($keys.Count -eq 1) {
+            $lines[$keys[0]] = 'verchk=0'
+        } else {
+            $lines.Insert($sectionIndex + 1, 'verchk=0')
+        }
+    }
+
+    $contents = ($lines -join "`r`n") + "`r`n"
+    $current = ''
+    if (Test-Path -LiteralPath $configurationPath) {
+        $current = [IO.File]::ReadAllText($configurationPath).Replace("`r`n", "`n").Replace("`r", "`n")
+    }
+    if ($current -cne $contents.Replace("`r`n", "`n")) {
+        $temporary = Join-Path $configurationRoot ('.herdr-sandbox-reaper-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+        $backup = ''
+        try {
+            [IO.File]::WriteAllText($temporary, $contents, (New-Object Text.UTF8Encoding($false)))
+            if (Test-Path -LiteralPath $configurationPath) {
+                $backup = Join-Path $configurationRoot ('.herdr-sandbox-reaper-' + [Guid]::NewGuid().ToString('N') + '.bak')
+                [IO.File]::Replace($temporary, $configurationPath, $backup, $true)
+            } else {
+                [IO.File]::Move($temporary, $configurationPath)
+            }
+        } finally {
+            if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+            if (-not [string]::IsNullOrWhiteSpace($backup) -and (Test-Path -LiteralPath $backup)) {
+                Remove-Item -LiteralPath $backup -Force
+            }
+        }
+    }
+    $verified = [IO.File]::ReadAllText($configurationPath)
+    if ([regex]::Matches($verified, '(?im)^\s*\[reaper\]\s*$').Count -ne 1 -or
+        [regex]::Matches($verified, '(?im)^\s*verchk\s*=\s*0\s*$').Count -ne 1) {
+        throw 'REAPER update-check configuration verification failed.'
+    }
+}
+
 function Test-StackAudioGridderFirewallRule {
     param(
         [Parameter(Mandatory = $true)]
@@ -1906,9 +1996,9 @@ function Install-AudioStack {
     [CmdletBinding()]
     param()
 
-    $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER' -Requested '7.78'
+    $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER' -Requested '7.79'
     $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder' -Requested '1.2.0'
-    if ($reaperVersion -cne '7.78' -or $audioGridderVersion -cne '1.2.0') {
+    if ($reaperVersion -cne '7.79' -or $audioGridderVersion -cne '1.2.0') {
         throw "Audio stack version plan is unsupported: REAPER=$reaperVersion AudioGridder=$audioGridderVersion"
     }
 
@@ -1916,23 +2006,23 @@ function Install-AudioStack {
         -Version $reaperVersion -Architecture 'x64' -InstallerType 'exe' -Scope 'machine' -PayloadExtension '.exe'
     $reaperURI = [Uri][string]$reaperMetadata.Url
     if ([string]$reaperMetadata.Id -cne 'Cockos.REAPER' -or
-        [string]$reaperMetadata.Version -cne '7.78' -or
+        [string]$reaperMetadata.Version -cne '7.79' -or
         [string]$reaperMetadata.Architecture -cne 'x64' -or
         [string]$reaperMetadata.InstallerType -cne 'exe' -or
         [string]$reaperMetadata.Scope -cne 'machine' -or
-        [string]$reaperMetadata.Sha256 -cne 'E7AD77BDD572C35D205034F871181C7B4D9A4110798131B60ACD54CD44453947' -or
+        [string]$reaperMetadata.Sha256 -cne 'F07714D894A073DF40E88568F8AA524A74230F574B0688DF681F9B7C0877F9DF' -or
         $reaperURI.Scheme -cne 'https' -or $reaperURI.Host -cne 'www.reaper.fm' -or
-        $reaperURI.AbsolutePath -cne '/files/7.x/reaper778_x64-install.exe') {
-        throw 'REAPER metadata does not match the approved 7.78 x64 installer.'
+        $reaperURI.AbsolutePath -cne '/files/7.x/reaper779_x64-install.exe') {
+        throw 'REAPER metadata does not match the approved 7.79 x64 installer.'
     }
-    Write-Output 'Installing REAPER 7.78...'
+    Write-Output 'Installing REAPER 7.79...'
     Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
         -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223) `
         -RequireAuthenticodeSignature
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
     if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        [string]$reaperInfo.VersionInfo.FileVersion -cne '7.78') {
+        [string]$reaperInfo.VersionInfo.FileVersion -cne '7.79') {
         throw "REAPER installation identity is invalid: $reaper"
     }
     Assert-ProvisioningAuthenticodeSignature -Role 'REAPER executable' -Path $reaper
@@ -1940,6 +2030,7 @@ function Install-AudioStack {
     if ($reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
         throw 'REAPER executable signer is not Cockos Incorporated.'
     }
+    Set-StackREAPERConfiguration
     Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
 
     $audioGridderMetadata = [pscustomobject]@{

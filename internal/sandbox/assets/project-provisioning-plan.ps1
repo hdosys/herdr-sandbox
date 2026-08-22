@@ -140,7 +140,7 @@ function Get-CommandToolRequirements {
     switch ($name) {
         'Install-AudioStack' {
             return @(
-                (New-ToolRequirement 'Cockos.REAPER' '7.78' '' 'audio'),
+                (New-ToolRequirement 'Cockos.REAPER' '7.79' '' 'audio'),
                 (New-ToolRequirement 'AudioGridder' '1.2.0' '' 'audio')
             )
         }

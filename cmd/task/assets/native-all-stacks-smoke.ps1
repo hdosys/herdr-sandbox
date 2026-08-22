@@ -91,10 +91,10 @@ $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
 $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
 $reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
 if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-    [string]$reaperInfo.VersionInfo.FileVersion -cne '7.78' -or
+    [string]$reaperInfo.VersionInfo.FileVersion -cne '7.79' -or
     $reaperSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
     $reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
-    throw 'REAPER 7.78 installation identity is invalid.'
+    throw 'REAPER 7.79 installation identity is invalid.'
 }
 $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
 $audioGridderCopies = [ordered]@{
@@ -166,7 +166,7 @@ foreach ($ruleName in @('HerdrSandbox-AudioGridder-Server0', 'HerdrSandbox-Audio
         throw "AudioGridder guest firewall rule is invalid: $ruleName"
     }
 }
-[Console]::Out.WriteLine("[all-stacks] audio: REAPER 7.78, AudioGridder server 0, local clients, and host-gateway firewall ready")
+[Console]::Out.WriteLine("[all-stacks] audio: REAPER 7.79, AudioGridder server 0, local clients, and host-gateway firewall ready")
 
 $expectedOpenSrc = 'C:\HerdrSandbox\tools\vercel-labs.opensrc\opensrc.exe'
 $expectedOpenSrcHome = 'C:\HerdrSandbox\cache\opensrc'

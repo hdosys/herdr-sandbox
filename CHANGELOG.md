@@ -22,6 +22,10 @@ artifacts remain available on the
   natural conversational pace with brief pauses. Projects can override the Voice
   Design per request, and `voxcpm2.ps1` exposes the same design or explicit-WAV
   cloning path directly in the guest.
+- The audio stack now installs REAPER 7.79 and disables its in-app update checks
+  before first launch while preserving existing REAPER settings.
+- Fresh TradingView guests now reject optional analytics and advertising cookies
+  before first launch, so the privacy consent prompt does not block the chart.
 
 ### Fixed
 

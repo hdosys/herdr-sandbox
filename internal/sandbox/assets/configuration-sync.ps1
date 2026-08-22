@@ -1268,59 +1268,53 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             throw 'TradingView authentication input contains an incomplete signed session.'
         }
     }
-    if ($tradingViewCookies.Count -gt 0 -or $tradingViewUserIDs.Count -gt 0) {
-        $runningTradingView = @(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)
-        if ($runningTradingView.Count -ne 0) {
-            throw 'TradingView Desktop is running in the guest; close it before reapplying authentication.'
-        }
+    $runningTradingView = @(Get-Process -Name 'TradingView' -ErrorAction SilentlyContinue)
+    if ($runningTradingView.Count -ne 0) {
+        throw 'TradingView Desktop is running in the guest; close it before reapplying profile configuration.'
     }
-    if ($tradingViewCookies.Count -gt 0) {
-        $tradingViewAdapterPath = Join-Path $expanded 'herdr-sandbox\tradingview-cookie-sync.cs'
-        if (-not (Test-Path -LiteralPath $tradingViewAdapterPath -PathType Leaf)) {
-            throw 'TradingView cookie sync adapter is missing.'
-        }
-        $null = Add-Type -Path $tradingViewAdapterPath
-        $tradingViewRecordType = 'HerdrSandbox.TradingViewCookieRecord' -as [type]
-        if ($null -eq $tradingViewRecordType) {
-            throw 'TradingView cookie sync adapter type is unavailable.'
-        }
-        $typedTradingViewCookies = [Array]::CreateInstance($tradingViewRecordType, $tradingViewCookies.Count)
-        for ($index = 0; $index -lt $tradingViewCookies.Count; $index++) {
-            $cookie = $tradingViewCookies[$index]
-            $record = New-Object 'HerdrSandbox.TradingViewCookieRecord'
-            $record.CreationUtc = [long]$cookie.creationUtc
-            $record.HostKey = [string]$cookie.hostKey
-            $record.TopFrameSiteKey = [string]$cookie.topFrameSiteKey
-            $record.Name = [string]$cookie.name
-            $record.Value = [string]$cookie.value
-            $record.Path = [string]$cookie.path
-            $record.ExpiresUtc = [long]$cookie.expiresUtc
-            $record.Secure = [bool]$cookie.secure
-            $record.HttpOnly = [bool]$cookie.httpOnly
-            $record.LastAccessUtc = [long]$cookie.lastAccessUtc
-            $record.HasExpires = [bool]$cookie.hasExpires
-            $record.Persistent = [bool]$cookie.persistent
-            $record.Priority = [int]$cookie.priority
-            $record.SameSite = [int]$cookie.sameSite
-            $record.SourceScheme = [int]$cookie.sourceScheme
-            $record.SourcePort = [int]$cookie.sourcePort
-            $record.LastUpdateUtc = [long]$cookie.lastUpdateUtc
-            $record.SourceType = [int]$cookie.sourceType
-            $record.CrossSiteAncestor = [bool]$cookie.crossSiteAncestor
-            $typedTradingViewCookies.SetValue($record, $index)
-        }
-        $tradingViewCookieDatabase = Join-Path $env:APPDATA 'TradingView\Network\Cookies'
-        Assert-ConfigurationDestinationPath -Path $tradingViewCookieDatabase
-        Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
-        try {
-            $tradingViewAuthenticatedCookies = [HerdrSandbox.TradingViewCookieSync]::Import(
-                $tradingViewCookieDatabase, $typedTradingViewCookies)
-        } finally {
-            foreach ($record in $typedTradingViewCookies) { $record.Value = [string]::Empty }
-            foreach ($cookie in $tradingViewCookies) { $cookie.value = [string]::Empty }
-        }
-    } else {
-        Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
+    $tradingViewAdapterPath = Join-Path $expanded 'herdr-sandbox\tradingview-cookie-sync.cs'
+    if (-not (Test-Path -LiteralPath $tradingViewAdapterPath -PathType Leaf)) {
+        throw 'TradingView cookie sync adapter is missing.'
+    }
+    $null = Add-Type -Path $tradingViewAdapterPath
+    $tradingViewRecordType = 'HerdrSandbox.TradingViewCookieRecord' -as [type]
+    if ($null -eq $tradingViewRecordType) {
+        throw 'TradingView cookie sync adapter type is unavailable.'
+    }
+    $typedTradingViewCookies = [Array]::CreateInstance($tradingViewRecordType, $tradingViewCookies.Count)
+    for ($index = 0; $index -lt $tradingViewCookies.Count; $index++) {
+        $cookie = $tradingViewCookies[$index]
+        $record = New-Object 'HerdrSandbox.TradingViewCookieRecord'
+        $record.CreationUtc = [long]$cookie.creationUtc
+        $record.HostKey = [string]$cookie.hostKey
+        $record.TopFrameSiteKey = [string]$cookie.topFrameSiteKey
+        $record.Name = [string]$cookie.name
+        $record.Value = [string]$cookie.value
+        $record.Path = [string]$cookie.path
+        $record.ExpiresUtc = [long]$cookie.expiresUtc
+        $record.Secure = [bool]$cookie.secure
+        $record.HttpOnly = [bool]$cookie.httpOnly
+        $record.LastAccessUtc = [long]$cookie.lastAccessUtc
+        $record.HasExpires = [bool]$cookie.hasExpires
+        $record.Persistent = [bool]$cookie.persistent
+        $record.Priority = [int]$cookie.priority
+        $record.SameSite = [int]$cookie.sameSite
+        $record.SourceScheme = [int]$cookie.sourceScheme
+        $record.SourcePort = [int]$cookie.sourcePort
+        $record.LastUpdateUtc = [long]$cookie.lastUpdateUtc
+        $record.SourceType = [int]$cookie.sourceType
+        $record.CrossSiteAncestor = [bool]$cookie.crossSiteAncestor
+        $typedTradingViewCookies.SetValue($record, $index)
+    }
+    $tradingViewCookieDatabase = Join-Path $env:APPDATA 'TradingView\Network\Cookies'
+    Assert-ConfigurationDestinationPath -Path $tradingViewCookieDatabase
+    Remove-Item -LiteralPath $tradingViewAuthenticationPath -Force
+    try {
+        $tradingViewAuthenticatedCookies = [HerdrSandbox.TradingViewCookieSync]::Import(
+            $tradingViewCookieDatabase, $typedTradingViewCookies)
+    } finally {
+        foreach ($record in $typedTradingViewCookies) { $record.Value = [string]::Empty }
+        foreach ($cookie in $tradingViewCookies) { $cookie.value = [string]::Empty }
     }
     $tradingViewSettingsTemplate = Join-Path $expanded 'herdr-sandbox\tradingview-settings.json'
     if ($tradingViewUserIDs.Count -gt 0) {

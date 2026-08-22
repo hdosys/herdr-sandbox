@@ -63,6 +63,19 @@ func TestTradingViewHostExportAndGuestMergeBoundary(t *testing.T) {
 	if err != nil || !found || unrelated != "preserve-me" {
 		t.Fatalf("unrelated guest cookie = %q, found=%v, err=%v", unrelated, found, err)
 	}
+	assertTradingViewEssentialOnlyPreferences(t, database)
+}
+
+func assertTradingViewEssentialOnlyPreferences(t *testing.T, database *tradingViewSQLiteDatabase) {
+	t.Helper()
+	settings, found, err := database.readOneText("SELECT value FROM cookies WHERE name='cookiesSettings' AND host_key='.tradingview.com' AND path='/'")
+	if err != nil || !found || settings != `{"analytics":false,"advertising":false}` {
+		t.Fatalf("TradingView cookie settings = %q, found=%v, err=%v", settings, found, err)
+	}
+	banner, found, err := database.readOneText("SELECT value FROM cookies WHERE name='cookiePrivacyPreferenceBannerProduction' AND host_key='.tradingview.com' AND path='/'")
+	if err != nil || !found || banner != "reject" {
+		t.Fatalf("TradingView privacy banner setting = %q, found=%v, err=%v", banner, found, err)
+	}
 }
 
 func createTradingViewUserSettingsFixture(t *testing.T, profile, userID string) {
@@ -113,6 +126,7 @@ func TestTradingViewGuestSettingsInitializationIsIdempotent(t *testing.T) {
 	appData := filepath.Join(root, "appdata")
 	authenticationPath := filepath.Join(expanded, "tradingview", "authentication.json")
 	templatePath := filepath.Join(expanded, "herdr-sandbox", "tradingview-settings.json")
+	adapterPath := filepath.Join(expanded, "herdr-sandbox", "tradingview-cookie-sync.cs")
 	if err := os.MkdirAll(filepath.Dir(authenticationPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +134,9 @@ func TestTradingViewGuestSettingsInitializationIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(templatePath, tradingViewInitialSettings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(adapterPath, tradingViewCookieSyncSource, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	payload, _, err := encodeTradingViewAuthentication(tradingViewAuthentication{
@@ -165,6 +182,17 @@ function Get-FileHash {
 		runWindowsPowerShellFileFixture(t, script)
 	}
 	runApply()
+	cookieDatabase := filepath.Join(appData, "TradingView", "Network", "Cookies")
+	database, err := openTradingViewSQLiteReadOnly(cookieDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTradingViewEssentialOnlyPreferences(t, database)
+	if _, found, readErr := database.readOneText("SELECT value FROM cookies WHERE name='sessionid'"); readErr != nil || found {
+		database.close()
+		t.Fatalf("unauthenticated TradingView profile contains a session cookie: found=%v err=%v", found, readErr)
+	}
+	database.close()
 	destination := filepath.Join(appData, "TradingView", "TVUserStorage", "id-12345678", "settings.json")
 	actual, err := os.ReadFile(destination)
 	if err != nil || !bytes.Equal(actual, tradingViewInitialSettings) {
@@ -175,6 +203,12 @@ function Get-FileHash {
 		t.Fatal(err)
 	}
 	runApply()
+	database, err = openTradingViewSQLiteReadOnly(cookieDatabase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTradingViewEssentialOnlyPreferences(t, database)
+	database.close()
 	actual, err = os.ReadFile(destination)
 	if err != nil || !bytes.Equal(actual, preserved) {
 		t.Fatalf("retained TradingView settings were replaced: err=%v", err)

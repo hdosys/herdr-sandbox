@@ -203,7 +203,7 @@ func TestInspectProjectProvisioningPlanOwnsExactAudioTools(t *testing.T) {
 	}
 	if len(inspection.ToolVersions) != 2 || inspection.ToolVersions[0].Tool != "AudioGridder" ||
 		inspection.ToolVersions[0].Version != "1.2.0" || inspection.ToolVersions[1].Tool != packageREAPER ||
-		inspection.ToolVersions[1].Version != "7.78" {
+		inspection.ToolVersions[1].Version != "7.79" {
 		t.Fatalf("audio tool plan = %#v", inspection.ToolVersions)
 	}
 	if !projectStackOwnsPackage(packageREAPER) {

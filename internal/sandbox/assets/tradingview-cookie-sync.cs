@@ -1,4 +1,4 @@
-// herdr-sandbox-tradingview-cookie-sync-contract: 2
+// herdr-sandbox-tradingview-cookie-sync-contract: 3
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -38,7 +38,7 @@ namespace HerdrSandbox
         private const int SqliteOpenReadWrite = 0x00000002;
         private const int SqliteOpenCreate = 0x00000004;
         private const int SqliteOpenNoFollow = 0x01000000;
-        private const int MaximumCookies = 4;
+        private const int MaximumAuthenticationCookies = 4;
         private const int MaximumValueBytes = 16 * 1024;
         private static readonly IntPtr SqliteTransient = new IntPtr(-1);
 
@@ -48,12 +48,18 @@ namespace HerdrSandbox
             "priority, samesite, source_scheme, source_port, last_update_utc, source_type, " +
             "has_cross_site_ancestor";
 
-        private const string OwnedRows =
+        private const string SessionRows =
             "(name='sessionid' OR name='sessionid_sign') AND top_frame_site_key='' AND " +
             "(lower(host_key)='tradingview.com' OR lower(host_key)='.tradingview.com' OR " +
             "lower(host_key) LIKE '%.tradingview.com')";
 
-        private const string AllowedRows = OwnedRows + " AND has_cross_site_ancestor=1";
+        private const string PreferenceRows =
+            "(name='cookiesSettings' OR name='cookiePrivacyPreferenceBannerProduction') AND " +
+            "lower(host_key)='.tradingview.com' AND top_frame_site_key='' AND path='/' AND " +
+            "source_scheme=2 AND source_port=443";
+
+        private const string OwnedRows = "(" + SessionRows + ") OR (" + PreferenceRows + ")";
+        private const string AllowedRows = "(" + OwnedRows + ") AND has_cross_site_ancestor=1";
 
         public static int Import(string destination, TradingViewCookieRecord[] cookies)
         {
@@ -61,11 +67,12 @@ namespace HerdrSandbox
             {
                 throw new ArgumentException("TradingView cookie destination must be absolute.", "destination");
             }
-            if (cookies == null || cookies.Length == 0 || cookies.Length > MaximumCookies)
+            if (cookies == null || cookies.Length > MaximumAuthenticationCookies)
             {
                 throw new ArgumentException("TradingView cookie input count is invalid.", "cookies");
             }
             ValidateCookies(cookies);
+            TradingViewCookieRecord[] desired = WithEssentialOnlyPreferences(cookies);
 
             string parent = Path.GetDirectoryName(destination);
             if (String.IsNullOrWhiteSpace(parent))
@@ -85,8 +92,8 @@ namespace HerdrSandbox
                 try
                 {
                     Exec(database, "DELETE FROM cookies WHERE " + OwnedRows);
-                    InsertCookies(database, cookies);
-                    VerifyCookies(database, cookies);
+                    InsertCookies(database, desired);
+                    VerifyCookies(database, desired);
                     Exec(database, "COMMIT");
                     committed = true;
                 }
@@ -110,6 +117,57 @@ namespace HerdrSandbox
                 }
             }
             return cookies.Length;
+        }
+
+        private static TradingViewCookieRecord[] WithEssentialOnlyPreferences(TradingViewCookieRecord[] authentication)
+        {
+            DateTime nowTime = DateTime.UtcNow;
+            long now = nowTime.ToFileTimeUtc() / 10;
+            long expires = nowTime.AddYears(1).ToFileTimeUtc() / 10;
+            TradingViewCookieRecord[] desired = new TradingViewCookieRecord[authentication.Length + 2];
+            Array.Copy(authentication, desired, authentication.Length);
+            desired[authentication.Length] = Preference(
+                "cookiesSettings", "{\"analytics\":false,\"advertising\":false}", now, expires);
+            desired[authentication.Length + 1] = Preference(
+                "cookiePrivacyPreferenceBannerProduction", "reject", now, expires);
+            Array.Sort(desired, delegate(TradingViewCookieRecord left, TradingViewCookieRecord right)
+            {
+                int comparison = StringComparer.OrdinalIgnoreCase.Compare(left.HostKey, right.HostKey);
+                if (comparison != 0) { return comparison; }
+                comparison = StringComparer.Ordinal.Compare(left.Name, right.Name);
+                if (comparison != 0) { return comparison; }
+                comparison = StringComparer.Ordinal.Compare(left.Path, right.Path);
+                if (comparison != 0) { return comparison; }
+                comparison = left.SourceScheme.CompareTo(right.SourceScheme);
+                return comparison != 0 ? comparison : left.SourcePort.CompareTo(right.SourcePort);
+            });
+            return desired;
+        }
+
+        private static TradingViewCookieRecord Preference(string name, string value, long now, long expires)
+        {
+            return new TradingViewCookieRecord
+            {
+                CreationUtc = now,
+                HostKey = ".tradingview.com",
+                TopFrameSiteKey = String.Empty,
+                Name = name,
+                Value = value,
+                Path = "/",
+                ExpiresUtc = expires,
+                Secure = false,
+                HttpOnly = false,
+                LastAccessUtc = now,
+                HasExpires = true,
+                Persistent = true,
+                Priority = 1,
+                SameSite = -1,
+                SourceScheme = 2,
+                SourcePort = 443,
+                LastUpdateUtc = now,
+                SourceType = 1,
+                CrossSiteAncestor = true,
+            };
         }
 
         private static IntPtr Open(string path)

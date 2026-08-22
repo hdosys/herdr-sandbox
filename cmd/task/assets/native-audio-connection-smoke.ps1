@@ -94,7 +94,7 @@ foreach ($file in @($serverExecutable, $reaperExecutable, $serverConfigurationPa
     }
 }
 if ([string](Get-Item -LiteralPath $serverExecutable -Force).VersionInfo.FileVersion -cne '1.2.0' -or
-    [string](Get-Item -LiteralPath $reaperExecutable -Force).VersionInfo.FileVersion -cne '7.78') {
+    [string](Get-Item -LiteralPath $reaperExecutable -Force).VersionInfo.FileVersion -cne '7.79') {
     throw 'Native audio smoke executable versions are invalid.'
 }
 
@@ -304,7 +304,7 @@ public static class HerdrReaperDialog {
             uint processId;
             GetWindowThreadProcessId(dialog, out processId);
             if (processId != expectedProcessId || !IsWindowVisible(dialog) || Class(dialog) != "#32770" ||
-                !Text(dialog).StartsWith("About REAPER v7.78/win64 rev ")) return true;
+                !Text(dialog).StartsWith("About REAPER v7.79/win64 rev ")) return true;
             bool hasNotice = false;
             var localButtons = new List<IntPtr>();
             EnumChildWindows(dialog, (child, ignoredChild) => {
@@ -435,7 +435,7 @@ try {
     } while ($true)
 
     [Console]::Out.WriteLine((
-            '[audio-connection] REAPER 7.78 inserted AGridder; server 0 created worker port {0} with {1} established loopback stream(s).' -f
+            '[audio-connection] REAPER 7.79 inserted AGridder; server 0 created worker port {0} with {1} established loopback stream(s).' -f
             [int]$workerPorts[0], $connections.Count))
 } catch {
     $runError = $_

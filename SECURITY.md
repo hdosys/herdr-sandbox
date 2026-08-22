@@ -48,7 +48,9 @@ The product protects these boundaries:
   exact installed MSIX package profile into bounded host memory and streamed over
   that verified SSH channel. The complete cookie database, broker cookies, and
   unrelated site state never enter run mappings or the transfer archive. Missing
-  host login state is a no-op.
+  host login state is a no-op. Two fixed, non-secret guest preferences reject
+  TradingView analytics and advertising cookies and record that privacy choice
+  before first launch. They are generated locally and never widen host export.
 - Whole home/AppData roots, app-owned private state, reparse-bearing paths, and
   known credential roots such as `.ssh`, `.gnupg`, cloud/Kubernetes/Docker auth
   directories, supported coding-agent auth roots, GitHub CLI state, and Windows

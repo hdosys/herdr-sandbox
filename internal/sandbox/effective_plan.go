@@ -223,7 +223,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackAndroid:
 		return "Android SDK Command-line Tools + Platform Tools + Microsoft OpenJDK 17"
 	case stackAudio:
-		return packageREAPER + " 7.78 + AudioGridder 1.2.0 Server + VST2/VST3 clients"
+		return packageREAPER + " 7.79 + AudioGridder 1.2.0 Server + VST2/VST3 clients"
 	case stackBun:
 		return "Oven-sh.Bun"
 	case stackCargoNextest:
