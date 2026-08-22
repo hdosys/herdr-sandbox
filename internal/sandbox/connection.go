@@ -430,10 +430,14 @@ func guestHerdrPublicationScript(executable string) string {
 }
 
 func guestHerdrStatusScript() string {
+	return guestHerdrCommandPowerShell() +
+		"& $herdr status server --json"
+}
+
+func guestHerdrCommandPowerShell() string {
 	return "$herdr = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine'); " +
 		"if ([string]::IsNullOrWhiteSpace($herdr) -or -not [IO.Path]::IsPathRooted($herdr) -or " +
-		"-not (Test-Path -LiteralPath $herdr -PathType Leaf)) { throw 'Provisioned guest Herdr executable is unavailable.' }; " +
-		"& $herdr status server --json"
+		"-not (Test-Path -LiteralPath $herdr -PathType Leaf)) { throw 'Provisioned guest Herdr executable is unavailable.' }; "
 }
 
 type guestHerdrStatus struct {

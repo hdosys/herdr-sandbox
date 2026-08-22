@@ -158,10 +158,10 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	pi := filepath.Join(root, "pi")
 	sharedSkills := filepath.Join(root, "shared-skills")
 	for _, directory := range []string{
-		filepath.Join(openCode, "agents"), filepath.Join(openCode, "node_modules"),
-		filepath.Join(claude, "agents"), filepath.Join(claude, "projects"),
+		filepath.Join(openCode, "agents"), filepath.Join(openCode, "plugins"), filepath.Join(openCode, "node_modules"),
+		filepath.Join(claude, "agents"), filepath.Join(claude, "hooks"), filepath.Join(claude, "projects"),
 		filepath.Join(codex, "agents"), filepath.Join(codex, "skills", ".system"), filepath.Join(codex, "sessions"),
-		filepath.Join(copilot, "agents"), filepath.Join(copilot, "session-state"),
+		filepath.Join(copilot, "agents"), filepath.Join(copilot, "hooks"), filepath.Join(copilot, "session-state"),
 		filepath.Join(pi, "extensions", "fixture"), filepath.Join(pi, "extensions", "fixture", "node_modules"), filepath.Join(pi, "sessions"),
 		filepath.Join(sharedSkills, "fixture"),
 	} {
@@ -171,6 +171,8 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	}
 	writeTestFile(t, filepath.Join(openCode, "opencode.json"), `{}`)
 	writeTestFile(t, filepath.Join(openCode, "agents", "builder.md"), "agent")
+	writeTestFile(t, filepath.Join(openCode, "plugins", "herdr-agent-state.js"), "// HERDR_INTEGRATION_VERSION=10")
+	writeTestFile(t, filepath.Join(openCode, "herdr-tui-session.js"), "// HERDR_INTEGRATION_VERSION=10")
 	writeTestFile(t, filepath.Join(openCode, "README.md"), "OpenCode workflow repository")
 	writeTestFile(t, filepath.Join(openCode, "removed.md"), "remove in guest")
 	writeTestFile(t, filepath.Join(openCode, "node_modules", "excluded.js"), "excluded")
@@ -179,6 +181,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 
 	writeTestFile(t, filepath.Join(claude, "settings.json"), `{}`)
 	writeTestFile(t, filepath.Join(claude, "agents", "reviewer.md"), "agent")
+	writeTestFile(t, filepath.Join(claude, "hooks", "herdr-agent-state.ps1"), "# HERDR_INTEGRATION_VERSION=8")
 	writeTestFile(t, filepath.Join(claude, "README.md"), "Claude workflow repository")
 	writeTestFile(t, filepath.Join(claude, "projects", "excluded.jsonl"), "excluded")
 	claudeAuth := filepath.Join(claude, ".credentials.json")
@@ -187,6 +190,8 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, claudeState, `{"mcpServers":{"fixture":{"command":"tool"}},"projects":{"C:\\host":{}}}`)
 
 	writeTestFile(t, filepath.Join(codex, "config.toml"), `model = "fixture"`)
+	writeTestFile(t, filepath.Join(codex, "hooks.json"), `{}`)
+	writeTestFile(t, filepath.Join(codex, "herdr-agent-state.ps1"), "# HERDR_INTEGRATION_VERSION=8")
 	writeTestFile(t, filepath.Join(codex, "work.config.toml"), `model = "profile"`)
 	writeTestFile(t, filepath.Join(codex, "agents", "reviewer.toml"), `name = "reviewer"`)
 	writeTestFile(t, filepath.Join(codex, "README.md"), "Codex workflow repository")
@@ -197,12 +202,14 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 
 	writeTestFile(t, filepath.Join(copilot, "settings.json"), `{}`)
 	writeTestFile(t, filepath.Join(copilot, "agents", "builder.agent.md"), "agent")
+	writeTestFile(t, filepath.Join(copilot, "hooks", "herdr-agent-state.ps1"), "# HERDR_INTEGRATION_VERSION=3")
 	writeTestFile(t, filepath.Join(copilot, "README.md"), "Copilot workflow repository")
 	writeTestFile(t, filepath.Join(copilot, "config.json"), `{"token":"excluded"}`)
 	writeTestFile(t, filepath.Join(copilot, "session-state", "excluded.json"), "excluded")
 
 	writeTestFile(t, filepath.Join(pi, "settings.json"), `{}`)
 	writeTestFile(t, filepath.Join(pi, "models.json"), `{"providers":{}}`)
+	writeTestFile(t, filepath.Join(pi, "extensions", "herdr-agent-state.ts"), "// HERDR_INTEGRATION_VERSION=8")
 	writeTestFile(t, filepath.Join(pi, "CLAUDE.md"), "pi instructions")
 	writeTestFile(t, filepath.Join(pi, "extensions", "fixture", "index.ts"), "export default {}")
 	writeTestFile(t, filepath.Join(pi, "README.md"), "Pi workflow repository")
@@ -260,11 +267,11 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	entries, contents := readConfigurationArchiveForTest(t, data)
 	for _, required := range []string{
 		codingAgentSyncManifestArchivePath,
-		"opencode/opencode.json", "opencode/agents/builder.md", "opencode/README.md", "opencode/.git/config", "opencode/.git/HEAD", "opencode/.git/index", "opencode-auth/auth.json",
-		"claude-code/settings.json", "claude-code/agents/reviewer.md", "claude-code/README.md", "claude-code/.git/config", "claude-code/.git/HEAD", "claude-code/.git/index", "claude-code-auth/.credentials.json", "claude-code-state/.claude.json",
-		"codex/config.toml", "codex/work.config.toml", "codex/agents/reviewer.toml", "codex/README.md", "codex/.git/config", "codex/.git/HEAD", "codex/.git/index", "codex-auth/auth.json", "codex-auth/.credentials.json",
-		"github-copilot/settings.json", "github-copilot/agents/builder.agent.md", "github-copilot/README.md", "github-copilot/.git/config", "github-copilot/.git/HEAD", "github-copilot/.git/index",
-		"pi/settings.json", "pi/models.json", "pi/AGENTS.md", "pi/CLAUDE.md", "pi/extensions/fixture/index.ts", "pi/README.md", "pi/.git/config", "pi/.git/HEAD", "pi/.git/index", "pi-auth/auth.json",
+		"opencode/opencode.json", "opencode/agents/builder.md", "opencode/plugins/herdr-agent-state.js", "opencode/herdr-tui-session.js", "opencode/README.md", "opencode/.git/config", "opencode/.git/HEAD", "opencode/.git/index", "opencode-auth/auth.json",
+		"claude-code/settings.json", "claude-code/agents/reviewer.md", "claude-code/hooks/herdr-agent-state.ps1", "claude-code/README.md", "claude-code/.git/config", "claude-code/.git/HEAD", "claude-code/.git/index", "claude-code-auth/.credentials.json", "claude-code-state/.claude.json",
+		"codex/config.toml", "codex/hooks.json", "codex/herdr-agent-state.ps1", "codex/work.config.toml", "codex/agents/reviewer.toml", "codex/README.md", "codex/.git/config", "codex/.git/HEAD", "codex/.git/index", "codex-auth/auth.json", "codex-auth/.credentials.json",
+		"github-copilot/settings.json", "github-copilot/agents/builder.agent.md", "github-copilot/hooks/herdr-agent-state.ps1", "github-copilot/README.md", "github-copilot/.git/config", "github-copilot/.git/HEAD", "github-copilot/.git/index",
+		"pi/settings.json", "pi/models.json", "pi/AGENTS.md", "pi/CLAUDE.md", "pi/extensions/fixture/index.ts", "pi/extensions/herdr-agent-state.ts", "pi/README.md", "pi/.git/config", "pi/.git/HEAD", "pi/.git/index", "pi-auth/auth.json",
 		"shared-agent-skills/fixture/SKILL.md", "shared-agent-skills/README.md", "shared-agent-skills/.git/config", "shared-agent-skills/.git/HEAD", "shared-agent-skills/.git/index",
 	} {
 		if !entries[required] {
@@ -302,7 +309,10 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	if err := json.Unmarshal(contents[codingAgentSyncManifestArchivePath], &syncManifest); err != nil {
 		t.Fatal(err)
 	}
-	if syncManifest.SchemaVersion != 2 || strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] {
+	if syncManifest.SchemaVersion != 3 || strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] ||
+		syncManifest.HerdrHookSourcePaths["claude"] != filepath.Join(claude, "hooks", "herdr-agent-state.ps1") ||
+		syncManifest.HerdrHookSourcePaths["codex"] != filepath.Join(codex, "herdr-agent-state.ps1") ||
+		syncManifest.HerdrHookSourcePaths["copilot"] != filepath.Join(copilot, "hooks", "herdr-agent-state.ps1") {
 		t.Fatalf("coding-agent Git deletion manifest = %#v", syncManifest)
 	}
 	var claudeStateArchive map[string]any
@@ -761,6 +771,91 @@ if (-not $rejected) { throw 'Destination junction was not rejected.' }
 	)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("coding-agent PowerShell sync regression: %v: %s", err, output)
+	}
+}
+
+func TestCodingAgentPowerShellRewritesSyncedHerdrHookPaths(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 configuration-sync regression")
+	}
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 configuration sync")
+	contents := configurationSyncScript
+	start := bytes.Index(contents, []byte("$script:CopiedConfigurationFiles = 0"))
+	end := bytes.Index(contents, []byte("function Invoke-GuestGitHubCLI {"))
+	if start < 0 || end <= start {
+		t.Fatal("configuration-sync PowerShell helper block was not found")
+	}
+
+	root := t.TempDir()
+	hostHook := filepath.Join(root, "host-user", ".claude", "hooks", "herdr-agent-state.ps1")
+	guestHook := filepath.Join(root, "guest-user", ".claude", "hooks", "herdr-agent-state.ps1")
+	configurationPath := filepath.Join(root, "guest-user", ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(configurationPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	hostCommand := `powershell -NoProfile -ExecutionPolicy Bypass -File "` + hostHook + `" session`
+	settings, err := json.Marshal(map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{map[string]any{
+				"matcher": "*",
+				"hooks": []any{map[string]any{
+					"type":    "command",
+					"command": hostCommand,
+					"timeout": 10,
+				}},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, configurationPath, string(settings))
+	missingConfigurationPath := filepath.Join(root, "guest-user", ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(missingConfigurationPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, missingConfigurationPath, `{}`)
+
+	script := string(contents[start:end]) + `
+Rewrite-SyncedHerdrHookPath -ConfigurationPath $env:SYNC_CONFIGURATION -SourceHookPath $env:SYNC_HOST_HOOK -DestinationHookPath $env:SYNC_GUEST_HOOK
+$rejected = $false
+try {
+    Rewrite-SyncedHerdrHookPath -ConfigurationPath $env:SYNC_MISSING_CONFIGURATION -SourceHookPath $env:SYNC_HOST_HOOK -DestinationHookPath $env:SYNC_GUEST_HOOK
+} catch {
+    if ($_.Exception.Message -notmatch 'does not reference') { throw }
+    $rejected = $true
+}
+if (-not $rejected) { throw 'A synced integration without its hook registration was accepted.' }
+`
+	scriptPath := filepath.Join(root, "synced-herdr-hook-path.ps1")
+	writeTestFile(t, scriptPath, script)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	command.Env = append(os.Environ(),
+		"SYNC_CONFIGURATION="+configurationPath,
+		"SYNC_MISSING_CONFIGURATION="+missingConfigurationPath,
+		"SYNC_HOST_HOOK="+hostHook,
+		"SYNC_GUEST_HOOK="+guestHook,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("synced Herdr hook path rewrite: %v: %s", err, output)
+	}
+	updated, err := os.ReadFile(configurationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostHookJSON, err := json.Marshal(hostHook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestHookJSON, err := json.Marshal(guestHook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostHookLiteral := string(hostHookJSON[1 : len(hostHookJSON)-1])
+	guestHookLiteral := string(guestHookJSON[1 : len(guestHookJSON)-1])
+	if strings.Contains(strings.ToLower(string(updated)), strings.ToLower(hostHookLiteral)) ||
+		!strings.Contains(strings.ToLower(string(updated)), strings.ToLower(guestHookLiteral)) {
+		t.Fatalf("rewritten Herdr hook configuration = %s", updated)
 	}
 }
 

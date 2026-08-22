@@ -172,6 +172,16 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return Connection{}, fmt.Errorf("verify guest Herdr after retained provisioning: %w", err)
 	}
+	if err := updateOperation("herdr-integrations", "Installing missing Herdr integrations for selected coding agents."); err != nil {
+		return Connection{}, err
+	}
+	installedIntegrations, err := installMissingGuestHerdrIntegrations(ctx, connection, provisioning.CodingAgentSync)
+	if err != nil {
+		return Connection{}, err
+	}
+	if len(installedIntegrations) > 0 {
+		fmt.Fprintf(options.Output, "Herdr integrations installed: %s\n", strings.Join(installedIntegrations, ", "))
+	}
 	ready.HerdrVersion = hostHerdr.version
 	ready.HerdrRuntimeVersion = hostHerdr.runtimeVersion
 	ready.HerdrProtocol = hostHerdr.protocol

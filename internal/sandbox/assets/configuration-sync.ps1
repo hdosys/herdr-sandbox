@@ -194,6 +194,61 @@ function Sync-ClaudeCodeUserState {
     }
     $script:CopiedConfigurationFiles += 1
 }
+function ConvertTo-JSONEscapedStringContent {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    $encoded = ConvertTo-Json -InputObject $Value -Compress
+    if ($encoded -isnot [string] -or $encoded.Length -lt 2 -or
+        -not $encoded.StartsWith('"', [StringComparison]::Ordinal) -or
+        -not $encoded.EndsWith('"', [StringComparison]::Ordinal)) {
+        throw 'Failed to encode a Herdr hook path as a JSON string.'
+    }
+    return $encoded.Substring(1, $encoded.Length - 2)
+}
+function Rewrite-SyncedHerdrHookPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigurationPath,
+        [Parameter(Mandatory = $true)][string]$SourceHookPath,
+        [Parameter(Mandatory = $true)][string]$DestinationHookPath
+    )
+    if (-not (Test-Path -LiteralPath $ConfigurationPath -PathType Leaf)) {
+        throw "Synced Herdr hook configuration is missing: $ConfigurationPath"
+    }
+    Assert-ConfigurationDestinationPath -Path $ConfigurationPath
+    $contents = [IO.File]::ReadAllText($ConfigurationPath)
+    $destinationLiteral = ConvertTo-JSONEscapedStringContent -Value $DestinationHookPath
+    $updated = $contents
+    $matchCount = 0
+    $sourceCandidates = @($SourceHookPath, $SourceHookPath.Replace('\', '/')) |
+        Select-Object -Unique
+    foreach ($sourceCandidate in $sourceCandidates) {
+        $sourceLiteral = ConvertTo-JSONEscapedStringContent -Value ([string]$sourceCandidate)
+        $pattern = [regex]::Escape($sourceLiteral)
+        $matches = [regex]::Matches($updated, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $matchCount += $matches.Count
+        if ($matches.Count -gt 0 -and $sourceLiteral -cne $destinationLiteral) {
+            $evaluator = [Text.RegularExpressions.MatchEvaluator]{ param($match) $destinationLiteral }
+            $updated = [regex]::Replace($updated, $pattern, $evaluator, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+    }
+    if ($matchCount -eq 0) {
+        throw "Synced Herdr hook configuration does not reference its archived hook: $ConfigurationPath"
+    }
+    if ($updated -cne $contents) {
+        $directory = Split-Path -Parent $ConfigurationPath
+        $temporary = Join-Path $directory ('.herdr-sandbox-herdr-hook-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+        $backup = Join-Path $directory ('.herdr-sandbox-herdr-hook-' + [Guid]::NewGuid().ToString('N') + '.bak')
+        try {
+            [IO.File]::WriteAllText($temporary, $updated, $script:Utf8NoBom)
+            [IO.File]::Replace($temporary, $ConfigurationPath, $backup, $true)
+        } finally {
+            if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) }
+            if (Test-Path -LiteralPath $backup) { [IO.File]::Delete($backup) }
+        }
+    }
+    if ([IO.File]::ReadAllText($ConfigurationPath) -cne $updated) {
+        throw "Synced Herdr hook path verification failed: $ConfigurationPath"
+    }
+}
 function Invoke-AgentConfigurationGit {
     param(
         [Parameter(Mandatory = $true)][string]$Role,
@@ -708,11 +763,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
     $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
-    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|gitTrackedDeletions|opencode|pi|schemaVersion' -or
-        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 2 -or
+    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|gitTrackedDeletions|herdrHookSourcePaths|opencode|pi|schemaVersion' -or
+        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 3 -or
         $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
         $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or
-        $agentSync.pi -isnot [bool] -or $null -eq $agentSync.gitTrackedDeletions) {
+        $agentSync.pi -isnot [bool] -or $null -eq $agentSync.gitTrackedDeletions -or
+        $null -eq $agentSync.herdrHookSourcePaths) {
         throw 'Coding-agent sync manifest has an unsupported contract.'
     }
     $allowedGitDeletionRoots = @{
@@ -739,6 +795,28 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     if ($gitDeletionCount -gt 4096) {
         throw 'Coding-agent Git deletion count exceeds its limit.'
+    }
+    $allowedHerdrHookSources = @{
+        'claude' = [pscustomobject]@{ Enabled = [bool]$agentSync.claudeCode; Suffix = '\hooks\herdr-agent-state.ps1' }
+        'codex' = [pscustomobject]@{ Enabled = [bool]$agentSync.codex; Suffix = '\herdr-agent-state.ps1' }
+        'copilot' = [pscustomobject]@{ Enabled = [bool]$agentSync.githubCopilot; Suffix = '\hooks\herdr-agent-state.ps1' }
+    }
+    $herdrHookSourceCount = 0
+    foreach ($property in @($agentSync.herdrHookSourcePaths.PSObject.Properties)) {
+        $target = [string]$property.Name
+        $sourcePath = [string]$property.Value
+        if (-not $allowedHerdrHookSources.ContainsKey($target) -or
+            -not [bool]$allowedHerdrHookSources[$target].Enabled -or
+            $property.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($sourcePath) -or
+            $sourcePath.Length -gt 32767 -or $sourcePath -match '[\x00\r\n]' -or
+            -not [IO.Path]::IsPathRooted($sourcePath) -or
+            -not $sourcePath.EndsWith([string]$allowedHerdrHookSources[$target].Suffix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Coding-agent Herdr hook source is invalid: $target"
+        }
+        $herdrHookSourceCount += 1
+    }
+    if ($herdrHookSourceCount -gt 3) {
+        throw 'Coding-agent Herdr hook source count exceeds its limit.'
     }
     function Get-AgentGitTrackedDeletions {
         param([Parameter(Mandatory = $true)][string]$Name)
@@ -790,6 +868,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $claudeDestination = Join-Path $env:USERPROFILE '.claude'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'claude-code') -Destination $claudeDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $claudeDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'claude-code')
+        $claudeHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['claude']
+        if ($null -ne $claudeHookSource) {
+            Rewrite-SyncedHerdrHookPath -ConfigurationPath (Join-Path $claudeDestination 'settings.json') `
+                -SourceHookPath ([string]$claudeHookSource.Value) `
+                -DestinationHookPath (Join-Path $claudeDestination 'hooks\herdr-agent-state.ps1')
+        }
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $claudeDestination '.credentials.json')
         Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination (Join-Path $env:USERPROFILE '.claude.json')
     }
@@ -799,6 +883,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $codexDestination = Join-Path $env:USERPROFILE '.codex'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'codex') -Destination $codexDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $codexDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'codex')
+        $codexHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['codex']
+        if ($null -ne $codexHookSource) {
+            Rewrite-SyncedHerdrHookPath -ConfigurationPath (Join-Path $codexDestination 'hooks.json') `
+                -SourceHookPath ([string]$codexHookSource.Value) `
+                -DestinationHookPath (Join-Path $codexDestination 'herdr-agent-state.ps1')
+        }
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\auth.json') -Destination (Join-Path $codexDestination 'auth.json')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\.credentials.json') -Destination (Join-Path $codexDestination '.credentials.json')
     }
@@ -808,6 +898,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $copilotDestination = Join-Path $env:USERPROFILE '.copilot'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'github-copilot') -Destination $copilotDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $copilotDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'github-copilot')
+        $copilotHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['copilot']
+        if ($null -ne $copilotHookSource) {
+            Rewrite-SyncedHerdrHookPath -ConfigurationPath (Join-Path $copilotDestination 'settings.json') `
+                -SourceHookPath ([string]$copilotHookSource.Value) `
+                -DestinationHookPath (Join-Path $copilotDestination 'hooks\herdr-agent-state.ps1')
+        }
     }
 
     if ([bool]$agentSync.pi) {

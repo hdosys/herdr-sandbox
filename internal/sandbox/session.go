@@ -24,7 +24,7 @@ import (
 const (
 	defaultMemoryMB             = 32768
 	configurationSyncTimeout    = 5 * time.Minute
-	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + hostHerdrProvisionTimeout + mobileSSHPreparationTimeout + 2*time.Minute
+	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + hostHerdrProvisionTimeout + guestHerdrIntegrationTimeout + mobileSSHPreparationTimeout + 2*time.Minute
 	sshTargetName               = "sandbox"
 )
 
@@ -327,6 +327,14 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	if err := verifyGuestHerdr(runContext, connection); err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-verification", err)
+	}
+	fmt.Fprintln(options.Output, "Installing missing Herdr integrations for selected coding agents...")
+	installedIntegrations, err := installMissingGuestHerdrIntegrations(runContext, connection, plan.CodingAgentSync)
+	if err != nil {
+		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-integrations", err)
+	}
+	if len(installedIntegrations) > 0 {
+		fmt.Fprintf(options.Output, "Herdr integrations installed: %s\n", strings.Join(installedIntegrations, ", "))
 	}
 	var mobileHandoff *mobileAccessHandoff
 	if len(plan.MobileSSHAuthorizedKeys) > 0 {

@@ -33,29 +33,31 @@ type codingAgentConfigurationSources struct {
 }
 
 type codingAgentSyncManifest struct {
-	SchemaVersion       int                 `json:"schemaVersion"`
-	OpenCode            bool                `json:"opencode"`
-	ClaudeCode          bool                `json:"claudeCode"`
-	Codex               bool                `json:"codex"`
-	GitHubCopilot       bool                `json:"githubCopilot"`
-	Pi                  bool                `json:"pi"`
-	GitTrackedDeletions map[string][]string `json:"gitTrackedDeletions"`
+	SchemaVersion        int                 `json:"schemaVersion"`
+	OpenCode             bool                `json:"opencode"`
+	ClaudeCode           bool                `json:"claudeCode"`
+	Codex                bool                `json:"codex"`
+	GitHubCopilot        bool                `json:"githubCopilot"`
+	Pi                   bool                `json:"pi"`
+	GitTrackedDeletions  map[string][]string `json:"gitTrackedDeletions"`
+	HerdrHookSourcePaths map[string]string   `json:"herdrHookSourcePaths"`
 }
 
-func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string) codingAgentSyncManifest {
+func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) codingAgentSyncManifest {
 	return codingAgentSyncManifest{
-		SchemaVersion:       2,
-		OpenCode:            configuration.OpenCode,
-		ClaudeCode:          configuration.ClaudeCode,
-		Codex:               configuration.Codex,
-		GitHubCopilot:       configuration.GitHubCopilot,
-		Pi:                  configuration.Pi,
-		GitTrackedDeletions: gitTrackedDeletions,
+		SchemaVersion:        3,
+		OpenCode:             configuration.OpenCode,
+		ClaudeCode:           configuration.ClaudeCode,
+		Codex:                configuration.Codex,
+		GitHubCopilot:        configuration.GitHubCopilot,
+		Pi:                   configuration.Pi,
+		GitTrackedDeletions:  gitTrackedDeletions,
+		HerdrHookSourcePaths: herdrHookSourcePaths,
 	}
 }
 
-func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string) ([]byte, error) {
-	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration, gitTrackedDeletions), "", "  ")
+func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) ([]byte, error) {
+	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration, gitTrackedDeletions, herdrHookSourcePaths), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode coding-agent sync manifest: %w", err)
 	}
@@ -135,6 +137,7 @@ func archiveCodingAgentConfiguration(
 ) error {
 	archivedDestinations := map[string]string{}
 	gitTrackedDeletions := map[string][]string{}
+	herdrHookSourcePaths := map[string]string{}
 	addConfiguration := func(source, destination string) error {
 		cleaned := filepath.Clean(destination)
 		if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" || cleaned == "." || cleaned == ".." ||
@@ -159,10 +162,16 @@ func archiveCodingAgentConfiguration(
 		}
 		return err
 	}
+	recordHerdrHookSource := func(target, destination string) {
+		identity := strings.ToLower(filepath.ToSlash(filepath.Clean(destination)))
+		if source, exists := archivedDestinations[identity]; exists {
+			herdrHookSourcePaths[target] = source
+		}
+	}
 
 	if sources.Selection.OpenCode {
 		if err := archiveAllowedConfigurationRoot(sources.OpenCodeDirectory, "opencode",
-			[]string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "package.json", "package-lock.json", "bun.lock", "bun.lockb"},
+			[]string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "herdr-tui-session.js", "package.json", "package-lock.json", "bun.lock", "bun.lockb"},
 			[]string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"}, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode configuration: %w", err)
 		}
@@ -183,9 +192,13 @@ func archiveCodingAgentConfiguration(
 		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "plugins", "known_marketplaces.json"), filepath.Join("claude-code", "plugins", "known_marketplaces.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code marketplace configuration: %w", err)
 		}
+		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "hooks", "herdr-agent-state.ps1"), filepath.Join("claude-code", "hooks", "herdr-agent-state.ps1"), addConfiguration); err != nil {
+			return fmt.Errorf("archive Claude Code Herdr integration: %w", err)
+		}
 		if err := archiveGit(sources.ClaudeCodeDirectory, "claude-code"); err != nil {
 			return fmt.Errorf("archive Claude Code Git repository: %w", err)
 		}
+		recordHerdrHookSource("claude", filepath.Join("claude-code", "hooks", "herdr-agent-state.ps1"))
 		state, exists, err := buildClaudeCodeUserState(sources.ClaudeCodeState)
 		if err != nil {
 			return err
@@ -207,6 +220,7 @@ func archiveCodingAgentConfiguration(
 		if err := archiveGit(sources.CodexDirectory, "codex"); err != nil {
 			return fmt.Errorf("archive Codex Git repository: %w", err)
 		}
+		recordHerdrHookSource("codex", filepath.Join("codex", "herdr-agent-state.ps1"))
 		if err := addOptionalConfigurationFile(sources.CodexAuthentication, filepath.Join("codex-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Codex authentication: %w", err)
 		}
@@ -224,6 +238,7 @@ func archiveCodingAgentConfiguration(
 		if err := archiveGit(sources.GitHubCopilotDirectory, "github-copilot"); err != nil {
 			return fmt.Errorf("archive GitHub Copilot Git repository: %w", err)
 		}
+		recordHerdrHookSource("copilot", filepath.Join("github-copilot", "hooks", "herdr-agent-state.ps1"))
 	}
 
 	if sources.Selection.Pi {
@@ -251,7 +266,7 @@ func archiveCodingAgentConfiguration(
 			return fmt.Errorf("archive shared agent skills Git repository: %w", err)
 		}
 	}
-	manifest, err := encodeCodingAgentSyncManifest(sources.Selection, gitTrackedDeletions)
+	manifest, err := encodeCodingAgentSyncManifest(sources.Selection, gitTrackedDeletions, herdrHookSourcePaths)
 	if err != nil {
 		return err
 	}
@@ -266,7 +281,7 @@ func archiveCodexConfiguration(directory string, add func(string, string) error)
 	if err != nil || !exists {
 		return err
 	}
-	allowedFiles := map[string]bool{"config.toml": true, "AGENTS.md": true, "AGENTS.override.md": true, "hooks.json": true}
+	allowedFiles := map[string]bool{"config.toml": true, "AGENTS.md": true, "AGENTS.override.md": true, "hooks.json": true, "herdr-agent-state.ps1": true}
 	for _, entry := range entries {
 		if entry.IsDir() || (!allowedFiles[entry.Name()] && !strings.HasSuffix(entry.Name(), ".config.toml")) {
 			continue
