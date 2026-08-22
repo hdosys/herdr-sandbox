@@ -20,8 +20,8 @@ artifacts remain available on the
 
 - Local VoxCPM2 narration now defaults to a deep, calm male tutorial voice at a
   natural conversational pace with brief pauses. Projects can override the Voice
-  Design per request, and `voxcpm2.ps1` exposes the same design or explicit-WAV
-  cloning path directly in the guest.
+  Design per request, and the concise `tts.ps1` command exposes the same design or
+  explicit-WAV cloning path directly in the guest.
 - The audio stack now installs REAPER 7.79 and disables its in-app update checks
   before first launch while preserving existing REAPER settings.
 - Fresh TradingView guests now reject optional analytics and advertising cookies

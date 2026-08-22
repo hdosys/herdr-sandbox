@@ -2801,7 +2801,7 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
     param([Parameter(Mandatory = $true)][string]$Entry)
 
     $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
-        $Entry -ceq 'bin/voxcpm2.ps1' -or
+        $Entry -ceq 'bin/tts.ps1' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('licenses/', [StringComparison]::Ordinal)
@@ -3045,7 +3045,7 @@ function Install-StackHyperFramesVoxCPM2 {
                 throw "HyperFrames VoxCPM2 manifest file identity changed: $relative"
             }
         }
-        foreach ($required in @('bin/voxcpm2.ps1', 'engine/audio/scripts/audio.mjs',
+        foreach ($required in @('bin/tts.ps1', 'engine/audio/scripts/audio.mjs',
                 'engine/audio/scripts/lib/tts.mjs', 'engine/audio/scripts/lib/voxcpm2-cli.mjs',
                 'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
                 'THIRD_PARTY_NOTICES.md')) {
@@ -3069,7 +3069,7 @@ function Install-StackHyperFramesVoxCPM2 {
 
     $engine = Join-Path $destination 'engine\audio'
     $cliDirectory = Join-Path $destination 'bin'
-    $cli = Join-Path $cliDirectory 'voxcpm2.ps1'
+    $cli = Join-Path $cliDirectory 'tts.ps1'
     $cliModule = Join-Path $engine 'scripts\lib\voxcpm2-cli.mjs'
     $provider = Join-Path $engine 'scripts\lib\voxcpm2.mjs'
     $cpuServer = Join-Path $destination 'runtime\cpu\llama-tts-server.exe'
@@ -3114,7 +3114,7 @@ function Install-StackHyperFramesVoxCPM2 {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
     }
     Add-ProvisioningMachinePath -Directory $cliDirectory
-    $resolvedCLI = Get-Command 'voxcpm2.ps1' -CommandType ExternalScript -ErrorAction Stop |
+    $resolvedCLI = Get-Command 'tts.ps1' -CommandType ExternalScript -ErrorAction Stop |
         Select-Object -First 1
     if ([IO.Path]::GetFullPath([string]$resolvedCLI.Source) -ine [IO.Path]::GetFullPath($cli)) {
         throw "HyperFrames VoxCPM2 CLI resolved from an unexpected path: $($resolvedCLI.Source)"
