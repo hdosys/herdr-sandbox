@@ -18,9 +18,10 @@ artifacts remain available on the
 
 ### Changed
 
-- Local VoxCPM2 narration now defaults to a deep, calm male tutorial voice with
-  measured pacing and natural pauses. Selecting an explicit WAV keeps
-  reference-voice cloning available when a particular speaker is needed.
+- Local VoxCPM2 narration now defaults to a deep, calm male tutorial voice at a
+  natural conversational pace with brief pauses. Projects can override the Voice
+  Design per request, and `voxcpm2.ps1` exposes the same design or explicit-WAV
+  cloning path directly in the guest.
 
 ### Fixed
 

@@ -466,8 +466,10 @@ func validateVoxCPM2CoreManifest(manifest voxcpm2CoreManifest, tag string) error
 	}
 	required := []string{
 		"THIRD_PARTY_NOTICES.md",
+		"bin/voxcpm2.ps1",
 		"engine/audio/scripts/audio.mjs",
 		"engine/audio/scripts/lib/tts.mjs",
+		"engine/audio/scripts/lib/voxcpm2-cli.mjs",
 		"engine/audio/scripts/lib/voxcpm2.mjs",
 		"runtime/cpu/llama-tts-server.exe",
 	}

@@ -2710,6 +2710,7 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
     param([Parameter(Mandatory = $true)][string]$Entry)
 
     $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
+        $Entry -ceq 'bin/voxcpm2.ps1' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('licenses/', [StringComparison]::Ordinal)
@@ -2953,7 +2954,8 @@ function Install-StackHyperFramesVoxCPM2 {
                 throw "HyperFrames VoxCPM2 manifest file identity changed: $relative"
             }
         }
-        foreach ($required in @('engine/audio/scripts/audio.mjs', 'engine/audio/scripts/lib/tts.mjs',
+        foreach ($required in @('bin/voxcpm2.ps1', 'engine/audio/scripts/audio.mjs',
+                'engine/audio/scripts/lib/tts.mjs', 'engine/audio/scripts/lib/voxcpm2-cli.mjs',
                 'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
                 'THIRD_PARTY_NOTICES.md')) {
             if (-not $seen.ContainsKey($required)) { throw "HyperFrames VoxCPM2 payload is missing $required" }
@@ -2975,10 +2977,27 @@ function Install-StackHyperFramesVoxCPM2 {
     }
 
     $engine = Join-Path $destination 'engine\audio'
+    $cliDirectory = Join-Path $destination 'bin'
+    $cli = Join-Path $cliDirectory 'voxcpm2.ps1'
+    $cliModule = Join-Path $engine 'scripts\lib\voxcpm2-cli.mjs'
     $provider = Join-Path $engine 'scripts\lib\voxcpm2.mjs'
     $cpuServer = Join-Path $destination 'runtime\cpu\llama-tts-server.exe'
-    Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider syntax' -FilePath $Node `
-        -ArgumentList @('--check', $provider) -TimeoutSeconds 30 | Out-Null
+    foreach ($module in @($provider, $cliModule)) {
+        Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider syntax' -FilePath $Node `
+            -ArgumentList @('--check', $module) -TimeoutSeconds 30 | Out-Null
+    }
+    $cliTokens = $null
+    $cliErrors = $null
+    [Management.Automation.Language.Parser]::ParseFile($cli, [ref]$cliTokens, [ref]$cliErrors) | Out-Null
+    if (@($cliErrors).Count -ne 0) {
+        throw "HyperFrames VoxCPM2 CLI wrapper syntax is invalid: $($cliErrors[0].Message)"
+    }
+    $cliHelp = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CLI help' -FilePath $Node `
+            -ArgumentList @($cliModule, '--help') -TimeoutSeconds 30) -join "`n")
+    if ($cliHelp -notmatch '(?m)^Usage:$' -or $cliHelp -notmatch '(?m)^  --design DESCRIPTION ' -or
+        $cliHelp -notmatch '(?m)^  --voice FILE ') {
+        throw 'HyperFrames VoxCPM2 CLI help identity is unexpected.'
+    }
     $version = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server identity' `
             -FilePath $cpuServer -ArgumentList @('--version') -TimeoutSeconds 30) -join "`n")
     if ($version -notmatch [regex]::Escape(([string]$descriptor.runtimeCommit).Substring(0, 7))) {
@@ -3002,6 +3021,12 @@ function Install-StackHyperFramesVoxCPM2 {
     }
     foreach ($entry in $settings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
+    }
+    Add-ProvisioningMachinePath -Directory $cliDirectory
+    $resolvedCLI = Get-Command 'voxcpm2.ps1' -CommandType ExternalScript -ErrorAction Stop |
+        Select-Object -First 1
+    if ([IO.Path]::GetFullPath([string]$resolvedCLI.Source) -ine [IO.Path]::GetFullPath($cli)) {
+        throw "HyperFrames VoxCPM2 CLI resolved from an unexpected path: $($resolvedCLI.Source)"
     }
     $providerURL = 'file:///' + ($provider.Replace('\', '/'))
     $availabilityScript = "import { voxcpm2Available } from '$providerURL'; if (!voxcpm2Available()) process.exit(1);"
