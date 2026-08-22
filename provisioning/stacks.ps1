@@ -2802,6 +2802,7 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
 
     $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
         $Entry -ceq 'bin/tts.ps1' -or
+        $Entry -ceq 'reference/herdr-narrator-de.wav' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('licenses/', [StringComparison]::Ordinal)
@@ -3048,6 +3049,7 @@ function Install-StackHyperFramesVoxCPM2 {
         foreach ($required in @('bin/tts.ps1', 'engine/audio/scripts/audio.mjs',
                 'engine/audio/scripts/lib/tts.mjs', 'engine/audio/scripts/lib/voxcpm2-cli.mjs',
                 'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
+                'reference/herdr-narrator-de.wav',
                 'THIRD_PARTY_NOTICES.md')) {
             if (-not $seen.ContainsKey($required)) { throw "HyperFrames VoxCPM2 payload is missing $required" }
         }
@@ -3103,10 +3105,10 @@ function Install-StackHyperFramesVoxCPM2 {
         'HF_VOXCPM2_ACOUSTIC' = Join-Path $modelRoot 'VoxCPM2-Acoustic-F16.gguf'
         'HF_VOXCPM2_SERVER_CPU' = $cpuServer
         'HF_VOXCPM2_MODEL_ID' = "$($descriptor.models.repository)@$($descriptor.models.revision)"
+        'HF_VOXCPM2_REFERENCE_AUDIO' = Join-Path $destination 'reference\herdr-narrator-de.wav'
         'HF_VOXCPM2_STATE_DIR' = $stateRoot
     }
-    foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_REFERENCE_AUDIO',
-            'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
+    foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
         Remove-Item -LiteralPath ('Env:\' + $name) -ErrorAction SilentlyContinue
         [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
     }

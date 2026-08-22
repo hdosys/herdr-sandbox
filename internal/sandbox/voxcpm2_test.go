@@ -114,6 +114,7 @@ func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 	files := map[string][]byte{
 		"THIRD_PARTY_NOTICES.md":                   []byte("notices"),
 		"bin/tts.ps1":                              []byte("wrapper"),
+		"reference/herdr-narrator-de.wav":          []byte("narrator"),
 		"engine/audio/scripts/audio.mjs":           []byte("audio"),
 		"engine/audio/scripts/lib/tts.mjs":         []byte("tts"),
 		"engine/audio/scripts/lib/voxcpm2-cli.mjs": []byte("cli"),

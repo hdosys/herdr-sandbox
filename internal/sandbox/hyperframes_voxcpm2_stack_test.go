@@ -84,6 +84,7 @@ foreach ($name in @('Test-StackHyperFramesVoxCPM2ArchiveEntry', 'Assert-StackHyp
 }
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/cpu/llama-tts-server.exe'
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'bin/tts.ps1'
+Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'reference/herdr-narrator-de.wav'
 $vulkanRejected = $false
 try { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/vulkan/llama-tts-server.exe' } catch { $vulkanRejected = $true }
 if (-not $vulkanRejected) { throw 'HyperFrames VoxCPM2 accepted a Vulkan runtime.' }
