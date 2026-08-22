@@ -196,9 +196,9 @@ if ($null -eq $agentCommand) {
     [Console]::Out.WriteLine('herdr-sandbox:unavailable')
     exit 0
 }
-$home = [IO.Path]::GetFullPath([string]$env:USERPROFILE).TrimEnd([char]92)
-$root = [IO.Path]::GetFullPath((Join-Path $home '%s')).TrimEnd([char]92)
-if (-not $root.StartsWith($home + '\', [StringComparison]::OrdinalIgnoreCase)) {
+$userProfileRoot = [IO.Path]::GetFullPath([string]$env:USERPROFILE).TrimEnd([char]92)
+$root = [IO.Path]::GetFullPath((Join-Path $userProfileRoot '%s')).TrimEnd([char]92)
+if (-not $root.StartsWith($userProfileRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Coding-agent integration root escapes the guest user profile.'
 }
 $current = $root
@@ -209,7 +209,7 @@ while ($true) {
             throw "Coding-agent integration root is unsafe: $current"
         }
     }
-    if ($current -ieq $home) { break }
+    if ($current -ieq $userProfileRoot) { break }
     $parent = Split-Path -Parent $current
     if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ieq $current) {
         throw 'Coding-agent integration root parent resolution failed.'
