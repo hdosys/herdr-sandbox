@@ -22,6 +22,13 @@ artifacts remain available on the
   measured pacing and natural pauses. Selecting an explicit WAV keeps
   reference-voice cloning available when a particular speaker is needed.
 
+### Fixed
+
+- Microsoft OpenJDK 25 provisioning now accepts Microsoft's runtime patch suffix
+  while still requiring the exact WinGet package, Microsoft runtime identity, and
+  matching `java` and `javac` versions, so reprovisioning no longer rejects
+  package `25.0.4.101` when its tools report `25.0.4.1`.
+
 ## v0.0.18
 
 ### Added

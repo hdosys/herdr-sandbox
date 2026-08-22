@@ -2091,6 +2091,28 @@ function Remove-StackJavaPreviousInstallation {
     }
 }
 
+function Assert-StackJavaVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^25\.0\.(?:0|[1-9][0-9]*)$')]
+        [string]$LanguageVersion,
+
+        [Parameter(Mandatory = $true)]
+        [string]$JavaVersion,
+
+        [Parameter(Mandatory = $true)]
+        [string]$JavacVersion
+    )
+
+    $runtimePattern = '(?m)^openjdk version "(?<version>' + [regex]::Escape($LanguageVersion) +
+        '(?:\.(?:0|[1-9][0-9]*))?)"(?:\s|$)'
+    $runtimeMatch = [regex]::Match($JavaVersion, $runtimePattern)
+    if (-not $runtimeMatch.Success -or $JavaVersion -notmatch '(?i)Microsoft' -or
+        $JavacVersion -cne ('javac ' + $runtimeMatch.Groups['version'].Value)) {
+        throw "Microsoft OpenJDK version verification failed: java=$JavaVersion javac=$JavacVersion"
+    }
+}
+
 function Install-JavaStack {
     [CmdletBinding()]
     param(
@@ -2172,10 +2194,8 @@ function Install-JavaStack {
     $javacVersion = ((Invoke-ProvisioningNative -Role 'Java compiler version verification' `
             -FilePath $commands['javac.exe'] -ArgumentList @('-version') -TimeoutSeconds 30) `
         -join [Environment]::NewLine).Trim()
-    if ($javaVersion -notmatch ('(?m)^openjdk version "' + [regex]::Escape($languageVersion) + '"(?:\s|$)') -or
-        $javaVersion -notmatch '(?i)Microsoft' -or $javacVersion -cne "javac $languageVersion") {
-        throw "Microsoft OpenJDK version verification failed: java=$javaVersion javac=$javacVersion"
-    }
+    Assert-StackJavaVersion -LanguageVersion $languageVersion -JavaVersion $javaVersion `
+        -JavacVersion $javacVersion
 
     $stage = Join-Path 'C:\HerdrSandbox\staging' ('java-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
