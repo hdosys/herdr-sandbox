@@ -69,7 +69,7 @@ The host keeps source, identity, configuration, cache, and diagnostics. The gues
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows Terminal, the Windows OpenSSH Client (`ssh.exe` on host `PATH`), and internet access for cache misses.
-- The maintained [Herdr-Win](https://github.com/hdosys/herdr-win) distribution on host `PATH`.
+- The maintained [Herdr-Win](https://github.com/hdosys/herdr-win) distribution, installed together with Herdr Sandbox below.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -78,17 +78,23 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-### Install Herdr-Win
+### Install with WinGet (recommended)
 
-Download the newest `herdr-win_v<version>_windows_amd64_setup.exe` from
-[Herdr-Win releases](https://github.com/hdosys/herdr-win/releases), verify its
-GitHub SHA-256 digest, run setup, and open a new terminal:
+WinGet is the preferred installation and update path. Herdr Sandbox requires
+Herdr Win, so install the latest available release of both packages in one
+command:
 
 ```powershell
-herdr --version
+winget install hdosys.herdr-win hdosys.herdr-sandbox --source winget
 ```
 
-The result must contain the exact `herdr-win` marker.
+No version is specified, so WinGet selects the latest available release of each
+package from its catalog. WinGet also owns future updates. Upgrade both packages
+together with:
+
+```powershell
+winget upgrade hdosys.herdr-win hdosys.herdr-sandbox --source winget
+```
 
 #### Why Herdr-Win is required
 
@@ -98,42 +104,31 @@ remote-provisioning path Herdr Sandbox uses to transfer, start, and connect to t
 matching guest runtime over SSH. It remains a separate installation that Herdr
 Sandbox never bundles, installs, or updates.
 
-### Install Herdr Sandbox
+### Direct installer alternative
 
-Choose either WinGet or the direct installer.
+If WinGet is unavailable, download the newest Windows setup from the latest
+[Herdr Win release](https://github.com/hdosys/herdr-win/releases/latest) and the
+latest [Herdr Sandbox release](https://github.com/hdosys/herdr-sandbox/releases/latest).
+Compare `Get-FileHash -Algorithm SHA256 <path>` with GitHub's digest for each
+asset, install Herdr Win first, then install Herdr Sandbox. The Herdr Sandbox
+Finish page can open the new configuration.
 
-#### WinGet
+### Verify installation
 
-```powershell
-winget install --id hdosys.herdr-sandbox --exact --source winget
-```
-
-Upgrade later with:
-
-```powershell
-winget upgrade --id hdosys.herdr-sandbox --exact --source winget
-```
-
-#### Direct installer
-
-Download `herdr-sandbox_<version>_windows_amd64_setup.exe` from the latest
-[Herdr Sandbox release](https://github.com/hdosys/herdr-sandbox/releases/latest),
-compare `Get-FileHash -Algorithm SHA256 <path>` with GitHub's digest for the same
-asset, and run setup. The interactive Finish page can open the new configuration.
-
-#### After either installation
-
-Both paths use the same per-user installer, require no administrator access, and
-add `sandbox` to user `PATH`. Open a new terminal and confirm:
+Both paths use the same per-user installers, require no administrator access, and
+add their commands to user `PATH`. Open a new terminal and confirm:
 
 ```powershell
+herdr --version
 sandbox --version
 ```
 
+The Herdr result must contain the exact `herdr-win` marker.
+
 > [!WARNING]
 > The Herdr-Win and Herdr Sandbox installers are currently unsigned. WinGet
-> verifies Herdr Sandbox against its community manifest. For direct downloads,
-> use only the linked GitHub repositories and verify the published asset digest.
+> verifies both packages against their community manifests. For direct downloads,
+> use only the linked GitHub repositories and verify each published asset digest.
 
 <details>
 <summary><strong>Installer and uninstall behavior</strong></summary>
