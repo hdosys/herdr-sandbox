@@ -11,10 +11,10 @@ artifacts remain available on the
 - Selected coding agents now receive Herdr awareness automatically. Existing host
   integrations are synchronized without being replaced, while Herdr installs an
   offered integration only when that agent is available and no integration exists.
-- HyperFrames projects can opt into local VoxCPM2 speech generation with one
-  dedicated host model directory. Herdr Sandbox securely verifies the latest
-  stable Core release and exact models, maps them read-only, and provisions only
-  the CPU runtime with GPU layers disabled in the existing HyperFrames stack.
+- One optional shared host model directory now maps read/write at `C:\Models` for
+  guest AI tools. Herdr Sandbox uses the same root for verified local VoxCPM2
+  models and provisions only the CPU runtime with GPU layers disabled in the
+  existing HyperFrames stack.
 
 ### Changed
 

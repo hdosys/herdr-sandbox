@@ -53,6 +53,6 @@ For each release, re-download the public installer, recompute its SHA-256, run
 version directory through WinGetCreate. Do not store or pass a GitHub token in
 this repository, command logs, or manifest files.
 
-The package contains only Herdr Sandbox. Herdr-Win remains a separate
-distribution, is not bundled or declared as a dependency, and does not yet have a
-community-source package.
+The package contains only Herdr Sandbox. Herdr Win remains a separate distribution
+and is not bundled or declared as a dependency; install its community package
+`hdosys.herdr-win` separately.

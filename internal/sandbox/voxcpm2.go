@@ -109,11 +109,11 @@ type voxcpm2ModelCompletion struct {
 
 func prepareHyperFramesVoxCPM2(ctx context.Context, modelDirectory string, output io.Writer) error {
 	if !filepath.IsAbs(modelDirectory) {
-		return errors.New("HyperFrames VoxCPM2 model directory must be absolute")
+		return errors.New("shared models directory must be absolute")
 	}
 	modelDirectory, err := canonicalMappedDirectory(modelDirectory)
 	if err != nil {
-		return fmt.Errorf("validate HyperFrames VoxCPM2 model directory: %w", err)
+		return fmt.Errorf("validate shared models directory: %w", err)
 	}
 	releaseRoot, err := ensurePhysicalDirectory(filepath.Join(modelDirectory, ".herdr-sandbox", voxcpm2CacheDirectoryName), "HyperFrames VoxCPM2 release store")
 	if err != nil {

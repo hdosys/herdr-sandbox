@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-func TestRenderConfigMapsVoxCPM2ModelsReadOnly(t *testing.T) {
+func TestRenderConfigMapsSharedModelsReadWrite(t *testing.T) {
 	encoded, err := renderConfigWithMappedDirectories(
 		`C:\Runs\one\input`,
 		`C:\Runs\one\status`,
 		`E:\cache`,
 		"",
-		`F:\Models\VoxCPM2`,
+		`F:\Models`,
 		nil,
 		nil,
 		4096,
@@ -28,28 +28,28 @@ func TestRenderConfigMapsVoxCPM2ModelsReadOnly(t *testing.T) {
 	}
 	found := false
 	for _, mapping := range config.MappedFolders.Folders {
-		if mapping.SandboxFolder == guestVoxCPM2Models {
+		if mapping.SandboxFolder == guestModelsDirectory {
 			found = true
-			if mapping.HostFolder != `F:\Models\VoxCPM2` || !mapping.ReadOnly {
-				t.Fatalf("VoxCPM2 mapping = %#v", mapping)
+			if mapping.HostFolder != `F:\Models` || mapping.ReadOnly {
+				t.Fatalf("models mapping = %#v", mapping)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("VoxCPM2 model mapping is missing")
+		t.Fatal("models mapping is missing")
 	}
 }
 
-func TestConfiguredVoxCPM2ModelDirectoryRequiresExistingAbsoluteDirectory(t *testing.T) {
+func TestConfiguredModelsDirectoryRequiresExistingAbsoluteDirectory(t *testing.T) {
 	directory := t.TempDir()
-	got, err := validateConfiguredVoxCPM2ModelDirectory(directory)
+	got, err := validateConfiguredModelsDirectory(directory)
 	if err != nil {
 		t.Fatalf("validate model directory: %v", err)
 	}
 	if !filepath.IsAbs(got) {
 		t.Fatalf("validated model directory is not absolute: %q", got)
 	}
-	if _, err := validateConfiguredVoxCPM2ModelDirectory("models"); err == nil {
+	if _, err := validateConfiguredModelsDirectory("models"); err == nil {
 		t.Fatal("relative model directory unexpectedly succeeded")
 	}
 }

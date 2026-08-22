@@ -690,7 +690,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		UserScriptPath:                `C:\Users\user\AppData\Roaming\herdr-sandbox\user.ps1`,
 		CacheDirectory:                `D:\herdr-cache`,
 		WorktreeDirectory:             `E:\herdr-worktrees`,
-		VoxCPM2ModelDirectory:         `F:\models\voxcpm2`,
+		ModelsDirectory:               `F:\models`,
 		MemoryMB:                      32768,
 		WindowsTerminal:               "stable",
 		PullHostGitRepositoriesOnUp:   true,
@@ -718,7 +718,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	var output bytes.Buffer
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
-		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "HyperFrames VoxCPM2 models: F:\\models\\voxcpm2", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
+		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Models directory: F:\\models", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
 		"Mobile SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",

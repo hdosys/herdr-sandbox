@@ -17,7 +17,7 @@ import (
 const (
 	currentSandboxNativeEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE"
 	currentSandboxPayloadEnvironment = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
-	currentSandboxVoxCPM2Environment = "HERDR_SANDBOX_CURRENT_NATIVE_VOXCPM2_MODELS"
+	currentSandboxModelsEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE_MODELS"
 	currentSandboxFixtureMarker      = "herdr-sandbox current native fixture v1\n"
 )
 
@@ -89,11 +89,11 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 			"remove": []string{}, "add": []string{}, "versions": map[string]string{},
 		},
 	}
-	if modelRoot := strings.TrimSpace(os.Getenv(currentSandboxVoxCPM2Environment)); modelRoot != "" {
-		if !strings.EqualFold(filepath.Clean(modelRoot), filepath.Clean(guestVoxCPM2Models)) {
-			t.Fatalf("current-Sandbox HyperFrames VoxCPM2 assets must be available at %s", guestVoxCPM2Models)
+	if modelRoot := strings.TrimSpace(os.Getenv(currentSandboxModelsEnvironment)); modelRoot != "" {
+		if !strings.EqualFold(filepath.Clean(modelRoot), filepath.Clean(guestModelsDirectory)) {
+			t.Fatalf("current-Sandbox models must be available at %s", guestModelsDirectory)
 		}
-		configurationValues["hyperframesVoxCPM2ModelDirectory"] = modelRoot
+		configurationValues["modelsDirectory"] = modelRoot
 	}
 	configuration, err := json.Marshal(configurationValues)
 	if err != nil {

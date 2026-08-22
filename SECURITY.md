@@ -53,9 +53,9 @@ The product protects these boundaries:
   known credential roots such as `.ssh`, `.gnupg`, cloud/Kubernetes/Docker auth
   directories, supported coding-agent auth roots, GitHub CLI state, and Windows
   credential stores are rejected as mappings, including parents or descendants.
-- An explicitly selected HyperFrames VoxCPM2 model root is exposed only through
-  one read-only guest mapping. It is checked against every other mapped or
-  recursively removable product root before launch.
+- An explicitly selected shared model root is exposed only through one writable
+  mapping at `C:\Models`. It is checked against every other mapped or recursively
+  removable product root before launch.
 - External diagnostics are memory-bounded and terminal-control characters are
   replaced before display.
 - Destructive lifecycle and uninstall paths require exact app ownership and fail
@@ -73,11 +73,13 @@ The product protects these boundaries:
 These are deliberate non-guarantees:
 
 - A guest process can read every selected read-only mount and can modify every
-  selected read/write workspace, mount, cache, and worktree directory. Do not map
-  data the agent must not access. The optional worktree root is trusted only at
-  `C:/Worktrees/*` in guest Git, but that trust does not restrict guest file access.
-- Enabling VoxCPM2 lets every guest administrator process read its model files and
-  reference audio. Use a dedicated folder containing no unrelated private data.
+  selected read/write workspace, mount, cache, worktree, and models directory. Do
+  not map data the agent must not access or modify. The optional worktree root is
+  trusted only at `C:/Worktrees/*` in guest Git, but that trust does not restrict
+  guest file access.
+- Enabling the shared model root lets every guest administrator process read,
+  replace, and add model files and reference audio. Use a dedicated AI-model
+  folder containing no unrelated private data.
 - Networking is enabled. A credential deliberately copied into the guest can be
   used or exfiltrated by a compromised agent or project. Herdr Sandbox currently
   has no offline mode.
@@ -160,15 +162,16 @@ Omitted package versions intentionally resolve the latest available stable
 version. Pin every required `wingetPackages.versions` entry and project toolchain
 version when reproducibility is part of the threat model.
 
-Opt-in HyperFrames VoxCPM2 preparation deliberately follows the latest stable
+Opt-in model persistence also enables HyperFrames VoxCPM2 preparation from the latest stable
 `hdosys/hyperframes-voxcpm2` GitHub release instead of a Sandbox-owned version
 pin. The host accepts only HTTPS with normal certificate validation, refuses
 non-HTTPS redirects, user curl configuration, inherited custom CA files, and TLS
 key logging, and requires GitHub's asset
-digest plus the exact release `.sha256` sidecar. It then checks the bounded ZIP,
-embedded file manifest, immutable model revision and SHA-256 values, and reference
-audio before publishing the read-only guest input. The admitted archive may contain
-only the CPU runtime, and provisioning removes prior VoxCPM2 Vulkan selection state
+digest plus the exact release `.sha256` sidecar. It binds each downloaded model
+and reference-audio file to the immutable revision, size, and SHA-256 before
+publishing the writable guest input. The HyperFrames stack rehashes the selected
+model files before activation. The admitted archive may contain only
+the CPU runtime, and provisioning removes prior VoxCPM2 Vulkan selection state
 before publishing the CPU server. This protects integrity for
 the selected release channel, but GitHub and the named upstream repositories
 remain trusted distribution authorities. Disable the setting when that dynamic

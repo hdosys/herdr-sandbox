@@ -694,11 +694,11 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 		worktreeDirectory = "disabled"
 	}
 	fmt.Fprintf(output, "  Worktree directory: %s\n", worktreeDirectory)
-	voxcpm2ModelDirectory := plan.VoxCPM2ModelDirectory
-	if voxcpm2ModelDirectory == "" {
-		voxcpm2ModelDirectory = "disabled"
+	modelsDirectory := plan.ModelsDirectory
+	if modelsDirectory == "" {
+		modelsDirectory = "disabled"
 	}
-	fmt.Fprintf(output, "  HyperFrames VoxCPM2 models: %s\n", voxcpm2ModelDirectory)
+	fmt.Fprintf(output, "  Models directory: %s\n", modelsDirectory)
 	fmt.Fprintf(output, "  Memory: %d MB\n", plan.MemoryMB)
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))

@@ -44,8 +44,8 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if !sameWSBMapping(actualMappings[strings.ToLower(guestWorktreeDirectory)], expectedMappings[strings.ToLower(guestWorktreeDirectory)]) {
 		differences = append(differences, "worktree directory")
 	}
-	if !sameWSBMapping(actualMappings[strings.ToLower(guestVoxCPM2Models)], expectedMappings[strings.ToLower(guestVoxCPM2Models)]) {
-		differences = append(differences, "HyperFrames VoxCPM2 model directory")
+	if !sameWSBMapping(actualMappings[strings.ToLower(guestModelsDirectory)], expectedMappings[strings.ToLower(guestModelsDirectory)]) {
+		differences = append(differences, "models directory")
 	}
 	if !sameWSBMountMappings(actualMappings, expectedMappings) {
 		differences = append(differences, "folder mounts")
@@ -189,7 +189,7 @@ func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool 
 }
 
 func isKnownWSBMapping(identity string) bool {
-	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory, guestVoxCPM2Models, guestWorktreeDirectory} {
+	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory, guestModelsDirectory, guestWorktreeDirectory} {
 		if identity == strings.ToLower(exact) {
 			return true
 		}

@@ -20,7 +20,7 @@ Detach and reconnect to the same OpenCode session through Herdr's managed Window
 - **Your normal terminal:** Herdr attaches from the host, so routine work does not require RDP or a second desktop workflow.
 - **Repeatable project setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
 - **Fast iteration:** reuse and reprovision a compatible ready guest instead of rebuilding it for every change.
-- **Deliberate persistence:** source, an optional worktree root, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
+- **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
 - **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
 
@@ -40,6 +40,7 @@ flowchart LR
     HostHerdr["Host Herdr<br/>remote provision + attach"]
     Projects[("Selected projects")]
     Worktrees[("Optional persistent<br/>Herdr worktrees")]
+    Models[("Optional shared<br/>AI models")]
     Config["Approved agent config"]
 
     subgraph Guest["Disposable Windows Sandbox"]
@@ -52,6 +53,7 @@ flowchart LR
     Host -->|final config + verified SSH target| HostHerdr
     Projects <-->|narrow writable mappings| Agents
     Worktrees <-->|dedicated writable mapping| Agents
+    Models <-->|shared writable mapping| Agents
     Config -->|verified SSH only| Agents
     Provision --> Agents
     HostHerdr -->|provision + validate| Herdr
@@ -69,7 +71,7 @@ The host keeps source, identity, configuration, cache, and diagnostics. The gues
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows Terminal, the Windows OpenSSH Client (`ssh.exe` on host `PATH`), and internet access for cache misses.
-- The maintained [Herdr-Win](https://github.com/hdosys/herdr-win) distribution, installed together with Herdr Sandbox below.
+- [Herdr Win](https://github.com/hdosys/herdr-win) on host `PATH`.
 - Go 1.26.4 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -80,43 +82,30 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 ### Install with WinGet (recommended)
 
-WinGet is the preferred installation and update path. Herdr Sandbox requires
-Herdr Win, so install the latest available release of both packages in one
-command:
+Herdr Sandbox requires Herdr Win. Install both:
 
 ```powershell
-winget install hdosys.herdr-win hdosys.herdr-sandbox --source winget
+winget install hdosys.herdr-win hdosys.herdr-sandbox
 ```
 
-No version is specified, so WinGet selects the latest available release of each
-package from its catalog. WinGet also owns future updates. Upgrade both packages
-together with:
+Update both:
 
 ```powershell
-winget upgrade hdosys.herdr-win hdosys.herdr-sandbox --source winget
+winget upgrade hdosys.herdr-win hdosys.herdr-sandbox
 ```
 
-#### Why Herdr-Win is required
-
-Upstream Herdr does not currently support running the Herdr server on Windows.
-Herdr-Win provides both support for the server on Windows and the unattended
-remote-provisioning path Herdr Sandbox uses to transfer, start, and connect to the
-matching guest runtime over SSH. It remains a separate installation that Herdr
-Sandbox never bundles, installs, or updates.
+Herdr Win provides the Windows server and remote provisioning used by Herdr
+Sandbox. It remains a separate package.
 
 ### Direct installer alternative
 
-If WinGet is unavailable, download the newest Windows setup from the latest
-[Herdr Win release](https://github.com/hdosys/herdr-win/releases/latest) and the
-latest [Herdr Sandbox release](https://github.com/hdosys/herdr-sandbox/releases/latest).
-Compare `Get-FileHash -Algorithm SHA256 <path>` with GitHub's digest for each
-asset, install Herdr Win first, then install Herdr Sandbox. The Herdr Sandbox
-Finish page can open the new configuration.
+If WinGet is unavailable, download and verify the latest [Herdr Win](https://github.com/hdosys/herdr-win/releases/latest)
+and [Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
+setups. Install Herdr Win first.
 
 ### Verify installation
 
-Both paths use the same per-user installers, require no administrator access, and
-add their commands to user `PATH`. Open a new terminal and confirm:
+Open a new terminal and confirm:
 
 ```powershell
 herdr --version
@@ -126,9 +115,8 @@ sandbox --version
 The Herdr result must contain the exact `herdr-win` marker.
 
 > [!WARNING]
-> The Herdr-Win and Herdr Sandbox installers are currently unsigned. WinGet
-> verifies both packages against their community manifests. For direct downloads,
-> use only the linked GitHub repositories and verify each published asset digest.
+> The Herdr Win and Herdr Sandbox installers are currently unsigned. For direct
+> downloads, use the linked releases and verify their GitHub SHA-256 digests.
 
 <details>
 <summary><strong>Installer and uninstall behavior</strong></summary>
@@ -229,47 +217,22 @@ These shortcuts package repository-specific setups and remain outside `all`:
 Dependencies and application commands remain project-owned. `sandbox plan`
 expands each composition without executing the profile.
 
-### AudioGridder server workflow
-
-The `audio` stack makes Windows Sandbox the production plugin server. VSTs run
-in the guest, while the normal host DAW loads the AudioGridder client:
-
-1. Install the AudioGridder 1.2.0 client plugin in the host DAW. Herdr Sandbox
-   does not change host DAW or plugin state.
-2. Run `sandbox init --stack audio`, then add the desired VST installation to
-   that project profile or the user provisioning file. Use
-   `C:\Program Files\VstPlugins` for VST2 and
-   `C:\Program Files\Common Files\VST3` for VST3.
-3. Review `sandbox plan`, run `sandbox up`, then start **AudioGridder Server**
-   from the guest Start menu.
-4. Run `sandbox status`, take its **Guest IP**, and add `<Guest IP>:0` as the
-   server endpoint in the host AudioGridder client.
-5. Set global config `"audio": true` only when guest-local REAPER playback
-   should be audible. This is separate from network processing and requires a
-   fresh guest when changed.
-
-Provisioning installs REAPER 7.78 and the complete AudioGridder 1.2.0
-server/client path, configures server ID 0, and opens guest TCP 55056 plus
-55088 through 56088 only to the host gateway. REAPER points its local client at
-`127.0.0.1:0`, which lets native acceptance prove the same server connection
-without requiring host DAW automation. Production VST packages remain explicit
-project or user provisioning choices.
-
 The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
 when the profile does not request versions. Provisioning runs HyperFrames doctor,
 checks its managed browser and global skills, and proves a software H.264 encode
 with `libx264`. Browser GPU acceleration and FFmpeg hardware encoding are separate;
 the Sandbox profile does not claim a hardware encoder.
 
-To add local VoxCPM2 speech generation, create a dedicated model folder and set
-`hyperframesVoxCPM2ModelDirectory` to its absolute host path. On `sandbox up`,
-Herdr Sandbox securely downloads and verifies the latest stable
+To persist AI models, create one shared model folder and set `modelsDirectory`
+to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where
+guest tools can download models. On `sandbox up`, the host also downloads and
+verifies the latest stable
 [`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
-bundle plus its exact models, then maps that folder read-only at
-`C:\HerdrSandbox\models\voxcpm2`. The HyperFrames stack verifies and installs the
-matching CPU-only runtime inside the guest and launches it with GPU layers disabled.
-VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime package. Leave the
-setting empty to keep VoxCPM2 disabled and avoid its roughly 5 GB model download.
+bundle plus its exact models in that same root. The HyperFrames stack rechecks
+their hashes, installs the matching CPU-only runtime, and launches it with GPU
+layers disabled. VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime
+package. Leave the setting empty to omit the shared mapping and avoid its roughly
+5 GB model download.
 
 ## Commands
 
@@ -335,7 +298,7 @@ PowerShell additions belong in `user.ps1`:
 ```json
 {
   "memoryMB": 16384,
-  "hyperframesVoxCPM2ModelDirectory": "E:\\Models\\VoxCPM2",
+  "modelsDirectory": "E:\\Models",
   "workspaces": {
     "client": "E:\\Clients\\client"
   },
@@ -365,7 +328,7 @@ become the final guest folder names.
 | --- | --- |
 | `cacheDirectory` | Dedicated package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. Never point it at shared data. |
 | `worktreeDirectory` | Optional dedicated root for persistent Herdr worktrees, mapped at `C:\Worktrees`. |
-| `hyperframesVoxCPM2ModelDirectory` | Optional dedicated VoxCPM2 model root, downloaded on the host and mapped read-only for the HyperFrames stack. |
+| `modelsDirectory` | Optional shared AI-model root, mapped read/write at `C:\Models`; the host also prepares verified VoxCPM2 models there. |
 | `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
 | `audio`, `audioInput` | Separate output and microphone opt-ins. Both default to `false`. |
 | `tailscale` | Opts into a stable tagged Tailscale identity. |
@@ -400,9 +363,9 @@ and authentication failures are reported for the user to resolve.
 
 - Prefer read-only `mounts` for reference material. Writable mappings expose host
   data to every guest administrator process.
-- `hyperframesVoxCPM2ModelDirectory` must be a dedicated existing folder. Herdr
-  Sandbox owns its verified VoxCPM2 model and release files, while the guest can
-  only read them.
+- `modelsDirectory` must be a dedicated existing AI-model folder. Every guest
+  administrator can read and modify it; Herdr Sandbox verifies its own VoxCPM2
+  files again before activation.
 - `workspaceDiscovery` selects only direct child directories and supports explicit
   exclusion patterns. The nearest profiled project is included automatically.
 - Audio output and microphone input are separate opt-ins. Changing either requires
@@ -437,8 +400,7 @@ use.
 Guest processes have administrator access inside Windows Sandbox. Only select host folders deliberately, prefer read-only mounts, and treat every credential copied into the network-enabled guest as accessible to its workloads.
 
 - Writable host access is limited to selected projects, explicit writable mounts,
-  the optional worktree root, cache, and run status. The optional VoxCPM2 model
-  root is read-only in the guest.
+  the optional worktree and shared model roots, cache, and run status.
 - The host home root, general AppData, unselected repositories, and private SSH or
   GPG keys are never mapped.
 - Approved portable credentials travel only over verified SSH and never enter
@@ -495,6 +457,21 @@ playwright-cli.cmd -s=edge-main detach
 
 A fresh Sandbox has a fresh Edge profile, so extension approval must currently be
 repeated. Do not create a second browser or profile for this integration.
+
+</details>
+
+<details>
+<summary><strong>AudioGridder VST server</strong></summary>
+
+The `audio` stack runs VSTs inside Windows Sandbox while the normal host DAW uses
+the AudioGridder client. Install the 1.2.0 client plugin on the host, select the
+stack, and add desired VST installers to project or user provisioning. Use
+`C:\Program Files\VstPlugins` for VST2 and
+`C:\Program Files\Common Files\VST3` for VST3.
+
+After `sandbox up`, start **AudioGridder Server** in the guest and configure the
+host client with `<Guest IP>:0` from `sandbox status`. Set global `"audio": true`
+only when guest-local REAPER playback should be audible.
 
 </details>
 

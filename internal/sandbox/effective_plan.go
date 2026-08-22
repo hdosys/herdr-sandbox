@@ -52,7 +52,7 @@ type EffectivePlan struct {
 	UserScriptExists              bool
 	CacheDirectory                string
 	WorktreeDirectory             string
-	VoxCPM2ModelDirectory         string
+	ModelsDirectory               string
 	MemoryMB                      int
 	AudioOutput                   bool
 	AudioInput                    bool
@@ -110,7 +110,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		UserScriptExists:              userScriptExists,
 		CacheDirectory:                cacheDirectory,
 		WorktreeDirectory:             provisioning.WorktreeDirectory,
-		VoxCPM2ModelDirectory:         provisioning.VoxCPM2ModelDirectory,
+		ModelsDirectory:               provisioning.ModelsDirectory,
 		MemoryMB:                      provisioning.MemoryMB,
 		AudioOutput:                   provisioning.AudioOutput,
 		AudioInput:                    provisioning.AudioInput,

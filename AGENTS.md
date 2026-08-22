@@ -111,8 +111,9 @@ in the global OpenCode configuration, not this repository.
 ## Sandbox and security boundaries
 
 - Keep host mappings narrow. Bootstrap/provisioning input is read-only; only the
-  explicit per-run status directory, app-owned package/tool cache, project roots,
-  and explicitly configured named folder mounts may be guest-writable. Folder
+  explicit per-run status directory, app-owned package/tool cache, shared models
+  root, project roots, worktree root, and explicitly configured named folder
+  mounts may be guest-writable. The models root maps only to `C:\Models`; folder
   mounts require an exact read-only selection and remain outside workspace state.
 - Never map host home/app data, credentials, private SSH keys, or a parent broader
   than the exact project or generic folder root selected by the user.

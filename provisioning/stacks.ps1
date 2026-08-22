@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 23
+# herdr-sandbox-stacks-contract: 24
 
 function Get-StackWebResponseText {
     param(
@@ -2804,6 +2804,17 @@ function Assert-StackHyperFramesVoxCPM2Models {
             [long]$info.Length -ne [long]$artifact.size) {
             throw "HyperFrames VoxCPM2 model artifact identity changed: $path"
         }
+        $stream = [IO.File]::OpenRead($path)
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+            $stream.Dispose()
+        }
+        if ($hash -cne [string]$artifact.sha256) {
+            throw "HyperFrames VoxCPM2 model artifact checksum changed: $path"
+        }
     }
 }
 
@@ -2813,9 +2824,9 @@ function Install-StackHyperFramesVoxCPM2 {
         [Parameter(Mandatory = $true)][string]$HyperFramesVersion
     )
 
-    $modelRoot = 'C:\HerdrSandbox\models\voxcpm2'
+    $modelRoot = 'C:\Models'
     if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
-        Write-Output 'HyperFrames VoxCPM2 disabled: set hyperframesVoxCPM2ModelDirectory in the host configuration to enable it.'
+        Write-Output 'HyperFrames VoxCPM2 disabled: set modelsDirectory in the host configuration to enable it.'
         return
     }
     $modelRootInfo = Get-Item -LiteralPath $modelRoot -Force
