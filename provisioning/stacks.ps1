@@ -2933,8 +2933,7 @@ function Assert-StackHyperFramesVoxCPM2Models {
 
 function Install-StackHyperFramesVoxCPM2 {
     param(
-        [Parameter(Mandatory = $true)][string]$Node,
-        [Parameter(Mandatory = $true)][string]$HyperFramesVersion
+        [Parameter(Mandatory = $true)][string]$Node
     )
 
     $modelRoot = 'C:\Models'
@@ -2947,9 +2946,6 @@ function Install-StackHyperFramesVoxCPM2 {
         throw 'HyperFrames VoxCPM2 model mapping is unsafe.'
     }
     $descriptor = Get-StackHyperFramesVoxCPM2Descriptor -ModelRoot $modelRoot
-    if ([string]$descriptor.hyperframesVersion -cne $HyperFramesVersion) {
-        throw "Latest HyperFrames VoxCPM2 release requires HyperFrames $($descriptor.hyperframesVersion), but the stack selected $HyperFramesVersion."
-    }
     Assert-StackHyperFramesVoxCPM2Models -ModelRoot $modelRoot -Descriptor $descriptor
 
     $releaseRoot = Join-Path $modelRoot '.herdr-sandbox\hyperframes-voxcpm2'
@@ -3486,7 +3482,7 @@ function Install-HyperFramesStack {
             }
         }
 
-        Install-StackHyperFramesVoxCPM2 -Node $node -HyperFramesVersion $Version
+        Install-StackHyperFramesVoxCPM2 -Node $node
         Assert-StackHyperFramesSoftwareEncode -FFmpeg ([string]$ffmpeg.Source) `
             -FFprobe ([string]$ffprobe.Source)
         Write-Output "HyperFrames CLI ready: $cliVersion"

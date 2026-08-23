@@ -98,6 +98,11 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 		return err
 	}
 	installed = true
+	seededConfiguration, err := captureCurrentSandboxSeededConfiguration(preserved)
+	if err != nil {
+		return err
+	}
+	preserved = seededConfiguration
 	state, err = inspectInstalledCandidate(ctx)
 	if err != nil {
 		return err
@@ -257,6 +262,30 @@ func captureCurrentSandboxUserConfiguration() ([]preservedFile, error) {
 			return nil, fmt.Errorf("capture current-Sandbox user configuration %s: %w", path, err)
 		}
 		result = append(result, preservedFile{Path: path, Exists: true, SHA256: hash})
+	}
+	return result, nil
+}
+
+func captureCurrentSandboxSeededConfiguration(files []preservedFile) ([]preservedFile, error) {
+	result := make([]preservedFile, len(files))
+	copy(result, files)
+	for index, file := range result {
+		if file.Exists {
+			continue
+		}
+		info, err := os.Lstat(file.Path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect seeded current-Sandbox user configuration %s: %w", file.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("seeded current-Sandbox user configuration is not a regular file: %s", file.Path)
+		}
+		hash, err := fileSHA256(file.Path)
+		if err != nil {
+			return nil, fmt.Errorf("capture seeded current-Sandbox user configuration %s: %w", file.Path, err)
+		}
+		result[index].Exists = true
+		result[index].SHA256 = hash
 	}
 	return result, nil
 }

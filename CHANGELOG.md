@@ -29,6 +29,10 @@ artifacts remain available on the
 
 ### Fixed
 
+- HyperFrames provisioning no longer rejects the verified VoxCPM2 provider only
+  because its build metadata names another HyperFrames version. The current
+  HyperFrames release is provisioned and real runtime behavior now determines
+  compatibility.
 - Guest OpenCode now keeps automatic clipboard copy when text is selected in
   Herdr, matching the established mouse-selection workflow.
 - Microsoft OpenJDK 25 provisioning now accepts Microsoft's runtime patch suffix
