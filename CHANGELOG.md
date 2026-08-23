@@ -29,6 +29,8 @@ artifacts remain available on the
 
 ### Fixed
 
+- Guest OpenCode now keeps automatic clipboard copy when text is selected in
+  Herdr, matching the established mouse-selection workflow.
 - Microsoft OpenJDK 25 provisioning now accepts Microsoft's runtime patch suffix
   while still requiring the exact WinGet package, Microsoft runtime identity, and
   matching `java` and `javac` versions, so reprovisioning no longer rejects

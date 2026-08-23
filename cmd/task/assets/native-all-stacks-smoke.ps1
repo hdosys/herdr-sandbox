@@ -57,6 +57,12 @@ if (-not $readOnlyWriteBlocked) { throw 'Read-only folder mount accepted a guest
 [IO.File]::WriteAllText((Join-Path $writableMount 'guest-write.txt'), ('guest-write-ok' + [Environment]::NewLine), $utf8)
 [Console]::Out.WriteLine('[all-stacks] folder mounts: read-only and read/write OK')
 
+if ([Environment]::GetEnvironmentVariable('OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT', 'Process') -cne 'false' -or
+    [Environment]::GetEnvironmentVariable('OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT', 'Machine') -cne 'false') {
+    throw 'OpenCode copy-on-select environment is not enabled for guest processes.'
+}
+[Console]::Out.WriteLine('[all-stacks] OpenCode automatic selection copy: enabled')
+
 $dotnet = (Get-Command 'dotnet.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $go = (Get-Command 'go.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $node = (Get-Command 'node.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -502,5 +508,5 @@ try {
 } finally { $env:STARSHIP_CONFIG = $previousStarshipConfig }
 
 Remove-Item -LiteralPath $root -Recurse -Force
-[Console]::Out.WriteLine('[all-stacks] PASS: opensrc, Android, Audio, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
+[Console]::Out.WriteLine('[all-stacks] PASS: OpenCode automatic selection copy, opensrc, Android, Audio, C/C++, Java, Nushell, dotnet, go, node, Handy and Herdr virtual stacks')
 [Console]::Out.WriteLine('[all-stacks] PASS: Windows Terminal light chrome and color scheme, PowerShell 7, GeistMono Nerd Font, Catppuccin Latte Starship')

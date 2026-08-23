@@ -3253,6 +3253,14 @@ Write-ProvisioningTiming -Role 'early registry customization' -Seconds $provisio
 return
 }
 
+$openCodeCopyOnSelectEnvironment = 'OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT'
+[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Machine')
+[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Process')
+if ([Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Machine') -cne 'false' -or
+    [Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Process') -cne 'false') {
+    throw 'OpenCode copy-on-select environment verification failed.'
+}
+
 Write-Output 'Installing PowerShell 7...'
 Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell' `
     -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') `
