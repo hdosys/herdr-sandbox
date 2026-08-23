@@ -129,12 +129,14 @@ cross-project workflow in the global OpenCode configuration repository.
   installed-candidate gate and tag, or expose one release-precheck task that invokes
   the same owner exactly once. Expected benefit: catch GitHub checked-build blockers
   locally before spending a release ID, an installed gate, and a remote run.
-- **Status: proposed. Make first-install configuration an explicit installed-candidate contract.**
+- **Status: done. Make first-install configuration an explicit installed-candidate contract.**
   Evidence: `package-current-sandbox` against an isolated initially empty `APPDATA`
   completed install, version, native reprovisioning, and quiet uninstall in 271.491
   seconds, then failed because setup correctly seeded `config.json` while the
-  preservation checker expected continued absence. Verify exact canonical
-  create-if-missing files when they were absent, while requiring every pre-existing
-  `config.json` and `user.ps1` byte to remain unchanged. Expected benefit: the exact
-  installed-candidate gate can use isolated current-schema state and distinguish
-  legitimate first-install seeding from configuration loss.
+  preservation checker expected continued absence. The checker now captures exact
+  canonical create-if-missing files as the post-setup preservation baseline while
+  retaining every pre-existing `config.json` and `user.ps1` hash. Focused tests
+  passed, and the immutable `40426e5` candidate completed provisioning, native audio
+  acceptance, configuration preservation, and quiet uninstall in 666.471 seconds.
+  Expected benefit: the exact installed-candidate gate distinguishes legitimate
+  first-install seeding from configuration loss.
