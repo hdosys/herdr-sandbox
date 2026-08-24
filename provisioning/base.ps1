@@ -905,38 +905,6 @@ function Get-ProvisioningGitHubLatestAssetMetadata {
     }
 }
 
-function Get-ProvisioningWinGetPackageIdentity {
-    param(
-        [Parameter(Mandatory = $true)][string]$Role,
-        [Parameter(Mandatory = $true)][string]$Id,
-        [string]$Version = '',
-        [string]$VersionTool = ''
-    )
-
-    $arguments = @(
-        'show', '--id', $Id, '--exact', '--source', 'winget',
-        '--accept-source-agreements', '--disable-interactivity'
-    )
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $arguments += @('--version', $Version)
-    }
-    $lines = @(Invoke-ProvisioningNative -Role "$Role identity resolution" -FilePath 'winget.exe' `
-        -ArgumentList $arguments | ForEach-Object { [string]$_ })
-    $resolvedID = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageIdentifier' `
-        -Pattern '^Found .+ \[([A-Za-z0-9._-]+)\](?: Version .+)?$'
-    $resolvedVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
-        -Pattern '^Version:\s*(\S(?:.*\S)?)\s*$'
-    if ($resolvedID -cne $Id) {
-        throw "$Role identity resolved package $resolvedID instead of $Id."
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Version) -and $resolvedVersion -cne $Version) {
-        throw "$Role identity resolved version $resolvedVersion instead of $Version."
-    }
-    $tool = if ([string]::IsNullOrWhiteSpace($VersionTool)) { $Id } else { $VersionTool }
-    $null = Get-ProvisioningToolVersion -Tool $tool -Requested $resolvedVersion
-    return [pscustomobject]@{ Id = $resolvedID; Version = $resolvedVersion }
-}
-
 function Get-ProvisioningWinGetMetadata {
     param(
         [Parameter(Mandatory = $true)]
@@ -1009,13 +977,15 @@ function Get-ProvisioningWinGetMetadata {
     }
 }
 
-function Get-ProvisioningMergedManifestValue {
+function Assert-ProvisioningMergedManifestField {
     param(
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string[]]$Lines,
         [Parameter(Mandatory = $true)]
         [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$Expected,
         [switch]$TopLevel
     )
 
@@ -1038,26 +1008,7 @@ function Get-ProvisioningMergedManifestValue {
             $values += $value
         }
     }
-    if ($values.Count -ne 1 -or [string]::IsNullOrWhiteSpace($values[0])) {
-        throw "Downloaded WinGet manifest field $Name resolved to $($values.Count) values; expected one."
-    }
-    return [string]$values[0]
-}
-
-function Assert-ProvisioningMergedManifestField {
-    param(
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyString()]
-        [string[]]$Lines,
-        [Parameter(Mandatory = $true)]
-        [string]$Name,
-        [Parameter(Mandatory = $true)]
-        [string]$Expected,
-        [switch]$TopLevel
-    )
-
-    $actual = Get-ProvisioningMergedManifestValue -Lines $Lines -Name $Name -TopLevel:$TopLevel
-    if ($actual -ine $Expected) {
+    if ($values.Count -ne 1 -or $values[0] -ine $Expected) {
         throw "Downloaded WinGet manifest field $Name did not equal $Expected."
     }
 }
@@ -1095,84 +1046,6 @@ function Assert-ProvisioningDownloadedManifest {
     if (-not [string]::IsNullOrWhiteSpace($Metadata.Scope)) {
         Assert-ProvisioningMergedManifestField -Lines $lines -Name 'Scope' -Expected $Metadata.Scope
     }
-}
-
-function Get-ProvisioningTargetedWinGetPackage {
-    param(
-        [Parameter(Mandatory = $true)][string]$Role,
-        [Parameter(Mandatory = $true)][string]$Id,
-        [Parameter(Mandatory = $true)][string]$Version,
-        [ValidateSet('x64', 'x86')][string]$Architecture = 'x64',
-        [Parameter(Mandatory = $true)][string]$InstallerType,
-        [Parameter(Mandatory = $true)][string]$PayloadExtension,
-        [ValidateSet('Windows.Desktop')][string]$Platform = 'Windows.Desktop',
-        [Parameter(Mandatory = $true)][ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$OSVersion,
-        [Parameter(Mandatory = $true)][string]$DownloadDirectory
-    )
-
-    if (-not [IO.Path]::IsPathRooted($DownloadDirectory) -or
-        -not (Test-Path -LiteralPath $DownloadDirectory -PathType Container) -or
-        @(Get-ChildItem -LiteralPath $DownloadDirectory -Force).Count -ne 0) {
-        throw "$Role target download directory must be one empty absolute directory."
-    }
-    $arguments = @(
-        'download', '--id', $Id, '--exact', '--source', 'winget', '--version', $Version,
-        '--architecture', $Architecture, '--installer-type', $InstallerType,
-        '--platform', $Platform, '--os-version', $OSVersion, '--skip-dependencies',
-        '--skip-license', '--download-directory', $DownloadDirectory,
-        '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
-    )
-    Invoke-ProvisioningNative -Role "$Role targeted package download" -FilePath 'winget.exe' `
-        -ArgumentList $arguments | Out-Null
-
-    $directories = @(Get-ChildItem -LiteralPath $DownloadDirectory -Directory -Force)
-    $files = @(Get-ChildItem -LiteralPath $DownloadDirectory -File -Force)
-    $manifests = @($files | Where-Object { $_.Extension -ieq '.yaml' })
-    $payloads = @($files | Where-Object { $_.Extension -ine '.yaml' })
-    if ($directories.Count -ne 0 -or $manifests.Count -ne 1 -or $payloads.Count -ne 1) {
-        throw "$Role targeted download produced $($directories.Count) directories, $($manifests.Count) manifests, and $($payloads.Count) payloads; expected zero, one, and one."
-    }
-
-    $lines = [IO.File]::ReadAllLines($manifests[0].FullName)
-    $resolvedID = Get-ProvisioningMergedManifestValue -Lines $lines -Name 'PackageIdentifier' -TopLevel
-    $resolvedVersion = Get-ProvisioningMergedManifestValue -Lines $lines -Name 'PackageVersion' -TopLevel
-    $resolvedArchitecture = Get-ProvisioningMergedManifestValue -Lines $lines -Name 'Architecture'
-    $resolvedInstallerType = Get-ProvisioningMergedManifestValue -Lines $lines -Name 'InstallerType'
-    $installerURL = Get-ProvisioningMergedManifestValue -Lines $lines -Name 'InstallerUrl'
-    $installerSHA256 = (Get-ProvisioningMergedManifestValue -Lines $lines -Name 'InstallerSha256').ToUpperInvariant()
-    if ($resolvedID -cne $Id -or $resolvedVersion -cne $Version -or
-        $resolvedArchitecture -cne $Architecture -or $resolvedInstallerType -cne $InstallerType -or
-        $installerSHA256 -notmatch '^[A-F0-9]{64}$') {
-        throw "$Role targeted download manifest identity is unexpected."
-    }
-    $uri = [Uri]$installerURL
-    if ($uri.Scheme -cne 'https' -or [string]::IsNullOrWhiteSpace($uri.Host) -or
-        [IO.Path]::GetExtension($uri.AbsolutePath) -ine $PayloadExtension) {
-        throw "$Role targeted download URL is unexpected: $installerURL"
-    }
-    $metadata = [pscustomobject]@{
-        Id = $resolvedID
-        Version = $resolvedVersion
-        Architecture = $resolvedArchitecture
-        InstallerType = $resolvedInstallerType
-        Scope = ''
-        Url = $installerURL
-        Sha256 = $installerSHA256
-        PayloadName = 'payload' + $PayloadExtension.ToLowerInvariant()
-    }
-    Assert-ProvisioningDownloadedManifest -Path $manifests[0].FullName -Metadata $metadata
-    $payloadStream = [IO.File]::Open($payloads[0].FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    $sha256 = [Security.Cryptography.SHA256]::Create()
-    try {
-        $actualHash = [BitConverter]::ToString($sha256.ComputeHash($payloadStream)).Replace('-', '')
-    } finally {
-        $sha256.Dispose()
-        $payloadStream.Dispose()
-    }
-    if ($actualHash -cne $metadata.Sha256) {
-        throw "$Role targeted download package hash mismatch: $actualHash"
-    }
-    return [pscustomobject]@{ Metadata = $metadata; PayloadPath = $payloads[0].FullName }
 }
 
 function Get-ProvisioningSafeCacheName {
@@ -1242,63 +1115,6 @@ function Test-ProvisioningPackageCacheEntry {
     } catch {
         return $false
     }
-}
-
-function Get-ProvisioningCachedPackageMetadata {
-    param(
-        [Parameter(Mandatory = $true)][string]$Id,
-        [Parameter(Mandatory = $true)][string]$Version,
-        [Parameter(Mandatory = $true)][string]$Architecture,
-        [Parameter(Mandatory = $true)][string]$InstallerType,
-        [Parameter(Mandatory = $true)][string]$PayloadExtension,
-        [Parameter(Mandatory = $true)][string]$AllowedHost
-    )
-
-    $packageRoot = Join-Path 'C:\HerdrSandbox\cache\packages' (Get-ProvisioningSafeCacheName -Value $Id)
-    if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) {
-        return $null
-    }
-    Assert-ProvisioningCachePath -Path $packageRoot
-    $matches = @()
-    foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force | Sort-Object Name)) {
-        Assert-ProvisioningCachePath -Path $directory.FullName
-        try {
-            $descriptorPath = Join-Path $directory.FullName 'complete.json'
-            if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { continue }
-            $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-            $properties = @($descriptor.PSObject.Properties.Name | Sort-Object)
-            $expectedProperties = @('architecture', 'id', 'installerType', 'payloadName', 'schemaVersion', 'scope', 'sha256', 'url', 'version')
-            if (($properties -join '|') -cne ($expectedProperties -join '|')) { continue }
-            $metadata = [pscustomobject]@{
-                Id = [string]$descriptor.id
-                Version = [string]$descriptor.version
-                Architecture = [string]$descriptor.architecture
-                InstallerType = [string]$descriptor.installerType
-                Scope = [string]$descriptor.scope
-                Url = [string]$descriptor.url
-                Sha256 = [string]$descriptor.sha256
-                PayloadName = [string]$descriptor.payloadName
-            }
-            $uri = [Uri]$metadata.Url
-            if ([int]$descriptor.schemaVersion -ne 1 -or $metadata.Id -cne $Id -or
-                $metadata.Version -cne $Version -or $metadata.Architecture -cne $Architecture -or
-                $metadata.InstallerType -cne $InstallerType -or -not [string]::IsNullOrEmpty($metadata.Scope) -or
-                $metadata.PayloadName -cne ('payload' + $PayloadExtension.ToLowerInvariant()) -or
-                $metadata.Sha256 -notmatch '^[A-F0-9]{64}$' -or $uri.Scheme -cne 'https' -or
-                $uri.Host -cne $AllowedHost -or [IO.Path]::GetExtension($uri.AbsolutePath) -ine $PayloadExtension -or
-                -not (Test-ProvisioningPackageCacheEntry -Directory $directory.FullName -Metadata $metadata)) {
-                continue
-            }
-            $matches += $metadata
-        } catch {
-            continue
-        }
-    }
-    if ($matches.Count -gt 1) {
-        throw "Package cache contains multiple valid entries for $Id $Version."
-    }
-    if ($matches.Count -eq 1) { return $matches[0] }
-    return $null
 }
 
 function Copy-ProvisioningPackageToGuest {
@@ -2818,11 +2634,10 @@ function Ensure-ProvisioningTaskbarPins {
         $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\File Pilot.lnk" />') | Out-Null
         $pinNames.Add('File Pilot') | Out-Null
     }
-    if ($global:HerdrSandboxToolVersionPlan.Versions.ContainsKey('TradingView.TradingViewDesktop')) {
-        $tradingViewShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\TradingView.lnk'
-        if (-not (Test-Path -LiteralPath $tradingViewShortcut -PathType Leaf) -or
-            ((Get-Item -LiteralPath $tradingViewShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "TradingView taskbar shortcut is missing or unsafe: $tradingViewShortcut"
+    $tradingViewShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\TradingView.lnk'
+    if (Test-Path -LiteralPath $tradingViewShortcut -PathType Leaf) {
+        if (((Get-Item -LiteralPath $tradingViewShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TradingView taskbar shortcut is unsafe: $tradingViewShortcut"
         }
         $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\TradingView.lnk" />') | Out-Null
         $pinNames.Add('TradingView') | Out-Null

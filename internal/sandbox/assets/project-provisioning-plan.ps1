@@ -253,13 +253,11 @@ function Get-CommandToolRequirements {
             )
         }
         'Install-TradingViewStack' {
-            $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion', 'DesktopVersion') 'NodeVersion' $Role
-            $control = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion', 'DesktopVersion') 'TVControlVersion' $Role
-            $desktop = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion', 'DesktopVersion') 'DesktopVersion' $Role
+            $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion') 'NodeVersion' $Role
+            $control = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion') 'TVControlVersion' $Role
             return @(
                 (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'tradingview'),
-                (New-ToolRequirement '@ferroxlabs/tvcontrol' $control '' 'tradingview'),
-                (New-ToolRequirement 'TradingView.TradingViewDesktop' $desktop '' 'tradingview')
+                (New-ToolRequirement '@ferroxlabs/tvcontrol' $control '' 'tradingview')
             )
         }
         'Install-Uv' {

@@ -3839,32 +3839,92 @@ function Install-HyperFramesStack {
     }
 }
 
-function Get-TradingViewDesktopPortablePackage {
+function Get-TradingViewDesktopPackageMetadata {
     param(
-        [ValidatePattern('^$|^\d+\.\d+\.\d+\.\d+$')]
-        [string]$Version = ''
+        [Parameter(Mandatory = $true)]
+        [string]$PayloadPath
     )
 
     $packageID = 'TradingView.TradingViewDesktop'
-    $identity = Get-ProvisioningWinGetPackageIdentity -Role 'TradingView Desktop' -Id $packageID `
-        -Version $Version
-    $metadata = Get-ProvisioningCachedPackageMetadata -Id $packageID -Version $identity.Version `
-        -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix' `
-        -AllowedHost 'tvd-packages.tradingview.com'
-    if ($null -ne $metadata) {
-        return [pscustomobject]@{ Metadata = $metadata; PayloadPath = ''; CleanupPath = '' }
+    $packageURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
+    $expectedPublisher = 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US'
+    if (-not [IO.Path]::IsPathRooted($PayloadPath) -or
+        -not (Test-Path -LiteralPath $PayloadPath -PathType Leaf) -or
+        ((Get-Item -LiteralPath $PayloadPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "TradingView Desktop MSIX is missing or unsafe: $PayloadPath"
+    }
+    $signature = Get-AuthenticodeSignature -LiteralPath $PayloadPath
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        [string]$signature.SignerCertificate.Subject -cne $expectedPublisher) {
+        throw "TradingView Desktop MSIX signer is invalid: $($signature.Status) $($signature.SignerCertificate.Subject)"
     }
 
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    $packageStream = [IO.File]::Open($PayloadPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $archive = $null
+    $manifestReader = $null
+    try {
+        $archive = [IO.Compression.ZipArchive]::new(
+            $packageStream, [IO.Compression.ZipArchiveMode]::Read, $false)
+        $manifestEntries = @($archive.Entries | Where-Object { $_.FullName -ceq 'AppxManifest.xml' })
+        if ($manifestEntries.Count -ne 1 -or $manifestEntries[0].Length -le 0 -or
+            $manifestEntries[0].Length -gt 1048576) {
+            throw "TradingView Desktop MSIX contains $($manifestEntries.Count) bounded AppxManifest.xml entries; expected one."
+        }
+        $manifestReader = [IO.StreamReader]::new($manifestEntries[0].Open(), [Text.Encoding]::UTF8, $true)
+        [xml]$manifest = $manifestReader.ReadToEnd()
+    } finally {
+        if ($null -ne $manifestReader) { $manifestReader.Dispose() }
+        if ($null -ne $archive) { $archive.Dispose() }
+        $packageStream.Dispose()
+    }
+    $identity = $manifest.Package.Identity
+    if ([string]$identity.Name -cne 'TradingView.Desktop' -or
+        [string]$identity.ProcessorArchitecture -cne 'x64' -or
+        [string]$identity.Publisher -cne $expectedPublisher -or
+        [string]$identity.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw 'TradingView Desktop MSIX package identity is invalid.'
+    }
+
+    $payloadStream = [IO.File]::Open($PayloadPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $payloadHash = [BitConverter]::ToString($sha256.ComputeHash($payloadStream)).Replace('-', '')
+    } finally {
+        $sha256.Dispose()
+        $payloadStream.Dispose()
+    }
+    return [pscustomobject]@{
+        Id = $packageID
+        Version = [string]$identity.Version
+        Architecture = 'x64'
+        InstallerType = 'msix'
+        Scope = ''
+        Url = $packageURL
+        Sha256 = $payloadHash
+        PayloadName = 'payload.msix'
+    }
+}
+
+function Get-TradingViewDesktopPortablePackage {
+    $packageURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
     $downloadDirectory = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
+    $payloadPath = Join-Path $downloadDirectory 'TradingView.msix'
     try {
-        $resolved = Get-ProvisioningTargetedWinGetPackage -Role 'TradingView Desktop' -Id $packageID `
-            -Version $identity.Version -Architecture 'x64' -InstallerType 'msix' `
-            -PayloadExtension '.msix' -Platform 'Windows.Desktop' -OSVersion '10.0.19042.0' `
-            -DownloadDirectory $downloadDirectory
+        $downloadStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            Write-ProvisioningProgress -Message 'TradingView Desktop package download'
+            Invoke-WebRequest -Uri $packageURL -OutFile $payloadPath -UseBasicParsing
+        } finally {
+            $downloadStopwatch.Stop()
+            Write-ProvisioningTiming -Role 'TradingView Desktop package download' `
+                -Seconds $downloadStopwatch.Elapsed.TotalSeconds
+        }
+        $metadata = Get-TradingViewDesktopPackageMetadata -PayloadPath $payloadPath
         return [pscustomobject]@{
-            Metadata = $resolved.Metadata
-            PayloadPath = $resolved.PayloadPath
+            Metadata = $metadata
+            PayloadPath = $payloadPath
             CleanupPath = $downloadDirectory
         }
     } catch {
@@ -3882,21 +3942,17 @@ function Install-TradingViewStack {
         [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
         [string]$NodeVersion = '',
         [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-        [string]$TVControlVersion = '',
-        [ValidatePattern('^$|^\d+\.\d+\.\d+\.\d+$')]
-        [string]$DesktopVersion = ''
+        [string]$TVControlVersion = ''
     )
 
     $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $NodeVersion
     $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
-    $DesktopVersion = Get-ProvisioningToolVersion -Tool 'TradingView.TradingViewDesktop' -Requested $DesktopVersion
     $desktopPackageID = 'TradingView.TradingViewDesktop'
-    $desktopPackage = Get-TradingViewDesktopPortablePackage -Version $DesktopVersion
+    $desktopPackage = Get-TradingViewDesktopPortablePackage
     $desktopMetadata = $desktopPackage.Metadata
-    $desktopURI = [Uri][string]$desktopMetadata.Url
     if ([string]$desktopMetadata.Id -cne $desktopPackageID -or
         [string]$desktopMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-        $desktopURI.Scheme -cne 'https' -or $desktopURI.Host -cne 'tvd-packages.tradingview.com') {
+        [string]$desktopMetadata.Url -cne 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix') {
         throw "TradingView Desktop metadata is unexpected: $($desktopMetadata.Id) $($desktopMetadata.Version)"
     }
     $desktopInstallFailure = $null

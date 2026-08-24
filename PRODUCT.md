@@ -83,12 +83,13 @@ Until a deliberate semantic-versioning decision replaces it, manually initiated 
 - The directly callable built-in `Install-PlaywrightCLIStack` is separate from `Install-NodeStack`: both reuse the same Node.js LTS runtime owner, but only Node installs Playwright-managed Chromium. The CLI stack resolves npm's current stable `@playwright/cli` release unless a profile supplies an exact version, disables update query/state through the supported `NO_UPDATE_NOTIFIER` environment, exposes `playwright-cli.cmd`, downloads no browser, registers Microsoft's official Playwright Extension for Edge from the Chrome Web Store, and never launches or creates a browser/profile. Because the official extension generates its token inside each fresh Edge profile, the user currently enables/installs it and places its displayed `PLAYWRIGHT_MCP_EXTENSION_TOKEN` value in the disposable guest environment once per fresh Sandbox. Agent automation then uses only `playwright-cli.cmd -s=edge-main attach --extension=msedge` and `detach`; it never uses `open`, `install-browser`, a persistent/alternate profile, or a custom extension.
 - The same built-in stack owner exposes `Install-HandyStack` for the current Handy checkout. Its nonexecuting plan identity expands to Bun, Rust/MSVC, and the current stable CMake, Vulkan SDK, and WebView2 package group; Rust/MSVC triggers the existing host Visual Studio layout owner. Provisioning verifies CMake and Vulkan with a compiled C++ probe and keeps the corrected SPIRV-Headers package under guest-local tools. The separate experimental global `KhronosGroup.VulkanRT` addition is not used by this project stack.
 - The directly callable built-in `Install-TradingViewStack` reuses Node.js LTS,
-  resolves current stable TVControl and TradingView Desktop versions once,
+  resolves current stable TVControl once and downloads TradingView Desktop from
+  its official `stable/latest` endpoint,
   installs them in the stable guest-local `C:\HerdrSandbox\tools\tvcontrol` and
   `C:\HerdrSandbox\tools\TradingView.TradingViewDesktop` roots, and exposes
-  `tv.cmd`, `tvcontrol.cmd`, and `TradingView.exe`. Desktop uses the official
-  `TradingView.TradingViewDesktop` WinGet manifest and unchanged signed MSIX
-  payload but does not register AppX, whose manifest requires build 19042.
+  `tv.cmd`, `tvcontrol.cmd`, and `TradingView.exe`. Desktop verifies the unchanged
+  signed MSIX and derives its version from the embedded Appx identity, but does
+  not register AppX, whose manifest requires build 19042.
   Native build-19041 acceptance proved visible Desktop launch, CDP, exact
   TVControl launch selection, healthy API/datafeed state, and compatibility.
   Selecting this stack also transfers an available account session from the

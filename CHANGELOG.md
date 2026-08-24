@@ -43,9 +43,9 @@ artifacts remain available on the
 - GeistMono provisioning now extracts and validates only the Regular and Bold font
   files used by Terminal instead of treating unrelated release inventory and
   unused weights as a deployment contract.
-- TradingView Desktop provisioning now selects the current x64 MSIX for its
-  declared minimum OS when WinGet hides that installer from build 19041, while
-  preserving exact manifest, URL, digest, signature, and package-identity checks.
+- TradingView Desktop provisioning now downloads the official signed
+  `stable/latest` MSIX directly, derives version and architecture from its Appx
+  identity, and no longer depends on WinGet's build-filtered metadata.
 - Provisioning no longer blocks a usable Sandbox because an installed tool renders
   an unfamiliar or different version string. Package and executable version
   read-backs now warn after successful installation or command execution, while

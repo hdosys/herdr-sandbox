@@ -67,7 +67,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		plan.StackPackages[7].PackageOwner != "current stable Microsoft.OpenJDK family" ||
 		plan.StackPackages[8].PackageOwner != packageNSIS ||
 		plan.StackPackages[9].PackageOwner != packageNushell ||
-		plan.StackPackages[12].PackageOwner != "OpenJS.NodeJS.LTS + TradingView.TradingViewDesktop + @ferroxlabs/tvcontrol@latest" ||
+		plan.StackPackages[12].PackageOwner != "OpenJS.NodeJS.LTS + TradingView stable/latest signed MSIX + @ferroxlabs/tvcontrol@latest" ||
 		plan.StackPackages[13].PackageOwner != packageUV || len(plan.ToolVersions) == 0 || !plan.RequiresVisualStudio ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
