@@ -40,9 +40,9 @@ artifacts remain available on the
 - Visual Studio Build Tools layout preparation now accepts current Visual Studio
   18 channel metadata, including build-qualified channel IDs and numeric
   product-line versions.
-- GeistMono provisioning now extracts and validates only the nine font files used
-  by Terminal instead of treating unrelated release inventory as a deployment
-  contract.
+- GeistMono provisioning now extracts and validates only the Regular and Bold font
+  files used by Terminal instead of treating unrelated release inventory and
+  unused weights as a deployment contract.
 - Provisioning no longer blocks a usable Sandbox because an installed tool renders
   an unfamiliar or different version string. Package and executable version
   read-backs now warn after successful installation or command execution, while

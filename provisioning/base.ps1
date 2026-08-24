@@ -1449,15 +1449,8 @@ function Test-ProvisioningRustupInstalled {
 
 function Get-ProvisioningGeistMonoExpectedFontNames {
     return @(
-        'GeistMonoNerdFont-Black.otf',
         'GeistMonoNerdFont-Bold.otf',
-        'GeistMonoNerdFont-Light.otf',
-        'GeistMonoNerdFont-Medium.otf',
-        'GeistMonoNerdFont-Regular.otf',
-        'GeistMonoNerdFont-SemiBold.otf',
-        'GeistMonoNerdFont-Thin.otf',
-        'GeistMonoNerdFont-UltraBlack.otf',
-        'GeistMonoNerdFont-UltraLight.otf'
+        'GeistMonoNerdFont-Regular.otf'
     )
 }
 
