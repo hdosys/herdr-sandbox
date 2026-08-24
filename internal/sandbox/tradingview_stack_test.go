@@ -45,3 +45,44 @@ if ([string]$explicit.Version -cne '4.0.0.8000' -or $script:metadataCalls.Count 
 		t.Fatalf("TradingView metadata delegation regression: %v: %s", err, output)
 	}
 }
+
+func TestWinGetMetadataJoinsWrappedTradingViewInstallerFieldsInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 metadata regression")
+	}
+	functionSetup := provisioningPowerShellFunctionSetup(t,
+		provisioningPowerShellFunctionSource{
+			path: defaultProvisioningPath(t, baseProvisioningName),
+			names: []string{
+				"Get-ProvisioningMetadataValue",
+				"Get-ProvisioningToolVersion",
+				"Get-ProvisioningWinGetMetadata",
+			},
+		},
+	)
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+%s
+function Invoke-ProvisioningNative {
+    return @(
+        'Found TradingView [TradingView.TradingViewDesktop]',
+        'Version: 3.3.0.7992',
+        'Installer:',
+        '  Installer Type: msix',
+        '  Installer Url:',
+        '    https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix',
+        '  Installer SHA256: 96B5EBC196A3824EF22667BA9AE1A6AB',
+        '    92E83B70615D0AFE96031AB11C6CE6DF'
+    )
+}
+$metadata = Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' -Id 'TradingView.TradingViewDesktop' -Version '3.3.0.7992' -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'
+if ([string]$metadata.Url -cne 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix' -or
+    [string]$metadata.Sha256 -cne '96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF' -or
+    [string]$metadata.PayloadName -cne 'payload.msix') {
+    throw "Wrapped TradingView metadata was not normalized: $($metadata | ConvertTo-Json -Compress)"
+}
+`, functionSetup)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("wrapped TradingView metadata regression: %v: %s", err, output)
+	}
+}

@@ -810,8 +810,29 @@ function Get-ProvisioningMetadataValue {
         [string]$Name
     )
 
+    $physicalLines = @($Lines | ForEach-Object { @(([string]$_) -split "`r") })
+    $wrappedLabel = switch ($Name) {
+        'InstallerUrl' { 'Installer Url' }
+        'InstallerSha256' { 'Installer SHA256' }
+        default { '' }
+    }
     $values = @()
-    foreach ($line in $Lines) {
+    for ($index = 0; $index -lt $physicalLines.Count; $index++) {
+        $line = [string]$physicalLines[$index]
+        if (-not [string]::IsNullOrEmpty($wrappedLabel) -and
+            $line -match ('^\s*' + [regex]::Escape($wrappedLabel) + ':\s*(.*)$')) {
+            $value = [string]$Matches[1]
+            while ($index + 1 -lt $physicalLines.Count) {
+                $nextLine = [string]$physicalLines[$index + 1]
+                if ($nextLine -notmatch '^\s+\S' -or
+                    $nextLine.Trim() -match '^[A-Za-z][A-Za-z0-9 ]*:(?:\s|$)') {
+                    break
+                }
+                $value += $nextLine.Trim()
+                $index += 1
+            }
+            $line = $wrappedLabel + ': ' + $value
+        }
         if ($line -match $Pattern) {
             $values += [string]$Matches[1]
         }
