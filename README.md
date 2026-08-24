@@ -6,7 +6,7 @@
 
 Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
 
-[Demo](#see-it-in-action) · [Value](#what-you-get) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Stacks](#supported-stacks) · [Commands](#commands) · [Configuration](#configuration) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Troubleshooting](#troubleshooting)
+[Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Troubleshooting](#troubleshooting) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
 
 ## See it in action
 
@@ -31,36 +31,6 @@ Detach and reconnect to the same OpenCode session through Herdr's managed Window
 - **Fail-closed lifecycle handling:** cancellation, bounded process trees, atomic state publication, strict parsing, and ownership checks prevent uncertain cleanup or attachment.
 - **Reproducible provisioning:** versions, package identity, hashes, signatures, and realized state are checked where the external boundary supports them. Repeated runs converge without duplicating work.
 - **Real release evidence:** fast tests and static checks cover the control plane; release checks compile and validate the real installer, while a real Windows Sandbox run exercises provisioning, SSH, and attach.
-
-## How it works
-
-```mermaid
-flowchart LR
-    Host["Host terminal<br/>sandbox (Go)"]
-    HostHerdr["Host Herdr<br/>remote provision + attach"]
-    Projects[("Selected projects")]
-    Worktrees[("Optional persistent<br/>Herdr worktrees")]
-    Models[("Optional shared<br/>AI models")]
-    Config["Approved agent config"]
-
-    subgraph Guest["Disposable Windows Sandbox"]
-        Provision["PowerShell 5.1<br/>provisioning"]
-        Agents["Agents + native<br/>toolchains"]
-        Herdr["Versioned Herdr<br/>sidecar + server"]
-    end
-
-    Host -->|launch + lifecycle| Provision
-    Host -->|final config + verified SSH target| HostHerdr
-    Projects <-->|narrow writable mappings| Agents
-    Worktrees <-->|dedicated writable mapping| Agents
-    Models <-->|shared writable mapping| Agents
-    Config -->|verified SSH only| Agents
-    Provision --> Agents
-    HostHerdr -->|provision + validate| Herdr
-    HostHerdr <-->|console-backed attach| Herdr
-```
-
-The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 > [!IMPORTANT]
 > Windows Sandbox separates this work from the normal Windows installation, but selected projects remain writable and guest administrators can access explicitly transferred credentials. Networking is enabled. Keep backups and normal supply-chain controls; see [Security boundaries](#security-boundaries) before using untrusted code.
@@ -148,6 +118,19 @@ The checked build writes the same four files to `build\bin`. Use that executable
 
 </details>
 
+### Review global configuration
+
+Before the first `up`, open the user-owned global configuration:
+
+```powershell
+sandbox config
+```
+
+Review memory, agent configuration sync, optional packages, and host folder
+mappings before exposing them to the guest. The command creates `config.json`
+only when absent. See [Configuration](#configuration) for a practical example
+and the complete field reference.
+
 ### Launch your first project
 
 From the project root, choose a stack, inspect the plan, and start:
@@ -175,114 +158,10 @@ sandbox down
 Use `sandbox up --no-attach` from a headless caller, then attach later from a real
 terminal. Plain `ssh sandbox` remains available for diagnostics.
 
-## Supported stacks
-
-`sandbox init --stack` accepts the generic stack names below, the exclusive `all`
-selection, and separate checkout-specific shortcuts.
-
-| Selection | Guest tooling |
-| --- | --- |
-| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with Python 3.13 and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
-| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
-| `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
-| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
-| `dotnet` | .NET 10 LTS SDK |
-| `go` | Go |
-| `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |
-| `java` | Microsoft OpenJDK 25 LTS |
-| `node` | Node.js LTS, Playwright, and Chromium |
-| `nsis` | NSIS compiler for building Windows installers |
-| `nushell` | Latest stable Nushell command-line shell |
-| `playwright-cli` | Playwright CLI without a bundled browser |
-| `python` | Latest stable Python |
-| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
-| `rust` | Rust with MSVC Build Tools |
-| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
-| `zig` | Zig |
-
-Project profiles may also call direct Bun, Cargo Nextest, Just, and uv helpers.
-
-The `all` expansion uses the Python AI composition as its single Python and uv
-owner, avoiding redundant standalone calls.
-
-### Checkout-specific shortcuts
-
-These shortcuts package repository-specific setups and remain outside `all`:
-
-| Shortcut | Intended setup |
-| --- | --- |
-| `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
-| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
-
-Dependencies and application commands remain project-owned. `sandbox plan`
-expands each composition without executing the profile.
-
-The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
-when the profile does not request versions. Provisioning runs HyperFrames doctor,
-checks its managed browser, stages the current skills outside normal agent discovery,
-and proves a software H.264 encode with `libx264`. From the intended project
-directory, start one HyperFrames-enabled OpenCode session with:
-
-```powershell
-hyperframes-opencode
-```
-
-Ordinary `opencode` sessions do not load the HyperFrames skill metadata. Browser
-GPU acceleration and FFmpeg hardware encoding are separate; the Sandbox profile
-does not claim a hardware encoder.
-
-To persist AI models, create one shared model folder and set `modelsDirectory`
-to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where
-guest tools can download models. On `sandbox up`, the host also downloads and
-verifies the latest stable
-[`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
-bundle plus its exact models in that same root. The HyperFrames stack rechecks
-their hashes, installs the matching CPU-only runtime, and launches it with GPU
-layers disabled. VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime
-package. Leave the setting empty to omit the shared mapping and avoid its roughly
-5 GB model download.
-
-## Commands
-
-Command output is plain, deterministic, and redirect-safe. Results go to stdout
-and errors go to stderr.
-
-| Command | Behavior |
-| --- | --- |
-| `sandbox config` | Creates and opens user configuration without replacing an existing file. |
-| `sandbox version` or `sandbox --version` | Prints the release and abbreviated source revision. |
-| `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
-| `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
-| `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
-| `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
-| `sandbox status` | Reports health, progress, diagnostics, and the next action. |
-| `sandbox mobile` | Prints the mobile SSH profile and secret-free QR code. |
-| `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
-| `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
-
-Lifecycle commands remove stale data only after verifying that no owned Sandbox
-process still uses it. Changed or uncertain state is preserved and reported.
-Settings that change host mappings or the isolation boundary require
-`sandbox down` before the next `up`.
-
 ## Configuration
 
 Project profiles own per-project tools. `config.json` and `user.ps1` own global
 choices. Setup never overwrites either user-owned file.
-
-### Project profiles
-
-`sandbox init` writes direct calls into `.herdr-sandbox\provision.ps1` so
-`sandbox plan` can inspect requirements without executing project code. Advanced
-profiles may call the supported functions in
-[`provisioning\stacks.ps1`](provisioning/stacks.ps1) and add idempotent Windows
-PowerShell 5.1 for project-specific tools. Keep application dependencies and
-lockfiles in their normal project owners.
-
-The first C/C++, Rust/MSVC, or Handy run may briefly show Microsoft Visual Studio
-Installer while Herdr Sandbox prepares a verified Build Tools layout in its cache.
-Nothing is installed into the host development environment.
 
 ### Global configuration
 
@@ -332,6 +211,13 @@ PowerShell additions belong in `user.ps1`:
 Replace paths with existing folders. User-chosen keys such as `client` and `docs`
 become the final guest folder names.
 
+Review the effective configuration and resolved tool versions with `sandbox plan`
+before `up`. Package changes can apply to a compatible ready guest without
+replacing it.
+
+<details>
+<summary><strong>Complete config.json field reference</strong></summary>
+
 | Field | Meaning |
 | --- | --- |
 | `cacheDirectory` | Dedicated package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. Never point it at shared data. |
@@ -348,11 +234,23 @@ become the final guest folder names.
 | `workspaceDiscovery` | Optionally selects direct child projects below one root, with exclusion patterns. |
 | `wingetPackages` | Removes optional defaults, adds exact package IDs, and optionally pins versions. |
 
-Run `sandbox plan` before `up` to review the effective configuration and resolved
-tool versions. Package changes can apply to a compatible ready guest without
-replacing it.
+</details>
 
-### Agent configuration sync
+### Project profiles
+
+`sandbox init` writes direct calls into `.herdr-sandbox\provision.ps1` so
+`sandbox plan` can inspect requirements without executing project code. Advanced
+profiles may call the supported functions in
+[`provisioning\stacks.ps1`](provisioning/stacks.ps1) and add idempotent Windows
+PowerShell 5.1 for project-specific tools. Keep application dependencies and
+lockfiles in their normal project owners.
+
+The first C/C++, Rust/MSVC, or Handy run may briefly show Microsoft Visual Studio
+Installer while Herdr Sandbox prepares a verified Build Tools layout in its cache.
+Nothing is installed into the host development environment.
+
+<details>
+<summary><strong>Agent configuration sync</strong></summary>
 
 Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
 Copilot CLI, and Pi, with every selection enabled by default. Review these choices
@@ -367,7 +265,10 @@ When enabled, registered configuration repositories fast-forward before `up` and
 after `down`. Local edits are never rebased, stashed, or overwritten; divergence
 and authentication failures are reported for the user to resolve.
 
-### Mappings and optional settings
+</details>
+
+<details>
+<summary><strong>Mappings and optional settings</strong></summary>
 
 - Prefer read-only `mounts` for reference material. Writable mappings expose host
   data to every guest administrator process.
@@ -381,7 +282,10 @@ and authentication failures are reported for the user to resolve.
 - Add `KhronosGroup.VulkanRT` only for the experimental vGPU-backed runtime path.
   It does not install a Vulkan SDK or host driver.
 
-### Persistent Herdr worktrees
+</details>
+
+<details>
+<summary><strong>Persistent Herdr worktrees</strong></summary>
 
 Set `worktreeDirectory` to an existing dedicated host folder when Herdr-created
 linked checkouts should survive fresh Sandboxes. Use Herdr for their complete
@@ -398,6 +302,112 @@ These are guest-native linked worktrees. Keep the main workspace at the same gue
 path, use Herdr rather than host Git for lifecycle operations, and remove linked
 worktrees before removing their main workspace. `sandbox clean` and uninstall
 preserve the dedicated root.
+
+</details>
+
+## Commands
+
+Command output is plain, deterministic, and redirect-safe. Results go to stdout
+and errors go to stderr.
+
+| Command | Behavior |
+| --- | --- |
+| `sandbox config` | Creates and opens user configuration without replacing an existing file. |
+| `sandbox version` or `sandbox --version` | Prints the release and abbreviated source revision. |
+| `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
+| `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
+| `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
+| `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
+| `sandbox status` | Reports health, progress, diagnostics, and the next action. |
+| `sandbox mobile` | Prints the mobile SSH profile and secret-free QR code. |
+| `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
+| `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
+
+Lifecycle commands remove stale data only after verifying that no owned Sandbox
+process still uses it. Changed or uncertain state is preserved and reported.
+Settings that change host mappings or the isolation boundary require
+`sandbox down` before the next `up`.
+
+## Supported stacks
+
+Start with the one stack that matches the project. Repeat `--stack` only to combine
+compatible entries. The exclusive `all` selection installs every generic stack
+and is intended for exhaustive environments rather than the usual first run.
+
+<details>
+<summary><strong>Complete built-in stack catalog</strong></summary>
+
+| Selection | Guest tooling |
+| --- | --- |
+| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with Python 3.13 and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
+| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
+| `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
+| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
+| `dotnet` | .NET 10 LTS SDK |
+| `go` | Go |
+| `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |
+| `java` | Microsoft OpenJDK 25 LTS |
+| `node` | Node.js LTS, Playwright, and Chromium |
+| `nsis` | NSIS compiler for building Windows installers |
+| `nushell` | Latest stable Nushell command-line shell |
+| `playwright-cli` | Playwright CLI without a bundled browser |
+| `python` | Latest stable Python |
+| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
+| `rust` | Rust with MSVC Build Tools |
+| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
+| `zig` | Zig |
+
+Project profiles may also call direct Bun, Cargo Nextest, Just, and uv helpers.
+The `all` expansion uses the Python AI composition as its single Python and uv
+owner, avoiding redundant standalone calls.
+
+</details>
+
+<details>
+<summary><strong>Checkout-specific Handy and Herdr shortcuts</strong></summary>
+
+These repository-specific shortcuts remain outside `all`:
+
+| Shortcut | Intended setup |
+| --- | --- |
+| `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
+| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
+
+Dependencies and application commands remain project-owned. `sandbox plan`
+expands each composition without executing the profile.
+
+</details>
+
+## How it works
+
+```mermaid
+flowchart LR
+    Host["Host terminal<br/>sandbox (Go)"]
+    HostHerdr["Host Herdr<br/>remote provision + attach"]
+    Projects[("Selected projects")]
+    Worktrees[("Optional persistent<br/>Herdr worktrees")]
+    Models[("Optional shared<br/>AI models")]
+    Config["Approved agent config"]
+
+    subgraph Guest["Disposable Windows Sandbox"]
+        Provision["PowerShell 5.1<br/>provisioning"]
+        Agents["Agents + native<br/>toolchains"]
+        Herdr["Versioned Herdr<br/>sidecar + server"]
+    end
+
+    Host -->|launch + lifecycle| Provision
+    Host -->|final config + verified SSH target| HostHerdr
+    Projects <-->|narrow writable mappings| Agents
+    Worktrees <-->|dedicated writable mapping| Agents
+    Models <-->|shared writable mapping| Agents
+    Config -->|verified SSH only| Agents
+    Provision --> Agents
+    HostHerdr -->|provision + validate| Herdr
+    HostHerdr <-->|console-backed attach| Herdr
+```
+
+The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 ## Security boundaries
 
@@ -419,6 +429,35 @@ Guest processes have administrator access inside Windows Sandbox. Only select ho
   cleanup. Uncertain state is preserved.
 - The disposable guest profile reduces some Windows protections and is not a
   hardened production workstation.
+
+## Troubleshooting
+
+Start with `sandbox status`; it preserves a running guest, removes stale data only
+when it is safe, and reports the next action.
+
+| Symptom | Action |
+| --- | --- |
+| Windows Sandbox is unavailable | Enable `Containers-DisposableClientVM` from elevated Windows PowerShell, restart Windows, and confirm hardware virtualization is enabled. |
+| `up` refuses an existing Sandbox | Run `sandbox status` and follow its next action. Use `down` only when it identifies the app-owned guest. |
+| Automatic attach is unavailable in a headless process | Run `sandbox up --no-attach`, then use `sandbox attach` from a real terminal. |
+| `ssh sandbox` no longer connects | Run `sandbox status`. If the guest is gone, run `sandbox up` to create a verified target. |
+| Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
+| Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
+| Guest Herdr provisioning fails | Confirm current Herdr-Win, host `ssh.exe`, and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
+| Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
+
+<details>
+<summary><strong>Audio, mobile, and Tailscale troubleshooting</strong></summary>
+
+| Symptom | Action |
+| --- | --- |
+| Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
+| The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
+| Mobile access is not ready | Check `tailscale`, `mobileSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox mobile`. |
+| The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
+| Tailscale enrollment is refused | Confirm the opt-in, retained package, dedicated tag, and a current non-reusable, non-ephemeral, pre-authorized key. |
+
+</details>
 
 ## Optional workflows
 
@@ -529,31 +568,47 @@ that identity.
 
 </details>
 
-## Troubleshooting
+<details>
+<summary><strong>HyperFrames activation and shared models</strong></summary>
 
-Start with `sandbox status`; it preserves a running guest, removes stale data only
-when it is safe, and reports the next action.
+The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
+when the profile does not request versions. Provisioning runs HyperFrames doctor,
+checks its managed browser, stages the current skills outside normal agent discovery,
+and proves a software H.264 encode with `libx264`. From the intended project
+directory, start one HyperFrames-enabled OpenCode session with:
 
-| Symptom | Action |
-| --- | --- |
-| Windows Sandbox is unavailable | Enable `Containers-DisposableClientVM` from elevated Windows PowerShell, restart Windows, and confirm hardware virtualization is enabled. |
-| `up` refuses an existing Sandbox | Run `sandbox status` and follow its next action. Use `down` only when it identifies the app-owned guest. |
-| Automatic attach is unavailable in a headless process | Run `sandbox up --no-attach`, then use `sandbox attach` from a real terminal. |
-| Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
-| The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
-| `ssh sandbox` no longer connects | Run `sandbox status`. If the guest is gone, run `sandbox up` to create a verified target. |
-| Mobile access is not ready | Check `tailscale`, `mobileSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox mobile`. |
-| The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
-| Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
-| Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
-| Guest Herdr provisioning fails | Confirm current Herdr-Win, host `ssh.exe`, and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
-| Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
-| Tailscale enrollment is refused | Confirm the opt-in, retained package, dedicated tag, and a current non-reusable, non-ephemeral, pre-authorized key. |
+```powershell
+hyperframes-opencode
+```
+
+Ordinary `opencode` sessions do not load the HyperFrames skill metadata. Browser
+GPU acceleration and FFmpeg hardware encoding are separate; the Sandbox profile
+does not claim a hardware encoder.
+
+To persist AI models, create one shared model folder and set `modelsDirectory`
+to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where
+guest tools can download models. On `sandbox up`, the host also downloads and
+verifies the latest stable
+[`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
+bundle plus its exact models in that same root. The HyperFrames stack rechecks
+their hashes, installs the matching CPU-only runtime, and launches it with GPU
+layers disabled. VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime
+package. Leave the setting empty to omit the shared mapping and avoid its roughly
+5 GB model download.
+
+</details>
 
 ## Development
 
 The repository uses one Go task runner for formatting, tests, stable builds, real
 Windows Sandbox checks, and release packaging.
+
+Packaging uses the same task runner and writes the installer and portable ZIP to
+`build\dist`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification
+architecture.
+
+<details>
+<summary><strong>Verification and packaging command reference</strong></summary>
 
 ```powershell
 go run ./cmd/task verify
@@ -579,14 +634,7 @@ go run ./cmd/task native-all-stacks
   complete toolchain, managed SSH, REAPER-to-AudioGridder connection, and a real
   NSIS compile without installing a release candidate.
 
-Packaging uses the same task runner and writes the installer and portable ZIP to
-`build\dist`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification
-architecture.
-
-## License
-
-`herdr-sandbox` is licensed under the [Apache License, Version 2.0](LICENSE). The
-same file retains the BSD notice for the bundled `rsc.io/qr` component.
+</details>
 
 ## Documentation
 
@@ -595,3 +643,8 @@ same file retains the BSD notice for the bundled `rsc.io/qr` component.
 - Security policy and threat model: [`SECURITY.md`](SECURITY.md)
 - User-visible release history: [`CHANGELOG.md`](CHANGELOG.md)
 - Open work: [`BACKLOG.md`](BACKLOG.md)
+
+## License
+
+`herdr-sandbox` is licensed under the [Apache License, Version 2.0](LICENSE). The
+same file retains the BSD notice for the bundled `rsc.io/qr` component.
