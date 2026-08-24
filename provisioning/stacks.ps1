@@ -1492,7 +1492,7 @@ function Install-AndroidStack {
         }
         $androidCLIVersions = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
                 -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | Where-Object {
-                ([string]$_).Trim() -match '^\d+\.\d+\.\d+\.\d+$'
+                ([string]$_).Trim() -match '^1\.0\.\d+$'
             })
         if ($androidCLIVersions.Count -ne 1) { throw 'Android CLI did not report one stable version.' }
         $androidCLIVersion = ([string]$androidCLIVersions[0]).Trim()
