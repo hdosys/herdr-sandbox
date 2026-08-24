@@ -3839,14 +3839,41 @@ function Install-HyperFramesStack {
     }
 }
 
-function Get-TradingViewDesktopPortableMetadata {
+function Get-TradingViewDesktopPortablePackage {
     param(
         [ValidatePattern('^$|^\d+\.\d+\.\d+\.\d+$')]
         [string]$Version = ''
     )
 
-    return Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' -Id 'TradingView.TradingViewDesktop' `
-        -Version $Version -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'
+    $packageID = 'TradingView.TradingViewDesktop'
+    $identity = Get-ProvisioningWinGetPackageIdentity -Role 'TradingView Desktop' -Id $packageID `
+        -Version $Version
+    $metadata = Get-ProvisioningCachedPackageMetadata -Id $packageID -Version $identity.Version `
+        -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix' `
+        -AllowedHost 'tvd-packages.tradingview.com'
+    if ($null -ne $metadata) {
+        return [pscustomobject]@{ Metadata = $metadata; PayloadPath = ''; CleanupPath = '' }
+    }
+
+    $downloadDirectory = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
+    try {
+        $resolved = Get-ProvisioningTargetedWinGetPackage -Role 'TradingView Desktop' -Id $packageID `
+            -Version $identity.Version -Architecture 'x64' -InstallerType 'msix' `
+            -PayloadExtension '.msix' -Platform 'Windows.Desktop' -OSVersion '10.0.19042.0' `
+            -DownloadDirectory $downloadDirectory
+        return [pscustomobject]@{
+            Metadata = $resolved.Metadata
+            PayloadPath = $resolved.PayloadPath
+            CleanupPath = $downloadDirectory
+        }
+    } catch {
+        if (Test-Path -LiteralPath $downloadDirectory) {
+            Remove-ProvisioningGuestPackageStage -Path $downloadDirectory -Attempts 1 `
+                -DelayMilliseconds 0 -BestEffort | Out-Null
+        }
+        throw
+    }
 }
 
 function Install-TradingViewStack {
@@ -3864,14 +3891,36 @@ function Install-TradingViewStack {
     $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
     $DesktopVersion = Get-ProvisioningToolVersion -Tool 'TradingView.TradingViewDesktop' -Requested $DesktopVersion
     $desktopPackageID = 'TradingView.TradingViewDesktop'
-    $desktopMetadata = Get-TradingViewDesktopPortableMetadata -Version $DesktopVersion
+    $desktopPackage = Get-TradingViewDesktopPortablePackage -Version $DesktopVersion
+    $desktopMetadata = $desktopPackage.Metadata
+    $desktopURI = [Uri][string]$desktopMetadata.Url
     if ([string]$desktopMetadata.Id -cne $desktopPackageID -or
-        [string]$desktopMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        [string]$desktopMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+        $desktopURI.Scheme -cne 'https' -or $desktopURI.Host -cne 'tvd-packages.tradingview.com') {
         throw "TradingView Desktop metadata is unexpected: $($desktopMetadata.Id) $($desktopMetadata.Version)"
     }
-    Install-ProvisioningCachedPackage -Role 'TradingView Desktop' -Metadata $desktopMetadata `
-        -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'TradingView.exe' `
-        -PortableVersionSource 'File' -RequireAuthenticodeSignature
+    $desktopInstallFailure = $null
+    $desktopCleanupFailure = $null
+    try {
+        Install-ProvisioningCachedPackage -Role 'TradingView Desktop' -Metadata $desktopMetadata `
+            -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'TradingView.exe' `
+            -PortableVersionSource 'File' -RequireAuthenticodeSignature `
+            -ResolvedDirectPayloadPath $desktopPackage.PayloadPath
+    } catch {
+        $desktopInstallFailure = $_
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace([string]$desktopPackage.CleanupPath) -and
+            (Test-Path -LiteralPath $desktopPackage.CleanupPath)) {
+            try {
+                Remove-ProvisioningGuestPackageStage -Path $desktopPackage.CleanupPath -Attempts 1 `
+                    -DelayMilliseconds 0 | Out-Null
+            } catch {
+                $desktopCleanupFailure = $_
+            }
+        }
+    }
+    if ($null -ne $desktopInstallFailure) { throw $desktopInstallFailure }
+    if ($null -ne $desktopCleanupFailure) { throw $desktopCleanupFailure }
 
     $desktopRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
     $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')

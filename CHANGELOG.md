@@ -43,9 +43,9 @@ artifacts remain available on the
 - GeistMono provisioning now extracts and validates only the Regular and Bold font
   files used by Terminal instead of treating unrelated release inventory and
   unused weights as a deployment contract.
-- TradingView Desktop metadata resolution now accepts WinGet's console-width
-  continuation lines while preserving exact URL, digest, architecture, and
-  installer-type validation.
+- TradingView Desktop provisioning now selects the current x64 MSIX for its
+  declared minimum OS when WinGet hides that installer from build 19041, while
+  preserving exact manifest, URL, digest, signature, and package-identity checks.
 - Provisioning no longer blocks a usable Sandbox because an installed tool renders
   an unfamiliar or different version string. Package and executable version
   read-backs now warn after successful installation or command execution, while
