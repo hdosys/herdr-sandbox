@@ -17,6 +17,12 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: done. Exercise required instruction filters through linked checkout.**
+  Evidence: configuration sync marked the agent-instruction filter required but
+  configured only its clean direction, so Git rejected a real linked-worktree
+  checkout. The existing integration test now creates and removes a worktree after
+  verifying clean-filter staging. Expected benefit: keep guest routing text out of
+  commits while catching checkout-direction regressions before configuration sync.
 - **Status: done. Add a public-audience pass to README review.**
   Evidence: `AGENTS.md` now requires every README change to retain only reader
   action, user value, or concise engineering evidence and routes workflow status

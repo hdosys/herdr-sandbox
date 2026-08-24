@@ -337,6 +337,9 @@ function Protect-ManagedAgentWorktreeInstructions {
     $null = Invoke-AgentConfigurationGit -Role 'Configure agent worktree Git clean filter' `
         -Repository $ConfigurationRoot -ProcessArguments @(
             'config', '--local', 'filter.herdr-sandbox-worktree.clean', $filterCommand)
+    $null = Invoke-AgentConfigurationGit -Role 'Configure agent worktree Git smudge filter' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', 'filter.herdr-sandbox-worktree.smudge', $filterCommand)
     $null = Invoke-AgentConfigurationGit -Role 'Require agent worktree Git clean filter' `
         -Repository $ConfigurationRoot -ProcessArguments @(
             'config', '--local', 'filter.herdr-sandbox-worktree.required', 'true')
@@ -353,13 +356,17 @@ function Protect-ManagedAgentWorktreeInstructions {
     if ($attribute.Count -ne 1 -or [string]$attribute[0] -cne ($RelativePath + ': filter: herdr-sandbox-worktree')) {
         throw "Agent worktree Git clean filter attribute verification failed: $RelativePath"
     }
-    $configuredCommand = @(Invoke-AgentConfigurationGit -Role 'Verify agent worktree Git clean filter command' `
+    $configuredCleanCommand = @(Invoke-AgentConfigurationGit -Role 'Verify agent worktree Git clean filter command' `
         -Repository $ConfigurationRoot -ProcessArguments @(
             'config', '--local', '--get', 'filter.herdr-sandbox-worktree.clean'))
+    $configuredSmudgeCommand = @(Invoke-AgentConfigurationGit -Role 'Verify agent worktree Git smudge filter command' `
+        -Repository $ConfigurationRoot -ProcessArguments @(
+            'config', '--local', '--get', 'filter.herdr-sandbox-worktree.smudge'))
     $required = @(Invoke-AgentConfigurationGit -Role 'Verify required agent worktree Git clean filter' `
         -Repository $ConfigurationRoot -ProcessArguments @(
             'config', '--local', '--get', 'filter.herdr-sandbox-worktree.required'))
-    if ($configuredCommand.Count -ne 1 -or [string]$configuredCommand[0] -cne $filterCommand -or
+    if ($configuredCleanCommand.Count -ne 1 -or [string]$configuredCleanCommand[0] -cne $filterCommand -or
+        $configuredSmudgeCommand.Count -ne 1 -or [string]$configuredSmudgeCommand[0] -cne $filterCommand -or
         $required.Count -ne 1 -or [string]$required[0] -cne 'true') {
         throw 'Agent worktree Git clean filter configuration verification failed.'
     }

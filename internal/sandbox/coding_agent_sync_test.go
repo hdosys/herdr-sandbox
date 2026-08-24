@@ -1001,6 +1001,17 @@ Protect-ManagedAgentWorktreeInstructions -ConfigurationRoot $env:SYNC_GENERATED_
 	if !bytes.Contains(working, []byte(agentWorktreeInstructionsStart)) || !bytes.Contains(working, []byte("personal instructions")) {
 		t.Fatalf("tracked working instructions lost guest or personal content: %q", working)
 	}
+	linkedWorktree := filepath.Join(root, "tracked-worktree")
+	runAgentGitTest(t, trackedRepository, "worktree", "add", "--detach", linkedWorktree, "HEAD")
+	linkedInstructions, err := os.ReadFile(filepath.Join(linkedWorktree, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(linkedInstructions, []byte(agentWorktreeInstructionsStart)) ||
+		!bytes.Contains(linkedInstructions, []byte("personal instructions")) {
+		t.Fatalf("linked worktree instructions = %q", linkedInstructions)
+	}
+	runAgentGitTest(t, trackedRepository, "worktree", "remove", linkedWorktree)
 	writeTestFile(t, trackedInstructions, string(working)+"legitimate guest edit\n")
 	runAgentGitTest(t, trackedRepository, "add", "--", "AGENTS.md")
 	staged := runAgentGitTest(t, trackedRepository, "show", ":AGENTS.md")
