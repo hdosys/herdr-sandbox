@@ -37,7 +37,7 @@ function Get-StackVisualStudioTargetFromChannel {
         [string]$channel.info.manifestName -cne $channelName -or
         [string]$channel.info.manifestType -cne 'channel' -or
         [string]$channel.info.productLine -cne "Dev$productMajor" -or
-        [string]$channel.info.productLineVersion -notmatch '^\d{4}$' -or
+        [string]$channel.info.productLineVersion -notmatch '^[1-9][0-9]*$' -or
         [string]$channel.info.productMilestone -cne 'RTW' -or
         [string]$channel.info.productMilestoneIsPreRelease -cne 'False') {
         throw "Visual Studio channel metadata is unexpected: $SourceDescription"
@@ -169,7 +169,7 @@ function ConvertFrom-StackVisualStudioLayoutDescriptor {
         $channelID = [string]$Descriptor.channelID
         if ($channelID -notmatch '^VisualStudio\.(?<major>[1-9][0-9]*)\.Release(?:/.+)?$' -or
             [string]$Descriptor.productLine -cne "Dev$($Matches['major'])" -or
-            [string]$Descriptor.productLineVersion -notmatch '^\d{4}$' -or
+            [string]$Descriptor.productLineVersion -notmatch '^[1-9][0-9]*$' -or
             [string]$Descriptor.packageVersion -notmatch '^[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){1,3}$') {
             throw 'Visual Studio layout descriptor version fields are invalid.'
         }

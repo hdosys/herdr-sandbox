@@ -769,20 +769,20 @@ $descriptor = [pscustomobject][ordered]@{
     bootstrapperURL = 'https://download.visualstudio.microsoft.com/download/pr/fixture/vs_BuildTools.exe'
     buildVersion = '18.9.12112.369'
     catalogSHA256 = $hash
-    channelID = 'VisualStudio.18.Release'
+    channelID = 'VisualStudio.18.Release/18.9.1+12112.369'
     componentIDs = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.Windows11SDK.26100')
     packageVersion = '18.9.1'
     productID = 'Microsoft.VisualStudio.Product.BuildTools'
     productLine = 'Dev18'
-    productLineVersion = '2026'
+    productLineVersion = '18'
     productVersion = '18.9.12112.369'
     schemaVersion = 3
-    semanticVersion = '18.9.1'
+    semanticVersion = '18.9.1+12112.369'
     setupSHA256 = $hash
     setupVersion = '4.9.50.302448642'
 }
 $target = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor
-if ($target.ChannelID -cne 'VisualStudio.18.Release' -or @($target.ComponentIDs).Count -ne 2) {
+if ($target.ChannelID -cne 'VisualStudio.18.Release/18.9.1+12112.369' -or @($target.ComponentIDs).Count -ne 2) {
     throw 'Current Visual Studio descriptor was not parsed.'
 }
 $invalidDescriptor = $descriptor | ConvertTo-Json -Depth 4 | ConvertFrom-Json

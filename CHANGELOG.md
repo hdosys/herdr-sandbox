@@ -37,6 +37,9 @@ artifacts remain available on the
 
 ### Fixed
 
+- Visual Studio Build Tools layout preparation now accepts current Visual Studio
+  18 channel metadata, including build-qualified channel IDs and numeric
+  product-line versions.
 - Provisioning no longer blocks a usable Sandbox because an installed tool renders
   an unfamiliar or different version string. Package and executable version
   read-backs now warn after successful installation or command execution, while

@@ -193,7 +193,7 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
         [string]$Channel.info.manifestName -cne $channelName -or
         [string]$Channel.info.manifestType -cne 'channel' -or
         [string]$Channel.info.productLine -cne "Dev$productMajor" -or
-        [string]$Channel.info.productLineVersion -notmatch '^\d{4}$' -or
+        [string]$Channel.info.productLineVersion -notmatch '^[1-9][0-9]*$' -or
         [string]$Channel.info.productMilestone -cne 'RTW' -or
         [string]$Channel.info.productMilestoneIsPreRelease -cne 'False') {
         throw "Visual Studio channel metadata is unexpected: $SourceDescription"
