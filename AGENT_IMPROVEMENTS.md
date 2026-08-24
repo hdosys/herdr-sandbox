@@ -165,3 +165,9 @@ cross-project workflow in the global OpenCode configuration repository.
   active guest in 11.553 seconds, and keeps expensive installed acceptance in its
   explicit release or deferred tier. Expected benefit: preserve the real installer
   gate while avoiding repeated multi-minute runs for locally diagnosable inputs.
+- **Status: done. Match the Visual Studio parser fixture to Current.**
+  Evidence: the signed Visual Studio 18 channel used a build-qualified ID and
+  numeric product-line version, while the focused descriptor fixture still used
+  an unsuffixed ID and release year. The existing Windows PowerShell 5.1 parser
+  test now uses the current shape. Expected benefit: catch this metadata drift in
+  seconds instead of after the roughly one-minute host layout download.
