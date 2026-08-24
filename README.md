@@ -32,6 +32,36 @@ Detach and reconnect to the same OpenCode session through Herdr's managed Window
 - **Reproducible provisioning:** versions, package identity, hashes, signatures, and realized state are checked where the external boundary supports them. Repeated runs converge without duplicating work.
 - **Real release evidence:** fast tests and static checks cover the control plane; release checks compile and validate the real installer, while a real Windows Sandbox run exercises provisioning, SSH, and attach.
 
+## How it works
+
+```mermaid
+flowchart LR
+    Host["Host terminal<br/>sandbox (Go)"]
+    HostHerdr["Host Herdr<br/>remote provision + attach"]
+    Projects[("Selected projects")]
+    Worktrees[("Optional persistent<br/>Herdr worktrees")]
+    Models[("Optional shared<br/>AI models")]
+    Config["Approved agent config"]
+
+    subgraph Guest["Disposable Windows Sandbox"]
+        Provision["PowerShell 5.1<br/>provisioning"]
+        Agents["Agents + native<br/>toolchains"]
+        Herdr["Versioned Herdr<br/>sidecar + server"]
+    end
+
+    Host -->|launch + lifecycle| Provision
+    Host -->|final config + verified SSH target| HostHerdr
+    Projects <-->|narrow writable mappings| Agents
+    Worktrees <-->|dedicated writable mapping| Agents
+    Models <-->|shared writable mapping| Agents
+    Config -->|verified SSH only| Agents
+    Provision --> Agents
+    HostHerdr -->|provision + validate| Herdr
+    HostHerdr <-->|console-backed attach| Herdr
+```
+
+The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
+
 > [!IMPORTANT]
 > Windows Sandbox separates this work from the normal Windows installation, but selected projects remain writable and guest administrators can access explicitly transferred credentials. Networking is enabled. Keep backups and normal supply-chain controls; see [Security boundaries](#security-boundaries) before using untrusted code.
 
@@ -378,36 +408,6 @@ Dependencies and application commands remain project-owned. `sandbox plan`
 expands each composition without executing the profile.
 
 </details>
-
-## How it works
-
-```mermaid
-flowchart LR
-    Host["Host terminal<br/>sandbox (Go)"]
-    HostHerdr["Host Herdr<br/>remote provision + attach"]
-    Projects[("Selected projects")]
-    Worktrees[("Optional persistent<br/>Herdr worktrees")]
-    Models[("Optional shared<br/>AI models")]
-    Config["Approved agent config"]
-
-    subgraph Guest["Disposable Windows Sandbox"]
-        Provision["PowerShell 5.1<br/>provisioning"]
-        Agents["Agents + native<br/>toolchains"]
-        Herdr["Versioned Herdr<br/>sidecar + server"]
-    end
-
-    Host -->|launch + lifecycle| Provision
-    Host -->|final config + verified SSH target| HostHerdr
-    Projects <-->|narrow writable mappings| Agents
-    Worktrees <-->|dedicated writable mapping| Agents
-    Models <-->|shared writable mapping| Agents
-    Config -->|verified SSH only| Agents
-    Provision --> Agents
-    HostHerdr -->|provision + validate| Herdr
-    HostHerdr <-->|console-backed attach| Herdr
-```
-
-The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 ## Security boundaries
 
