@@ -1566,14 +1566,14 @@ function Test-ProvisioningGeistMonoFontPayload {
             return $false
         }
         $items = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
-        if ($items.Count -ne 29 -or @($items | Where-Object {
+        $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
+        if ($items.Count -ne $expectedFontNames.Count -or @($items | Where-Object {
                     $_.PSIsContainer -or $_.DirectoryName -cne $toolRoot -or
                     ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
                 }).Count -ne 0) {
             return $false
         }
         $familyFonts = @($items | Where-Object { $_.Name -like 'GeistMonoNerdFont-*.otf' } | Sort-Object Name)
-        $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
         if (($familyFonts.Name -join '|') -cne ($expectedFontNames -join '|')) {
             return $false
         }
@@ -1647,22 +1647,15 @@ function Install-ProvisioningGeistMonoFontPayload {
         throw "$Role metadata does not match the resolved GeistMono Nerd Font contract."
     }
     $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+    $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
     if (-not (Test-ProvisioningGeistMonoFontPayload -Metadata $Metadata)) {
         if (Test-Path -LiteralPath $toolRoot) {
             Remove-Item -LiteralPath $toolRoot -Recurse -Force
         }
         New-Item -ItemType Directory -Path $toolRoot | Out-Null
         $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-        $archiveEntries = @(Invoke-ProvisioningNative -Role "$Role archive inspection" -FilePath $tar `
-            -ArgumentList @('-tf', $PayloadPath) | ForEach-Object { [string]$_ })
-        if ($archiveEntries.Count -ne 29 -or @($archiveEntries | Where-Object {
-                [string]::IsNullOrWhiteSpace($_) -or $_ -match '[/\\]' }).Count -ne 0 -or
-            $archiveEntries -notcontains 'LICENSE' -or $archiveEntries -notcontains 'README.md' -or
-            @($archiveEntries | Where-Object { $_ -like '*.otf' }).Count -ne 27) {
-            throw "$Role archive does not match the flat 27-OTF release contract."
-        }
         Invoke-ProvisioningNative -Role "$Role cached extraction" -FilePath $tar `
-            -ArgumentList @('-xf', $PayloadPath, '-C', $toolRoot) | Out-Null
+            -ArgumentList ([string[]](@('-xf', $PayloadPath, '-C', $toolRoot) + $expectedFontNames)) | Out-Null
         $extractedItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
         foreach ($item in $extractedItems) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -1672,13 +1665,12 @@ function Install-ProvisioningGeistMonoFontPayload {
                 throw "$Role archive produced a non-flat entry: $($item.FullName)"
             }
         }
-        if ($extractedItems.Count -ne 29) {
-            throw "$Role extracted $($extractedItems.Count) entries; expected 29."
+        if ($extractedItems.Count -ne $expectedFontNames.Count) {
+            throw "$Role extracted $($extractedItems.Count) font files; expected $($expectedFontNames.Count)."
         }
     } else {
         Write-Host "$Role payload already matches; loading it into the current Windows session."
     }
-    $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
     $familyFonts = @(Get-ChildItem -LiteralPath $toolRoot -File -Filter 'GeistMonoNerdFont-*.otf' |
         Sort-Object Name)
     if (($familyFonts.Name -join '|') -cne ($expectedFontNames -join '|')) {
