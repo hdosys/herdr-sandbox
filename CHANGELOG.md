@@ -18,6 +18,9 @@ artifacts remain available on the
 
 ### Changed
 
+- HyperFrames skills no longer load into every OpenCode session. The stack keeps
+  them outside normal agent discovery and the new `hyperframes-opencode` command
+  activates them only for an explicitly started OpenCode session.
 - Local VoxCPM2 narration now uses the selected German Herdr narrator reference as
   one stable default voice across segments. Projects can explicitly select Voice
   Design or another reference, and the concise `tts.ps1` command exposes both paths

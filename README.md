@@ -188,7 +188,7 @@ selection, and separate checkout-specific shortcuts.
 | `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
 | `dotnet` | .NET 10 LTS SDK |
 | `go` | Go |
-| `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and HyperFrames skills for every supported coding agent |
+| `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |
 | `java` | Microsoft OpenJDK 25 LTS |
 | `node` | Node.js LTS, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
@@ -219,9 +219,12 @@ expands each composition without executing the profile.
 
 The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
 when the profile does not request versions. Provisioning runs HyperFrames doctor,
-checks its managed browser and global skills, and proves a software H.264 encode
-with `libx264`. Browser GPU acceleration and FFmpeg hardware encoding are separate;
-the Sandbox profile does not claim a hardware encoder.
+checks its managed browser, stages the current skills outside normal agent discovery,
+and proves a software H.264 encode with `libx264`. Run `hyperframes-opencode` from
+the intended project directory to start a separate OpenCode session with those
+skills. Ordinary `opencode` sessions do not load their metadata. Browser GPU
+acceleration and FFmpeg hardware encoding are separate; the Sandbox profile does
+not claim a hardware encoder.
 
 To persist AI models, create one shared model folder and set `modelsDirectory`
 to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where

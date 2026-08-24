@@ -239,7 +239,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackHandy:
 		return packageCMake + " + " + packageVulkanSDK + " 1.4.309.0 + " + packageWebView2
 	case stackHyperFrames:
-		return "OpenJS.NodeJS.LTS + Gyan.FFmpeg full + hyperframes@latest + global HyperFrames skills"
+		return "OpenJS.NodeJS.LTS + Gyan.FFmpeg full + hyperframes@latest + manual HyperFrames OpenCode activation"
 	case stackJava:
 		return packageOpenJDK25
 	case stackJust:

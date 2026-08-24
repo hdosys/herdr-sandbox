@@ -3098,17 +3098,47 @@ function Assert-StackHyperFramesSoftwareEncode {
     }
 }
 
-function Assert-StackHyperFramesAgentSkills {
+function Assert-StackHyperFramesSkillTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$SkillRoot,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$SkillNames
+    )
+
+    $root = [IO.Path]::GetFullPath($SkillRoot)
+    if ($SkillNames.Count -le 0 -or -not (Test-Path -LiteralPath $root -PathType Container)) {
+        throw "HyperFrames activation skills are unavailable: $root"
+    }
+    $rootInfo = Get-Item -LiteralPath $root -Force
+    $items = @(Get-ChildItem -LiteralPath $root -Recurse -Force)
+    if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        @($items | Where-Object {
+                ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+            }).Count -ne 0) {
+        throw "HyperFrames activation skills contain a reparse point: $root"
+    }
+    foreach ($name in $SkillNames) {
+        $skillFile = Join-Path (Join-Path $root $name) 'SKILL.md'
+        if (-not (Test-Path -LiteralPath $skillFile -PathType Leaf)) {
+            throw "HyperFrames activation skill $name is unavailable: $skillFile"
+        }
+    }
+}
+
+function Assert-StackHyperFramesActivationSkills {
     param(
         [Parameter(Mandatory = $true)][object]$Report,
-        [Parameter(Mandatory = $true)][Collections.IDictionary]$SkillRoots
+        [Parameter(Mandatory = $true)][string]$SkillRoot
     )
 
     $skills = @($Report.skills)
-    if ($Report.updateAvailable -ne $false -or $null -eq $Report.summary -or
+    $root = [IO.Path]::GetFullPath($SkillRoot)
+    if ($Report.updateAvailable -ne $false -or $Report.lockMissing -ne $false -or
+        [string]$Report.scope -cne 'global' -or [string]$Report.agent -cne 'claude-code' -or
+        [string]::IsNullOrWhiteSpace([string]$Report.location) -or
+        [IO.Path]::GetFullPath([string]$Report.location) -ine $root -or $null -eq $Report.summary -or
         [int]$Report.summary.outdated -ne 0 -or [int]$Report.summary.missing -ne 0 -or
         [int]$Report.summary.removed -ne 0 -or $skills.Count -le 0) {
-        throw 'HyperFrames global skills are not current and complete.'
+        throw 'HyperFrames activation skills are not current and complete.'
     }
     $skillNames = @($skills | ForEach-Object {
             if ([string]$_.status -cne 'current' -or [string]$_.name -notmatch '^[a-z0-9][a-z0-9._-]*$') {
@@ -3119,21 +3149,65 @@ function Assert-StackHyperFramesAgentSkills {
     if ($skillNames.Count -ne $skills.Count) {
         throw 'HyperFrames skill report contains duplicate names.'
     }
-    foreach ($entry in $SkillRoots.GetEnumerator()) {
-        $root = [IO.Path]::GetFullPath([string]$entry.Value)
-        if (-not (Test-Path -LiteralPath $root -PathType Container) -or
-            ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "HyperFrames skills are unavailable for $($entry.Key): $root"
-        }
-        foreach ($name in $skillNames) {
-            $skillFile = Join-Path (Join-Path $root $name) 'SKILL.md'
-            if (-not (Test-Path -LiteralPath $skillFile -PathType Leaf) -or
-                ((Get-Item -LiteralPath $skillFile -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "HyperFrames skill $name is unavailable for $($entry.Key): $skillFile"
-            }
-        }
-    }
+    Assert-StackHyperFramesSkillTree -SkillRoot $root -SkillNames $skillNames
     return $skillNames
+}
+
+function Write-StackHyperFramesOpenCodeLauncher {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$SkillRoot
+    )
+
+    $launcherPath = [IO.Path]::GetFullPath($Path)
+    $skillsPath = [IO.Path]::GetFullPath($SkillRoot)
+    $parent = Split-Path -Parent $launcherPath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container) -or
+        ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "HyperFrames OpenCode launcher parent is unsafe: $parent"
+    }
+    $escapedSkillsPath = $skillsPath.Replace("'", "''")
+    $contents = @'
+[CmdletBinding()]
+param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [AllowEmptyCollection()]
+    [string[]]$OpenCodeArguments
+)
+
+$ErrorActionPreference = 'Stop'
+$skillsRoot = '__HYPERFRAMES_SKILLS_ROOT__'
+if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container) -or
+    ((Get-Item -LiteralPath $skillsRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "HyperFrames activation skills are unavailable: $skillsRoot"
+}
+$existingInlineConfig = [Environment]::GetEnvironmentVariable('OPENCODE_CONFIG_CONTENT', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($existingInlineConfig)) {
+    throw 'hyperframes-opencode requires OPENCODE_CONFIG_CONTENT to be unset so existing inline configuration is not replaced.'
+}
+$openCode = Get-Command 'opencode.exe' -CommandType Application -ErrorAction Stop |
+    Select-Object -First 1
+$activationConfig = ([ordered]@{
+        skills = [ordered]@{ paths = @($skillsRoot) }
+    } | ConvertTo-Json -Depth 3 -Compress)
+try {
+    $env:OPENCODE_CONFIG_CONTENT = $activationConfig
+    & $openCode.Source @OpenCodeArguments
+    $openCodeExitCode = $LASTEXITCODE
+} finally {
+    Remove-Item Env:\OPENCODE_CONFIG_CONTENT -ErrorAction SilentlyContinue
+}
+if ($openCodeExitCode -ne 0) {
+    throw "OpenCode exited with code $openCodeExitCode."
+}
+'@.Replace('__HYPERFRAMES_SKILLS_ROOT__', $escapedSkillsPath)
+    [IO.File]::WriteAllText($launcherPath, $contents + "`n", (New-Object Text.UTF8Encoding($false)))
+    $tokens = $null
+    $errors = $null
+    [Management.Automation.Language.Parser]::ParseFile($launcherPath, [ref]$tokens, [ref]$errors) | Out-Null
+    if (@($errors).Count -ne 0) {
+        throw "HyperFrames OpenCode launcher syntax is invalid: $($errors[0].Message)"
+    }
 }
 
 function Install-HyperFramesStack {
@@ -3162,7 +3236,7 @@ function Install-HyperFramesStack {
     $npmCLI = $nodeTools.NpmCLI
     $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $git) {
-        throw 'HyperFrames global skills require Base package Git.Git.'
+        throw 'HyperFrames OpenCode activation skills require Base package Git.Git.'
     }
 
     $ffmpegMetadata = Get-ProvisioningWinGetMetadata -Role 'HyperFrames FFmpeg full build' `
@@ -3196,6 +3270,9 @@ function Install-HyperFramesStack {
         -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
 
     $toolRoot = 'C:\HerdrSandbox\tools\hyperframes'
+    $activationRoot = 'C:\HerdrSandbox\tools\hyperframes-opencode'
+    $activationSkillsRoot = Join-Path $activationRoot 'skills'
+    $activationLauncher = Join-Path $toolRoot 'hyperframes-opencode.ps1'
     $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
     $stagingRoot = 'C:\HerdrSandbox\staging'
     foreach ($directory in @('C:\HerdrSandbox\tools', $npmCache, $stagingRoot)) {
@@ -3342,34 +3419,77 @@ function Install-HyperFramesStack {
             throw "HyperFrames managed Chrome Headless Shell version is unexpected: $browserVersion"
         }
 
-        $skillRoots = [ordered]@{
-            'OpenCode' = Join-Path $env:USERPROFILE '.config\opencode\skills'
-            'Claude Code' = Join-Path $env:USERPROFILE '.claude\skills'
-            'Codex' = Join-Path $env:USERPROFILE '.codex\skills'
-            'GitHub Copilot' = Join-Path $env:USERPROFILE '.copilot\skills'
-            'Pi' = Join-Path $env:USERPROFILE '.pi\agent\skills'
-            'Universal agents' = Join-Path $env:USERPROFILE '.agents\skills'
+        $skillStage = Join-Path $stagingRoot ('hyperframes-opencode-' + [Guid]::NewGuid().ToString('N'))
+        $skillHome = Join-Path $skillStage 'home'
+        $stagedClaudeRoot = Join-Path $skillHome '.claude'
+        $stagedSkillsRoot = Join-Path $stagedClaudeRoot 'skills'
+        New-Item -ItemType Directory -Path $skillHome -Force | Out-Null
+        $skillEnvironment = [ordered]@{
+            'HOME' = $skillHome
+            'USERPROFILE' = $skillHome
+            'XDG_CONFIG_HOME' = Join-Path $skillHome '.config'
+            'XDG_STATE_HOME' = Join-Path $skillHome '.local\state'
+            'CODEX_HOME' = Join-Path $skillHome '.codex'
+            'CLAUDE_CONFIG_DIR' = $stagedClaudeRoot
+            'VIBE_HOME' = Join-Path $skillHome '.vibe'
+            'HERMES_HOME' = Join-Path $skillHome '.hermes'
+            'AUTOHAND_HOME' = Join-Path $skillHome '.autohand'
         }
-        foreach ($root in @($skillRoots.Values)) {
-            $parent = Split-Path -Parent ([string]$root)
-            New-Item -ItemType Directory -Path $parent -Force | Out-Null
-            $parentInfo = Get-Item -LiteralPath $parent -Force
-            if (-not $parentInfo.PSIsContainer -or
-                ($parentInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "HyperFrames global agent directory is unsafe: $parent"
+        $previousSkillEnvironment = @{}
+        foreach ($entry in $skillEnvironment.GetEnumerator()) {
+            $previousSkillEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process')
+            [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, 'Process')
+        }
+        try {
+            Invoke-ProvisioningNative -Role 'HyperFrames isolated OpenCode skills installation' `
+                -FilePath $node -ArgumentList @($cliEntry, 'skills') -WorkingDirectory $skillStage `
+                -TimeoutSeconds 600 | Out-Null
+            $skillsJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames isolated OpenCode skills check' `
+                    -FilePath $node -ArgumentList @($cliEntry, 'skills', 'check', '--json') `
+                    -WorkingDirectory $skillStage -TimeoutSeconds 120) -join [Environment]::NewLine).Trim()
+            try {
+                $skillsReport = $skillsJSON | ConvertFrom-Json
+            } catch {
+                throw "HyperFrames isolated OpenCode skills check returned invalid JSON: $($_.Exception.Message)"
+            }
+            $skillNames = @(Assert-StackHyperFramesActivationSkills -Report $skillsReport `
+                    -SkillRoot $stagedSkillsRoot)
+
+            if (Test-Path -LiteralPath $activationRoot) {
+                $activationInfo = Get-Item -LiteralPath $activationRoot -Force
+                $activationItems = @(Get-ChildItem -LiteralPath $activationRoot -Recurse -Force)
+                if (-not $activationInfo.PSIsContainer -or
+                    ($activationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                    @($activationItems | Where-Object {
+                            ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                        }).Count -ne 0) {
+                    throw "HyperFrames OpenCode activation root is unsafe: $activationRoot"
+                }
+                Remove-Item -LiteralPath $activationRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $activationRoot | Out-Null
+            Move-Item -LiteralPath $stagedSkillsRoot -Destination $activationSkillsRoot
+            Assert-StackHyperFramesSkillTree -SkillRoot $activationSkillsRoot -SkillNames $skillNames
+        } finally {
+            foreach ($entry in $skillEnvironment.GetEnumerator()) {
+                $previous = $previousSkillEnvironment[$entry.Key]
+                if ($null -eq $previous) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $null, 'Process')
+                } else {
+                    [Environment]::SetEnvironmentVariable($entry.Key, [string]$previous, 'Process')
+                }
+            }
+            if (Test-Path -LiteralPath $skillStage) {
+                Remove-Item -LiteralPath $skillStage -Recurse -Force
             }
         }
-        Invoke-ProvisioningNative -Role 'HyperFrames global agent skills installation' -FilePath $node `
-            -ArgumentList @($cliEntry, 'skills') -WorkingDirectory $stagingRoot -TimeoutSeconds 600 | Out-Null
-        $skillsJSON = ((Invoke-ProvisioningNative -Role 'HyperFrames global agent skills check' `
-            -FilePath $node -ArgumentList @($cliEntry, 'skills', 'check', '--json') `
-            -WorkingDirectory $stagingRoot -TimeoutSeconds 120) -join [Environment]::NewLine).Trim()
-        try {
-            $skillsReport = $skillsJSON | ConvertFrom-Json
-        } catch {
-            throw "HyperFrames global skills check returned invalid JSON: $($_.Exception.Message)"
+        Write-StackHyperFramesOpenCodeLauncher -Path $activationLauncher -SkillRoot $activationSkillsRoot
+        $resolvedActivationLauncher = Get-Command 'hyperframes-opencode.ps1' `
+            -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1
+        if ([IO.Path]::GetFullPath([string]$resolvedActivationLauncher.Source) -ine
+            [IO.Path]::GetFullPath($activationLauncher)) {
+            throw "HyperFrames OpenCode launcher resolved from an unexpected path: $($resolvedActivationLauncher.Source)"
         }
-        $skillNames = @(Assert-StackHyperFramesAgentSkills -Report $skillsReport -SkillRoots $skillRoots)
 
         $doctorLines = @(Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
             -ArgumentList @($cliEntry, 'doctor', '--json') -WorkingDirectory $stagingRoot -TimeoutSeconds 180)
@@ -3402,7 +3522,8 @@ function Install-HyperFramesStack {
             -FFprobe ([string]$ffprobe.Source)
         Write-Output "HyperFrames CLI ready: $Version"
         Write-Output "HyperFrames managed Chrome Headless Shell ready: $browserPath"
-        Write-Output "HyperFrames skills ready for all supported agents: $($skillNames.Count)"
+        Write-Output "HyperFrames skills ready for manual OpenCode activation: $($skillNames.Count)"
+        Write-Output 'Run hyperframes-opencode to start an OpenCode session with HyperFrames skills.'
         Write-Output "HyperFrames FFmpeg ready: $($ffmpegVersionText.Split([Environment]::NewLine)[0])"
         Write-Output "HyperFrames FFprobe ready: $($ffprobeVersionText.Split([Environment]::NewLine)[0])"
         Write-Output 'HyperFrames rendering ready with verified libx264 software encoding. Browser GPU acceleration may be available; FFmpeg hardware encoding is not claimed.'
