@@ -215,7 +215,7 @@ if ($env:ANDROID_HOME -cne $androidSDK -or [string]::IsNullOrWhiteSpace($android
 $androidVersion = Remove-AndroidJVMWarning (Invoke-SmokeTool 'android-cli-version' $androidCLI @('--no-metrics','--version'))
 if ($androidVersion -notmatch '^1\.0\.\d+$') { throw "Android CLI version is unexpected: $androidVersion" }
 $androidJDKRelease = [IO.File]::ReadAllText((Join-Path $androidJDK 'release'))
-if ($androidJDKRelease -notmatch '(?m)^JAVA_VERSION="(?<version>\d+\.\d+\.\d+)"\r?$') {
+if ($androidJDKRelease -notmatch '(?m)^JAVA_VERSION="(?<version>[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){0,3})"\r?$') {
     throw 'Android JDK release identity is unexpected.'
 }
 $androidJDKVersion = [string]$Matches['version']

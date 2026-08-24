@@ -1429,7 +1429,7 @@ function Install-AndroidStack {
         throw 'Android Java release identity is missing.'
     }
     $jdkRelease = [IO.File]::ReadAllText($jdkReleasePath)
-    if ($jdkRelease -notmatch '(?m)^JAVA_VERSION="(?<version>\d+\.\d+\.\d+)"\r?$') {
+    if ($jdkRelease -notmatch '(?m)^JAVA_VERSION="(?<version>[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){0,3})"\r?$') {
         throw 'Android Java release version is invalid.'
     }
     $jdkVersion = [string]$Matches['version']
