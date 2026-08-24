@@ -154,13 +154,14 @@ cross-project workflow in the global OpenCode configuration repository.
   `$ErrorActionPreference = 'Stop'` before setup and purpose-specific names in
   PowerShell isolation smokes. Expected benefit: keep failed test setup from
   crossing into real configuration state.
-- **Status: proposed. Add a fast current-environment provisioning preflight.**
+- **Status: done. Add a fast current-environment provisioning preflight.**
   Evidence: four immutable `package-current-sandbox` attempts took 160.566,
   177.336, 183.399, and 188.623 seconds while serially exposing an injected
   AudioGridder encoding dependency, the installed OpenJDK release shape, the
   Android CLI version shape, and an invalid Visual Studio A/B descriptor. Each
   condition was available from existing files or subsecond commands before the
-  full installed-candidate run. Reuse those production parsers in one focused
-  current-environment preflight before packaging. Expected benefit: preserve the
-  real installer gate while avoiding repeated multi-minute runs for locally
-  diagnosable provisioning inputs.
+  full installed-candidate run. `provisioning-preflight` now reuses those
+  production parsers before either current-Sandbox gate, completed against the
+  active guest in 11.553 seconds, and keeps expensive installed acceptance in its
+  explicit release or deferred tier. Expected benefit: preserve the real installer
+  gate while avoiding repeated multi-minute runs for locally diagnosable inputs.

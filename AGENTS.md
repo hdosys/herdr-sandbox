@@ -58,6 +58,11 @@ in the global OpenCode configuration, not this repository.
   paths, cleanup bridges, or dual behavior. A future exception requires an
   explicit current-user decision and a matching canonical product or architecture
   contract in the same milestone; historical releases alone never authorize it.
+- Post-install version strings and duplicated package or file metadata are
+  diagnostic only. Warn on missing or mismatched version read-back and continue
+  when installation plus the required command or capability succeeded. Keep
+  payload integrity, publisher identity, safe paths, process exit status, and real
+  capability failures terminal.
 - Agent-invoked host console subprocesses must not create visible console windows.
   Capture output/exit status through a hidden process-tree console inherited by
   descendants; a consoleless parent is insufficient for toolchains that spawn
@@ -146,15 +151,17 @@ Use repository-owned tasks and the smallest ladder covering the change:
    applicable Windows PowerShell 5.1 syntax checks.
 3. `go run ./cmd/task build` and the stable CLI under `build/bin` when binary
    behavior changed.
-4. `go run ./cmd/task native-current-sandbox` for explicit in-place Base/package/
+4. `go run ./cmd/task provisioning-preflight` for the bounded current-guest inputs
+   and production parsers that can fail before expensive provisioning.
+5. `go run ./cmd/task native-current-sandbox` for explicit in-place Base/package/
    all-stack acceptance plus a task-owned REAPER-to-AudioGridder connection inside
    the active development Sandbox. It must never run bootstrap, reprovision SSH or
    Herdr, or change the existing SSH service, Herdr server, or remote-client bridge
    identities.
-5. `go run ./cmd/task package-current-sandbox VERSION` for exact installer,
+6. `go run ./cmd/task package-current-sandbox VERSION` for exact installer,
    registered identity, installed-payload provisioning, preservation, and quiet
    uninstall acceptance inside the active disposable Sandbox.
-6. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
+7. `go run ./cmd/task native-all-stacks` for the opt-in real Windows Sandbox +
    WinGet + all-stack + task-owned REAPER-to-AudioGridder connection + guest Herdr
    server + managed SSH smoke, followed by a real interactive remote-attach check
    when attach behavior changed.
@@ -171,13 +178,19 @@ Do not run these slower gates while a user waits for an ordinary build or
 installer. Unit tests do not replace the applicable native gate when changed
 behavior depends on that boundary.
 
+`go run ./cmd/task provisioning-preflight` must finish within 45 seconds and runs
+automatically before both current-Sandbox gates. It checks only already available
+current-guest inputs with the production parsers. It never installs, updates, or
+replaces a tool and does not replace installed or native acceptance.
+
 For installer work, `go run ./cmd/task package VERSION` owns the early
 user-testable candidate. Never run `package-current-sandbox` from a dirty or
 pre-commit checkout. Freeze production source, complete the focused gates, commit
-and push, rebuild once from that immutable commit, then run exactly one
-`package-current-sandbox VERSION` acceptance. A later production-relevant edit
-requires a new commit and candidate; unchanged inputs never justify repeating the
-installed-candidate gate.
+and push, then rebuild once from that immutable commit. Run exactly one
+`package-current-sandbox VERSION` acceptance only for an explicitly requested
+installed-candidate or release gate, or through its deferred-verification
+assignment. A later production-relevant edit requires a new commit and candidate;
+unchanged inputs never justify repeating the installed-candidate gate.
 
 For long-running GitHub Actions, check status no more than once every two minutes
 and fetch detailed logs only after terminal failure. GitHub release artifacts do

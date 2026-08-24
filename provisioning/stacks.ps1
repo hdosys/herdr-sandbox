@@ -28,12 +28,13 @@ function Get-StackVisualStudioTargetFromChannel {
 
     $channel = $Channel
     $channelID = [string]$channel.info.id
-    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release$') {
+    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release(?:/.+)?$') {
         throw "Visual Studio channel identity is unexpected: $SourceDescription"
     }
     $productMajor = [string]$Matches['major']
+    $channelName = ($channelID -split '/', 2)[0]
     if ([string]$channel.manifestVersion -cne '1.1' -or
-        [string]$channel.info.manifestName -cne $channelID -or
+        [string]$channel.info.manifestName -cne $channelName -or
         [string]$channel.info.manifestType -cne 'channel' -or
         [string]$channel.info.productLine -cne "Dev$productMajor" -or
         [string]$channel.info.productLineVersion -notmatch '^\d{4}$' -or
@@ -51,7 +52,7 @@ function Get-StackVisualStudioTargetFromChannel {
     })
     $setups = @($channel.channelItems | Where-Object {
         [string]$_.type -ceq 'Bootstrapper' -and
-        [string]$_.id -ceq "$channelID.Bootstrappers.Setup"
+        [string]$_.id -ceq "$channelName.Bootstrappers.Setup"
     })
     if ($products.Count -ne 1 -or $manifests.Count -ne 1 -or $setups.Count -ne 1) {
         throw "Visual Studio channel did not resolve one Build Tools product, manifest, and setup bootstrapper: $SourceDescription"
@@ -106,6 +107,97 @@ function Test-StackVisualStudioTargetEqual {
         [string]$Left.CatalogSHA256 -ceq [string]$Right.CatalogSHA256 -and
         [string]$Left.SetupVersion -ceq [string]$Right.SetupVersion -and
         [string]$Left.SetupSHA256 -ceq [string]$Right.SetupSHA256
+}
+
+function ConvertFrom-StackVisualStudioLayoutDescriptor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Descriptor,
+        [string]$Slot = ''
+    )
+
+    $currentProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
+        'catalogSHA256', 'channelID', 'componentIDs', 'packageVersion', 'productID', 'productLine',
+        'productLineVersion', 'productVersion', 'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
+    $previousProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
+        'catalogSHA256', 'channelID', 'componentIDs', 'productID', 'productVersion', 'schemaVersion',
+        'semanticVersion', 'setupSHA256', 'setupVersion')
+    $actualProperties = @($Descriptor.PSObject.Properties.Name | Sort-Object)
+    $schemaVersion = [int]$Descriptor.schemaVersion
+    $expectedProperties = if ($schemaVersion -eq 3) { $currentProperties } elseif ($schemaVersion -eq 2) { $previousProperties } else { @() }
+    if ($expectedProperties.Count -eq 0 -or
+        ($actualProperties -join '|') -cne (($expectedProperties | Sort-Object) -join '|') -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.channelID) -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.buildVersion) -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.semanticVersion) -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.productVersion) -or
+        [string]::IsNullOrWhiteSpace([string]$Descriptor.setupVersion) -or
+        [string]$Descriptor.catalogSHA256 -notmatch '^[A-Fa-f0-9]{64}$' -or
+        [string]$Descriptor.setupSHA256 -notmatch '^[A-Fa-f0-9]{64}$' -or
+        [string]$Descriptor.bootstrapperSHA256 -notmatch '^[A-Fa-f0-9]{64}$' -or
+        [string]$Descriptor.productID -cne 'Microsoft.VisualStudio.Product.BuildTools') {
+        throw 'Visual Studio layout descriptor identity is invalid.'
+    }
+    $bootstrapperURI = [Uri][string]$Descriptor.bootstrapperURL
+    if ($bootstrapperURI.Scheme -cne 'https' -or $bootstrapperURI.Host -cne 'download.visualstudio.microsoft.com') {
+        throw 'Visual Studio layout bootstrapper URL is invalid.'
+    }
+    $componentIDs = [string[]]@($Descriptor.componentIDs)
+    if ($componentIDs.Count -ne 2 -or
+        @($componentIDs | Where-Object { $_ -ceq 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }).Count -ne 1 -or
+        @($componentIDs | Where-Object { $_ -match '^Microsoft\.VisualStudio\.Component\.Windows11SDK\.\d+$' }).Count -ne 1) {
+        throw 'Visual Studio layout component selection is invalid.'
+    }
+
+    if ($schemaVersion -eq 2) {
+        if ([string]::IsNullOrWhiteSpace($Slot)) {
+            throw 'Visual Studio layout descriptor schema 2 requires its verified slot.'
+        }
+        $channelPath = Join-Path (Join-Path $Slot 'layout') 'ChannelManifest.json'
+        $target = Get-StackVisualStudioTargetFromChannel `
+            -Channel ([IO.File]::ReadAllText($channelPath) | ConvertFrom-Json) -SourceDescription $channelPath
+        if ([string]$Descriptor.channelID -cne $target.ChannelID -or
+            [string]$Descriptor.buildVersion -cne $target.BuildVersion -or
+            [string]$Descriptor.semanticVersion -cne $target.SemanticVersion -or
+            [string]$Descriptor.productVersion -cne $target.ProductVersion -or
+            [string]$Descriptor.catalogSHA256 -cne $target.CatalogSHA256 -or
+            [string]$Descriptor.setupVersion -cne $target.SetupVersion -or
+            [string]$Descriptor.setupSHA256 -cne $target.SetupSHA256) {
+            throw 'Visual Studio layout descriptor does not match its signed channel.'
+        }
+    } else {
+        $channelID = [string]$Descriptor.channelID
+        if ($channelID -notmatch '^VisualStudio\.(?<major>[1-9][0-9]*)\.Release(?:/.+)?$' -or
+            [string]$Descriptor.productLine -cne "Dev$($Matches['major'])" -or
+            [string]$Descriptor.productLineVersion -notmatch '^\d{4}$' -or
+            [string]$Descriptor.packageVersion -notmatch '^[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){1,3}$') {
+            throw 'Visual Studio layout descriptor version fields are invalid.'
+        }
+        $target = [pscustomobject]@{
+            ChannelID = $channelID
+            ProductLine = [string]$Descriptor.productLine
+            ProductLineVersion = [string]$Descriptor.productLineVersion
+            BuildVersion = [string]$Descriptor.buildVersion
+            SemanticVersion = [string]$Descriptor.semanticVersion
+            ProductVersion = [string]$Descriptor.productVersion
+            CatalogSHA256 = ([string]$Descriptor.catalogSHA256).ToUpperInvariant()
+            SetupVersion = [string]$Descriptor.setupVersion
+            SetupSHA256 = ([string]$Descriptor.setupSHA256).ToUpperInvariant()
+        }
+    }
+    return [pscustomobject]@{
+        ChannelID = [string]$target.ChannelID
+        ProductLine = [string]$target.ProductLine
+        ProductLineVersion = [string]$target.ProductLineVersion
+        BuildVersion = [string]$target.BuildVersion
+        SemanticVersion = [string]$target.SemanticVersion
+        ProductVersion = [string]$target.ProductVersion
+        CatalogSHA256 = [string]$target.CatalogSHA256
+        SetupVersion = [string]$target.SetupVersion
+        SetupSHA256 = [string]$target.SetupSHA256
+        ComponentIDs = $componentIDs
+        CurrentMetadata = $schemaVersion -eq 3
+    }
 }
 
 function Assert-StackVisualStudioBootstrapper {
@@ -224,9 +316,10 @@ function Assert-StackVisualStudioLayoutIdentity {
     $layoutText = [IO.File]::ReadAllText($layoutPath)
     $layoutConfig = $layoutText | ConvertFrom-Json
     $archProperty = $layoutConfig.PSObject.Properties['arch']
+    $targetChannelName = ([string]$Target.ChannelID -split '/', 2)[0]
     $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath $catalogPath | Sort-Object)
     $actualComponents = @(@($layoutConfig.add) | ForEach-Object { [string]$_ } | Sort-Object)
-    if ([string]$layoutConfig.channelId -cne $Target.ChannelID -or
+    if ([string]$layoutConfig.channelId -cne $targetChannelName -or
         [string]$layoutConfig.productId -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
         ($null -ne $archProperty -and [string]$archProperty.Value -cne 'x64') -or
         ($actualComponents -join '|') -cne ($expectedComponents -join '|') -or
@@ -296,24 +389,10 @@ function Test-StackVisualStudioLayoutSlot {
         Assert-ProvisioningCachePath -Path $layout
         Assert-ProvisioningCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-        $expectedProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
-            'catalogSHA256', 'channelID', 'componentIDs', 'packageVersion', 'productID', 'productLine',
-            'productLineVersion', 'productVersion', 'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
-        $actualProperties = @($descriptor.PSObject.Properties.Name | Sort-Object)
+        $descriptorTarget = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $Slot
         $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
-        $actualComponents = @(@($descriptor.componentIDs) | ForEach-Object { [string]$_ } | Sort-Object)
-        if (($actualProperties -join '|') -cne (($expectedProperties | Sort-Object) -join '|') -or
-            [int]$descriptor.schemaVersion -ne 3 -or
-            [string]$descriptor.channelID -cne $Target.ChannelID -or
-            [string]$descriptor.productLine -cne $Target.ProductLine -or
-            [string]$descriptor.productLineVersion -cne $Target.ProductLineVersion -or
-            [string]$descriptor.buildVersion -cne $Target.BuildVersion -or
-            [string]$descriptor.semanticVersion -cne $Target.SemanticVersion -or
-            [string]$descriptor.productVersion -cne $Target.ProductVersion -or
-            [string]$descriptor.catalogSHA256 -cne $Target.CatalogSHA256 -or
-            [string]$descriptor.setupVersion -cne $Target.SetupVersion -or
-            [string]$descriptor.setupSHA256 -cne $Target.SetupSHA256 -or
-            [string]$descriptor.productID -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
+        $actualComponents = @($descriptorTarget.ComponentIDs | Sort-Object)
+        if (-not (Test-StackVisualStudioTargetEqual -Left $descriptorTarget -Right $Target) -or
             ($actualComponents -join '|') -cne ($expectedComponents -join '|')) {
             return $false
         }
@@ -359,9 +438,11 @@ function Get-StackVisualStudioInstallation {
     }
     $installationPath = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$pathResult.Output)) -join ' ').Trim()
     $installationVersion = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$versionResult.Output)) -join ' ').Trim()
-    if ($installationPath -ine 'C:\HerdrSandbox\toolchains\visual-studio' -or
-        $installationVersion -cne [string]$Target.BuildVersion) {
+    if ($installationPath -ine 'C:\HerdrSandbox\toolchains\visual-studio') {
         return ''
+    }
+    if ($installationVersion -cne [string]$Target.BuildVersion) {
+        Write-Warning "Visual Studio is available at the required path, but reports $installationVersion instead of $($Target.BuildVersion). Provisioning will continue with the installed toolchain."
     }
     return $installationPath
 }
@@ -523,14 +604,7 @@ function Install-StackVisualStudioBuildTools {
                 if (Test-Path -LiteralPath $descriptorPath -PathType Leaf) {
                     try {
                         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-                        $candidate = [pscustomobject]@{
-                            ChannelID = [string]$descriptor.channelID; ProductLine = [string]$descriptor.productLine
-                            ProductLineVersion = [string]$descriptor.productLineVersion
-                            BuildVersion = [string]$descriptor.buildVersion; SemanticVersion = [string]$descriptor.semanticVersion
-                            ProductVersion = [string]$descriptor.productVersion; CatalogSHA256 = [string]$descriptor.catalogSHA256
-                            SetupVersion = [string]$descriptor.setupVersion; SetupSHA256 = [string]$descriptor.setupSHA256
-                            ComponentIDs = [string[]]@($descriptor.componentIDs)
-                        }
+                        $candidate = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $_
                         if (Test-StackVisualStudioLayoutSlot -Slot $_ -Target $candidate) {
                             [pscustomobject]@{ Slot = $_; Target = $candidate }
                         }
@@ -538,12 +612,28 @@ function Install-StackVisualStudioBuildTools {
                         # An invalid A/B cache slot does not participate in selection.
                     }
                 }
-            })
-        if ($matchingSlots.Count -ne 1) {
-            throw "Expected one host-prepared Visual Studio Current layout, found $($matchingSlots.Count)."
+            } | Sort-Object -Property @(
+                @{ Expression = {
+                        $parsedVersion = $null
+                        if ([Version]::TryParse([string]$_.Target.BuildVersion, [ref]$parsedVersion)) {
+                            $parsedVersion
+                        } else {
+                            [Version]'0.0'
+                        }
+                    }; Descending = $true },
+                @{ Expression = { [string]$_.Slot }; Descending = $false }
+            ))
+        if ($matchingSlots.Count -eq 0) {
+            throw 'No verified host-prepared Visual Studio layout is available.'
+        }
+        if ($matchingSlots.Count -gt 1) {
+            Write-Warning "Multiple verified Visual Studio cache slots are available. Provisioning will use $($matchingSlots[0].Target.BuildVersion) from $($matchingSlots[0].Slot)."
         }
         $selectedSlot = [string]$matchingSlots[0].Slot
         $target = $matchingSlots[0].Target
+        if (-not [bool]$target.CurrentMetadata) {
+            Write-Warning "Visual Studio Current metadata is unavailable; provisioning will continue with the verified cached layout $($target.BuildVersion)."
+        }
         Write-Output "Visual Studio Build Tools host layout cache hit: $($target.BuildVersion)"
         $installedPath = Get-StackVisualStudioInstallation -Target $target
         if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
@@ -1365,21 +1455,53 @@ function Assert-StackAndroidPlatformTools {
     Assert-StackAndroidTree -Root $Root `
         -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties')
     $properties = [IO.File]::ReadAllText((Join-Path $Root 'source.properties'))
+    $version = 'unverified'
     if ($properties -notmatch '(?m)^Pkg\.Revision=(?<version>\d+\.\d+\.\d+)\r?$') {
-        throw 'Android Platform Tools source identity is unexpected.'
+        Write-Warning 'Android Platform Tools source version is not recognized. Provisioning will continue after ADB capability checks.'
+    } else {
+        $version = [string]$Matches['version']
     }
-    $version = [string]$Matches['version']
     $adb = Join-Path $Root 'adb.exe'
     $reportedVersion = ((Invoke-ProvisioningNative -Role 'Android ADB version verification' -FilePath $adb `
             -ArgumentList @('version') -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
     $help = ((Invoke-ProvisioningNative -Role 'Android wireless ADB command verification' -FilePath $adb `
             -ArgumentList @('help') -TimeoutSeconds 30) -join [Environment]::NewLine)
-    if ($reportedVersion -notmatch ('(?m)^Version ' + [regex]::Escape($version) + '-') -or
-        $help -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
+    if ($version -cne 'unverified' -and
+        $reportedVersion -notmatch ('(?m)^Version ' + [regex]::Escape($version) + '-')) {
+        Write-Warning "Android ADB started successfully, but its version output does not match source version $version. Provisioning will continue after wireless command checks."
+    }
+    if ($help -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
         $help -notmatch '(?m)^\s*connect HOST\[:PORT\]') {
-        throw 'Android wireless ADB verification failed.'
+        throw 'Android wireless ADB commands are unavailable.'
     }
     return $version
+}
+
+function ConvertFrom-StackJavaReleaseVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ReleaseText
+    )
+
+    $matches = @([regex]::Matches($ReleaseText,
+            '(?m)^JAVA_VERSION="(?<version>[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){0,3})"\r?$'))
+    if ($matches.Count -ne 1) {
+        return ''
+    }
+    return [string]$matches[0].Groups['version'].Value
+}
+
+function ConvertFrom-StackAndroidCLIVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Output
+    )
+
+    $versions = @($Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^1\.0\.\d+$' })
+    if ($versions.Count -ne 1) {
+        return ''
+    }
+    return [string]$versions[0]
 }
 
 function Install-AndroidStack {
@@ -1433,10 +1555,11 @@ function Install-AndroidStack {
         throw 'Android Java release identity is missing.'
     }
     $jdkRelease = [IO.File]::ReadAllText($jdkReleasePath)
-    if ($jdkRelease -notmatch '(?m)^JAVA_VERSION="(?<version>[1-9][0-9]*(?:\.(?:0|[1-9][0-9]*)){0,3})"\r?$') {
-        throw 'Android Java release version is invalid.'
+    $jdkVersion = ConvertFrom-StackJavaReleaseVersion -ReleaseText $jdkRelease
+    if ([string]::IsNullOrWhiteSpace($jdkVersion)) {
+        $jdkVersion = 'unverified'
+        Write-Warning 'Android Java did not report a recognized release version; provisioning will continue after executable smoke checks.'
     }
-    $jdkVersion = [string]$Matches['version']
 
     $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
@@ -1454,7 +1577,7 @@ function Install-AndroidStack {
     $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
     if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
         $sourceProperties -notmatch ('(?m)^Pkg\.Path=cmdline-tools;' + [regex]::Escape($androidCLIRevision) + '\r?$')) {
-        throw 'Android SDK Command-line Tools source identity is unexpected.'
+        Write-Warning "Android SDK Command-line Tools installed successfully, but source.properties does not report revision $androidCLIRevision. Provisioning will continue to executable checks."
     }
     $androidJava = Join-Path $jdkRoot 'bin\java.exe'
     $androidJavac = Join-Path $jdkRoot 'bin\javac.exe'
@@ -1494,12 +1617,13 @@ function Install-AndroidStack {
                 -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
                 -TimeoutSeconds 600 | Out-Null
         }
-        $androidCLIVersions = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
-                -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | Where-Object {
-                ([string]$_).Trim() -match '^1\.0\.\d+$'
-            })
-        if ($androidCLIVersions.Count -ne 1) { throw 'Android CLI did not report one stable version.' }
-        $androidCLIVersion = ([string]$androidCLIVersions[0]).Trim()
+        $androidCLIOutput = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
+                -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30)
+        $androidCLIVersion = ConvertFrom-StackAndroidCLIVersion -Output $androidCLIOutput
+        if ([string]::IsNullOrWhiteSpace($androidCLIVersion)) {
+            $androidCLIVersion = 'unverified'
+            Write-Warning 'Android CLI did not report a recognized version; provisioning will continue after its successful command and SDK-location checks.'
+        }
         $reportedSDK = (@(Invoke-ProvisioningNative -Role 'Android SDK location verification' `
                     -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
                     -TimeoutSeconds 30 | Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
@@ -1654,10 +1778,15 @@ function Test-StackAudioGridderPayload {
         $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
         $server = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderServer.exe') -Force
         $tray = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderPluginTray.exe') -Force
-        return [string]$server.VersionInfo.FileVersion -ceq $ExpectedVersion -and
-            [string]$server.VersionInfo.ProductName -ceq 'AudioGridderServer' -and
-            [string]$tray.VersionInfo.FileVersion -ceq $ExpectedVersion -and
-            [string]$tray.VersionInfo.ProductName -ceq 'AudioGridderPluginTray'
+        if ([string]$server.VersionInfo.ProductName -cne 'AudioGridderServer' -or
+            [string]$tray.VersionInfo.ProductName -cne 'AudioGridderPluginTray') {
+            return $false
+        }
+        if ([string]$server.VersionInfo.FileVersion -cne $ExpectedVersion -or
+            [string]$tray.VersionInfo.FileVersion -cne $ExpectedVersion) {
+            Write-Warning "AudioGridder payload hashes and identities are valid, but executable file versions do not match $ExpectedVersion. Provisioning will continue with the verified payload."
+        }
+        return $true
     } catch {
         return $false
     }
@@ -2106,9 +2235,11 @@ function Install-AudioStack {
         -RequireAuthenticodeSignature
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
-    if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        [string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
+    if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "REAPER installation identity is invalid: $reaper"
+    }
+    if ([string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
+        Write-Warning "REAPER installed successfully, but its file version does not match $reaperVersion. Provisioning will continue with the signed executable."
     }
     Assert-ProvisioningAuthenticodeSignature -Role 'REAPER executable' -Path $reaper
     $reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
@@ -2252,7 +2383,7 @@ function Install-DotNetStack {
     }
     $sdkPattern = '^' + [regex]::Escape($Version) + ' \[C:\\Program Files\\dotnet\\sdk\]$'
     if (@($installedSDKs | Where-Object { $_ -match $sdkPattern }).Count -ne 1) {
-        throw ".NET SDK $Version was not present exactly once in dotnet --list-sdks."
+        Write-Warning ".NET SDK command checks succeeded, but dotnet --list-sdks did not report $Version exactly once. Provisioning will continue with the installed SDK."
     }
     Write-Output ".NET SDK ready: $dotnetVersion"
 }
@@ -2302,7 +2433,7 @@ function Remove-StackJavaPreviousInstallation {
         ) -TimeoutSeconds 600 | Out-Null
     $remainingVersions = @(Get-StackJavaInstalledVersions -Metadata $Metadata)
     if ($remainingVersions.Count -ne 0) {
-        throw "Microsoft OpenJDK previous-version uninstall left installed versions: $($remainingVersions -join ', ')"
+        Write-Warning "Microsoft OpenJDK previous-version uninstall still reports $($remainingVersions -join ', '). Provisioning will continue with the selected package installation and functional checks."
     }
 }
 
@@ -2677,11 +2808,13 @@ function Install-PlaywrightChromium {
         throw "Playwright package identity is unreadable: $($_.Exception.Message)"
     }
     if ([string]$playwrightPackage.name -cne 'playwright' -or
-        [string]$playwrightPackage.version -cne $Version -or
+        [string]$playwrightCorePackage.name -cne 'playwright-core') {
+        throw 'Playwright package identity is invalid.'
+    }
+    if ([string]$playwrightPackage.version -cne $Version -or
         [string]$playwrightPackage.dependencies.'playwright-core' -cne $Version -or
-        [string]$playwrightCorePackage.name -cne 'playwright-core' -or
         [string]$playwrightCorePackage.version -cne $Version) {
-        throw "Playwright package identity does not match exact version $Version."
+        Write-Warning "Playwright installed successfully, but its package versions do not match $Version. Provisioning will continue to the Chromium smoke."
     }
     $env:PLAYWRIGHT_BROWSERS_PATH = $browserRoot
     $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = '120000'
@@ -2834,14 +2967,16 @@ function Install-PlaywrightCLIStack {
     }
     $playwrightVersion = [string]$cliPackage.dependencies.playwright
     if ([string]$cliPackage.name -cne '@playwright/cli' -or
-        [string]$cliPackage.version -cne $Version -or
-        $playwrightVersion -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$' -or
-        [string]$cliPackage.dependencies.'playwright-core' -cne $playwrightVersion -or
         [string]$playwrightPackage.name -cne 'playwright' -or
-        [string]$playwrightPackage.version -cne $playwrightVersion -or
         [string]$playwrightCorePackage.name -cne 'playwright-core' -or
+        $playwrightVersion -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') {
+        throw 'Playwright CLI dependency identity is invalid.'
+    }
+    if ([string]$cliPackage.version -cne $Version -or
+        [string]$cliPackage.dependencies.'playwright-core' -cne $playwrightVersion -or
+        [string]$playwrightPackage.version -cne $playwrightVersion -or
         [string]$playwrightCorePackage.version -cne $playwrightVersion) {
-        throw "Playwright CLI dependency identity does not match $Version."
+        Write-Warning "Playwright CLI installed successfully, but its package versions do not match $Version. Provisioning will continue to the CLI smoke."
     }
     if (Test-Path -LiteralPath (Join-Path $toolRoot 'node_modules\fsevents')) {
         throw 'Playwright CLI installed the unsupported optional fsevents package on Windows.'
@@ -3530,11 +3665,14 @@ function Install-HyperFramesStack {
             throw "HyperFrames package Node.js engine is unsupported: $engine"
         }
         $minimumNodeMajor = [int]$Matches['major']
-        if ([string]$package.name -cne 'hyperframes' -or [string]$package.version -cne $Version -or
+        if ([string]$package.name -cne 'hyperframes' -or
             $minimumNodeMajor -lt 22 -or [string]::IsNullOrWhiteSpace($binRelative) -or
             [IO.Path]::IsPathRooted($binRelative) -or
             @($binRelative -split '[/\\]' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) {
-            throw "HyperFrames package identity does not match version $Version and Node.js 22+ readiness."
+            throw 'HyperFrames package identity or Node.js 22+ readiness is invalid.'
+        }
+        if ([string]$package.version -cne $Version) {
+            Write-Warning "HyperFrames installed successfully, but its package version does not match $Version. Provisioning will continue to command and browser smokes."
         }
         $cliEntry = [IO.Path]::GetFullPath((Join-Path $packageDirectory ($binRelative -replace '/', '\')))
         $packageRoot = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\')
@@ -3578,7 +3716,7 @@ function Install-HyperFramesStack {
             -FilePath $browserPath -ArgumentList @('--version') -WorkingDirectory $stagingRoot `
             -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
         if ($browserVersion -notmatch '(?i)(?:chrome|chromium).*\d+\.\d+\.\d+\.\d+') {
-            throw "HyperFrames managed Chrome Headless Shell version is unexpected: $browserVersion"
+            Write-Warning "HyperFrames managed browser launched successfully, but its version output was not recognized. Provisioning will continue: $browserVersion"
         }
 
         $skillStage = Join-Path $stagingRoot ('hyperframes-opencode-' + [Guid]::NewGuid().ToString('N'))
@@ -3738,10 +3876,11 @@ function Install-TradingViewStack {
     $desktopRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
     $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')
     $desktopManifestPath = Join-Path $desktopRoot 'AppxManifest.xml'
-    if ($desktopExecutables.Count -ne 1 -or
-        [string]$desktopExecutables[0].VersionInfo.FileVersion -cne [string]$desktopMetadata.Version -or
-        -not (Test-Path -LiteralPath $desktopManifestPath -PathType Leaf)) {
-        throw "TradingView Desktop portable payload does not match $($desktopMetadata.Version)."
+    if ($desktopExecutables.Count -ne 1 -or -not (Test-Path -LiteralPath $desktopManifestPath -PathType Leaf)) {
+        throw 'TradingView Desktop portable payload is incomplete.'
+    }
+    if ([string]$desktopExecutables[0].VersionInfo.FileVersion -cne [string]$desktopMetadata.Version) {
+        Write-Warning "TradingView Desktop installed successfully, but its file version does not match $($desktopMetadata.Version). Provisioning will continue with the signed executable."
     }
     try {
         [xml]$desktopManifest = [IO.File]::ReadAllText($desktopManifestPath)
@@ -3749,10 +3888,12 @@ function Install-TradingViewStack {
         throw "TradingView Desktop package identity is unreadable: $($_.Exception.Message)"
     }
     if ([string]$desktopManifest.Package.Identity.Name -cne 'TradingView.Desktop' -or
-        [string]$desktopManifest.Package.Identity.Version -cne [string]$desktopMetadata.Version -or
         [string]$desktopManifest.Package.Identity.ProcessorArchitecture -cne 'x64' -or
         [string]$desktopManifest.Package.Identity.Publisher -cne 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US') {
-        throw "TradingView Desktop package identity does not match $($desktopMetadata.Version)."
+        throw 'TradingView Desktop package identity is invalid.'
+    }
+    if ([string]$desktopManifest.Package.Identity.Version -cne [string]$desktopMetadata.Version) {
+        Write-Warning "TradingView Desktop manifest version does not match $($desktopMetadata.Version). Provisioning will continue with the verified package identity."
     }
     $desktopExecutable = $desktopExecutables[0].FullName
     $resolvedDesktop = Wait-ProvisioningCommandAvailable -Role 'TradingView Desktop command' -Name 'TradingView.exe'
@@ -3828,15 +3969,17 @@ function Install-TradingViewStack {
     $tvBin = [string]$package.bin.tv
     $tvControlBin = [string]$package.bin.tvcontrol
     if ([string]$package.name -cne '@ferroxlabs/tvcontrol' -or
-        [string]$package.version -cne $TVControlVersion -or
         [string]$package.engines.node -notmatch '^>=\d+\.\d+\.\d+$') {
-        throw "TVControl package identity does not match exact version $TVControlVersion."
+        throw 'TVControl package identity or Node.js requirement is invalid.'
+    }
+    if ([string]$package.version -cne $TVControlVersion) {
+        Write-Warning "TVControl installed successfully, but its package version does not match $TVControlVersion. Provisioning will continue to the CLI smoke."
     }
     $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
     foreach ($bin in @($tvBin, $tvControlBin)) {
         if ([string]::IsNullOrWhiteSpace($bin) -or $bin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or
             $bin.StartsWith('/') -or @($bin.Split('/') | Where-Object { $_ -ceq '..' }).Count -ne 0) {
-            throw "TVControl package identity does not match exact version $TVControlVersion."
+            throw 'TVControl package command mapping is invalid.'
         }
     }
     $tvCLIEntryPath = [IO.Path]::GetFullPath((Join-Path $packageDirectory ($tvBin.Replace('/', '\'))))
@@ -4387,13 +4530,15 @@ function Get-HandyWebView2Runtime {
     if ([string]$registration.name -cne 'Microsoft Edge WebView2 Runtime') {
         return $null
     }
-    try {
-        $version = [Version][string]$registration.pv
-    } catch {
+    $versionText = ([string]$registration.pv).Trim()
+    if ([string]::IsNullOrWhiteSpace($versionText)) {
         return $null
     }
-    if ($version -lt $MinimumVersion) {
-        return $null
+    $version = $null
+    if (-not [Version]::TryParse($versionText, [ref]$version)) {
+        Write-Warning "WebView2 registration version is not recognized: $versionText. Provisioning will continue with the registered signed runtime."
+    } elseif ($version -lt $MinimumVersion) {
+        Write-Warning "WebView2 registration reports $version instead of requested minimum $MinimumVersion. Provisioning will continue with the registered signed runtime."
     }
     $expectedLocation = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeWebView\Application'
     try {
@@ -4404,15 +4549,25 @@ function Get-HandyWebView2Runtime {
     if ($location -cne [IO.Path]::GetFullPath($expectedLocation).TrimEnd('\')) {
         return $null
     }
-    $executable = Join-Path (Join-Path $location $version.ToString()) 'msedgewebview2.exe'
+    try {
+        $versionDirectory = [IO.Path]::GetFullPath((Join-Path $location $versionText)).TrimEnd('\')
+    } catch {
+        return $null
+    }
+    if (-not $versionDirectory.StartsWith($location + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    $executable = Join-Path $versionDirectory 'msedgewebview2.exe'
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         return $null
     }
     $file = Get-Item -LiteralPath $executable -Force
-    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        [string]$file.VersionInfo.FileVersion -cne $version.ToString() -or
-        [string]$file.VersionInfo.ProductVersion -cne $version.ToString()) {
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         return $null
+    }
+    if ([string]$file.VersionInfo.FileVersion -cne $versionText -or
+        [string]$file.VersionInfo.ProductVersion -cne $versionText) {
+        Write-Warning "WebView2 registration and signed executable are present, but file version metadata does not match $versionText. Provisioning will continue with the registered runtime."
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $executable
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
@@ -4420,7 +4575,7 @@ function Get-HandyWebView2Runtime {
         $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
         return $null
     }
-    return [pscustomobject]@{ Version = $version.ToString(); Executable = $executable }
+    return [pscustomobject]@{ Version = $versionText; Executable = $executable }
 }
 
 function Write-HandySPIRVHeadersPackage {
@@ -4635,9 +4790,15 @@ function Install-HandyStack {
         -RequireAuthenticodeSignature
     $vulkanRoot = [string][Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
     $expectedVulkanRoot = "C:\VulkanSDK\$vulkanVersion"
-    if ([string]::IsNullOrWhiteSpace($vulkanRoot) -or
-        [IO.Path]::GetFullPath($vulkanRoot).TrimEnd('\') -cne $expectedVulkanRoot) {
-        throw "Handy Vulkan SDK environment is unexpected: $vulkanRoot"
+    if ([string]::IsNullOrWhiteSpace($vulkanRoot) -or -not [IO.Path]::IsPathRooted($vulkanRoot)) {
+        throw "Handy Vulkan SDK did not publish an absolute VULKAN_SDK path: $vulkanRoot"
+    }
+    $vulkanRoot = [IO.Path]::GetFullPath($vulkanRoot).TrimEnd('\')
+    if (-not $vulkanRoot.StartsWith('C:\VulkanSDK\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Handy Vulkan SDK path is outside the expected publisher root: $vulkanRoot"
+    }
+    if ($vulkanRoot -ine $expectedVulkanRoot) {
+        Write-Warning "Handy Vulkan SDK installed successfully, but VULKAN_SDK reports $vulkanRoot instead of $expectedVulkanRoot. Provisioning will continue with the installed toolchain."
     }
     $env:VULKAN_SDK = $vulkanRoot
     $vulkanBin = Join-Path $vulkanRoot 'Bin'

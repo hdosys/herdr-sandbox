@@ -109,6 +109,7 @@ func TestAudioGridderReleaseManifestBindsSourceAndInstalledFilesInWindowsPowerSh
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AudioGridder release manifest regression")
 	}
+	requireExternalBoundaryTest(t, "AudioGridder release manifest")
 	stackPath := defaultProvisioningPath(t, stackProvisioningName)
 	root := t.TempDir()
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }

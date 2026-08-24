@@ -184,12 +184,13 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
     )
 
     $channelID = [string]$Channel.info.id
-    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release$') {
+    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release(?:/.+)?$') {
         throw "Visual Studio channel identity is unexpected: $SourceDescription"
     }
     $productMajor = [string]$Matches['major']
+    $channelName = ($channelID -split '/', 2)[0]
     if ([string]$Channel.manifestVersion -cne '1.1' -or
-        [string]$Channel.info.manifestName -cne $channelID -or
+        [string]$Channel.info.manifestName -cne $channelName -or
         [string]$Channel.info.manifestType -cne 'channel' -or
         [string]$Channel.info.productLine -cne "Dev$productMajor" -or
         [string]$Channel.info.productLineVersion -notmatch '^\d{4}$' -or
@@ -207,7 +208,7 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
     })
     $setups = @($Channel.channelItems | Where-Object {
         [string]$_.type -ceq 'Bootstrapper' -and
-        [string]$_.id -ceq "$channelID.Bootstrappers.Setup"
+        [string]$_.id -ceq "$channelName.Bootstrappers.Setup"
     })
     if ($products.Count -ne 1 -or $manifests.Count -ne 1 -or $setups.Count -ne 1) {
         throw "Visual Studio channel selection is ambiguous: $SourceDescription"
@@ -260,7 +261,32 @@ function Test-HerdrHostVisualStudioTargetEqual {
 }
 
 function Get-HerdrHostVisualStudioTargetFromDescriptor {
-    param([Parameter(Mandatory = $true)][object]$Descriptor)
+    param(
+        [Parameter(Mandatory = $true)][object]$Descriptor,
+        [string]$Slot = ''
+    )
+
+    if ([int]$Descriptor.schemaVersion -eq 2) {
+        if ([string]::IsNullOrWhiteSpace($Slot)) {
+            throw 'Visual Studio schema-2 descriptor requires its cache slot.'
+        }
+        $channelPath = Join-Path (Join-Path $Slot 'layout') 'ChannelManifest.json'
+        $target = Get-HerdrHostVisualStudioTargetFromChannel `
+            -Channel ([IO.File]::ReadAllText($channelPath) | ConvertFrom-Json) -SourceDescription $channelPath
+        if ([string]$Descriptor.channelID -cne $target.ChannelID -or
+            [string]$Descriptor.buildVersion -cne $target.BuildVersion -or
+            [string]$Descriptor.semanticVersion -cne $target.SemanticVersion -or
+            [string]$Descriptor.productVersion -cne $target.ProductVersion -or
+            [string]$Descriptor.catalogSHA256 -cne $target.CatalogSHA256 -or
+            [string]$Descriptor.setupVersion -cne $target.SetupVersion -or
+            [string]$Descriptor.setupSHA256 -cne $target.SetupSHA256) {
+            throw 'Visual Studio schema-2 descriptor does not match its signed channel.'
+        }
+        return $target
+    }
+    if ([int]$Descriptor.schemaVersion -ne 3) {
+        throw "Visual Studio descriptor schema is unsupported: $($Descriptor.schemaVersion)"
+    }
 
     return [pscustomobject]@{
         ChannelID = [string]$Descriptor.channelID
@@ -447,9 +473,10 @@ function Assert-HerdrHostVisualStudioLayoutIdentity {
     $layoutText = [IO.File]::ReadAllText($layoutPath)
     $layoutConfig = $layoutText | ConvertFrom-Json
     $archProperty = $layoutConfig.PSObject.Properties['arch']
+    $targetChannelName = ([string]$Target.ChannelID -split '/', 2)[0]
     $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs -CatalogPath $catalogPath | Sort-Object)
     $actualComponents = @(@($layoutConfig.add) | ForEach-Object { [string]$_ } | Sort-Object)
-    if ([string]$layoutConfig.channelId -cne $Target.ChannelID -or
+    if ([string]$layoutConfig.channelId -cne $targetChannelName -or
         [string]$layoutConfig.productId -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
         ($null -ne $archProperty -and [string]$archProperty.Value -cne 'x64') -or
         ($actualComponents -join '|') -cne ($expectedComponents -join '|') -or
@@ -460,7 +487,7 @@ function Assert-HerdrHostVisualStudioLayoutIdentity {
 }
 
 function Test-HerdrHostVisualStudioLayoutSlot {
-    param([string]$Slot, [object]$Target)
+    param([string]$Slot, [object]$Target, [switch]$WarningOnFailure)
 
     try {
         $layout = Join-Path $Slot 'layout'
@@ -468,21 +495,19 @@ function Test-HerdrHostVisualStudioLayoutSlot {
         if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $false }
         Assert-HerdrHostCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-        $properties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
+        $currentProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
             'catalogSHA256', 'channelID', 'componentIDs', 'packageVersion', 'productID', 'productLine',
             'productLineVersion', 'productVersion', 'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
+        $previousProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
+            'catalogSHA256', 'channelID', 'componentIDs', 'productID', 'productVersion', 'schemaVersion',
+            'semanticVersion', 'setupSHA256', 'setupVersion')
+        $properties = if ([int]$descriptor.schemaVersion -eq 3) { $currentProperties } elseif ([int]$descriptor.schemaVersion -eq 2) { $previousProperties } else { @() }
+        $descriptorTarget = Get-HerdrHostVisualStudioTargetFromDescriptor -Descriptor $descriptor -Slot $Slot
         $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
         $actualComponents = @(@($descriptor.componentIDs) | ForEach-Object { [string]$_ } | Sort-Object)
-        if ((@($descriptor.PSObject.Properties.Name | Sort-Object) -join '|') -cne (($properties | Sort-Object) -join '|') -or
-            [int]$descriptor.schemaVersion -ne 3 -or [string]$descriptor.channelID -cne $Target.ChannelID -or
-            [string]$descriptor.productLine -cne $Target.ProductLine -or
-            [string]$descriptor.productLineVersion -cne $Target.ProductLineVersion -or
-            [string]$descriptor.buildVersion -cne $Target.BuildVersion -or
-            [string]$descriptor.semanticVersion -cne $Target.SemanticVersion -or
-            [string]$descriptor.productVersion -cne $Target.ProductVersion -or
-            [string]$descriptor.catalogSHA256 -cne $Target.CatalogSHA256 -or
-            [string]$descriptor.setupVersion -cne $Target.SetupVersion -or
-            [string]$descriptor.setupSHA256 -cne $Target.SetupSHA256 -or
+        if ($properties.Count -eq 0 -or
+            (@($descriptor.PSObject.Properties.Name | Sort-Object) -join '|') -cne (($properties | Sort-Object) -join '|') -or
+            -not (Test-HerdrHostVisualStudioTargetEqual -Left $descriptorTarget -Right $Target) -or
             [string]$descriptor.productID -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
             ($actualComponents -join '|') -cne ($expectedComponents -join '|')) { return $false }
         $required = @(Get-HerdrHostVisualStudioRequiredArtifacts)
@@ -501,19 +526,25 @@ function Test-HerdrHostVisualStudioLayoutSlot {
             -ExpectedSHA256 ([string]$descriptor.bootstrapperSHA256)
         Assert-HerdrHostVisualStudioLayoutIdentity -Layout $layout -Target $Target
         return $true
-    } catch { return $false }
+    } catch {
+        if ($WarningOnFailure) { Write-Warning "Visual Studio cache slot is unusable: $Slot`: $($_.Exception.Message)" }
+        return $false
+    }
 }
 
 function Test-HerdrHostStoredVisualStudioLayoutSlot {
-    param([string]$Slot)
+    param([string]$Slot, [switch]$WarningOnFailure)
 
     try {
         $descriptorPath = Join-Path $Slot 'complete.json'
         if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $false }
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-        $target = Get-HerdrHostVisualStudioTargetFromDescriptor -Descriptor $descriptor
-        return Test-HerdrHostVisualStudioLayoutSlot -Slot $Slot -Target $target
-    } catch { return $false }
+        $target = Get-HerdrHostVisualStudioTargetFromDescriptor -Descriptor $descriptor -Slot $Slot
+        return Test-HerdrHostVisualStudioLayoutSlot -Slot $Slot -Target $target -WarningOnFailure:$WarningOnFailure
+    } catch {
+        if ($WarningOnFailure) { Write-Warning "Visual Studio cache slot descriptor is unusable: $Slot`: $($_.Exception.Message)" }
+        return $false
+    }
 }
 
 function Wait-HerdrHostVisualStudioLayoutFiles {
@@ -551,17 +582,18 @@ New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
 Assert-HerdrHostCachePath -Path $cacheRoot
 $stableBootstrapper = Join-Path $cacheRoot 'bootstrapper\vs_BuildTools.exe'
 $lockPath = Join-Path $cacheRoot '.lock'
+$slotA = Join-Path $cacheRoot 'a'
+$slotB = Join-Path $cacheRoot 'b'
 $lock = $null
 $stage = Join-Path $env:TEMP ('herdr-sandbox-vsbt-' + [Guid]::NewGuid().ToString('N'))
 try {
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
         [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $packageMetadata = Get-HerdrHostVisualStudioPackageMetadata
-    $slotA = Join-Path $cacheRoot 'a'
-    $slotB = Join-Path $cacheRoot 'b'
     $matching = @(@($slotA, $slotB) | Where-Object {
         if (-not (Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $_)) { return $false }
         $descriptor = [IO.File]::ReadAllText((Join-Path $_ 'complete.json')) | ConvertFrom-Json
+        if ([int]$descriptor.schemaVersion -ne 3) { return $false }
         return [string]$descriptor.packageVersion -ceq $packageMetadata.Version -and
             [string]$descriptor.bootstrapperURL -ceq $packageMetadata.Url -and
             [string]$descriptor.bootstrapperSHA256 -ceq $packageMetadata.SHA256
@@ -661,6 +693,14 @@ try {
         throw 'Published host Visual Studio layout validation failed.'
     }
     Write-Host "Visual Studio Build Tools host layout ready: $($target.BuildVersion)"
+} catch {
+    $fallbackSlots = @(@($slotA, $slotB) | Where-Object { Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $_ -WarningOnFailure })
+    if ($fallbackSlots.Count -gt 0) {
+        $fallbackDescriptor = [IO.File]::ReadAllText((Join-Path $fallbackSlots[0] 'complete.json')) | ConvertFrom-Json
+        Write-Warning "Visual Studio Current layout preparation failed; provisioning will continue with verified cached layout $($fallbackDescriptor.buildVersion): $($_.Exception.Message)"
+        return
+    }
+    throw
 } finally {
     if ($null -ne $lock) { $lock.Dispose() }
     if (Test-Path -LiteralPath $stage) {

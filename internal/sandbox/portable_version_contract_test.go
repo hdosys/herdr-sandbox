@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestPortableFileVersionReadbackDoesNotLaunchGUIBinaryInWindowsPowerShell51(t *testing.T) {
+func TestPortableFileVersionReadbackWarnsWithoutLaunchingGUIBinaryInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 portable file-version regression")
 	}
@@ -44,8 +44,12 @@ if (-not (Test-ProvisioningPortablePackageInstalled -Metadata $metadata -Executa
     throw 'Matching portable file version was rejected.'
 }
 $metadata.Version = '0.0.0.0'
-if (Test-ProvisioningPortablePackageInstalled -Metadata $metadata -ExecutableName 'fixture.exe' -VersionSource 'File') {
-    throw 'Mismatched portable file version was accepted.'
+$warnings = @()
+if (-not (Test-ProvisioningPortablePackageInstalled -Metadata $metadata -ExecutableName 'fixture.exe' -VersionSource 'File' -WarningVariable warnings)) {
+    throw 'Mismatched portable file version rejected the working executable.'
+}
+if ($warnings.Count -ne 1 -or [string]$warnings[0] -notmatch 'Provisioning will continue') {
+    throw 'Mismatched portable file version did not emit one continuation warning.'
 }
 `, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(root), quote(fixture))
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))

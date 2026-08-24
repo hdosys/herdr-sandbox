@@ -139,13 +139,11 @@ function Invoke-ProvisioningNative { param($Role, $FilePath, $ArgumentList) retu
 $actual = Assert-ProvisioningCommand -Role 'Fixture' -Name 'fixture.exe' -VersionArguments @('--version') -ExpectedPattern '^fixture 1\.2\.3$'
 if ($actual -cne 'fixture 1.2.3') { throw "Matched command output is unexpected: $actual" }
 $script:output = @('nonfatal tool warning', 'fixture 2.0.0')
-$rejected = $false
-try {
-    Assert-ProvisioningCommand -Role 'Fixture' -Name 'fixture.exe' -VersionArguments @('--version') -ExpectedPattern '^fixture 1\.2\.3$' | Out-Null
-} catch {
-    $rejected = $_.Exception.Message -like 'Fixture did not report its required version or capability:*'
+$warnings = @()
+$unverified = Assert-ProvisioningCommand -Role 'Fixture' -Name 'fixture.exe' -VersionArguments @('--version') -ExpectedPattern '^fixture 1\.2\.3$' -WarningVariable warnings
+if ($warnings.Count -ne 1 -or $unverified -notmatch 'fixture 2\.0\.0') {
+    throw 'Unrecognized version output did not continue with one warning.'
 }
-if (-not $rejected) { throw 'Missing required command output was accepted.' }
 `, quote(basePath))
 	scriptPath := filepath.Join(t.TempDir(), "command-output-regression.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
@@ -747,6 +745,77 @@ if ($accepted) { throw 'Mismatched exact Rust manifest was accepted.' }
 	}
 }
 
+func TestCurrentProvisioningInputParsersInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 current provisioning input regression")
+	}
+	requireExternalBoundaryTest(t, "current provisioning input parsers")
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: stackPath,
+		names: []string{
+			"ConvertFrom-StackVisualStudioLayoutDescriptor",
+			"ConvertFrom-StackJavaReleaseVersion",
+			"ConvertFrom-StackAndroidCLIVersion",
+		},
+	})
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+trap { Write-Output ($_ | Out-String); exit 1 }
+%s
+$hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$descriptor = [pscustomobject][ordered]@{
+    artifacts = [pscustomobject]@{}
+    bootstrapperSHA256 = $hash
+    bootstrapperURL = 'https://download.visualstudio.microsoft.com/download/pr/fixture/vs_BuildTools.exe'
+    buildVersion = '18.9.12112.369'
+    catalogSHA256 = $hash
+    channelID = 'VisualStudio.18.Release'
+    componentIDs = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.Windows11SDK.26100')
+    packageVersion = '18.9.1'
+    productID = 'Microsoft.VisualStudio.Product.BuildTools'
+    productLine = 'Dev18'
+    productLineVersion = '2026'
+    productVersion = '18.9.12112.369'
+    schemaVersion = 3
+    semanticVersion = '18.9.1'
+    setupSHA256 = $hash
+    setupVersion = '4.9.50.302448642'
+}
+$target = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor
+if ($target.ChannelID -cne 'VisualStudio.18.Release' -or @($target.ComponentIDs).Count -ne 2) {
+    throw 'Current Visual Studio descriptor was not parsed.'
+}
+$invalidDescriptor = $descriptor | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+$invalidDescriptor.PSObject.Properties.Remove('productLine')
+$accepted = $false
+try { $null = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $invalidDescriptor; $accepted = $true } catch { }
+if ($accepted) { throw 'Visual Studio descriptor without productLine was accepted.' }
+
+$javaVersion = ConvertFrom-StackJavaReleaseVersion -ReleaseText ('JAVA_VERSION="25.0.4.1"' + [Environment]::NewLine + 'IMPLEMENTOR="Microsoft"' + [Environment]::NewLine)
+if ($javaVersion -cne '25.0.4.1') { throw "Current Java release version was not parsed: $javaVersion" }
+if (-not [string]::IsNullOrEmpty((ConvertFrom-StackJavaReleaseVersion -ReleaseText 'JAVA_VERSION="25.0.4.1.2"'))) {
+    throw 'Java release version with five components was accepted.'
+}
+
+$androidVersion = ConvertFrom-StackAndroidCLIVersion -Output @(
+    'OpenJDK 64-Bit Server VM warning: fixture',
+    '1.0.15985488'
+)
+if ($androidVersion -cne '1.0.15985488') { throw "Current Android CLI version was not parsed: $androidVersion" }
+if (-not [string]::IsNullOrEmpty((ConvertFrom-StackAndroidCLIVersion -Output @('1.0.2.3')))) {
+    throw 'Unexpected Android CLI version shape was accepted.'
+}
+`, functionSetup)
+	scriptPath := filepath.Join(t.TempDir(), "current-provisioning-inputs.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("current provisioning input regression: %v: %s", err, output)
+	}
+}
+
 func TestRustMirrorCacheUsesResolvedIdentityInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 Rust cache regression")
@@ -1177,7 +1246,7 @@ try {
 	}
 }
 
-func TestWinGetListParserRecognizesInstalledExactIDInWindowsPowerShell51(t *testing.T) {
+func TestWinGetListParserAcceptsInstalledIDAndWarnsOnVersionDriftInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
@@ -1194,12 +1263,16 @@ $matching = @('Name       Id                   Version', '----------------------
 $wrongVersion = @('PowerShell Microsoft.PowerShell 7.6.3.0')
 $duplicate = @('PowerShell Microsoft.PowerShell 7.6.4.0', 'PowerShell Microsoft.PowerShell 7.6.4.0')
 $latestMetadata = [pscustomobject]@{ Id = 'Microsoft.PowerShell'; Version = '' }
+$warnings = @()
 if (-not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $metadata) -or
-    (Test-ProvisioningWinGetListOutput -Lines $wrongVersion -Metadata $metadata) -or
+    -not (Test-ProvisioningWinGetListOutput -Lines $wrongVersion -Metadata $metadata -WarningVariable warnings) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $metadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $latestMetadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $latestMetadata)) {
-    throw 'WinGet list parser did not recognize an installed exact ID and requested version.'
+    throw 'WinGet list parser did not recognize an installed exact ID.'
+}
+if ($warnings.Count -ne 1 -or [string]$warnings[0] -notmatch 'Provisioning will continue') {
+    throw 'WinGet version drift did not emit one continuation warning.'
 }
 `, quote(baseScript))
 	powerShell := mustWindowsPowerShellPath(t)

@@ -1301,14 +1301,22 @@ function Test-ProvisioningWinGetListOutput {
         [object]$Metadata
     )
 
-    $versionPattern = if ([string]::IsNullOrWhiteSpace([string]$Metadata.Version)) {
-        '\S+'
-    } else {
-        [Regex]::Escape([string]$Metadata.Version)
+    $linePattern = '(?:^|\s)' + [Regex]::Escape([string]$Metadata.Id) +
+        '\s+(?<version>\S+)(?:\s|$)'
+    $installedVersions = @($Lines | ForEach-Object {
+            $match = [Regex]::Match([string]$_, $linePattern,
+                [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($match.Success) { [string]$match.Groups['version'].Value }
+        } | Sort-Object -Unique)
+    if ($installedVersions.Count -eq 0) {
+        return $false
     }
-    $linePattern = '(?:^|\s)' + [Regex]::Escape([string]$Metadata.Id) + '\s+' +
-        $versionPattern + '(?:\s|$)'
-    return @($Lines | Where-Object { $_ -match $linePattern }).Count -ge 1
+    $expectedVersion = [string]$Metadata.Version
+    if (-not [string]::IsNullOrWhiteSpace($expectedVersion) -and
+        @($installedVersions | Where-Object { $_ -ceq $expectedVersion }).Count -eq 0) {
+        Write-Warning "Package $($Metadata.Id) is installed, but WinGet reports $($installedVersions -join ', ') instead of $expectedVersion. Provisioning will continue with the installed package."
+    }
+    return $true
 }
 
 function Test-ProvisioningWinGetPackageInstalled {
@@ -1380,7 +1388,7 @@ function Test-ProvisioningPortablePackageInstalled {
         }
         if ($VersionSource -eq 'File') {
             if ([string]$commands[0].VersionInfo.FileVersion -cne [string]$Metadata.Version) {
-                return $false
+                Write-Warning "$($Metadata.Id) is installed, but its file version does not match $($Metadata.Version). Provisioning will continue with the installed executable."
             }
         } else {
             $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) portable version inspection" `
@@ -1388,8 +1396,11 @@ function Test-ProvisioningPortablePackageInstalled {
             $versionOutput = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
             $exitCode = $result.ExitCode
             $versionPattern = '(?<![0-9A-Za-z])' + [Regex]::Escape([string]$Metadata.Version) + '(?![0-9A-Za-z])'
-            if ($exitCode -ne 0 -or ($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
+            if ($exitCode -ne 0) {
                 return $false
+            }
+            if (($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
+                Write-Warning "$($Metadata.Id) command succeeded, but its version output does not match $($Metadata.Version). Provisioning will continue with the installed executable."
             }
         }
         Add-ProvisioningMachinePath -Directory $commands[0].Directory.FullName
@@ -1424,7 +1435,13 @@ function Test-ProvisioningRustupInstalled {
         $exitCode = $result.ExitCode
         $versionPattern = '^rustup ' + [Regex]::Escape([string]$Metadata.Version) +
             ' \([0-9a-f]{7,40} [0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
-        return $exitCode -eq 0 -and @($versionOutput | Where-Object { $_ -match $versionPattern }).Count -eq 1
+        if ($exitCode -ne 0) {
+            return $false
+        }
+        if (@($versionOutput | Where-Object { $_ -match $versionPattern }).Count -ne 1) {
+            Write-Warning "Rustup is installed, but its version output does not match $($Metadata.Version). Provisioning will continue with the installed command."
+        }
+        return $true
     } catch {
         return $false
     }
@@ -1882,7 +1899,7 @@ function Install-ProvisioningCachedPackage {
     Update-ProvisioningPath
     if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
             -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource) {
-        Write-Host "$Role already matches requested version: $($metadata.Version)"
+        Write-Host "$Role is already installed; resolved version for this run: $($metadata.Version)"
         $packageStopwatch.Stop()
         Write-ProvisioningTiming -Role "$Role package total" -Seconds $packageStopwatch.Elapsed.TotalSeconds
         return
@@ -1946,7 +1963,7 @@ function Install-ProvisioningCachedPackage {
         if ($DownloadSource -eq 'WinGet') {
             Confirm-ProvisioningWinGetReadback -Role $Role -Metadata $metadata -Verified $installed
         } elseif (-not $installed) {
-            throw "$Role installed package does not match resolved version $($metadata.Version)."
+            Write-Warning "$Role installation command succeeded, but its version read-back did not match $($metadata.Version). Provisioning will continue with the installed payload."
         }
         if (-not $cacheHit) {
             Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
@@ -2118,7 +2135,11 @@ function Assert-ProvisioningCommand {
     $match = [regex]::Match($matchText, $ExpectedPattern, $options)
     if (-not $match.Success) {
         $detail = Get-ProvisioningBoundedDiagnosticText -Text $diagnostic -MaximumBytes 1000
-        throw "$Role did not report its required version or capability: $detail"
+        Write-Warning "$Role command succeeded, but its version output was not recognized. Provisioning will continue: $detail"
+        if ([string]::IsNullOrWhiteSpace($diagnostic)) {
+            return 'version unverified'
+        }
+        return $diagnostic
     }
     return $match.Value.Trim()
 }
@@ -2155,21 +2176,28 @@ function Get-ProvisioningPowerShell7Installation {
     $packageVersion = [string]$package.Version
     if ([string]$package.Name -cne 'Microsoft.PowerShell' -or
         [string]$package.Architecture -cne 'X64' -or
-        [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' -or
-        $packageVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
         throw "PowerShell 7 package identity is unexpected: name=$($package.Name) version=$packageVersion architecture=$($package.Architecture)"
     }
-    $version = [Version]$packageVersion
-    $displayVersion = "$($version.Major).$($version.Minor).$($version.Build)"
+    $version = $null
+    if ([Version]::TryParse($packageVersion, [ref]$version)) {
+        $displayVersion = "$($version.Major).$($version.Minor).$($version.Build)"
+    } else {
+        $displayVersion = 'unverified'
+        Write-Warning "PowerShell 7 package version is not recognized: $packageVersion. Provisioning will continue with the registered Microsoft package."
+    }
     $executable = Join-Path ([string]$package.InstallLocation) 'pwsh.exe'
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "PowerShell 7 package is missing pwsh.exe: $executable"
     }
     $file = Get-Item -LiteralPath $executable -Force
-    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        -not ([string]$file.VersionInfo.FileVersion).StartsWith($displayVersion + '.', [StringComparison]::Ordinal) -or
-        -not ([string]$file.VersionInfo.ProductVersion).StartsWith($displayVersion + ' ', [StringComparison]::Ordinal)) {
-        throw "PowerShell 7 executable metadata does not match package version $packageVersion."
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "PowerShell 7 executable is a reparse point: $executable"
+    }
+    if ($null -ne $version -and
+        (-not ([string]$file.VersionInfo.FileVersion).StartsWith($displayVersion + '.', [StringComparison]::Ordinal) -or
+        -not ([string]$file.VersionInfo.ProductVersion).StartsWith($displayVersion + ' ', [StringComparison]::Ordinal))) {
+        Write-Warning "PowerShell 7 executable metadata does not match package version $packageVersion. Provisioning will continue with the signed executable."
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $executable
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or

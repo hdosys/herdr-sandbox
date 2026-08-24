@@ -15,11 +15,112 @@ import (
 )
 
 const (
-	currentSandboxNativeEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE"
-	currentSandboxPayloadEnvironment = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
-	currentSandboxModelsEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE_MODELS"
-	currentSandboxFixtureMarker      = "herdr-sandbox current native fixture v1\n"
+	currentSandboxNativeEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE"
+	currentSandboxPayloadEnvironment   = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
+	currentSandboxModelsEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE_MODELS"
+	currentSandboxPreflightEnvironment = "HERDR_SANDBOX_CURRENT_PREFLIGHT"
+	currentSandboxFixtureMarker        = "herdr-sandbox current native fixture v1\n"
 )
+
+func TestCurrentSandboxProvisioningPreflight(t *testing.T) {
+	if os.Getenv(currentSandboxPreflightEnvironment) != "1" {
+		t.Skip("explicit current-Sandbox provisioning preflight")
+	}
+	if !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		t.Fatalf("current-Sandbox preflight user = %q", os.Getenv("USERNAME"))
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: stackPath,
+		names: []string{
+			"Get-StackVisualStudioTargetFromChannel",
+			"ConvertFrom-StackVisualStudioLayoutDescriptor",
+			"ConvertFrom-StackJavaReleaseVersion",
+			"ConvertFrom-StackAndroidCLIVersion",
+			"Get-StackVisualStudioRequiredArtifacts",
+		},
+	})
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+trap { Write-Output ($_ | Out-String); exit 1 }
+%s
+$javaRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+$javaVersion = 'not installed'
+if (-not [string]::IsNullOrWhiteSpace($javaRoot)) {
+    $javaReleasePath = Join-Path $javaRoot 'release'
+    if (-not (Test-Path -LiteralPath $javaReleasePath -PathType Leaf)) { throw "Current-Sandbox Java release is missing: $javaReleasePath" }
+    $javaVersion = ConvertFrom-StackJavaReleaseVersion -ReleaseText ([IO.File]::ReadAllText($javaReleasePath))
+    if ([string]::IsNullOrWhiteSpace($javaVersion)) {
+        $javaVersion = 'unverified'
+        Write-Warning 'Current-Sandbox Java version output was not recognized; preflight will continue.'
+    }
+}
+
+$androidCLI = 'C:\HerdrSandbox\tools\android-sdk\cmdline-tools\latest\bin\android.exe'
+$androidVersion = 'not installed'
+if (Test-Path -LiteralPath $androidCLI -PathType Leaf) {
+    if ([string]::IsNullOrWhiteSpace($javaRoot)) {
+        $androidVersion = 'deferred until Java installation'
+    } else {
+        $previousJavaHome = [string]$env:JAVA_HOME
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $env:JAVA_HOME = $javaRoot
+            $ErrorActionPreference = 'Continue'
+            $androidOutput = @(& $androidCLI --no-metrics --version 2>&1 | ForEach-Object { [string]$_ })
+            $androidExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+            $env:JAVA_HOME = $previousJavaHome
+        }
+        if ($androidExitCode -ne 0) { throw "Current-Sandbox Android CLI exited with code $androidExitCode." }
+        $androidVersion = ConvertFrom-StackAndroidCLIVersion -Output $androidOutput
+        if ([string]::IsNullOrWhiteSpace($androidVersion)) {
+            $androidVersion = 'unverified'
+            Write-Warning 'Current-Sandbox Android CLI version output was not recognized; preflight will continue.'
+        }
+    }
+}
+
+$validSlots = @()
+$invalidSlots = @()
+$invalidDetails = @()
+foreach ($slot in @('C:\HerdrSandbox\cache\vsbt\a', 'C:\HerdrSandbox\cache\vsbt\b')) {
+    $descriptorPath = Join-Path $slot 'complete.json'
+    if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { continue }
+    try {
+        $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
+        $target = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $slot
+        if (-not [bool]$target.CurrentMetadata) {
+            Write-Warning "Current-Sandbox Visual Studio slot uses verified cached metadata; preflight will continue: $slot"
+        }
+        $layout = Join-Path $slot 'layout'
+        foreach ($relativePath in @(Get-StackVisualStudioRequiredArtifacts)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $layout $relativePath) -PathType Leaf)) {
+                throw "Visual Studio layout artifact is missing: $relativePath"
+            }
+        }
+        $validSlots += $slot
+    } catch {
+        $invalidSlots += $slot
+        $invalidDetails += "${slot}: $($_.Exception.Message)"
+    }
+}
+if ($validSlots.Count -eq 0) {
+    throw "Current-Sandbox preflight requires a verified host-prepared Visual Studio slot; valid=$($validSlots.Count), invalid=$($invalidSlots.Count): $($invalidDetails -join '; ')"
+}
+Write-Output "Current-Sandbox provisioning inputs passed: Java $javaVersion, Android $androidVersion, Visual Studio slot $($validSlots[0])."
+`, functionSetup)
+	scriptPath := filepath.Join(t.TempDir(), "current-sandbox-preflight.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("current-Sandbox provisioning preflight: %v", err)
+	}
+}
 
 func TestCurrentSandboxProvisioning(t *testing.T) {
 	if os.Getenv(currentSandboxNativeEnvironment) != "1" {

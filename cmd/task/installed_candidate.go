@@ -39,6 +39,9 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	if err := currentSandboxProvisioningPreflight(ctx, stdout, stderr); err != nil {
+		return err
+	}
 	identityBefore, err := inspectCurrentSandboxIdentity(ctx)
 	if err != nil {
 		return err
@@ -113,7 +116,7 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := runInstalledCandidateVersion(ctx, filepath.Join(installRoot, productidentity.ExecutableName), version, stdout, stderr); err != nil {
 		return err
 	}
-	if err := nativeCurrentSandbox(ctx, stdout, stderr, installRoot); err != nil {
+	if err := nativeCurrentSandboxProvisioning(ctx, stdout, stderr, installRoot); err != nil {
 		return err
 	}
 	if err := uninstallCurrentSandboxCandidate(ctx, installRoot, stdout, stderr); err != nil {

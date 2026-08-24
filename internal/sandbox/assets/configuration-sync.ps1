@@ -486,9 +486,11 @@ function Get-OpenCodeTVControlMCPConfiguration {
         throw 'OpenCode TVControl MCP package identity is unreadable.'
     }
     if ([string]$package.name -cne '@ferroxlabs/tvcontrol' -or
-        [string]$package.version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
         [string]$package.main -cne 'src/server.js') {
         throw 'OpenCode TVControl MCP package identity is unexpected.'
+    }
+    if ([string]$package.version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+        Write-Warning "TVControl package version is not recognized: $($package.version). Configuration will continue with the verified server entry point."
     }
     return [ordered]@{
         type = 'local'

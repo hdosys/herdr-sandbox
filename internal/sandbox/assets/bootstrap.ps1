@@ -585,21 +585,28 @@ function Get-PowerShell7Installation {
     $packageVersion = [string]$package.Version
     if ([string]$package.Name -cne 'Microsoft.PowerShell' -or
         [string]$package.Architecture -cne 'X64' -or
-        [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' -or
-        $packageVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
         throw "PowerShell 7 package identity is unexpected: name=$($package.Name) version=$packageVersion architecture=$($package.Architecture)"
     }
-    $version = [Version]$packageVersion
-    $displayVersion = "$($version.Major).$($version.Minor).$($version.Build)"
+    $version = $null
+    if ([Version]::TryParse($packageVersion, [ref]$version)) {
+        $displayVersion = "$($version.Major).$($version.Minor).$($version.Build)"
+    } else {
+        $displayVersion = 'unverified'
+        Write-Warning "PowerShell 7 package version is not recognized: $packageVersion. Provisioning will continue with the registered Microsoft package."
+    }
     $executable = Join-Path ([string]$package.InstallLocation) 'pwsh.exe'
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw "PowerShell 7 package is missing pwsh.exe: $executable"
     }
     $file = Get-Item -LiteralPath $executable -Force
-    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        -not ([string]$file.VersionInfo.FileVersion).StartsWith($displayVersion + '.', [StringComparison]::Ordinal) -or
-        -not ([string]$file.VersionInfo.ProductVersion).StartsWith($displayVersion + ' ', [StringComparison]::Ordinal)) {
-        throw "PowerShell 7 executable metadata does not match package version $packageVersion."
+    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "PowerShell 7 executable is a reparse point: $executable"
+    }
+    if ($null -ne $version -and
+        (-not ([string]$file.VersionInfo.FileVersion).StartsWith($displayVersion + '.', [StringComparison]::Ordinal) -or
+        -not ([string]$file.VersionInfo.ProductVersion).StartsWith($displayVersion + ' ', [StringComparison]::Ordinal))) {
+        Write-Warning "PowerShell 7 executable metadata does not match package version $packageVersion. Provisioning will continue with the signed executable."
     }
     $signature = Get-AuthenticodeSignature -LiteralPath $executable
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
@@ -765,7 +772,7 @@ try {
     $wingetVersionOutput = Invoke-Native -Role 'winget version check' -FilePath $wingetPath -ArgumentList @('--version')
     $wingetVersion = ($wingetVersionOutput -join ' ').Trim()
     if ($wingetVersion -ne $ExpectedWinGetVersion) {
-        throw "WinGet version mismatch. Expected $ExpectedWinGetVersion but got $wingetVersion."
+        Write-Warning "WinGet installed successfully, but reports $wingetVersion instead of $ExpectedWinGetVersion. Provisioning will continue with the working command."
     }
 
     Write-ProgressStatus -Phase 'development-provisioning' `
@@ -801,7 +808,7 @@ try {
     $vcInstalledPattern = '(?:^|\s)' + [regex]::Escape('Microsoft.VCRedist.2015+.x64') + '\s+' +
         [regex]::Escape([string]$vcVersions[0]) + '(?:\s|$)'
     if (@($vcInstalled | Where-Object { [string]$_ -match $vcInstalledPattern }).Count -lt 1) {
-        throw "VC++ runtime installed package does not match resolved version $($vcVersions[0])."
+        Write-Warning "VC++ runtime installation succeeded, but WinGet did not report resolved version $($vcVersions[0]). Provisioning will continue with the installed runtime."
     }
 
     Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
@@ -838,9 +845,11 @@ try {
             throw "OpenSSH package is missing required file: $requiredFile"
         }
         $requiredItem = Get-Item -LiteralPath $requiredFile -Force
-        if (($requiredItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            [string]$requiredItem.VersionInfo.FileVersion -cne $openSSHAssetVersion) {
-            throw "OpenSSH installed file does not match release $OpenSSHVersion`: $requiredFile"
+        if (($requiredItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "OpenSSH installed file is a reparse point: $requiredFile"
+        }
+        if ([string]$requiredItem.VersionInfo.FileVersion -cne $openSSHAssetVersion) {
+            Write-Warning "OpenSSH installed file version does not match release $OpenSSHVersion`: $requiredFile. Provisioning will continue with the signed package payload."
         }
     }
     $openSSHBanner = (Invoke-HerdrBoundary -Role 'OpenSSH Server version verification' `
@@ -848,7 +857,7 @@ try {
     $openSSHBannerVersion = [regex]::Escape([string]$openSSHSelection.BannerVersion)
     if ($openSSHChannel -ceq 'stable') { $openSSHBannerVersion += '(?:p\d+)?' }
     if ($openSSHBanner -notmatch ('(?m)^OpenSSH_for_Windows_' + $openSSHBannerVersion + '(?:,|\s|$)')) {
-        throw "OpenSSH installed version output does not match release $OpenSSHVersion`: $openSSHBanner"
+        Write-Warning "OpenSSH Server started successfully, but its version output does not match release $OpenSSHVersion`: $openSSHBanner. Provisioning will continue with the working server command."
     }
 
     Write-ProgressStatus -Phase 'openssh-config' -Message 'Configuring OpenSSH keys, authentication, and PowerShell shell'

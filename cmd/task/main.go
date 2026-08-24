@@ -35,6 +35,7 @@ Tasks:
   test [args...]   run fast product tests with optional go test arguments
   test-integration [args...]  run all Go external-boundary tests
   build            build intermediate CLI output at build/bin/%s
+  provisioning-preflight  validate current guest inputs before an expensive native or installed-candidate gate
   native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
   package-current-sandbox VERSION  package, install, provision through, and uninstall the candidate in this Sandbox
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
@@ -89,6 +90,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("build accepts no arguments")
 		}
 		return build(ctx, stdout, stderr)
+	case "provisioning-preflight":
+		if len(args) != 1 {
+			return errors.New("provisioning-preflight accepts no arguments")
+		}
+		return currentSandboxProvisioningPreflight(ctx, stdout, stderr)
 	case "native-all-stacks":
 		if len(args) != 1 {
 			return errors.New("native-all-stacks accepts no arguments")

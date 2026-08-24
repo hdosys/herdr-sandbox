@@ -165,7 +165,11 @@ available stable release during provisioning. Explicit `wingetPackages.versions`
 entries and project toolchain versions remain exact. Each selected payload is
 bound to the strongest publisher evidence available for that operation, including
 published digests, package hashes, signatures, or the exact once-downloaded bytes.
-Pin every required version when reproducibility is part of the threat model.
+Post-install version strings and duplicated package or executable metadata are
+advisory and warn rather than fail after installation or command success. They do
+not weaken digest, signature, publisher, safe-path, process-status, or required
+capability checks. Pin every required selection when reproducibility is part of
+the threat model, but do not treat a version read-back as provenance evidence.
 
 OpenSSH is the narrow channel exception. Provisioning prefers the newest official
 stable release that publishes one digest-backed Win64 server MSI. Only when no

@@ -37,10 +37,11 @@ artifacts remain available on the
 
 ### Fixed
 
-- Provisioning no longer mistakes warning banners for version failures. Exact
-  package identity, integrity, command paths, exit status, and real capability
-  probes remain strict, while duplicate version-rendering checks no longer block
-  the entire Sandbox.
+- Provisioning no longer blocks a usable Sandbox because an installed tool renders
+  an unfamiliar or different version string. Package and executable version
+  read-backs now warn after successful installation or command execution, while
+  payload integrity, publisher identity, safe paths, exit status, and real
+  capability probes remain strict.
 - Retained provisioning failures now show one concise plain-text cause instead of
   repeating the failure as raw PowerShell CLIXML.
 - HyperFrames provisioning no longer rejects the verified VoxCPM2 provider only

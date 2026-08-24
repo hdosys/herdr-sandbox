@@ -14,11 +14,14 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
-	currentSandboxNativeEnvironment  = "HERDR_SANDBOX_CURRENT_NATIVE"
-	currentSandboxPayloadEnvironment = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
+	currentSandboxNativeEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE"
+	currentSandboxPayloadEnvironment   = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
+	currentSandboxPreflightEnvironment = "HERDR_SANDBOX_CURRENT_PREFLIGHT"
+	currentSandboxPreflightTimeout     = 45 * time.Second
 )
 
 var currentSandboxFixtureSafeDirectories = []string{
@@ -44,6 +47,32 @@ type currentSandboxIdentity struct {
 }
 
 func nativeCurrentSandbox(ctx context.Context, stdout, stderr io.Writer, payloadDirectory string) error {
+	if err := currentSandboxProvisioningPreflight(ctx, stdout, stderr); err != nil {
+		return err
+	}
+	return nativeCurrentSandboxProvisioning(ctx, stdout, stderr, payloadDirectory)
+}
+
+func currentSandboxProvisioningPreflight(ctx context.Context, stdout, stderr io.Writer) error {
+	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") || os.Getenv("HERDR_ENV") != "1" {
+		return errors.New("provisioning-preflight requires the active Herdr-managed Windows Sandbox")
+	}
+	preflightContext, cancel := context.WithTimeout(ctx, currentSandboxPreflightTimeout)
+	defer cancel()
+	pattern := "^(TestAudioGridderReleaseManifestBindsSourceAndInstalledFilesInWindowsPowerShell51|TestCurrentProvisioningInputParsersInWindowsPowerShell51|TestCurrentSandboxProvisioningPreflight)$"
+	command := hiddenCommandContext(preflightContext, "go", "test", "./internal/sandbox", "-run", pattern, "-count=1", "-timeout", "40s", "-v")
+	command.Env = currentSandboxPreflightTestEnvironment()
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.Stdin = os.Stdin
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("run current-Sandbox provisioning preflight: %w", err)
+	}
+	_, err := fmt.Fprintln(stdout, "Current-Sandbox provisioning preflight passed.")
+	return err
+}
+
+func nativeCurrentSandboxProvisioning(ctx context.Context, stdout, stderr io.Writer, payloadDirectory string) error {
 	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
 		return errors.New("native-current-sandbox requires the active confirmed Windows Sandbox")
 	}
@@ -82,6 +111,18 @@ func nativeCurrentSandbox(ctx context.Context, stdout, stderr io.Writer, payload
 	}
 	_, err = fmt.Fprintln(stdout, "Current-Sandbox provisioning and REAPER-to-AudioGridder connection passed without restarting SSH or Herdr.")
 	return err
+}
+
+func currentSandboxPreflightTestEnvironment() []string {
+	filtered := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		name, _, found := strings.Cut(entry, "=")
+		if found && (strings.EqualFold(name, currentSandboxPreflightEnvironment) || strings.EqualFold(name, fastTestsEnvironment)) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return append(filtered, currentSandboxPreflightEnvironment+"=1")
 }
 
 func runCurrentSandboxAudioSmoke(ctx context.Context, stdout, stderr io.Writer) error {

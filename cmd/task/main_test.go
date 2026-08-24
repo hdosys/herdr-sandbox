@@ -39,7 +39,7 @@ func TestRunRejectsUnknownTask(t *testing.T) {
 }
 
 func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
-	for _, task := range []string{"fmt", "build", "verify", "verify-integration", "native-current-sandbox", "native-all-stacks"} {
+	for _, task := range []string{"fmt", "build", "verify", "verify-integration", "provisioning-preflight", "native-current-sandbox", "native-all-stacks"} {
 		err := run(context.Background(), []string{task, "unexpected"}, &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || !strings.Contains(err.Error(), "accepts no arguments") {
 			t.Fatalf("run %s error = %v", task, err)

@@ -616,6 +616,7 @@ architecture.
 ```powershell
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
+go run ./cmd/task provisioning-preflight
 go run ./cmd/task native-current-sandbox
 go run ./cmd/task package-current-sandbox v0.0.RELEASE_ID
 go run ./cmd/task native-all-stacks
@@ -626,6 +627,9 @@ go run ./cmd/task native-all-stacks
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
+- `provisioning-preflight` checks production provisioning parsers plus available
+  Java, Android, and Visual Studio inputs in the active Sandbox before a slower
+  native or installed-candidate run. It does not install or update tools.
 - `native-current-sandbox` replays real Base and every project stack inside the
   active development Sandbox, then proves a task-owned REAPER client connection
   to AudioGridder server 0 without launching a nested Sandbox or restarting its
