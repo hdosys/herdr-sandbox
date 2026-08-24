@@ -140,11 +140,11 @@ cross-project workflow in the global OpenCode configuration repository.
   acceptance, configuration preservation, and quiet uninstall in 666.471 seconds.
   Expected benefit: the exact installed-candidate gate distinguishes legitimate
   first-install seeding from configuration loss.
-- **Status: proposed. Fail fast on PowerShell automatic-variable collisions in isolation smokes.**
+- **Status: done. Fail fast on PowerShell automatic-variable collisions in isolation smokes.**
   Evidence: a one-off HyperFrames staging smoke assigned `$home`, which PowerShell
   resolves case-insensitively to the read-only `$HOME`; because the script did not
   stop on that assignment error, the following external command used the real agent
-  roots instead of its temporary home. Require `$ErrorActionPreference = 'Stop'`
-  before setup and use purpose-specific names such as `$isolatedHome` in native
-  smoke scripts. Expected benefit: keep failed test setup from crossing into real
-  configuration state.
+  roots instead of its temporary home. `AGENTS.md` now requires
+  `$ErrorActionPreference = 'Stop'` before setup and purpose-specific names in
+  PowerShell isolation smokes. Expected benefit: keep failed test setup from
+  crossing into real configuration state.

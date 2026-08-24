@@ -100,6 +100,9 @@ in the global OpenCode configuration, not this repository.
 
 - All repository-owned Windows/guest scripts use PowerShell; do not add or generate
   `.cmd`/`.bat` files. `cmd/task` is Go source, not permission for CMD scripts.
+- PowerShell isolation smokes set `$ErrorActionPreference = 'Stop'` before setup
+  and use purpose-specific variable names that do not collide case-insensitively
+  with automatic variables such as `$HOME`.
 - Windows PowerShell 5.1 exclusively owns bootstrap, Base, project/stack scripts,
   configuration sync, parser adapters, and verification.
 - Installed PowerShell 7 is interactive guest tooling only and provisioning must

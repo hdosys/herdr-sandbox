@@ -220,11 +220,16 @@ expands each composition without executing the profile.
 The HyperFrames stack resolves the latest stable CLI and full FFmpeg release
 when the profile does not request versions. Provisioning runs HyperFrames doctor,
 checks its managed browser, stages the current skills outside normal agent discovery,
-and proves a software H.264 encode with `libx264`. Run `hyperframes-opencode` from
-the intended project directory to start a separate OpenCode session with those
-skills. Ordinary `opencode` sessions do not load their metadata. Browser GPU
-acceleration and FFmpeg hardware encoding are separate; the Sandbox profile does
-not claim a hardware encoder.
+and proves a software H.264 encode with `libx264`. From the intended project
+directory, start one HyperFrames-enabled OpenCode session with:
+
+```powershell
+hyperframes-opencode
+```
+
+Ordinary `opencode` sessions do not load the HyperFrames skill metadata. Browser
+GPU acceleration and FFmpeg hardware encoding are separate; the Sandbox profile
+does not claim a hardware encoder.
 
 To persist AI models, create one shared model folder and set `modelsDirectory`
 to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where
