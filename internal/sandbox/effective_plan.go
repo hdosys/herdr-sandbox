@@ -221,27 +221,27 @@ func effectiveToolVersionSource(source string) string {
 func effectiveStackPackageOwner(stack projectStack) string {
 	switch stack {
 	case stackAndroid:
-		return "Android SDK Command-line Tools + Platform Tools + Microsoft OpenJDK 17"
+		return "Android SDK Command-line Tools + Platform Tools + current stable JDK"
 	case stackAudio:
-		return packageREAPER + " 7.79 + AudioGridder 1.2.0 Server + VST2/VST3 clients"
+		return packageREAPER + " + AudioGridder Server + VST2/VST3 clients"
 	case stackBun:
 		return "Oven-sh.Bun"
 	case stackCargoNextest:
 		return "nextest.cargo-nextest"
 	case stackCpp:
-		return "Visual Studio 2022 Build Tools (MSVC + Windows 11 SDK 26100)"
+		return "current stable Visual Studio Build Tools C++ workload"
 	case stackDotNet:
-		return "Microsoft.DotNet.SDK.10"
+		return "current stable Microsoft.DotNet.SDK family"
 	case stackGitSH:
 		return packageGit
 	case stackGo:
 		return "GoLang.Go"
 	case stackHandy:
-		return packageCMake + " + " + packageVulkanSDK + " 1.4.309.0 + " + packageWebView2
+		return packageCMake + " + " + packageVulkanSDK + " + " + packageWebView2
 	case stackHyperFrames:
 		return "OpenJS.NodeJS.LTS + Gyan.FFmpeg full + hyperframes@latest + manual HyperFrames OpenCode activation"
 	case stackJava:
-		return packageOpenJDK25
+		return "current stable Microsoft.OpenJDK family"
 	case stackJust:
 		return "Casey.Just"
 	case stackNode:
@@ -251,7 +251,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackNushell:
 		return packageNushell
 	case stackPlaywrightCLI:
-		return "OpenJS.NodeJS.LTS + @playwright/cli@0.1.17"
+		return "OpenJS.NodeJS.LTS + @playwright/cli@latest"
 	case stackPython:
 		return "Python.Python.<family selected by stack>"
 	case stackRustMSVC:

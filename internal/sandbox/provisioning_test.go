@@ -49,6 +49,39 @@ func TestFindProjectProvisioningUsesNearestAncestor(t *testing.T) {
 	}
 }
 
+func TestNumericWinGetFamilyResolverSelectsHighestStableFamilyInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 package-family regression")
+	}
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path:  defaultProvisioningPath(t, baseProvisioningName),
+		names: []string{"Resolve-ProvisioningWinGetNumericFamilyID"},
+	})
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+%s
+function Invoke-ProvisioningNative {
+    param($Role, $FilePath, [object[]]$ArgumentList)
+    return @(
+        'Microsoft .NET SDK Microsoft.DotNet.SDK.9 9.0.1 winget',
+        'Microsoft .NET SDK Microsoft.DotNet.SDK.10 10.0.1 winget',
+        'Microsoft .NET SDK Preview Microsoft.DotNet.SDK.11.Preview 11.0.0 winget',
+        'Python Python.Python.3.9 3.9.20 winget',
+        'Python Python.Python.3.14 3.14.1 winget',
+        'Python Preview Python.Python.3.15.Preview 3.15.0 winget'
+    )
+}
+$dotnet = Resolve-ProvisioningWinGetNumericFamilyID -Role '.NET' -Prefix 'Microsoft.DotNet.SDK.'
+$python = Resolve-ProvisioningWinGetNumericFamilyID -Role 'Python' -Prefix 'Python.Python.' -SuffixKind 'series'
+if ($dotnet -cne 'Microsoft.DotNet.SDK.10' -or $python -cne 'Python.Python.3.14') {
+    throw "Unexpected family selection: $dotnet, $python"
+}
+`, setup)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("numeric WinGet family resolution: %v: %s", err, output)
+	}
+}
+
 func TestEncodeGuestWorkspaceManifestIsStrictAndDeterministic(t *testing.T) {
 	data, err := encodeGuestWorkspaceManifest([]workspacePlan{
 		{Name: "zeta", GuestDirectory: `C:\Workspaces\zeta`},
@@ -666,9 +699,8 @@ foreach ($name in @('Resolve-StackPythonPackage', 'Get-StackRustSHA256', 'Conver
     if ($null -eq $definition) { throw "Missing function $name" }
     Invoke-Expression $definition.Extent.Text
 }
-$accepted = $false
-try { $null = Resolve-StackPythonPackage -Series '' -Version ''; $accepted = $true } catch { }
-if ($accepted) { throw 'Unresolved Python selection was accepted.' }
+$currentPython = Resolve-StackPythonPackage -Series '' -Version ''
+if ($currentPython.Series -cne '' -or $currentPython.Version -cne '') { throw 'Current Python selection was changed before package-family resolution.' }
 $seriesPython = Resolve-StackPythonPackage -Series '3.10' -Version ''
 if ($seriesPython.Series -cne '3.10' -or $seriesPython.Version -cne '') { throw 'Python series selection failed.' }
 $explicitPython = Resolve-StackPythonPackage -Series '' -Version '3.12.9'

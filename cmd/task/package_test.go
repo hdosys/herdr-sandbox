@@ -583,18 +583,18 @@ finally {
 	}
 }
 
-func TestReleaseWorkflowUsesCanonicalPackageTaskAndPinnedNSIS(t *testing.T) {
+func TestReleaseWorkflowUsesCanonicalPackageTaskAndResolvedNSIS(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	workflow := string(data)
 	for _, want := range []string{
-		`NSIS_VERSION: "` + installerEngineVersion + `"`,
-		`NSIS_URL: https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip`,
-		`NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f`,
-		`$curl = Join-Path $env:SystemRoot 'System32\curl.exe'`,
-		`& $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL`,
+		`winget.exe show --id NSIS.NSIS --exact --source winget`,
+		`Installer SHA256:`,
+		`$actualHash -ine [string]$hashes[0]`,
+		`Start-Process -FilePath $installer -ArgumentList @('/S')`,
+		`$actualVersion -cne "v$resolvedVersion"`,
 		`go run ./cmd/task package $env:RELEASE_TAG`,
 		`go run ./cmd/task release-notes $env:RELEASE_TAG`,
 		`Get-ChildItem -LiteralPath 'build\dist' -File`,

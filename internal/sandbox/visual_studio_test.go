@@ -18,10 +18,10 @@ func TestVisualStudioLayoutAssetIsEmbedded(t *testing.T) {
 		t.Fatal("Visual Studio layout script is empty")
 	}
 	for _, required := range []string{
-		"https://aka.ms/vs/17/release/channel",
-		"https://aka.ms/vs/17/release/vs_buildtools.exe",
+		"Microsoft.VisualStudio.BuildTools",
+		"Get-HerdrHostVisualStudioPackageMetadata",
 		"Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-		"Microsoft.VisualStudio.Component.Windows11SDK.26100",
+		`^Microsoft\.VisualStudio\.Component\.Windows11SDK\.\d+$`,
 		`bootstrapper\vs_BuildTools.exe`,
 		"function Assert-HerdrHostCacheTree",
 		"Assert-HerdrHostCacheTree -Path $selectedSlot",
@@ -32,6 +32,9 @@ func TestVisualStudioLayoutAssetIsEmbedded(t *testing.T) {
 		}
 	}
 	for _, excluded := range []string{
+		"https://aka.ms/vs/17/",
+		"Microsoft.VisualStudio.Component.Windows11SDK.26100",
+		"VisualStudio.17.Release",
 		"Microsoft.VisualStudio.Workload.VCTools",
 		"--includeRecommended",
 		"--includeOptional",

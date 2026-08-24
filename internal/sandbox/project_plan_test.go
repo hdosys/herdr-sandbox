@@ -102,7 +102,7 @@ func TestInspectProjectProvisioningPlanAcceptsEmptyGoProject(t *testing.T) {
 	}
 }
 
-func TestInspectProjectProvisioningPlanDefaultsPythonToCurrentSeries(t *testing.T) {
+func TestInspectProjectProvisioningPlanLeavesPythonFamilyForProvisioningResolution(t *testing.T) {
 	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
@@ -119,7 +119,7 @@ func TestInspectProjectProvisioningPlanDefaultsPythonToCurrentSeries(t *testing.
 		t.Fatalf("default Python inspection: %v", err)
 	}
 	if len(inspection.ToolVersions) != 1 || inspection.ToolVersions[0].Tool != "Python" ||
-		inspection.ToolVersions[0].Version != "" || inspection.ToolVersions[0].Series != "3.14" ||
+		inspection.ToolVersions[0].Version != "" || inspection.ToolVersions[0].Series != "" ||
 		inspection.ToolVersions[0].Source != toolVersionSourceDefault {
 		t.Fatalf("default Python tool plan = %#v", inspection.ToolVersions)
 	}
@@ -182,7 +182,7 @@ func TestInspectProjectProvisioningPlanDefaultsHyperFramesToolsToLatestStable(t 
 	}
 }
 
-func TestInspectProjectProvisioningPlanOwnsExactAudioTools(t *testing.T) {
+func TestInspectProjectProvisioningPlanLeavesAudioVersionsForProvisioningResolution(t *testing.T) {
 	requireExternalBoundaryTest(t, "Windows PowerShell project-plan inspection")
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 AST regression")
@@ -202,8 +202,8 @@ func TestInspectProjectProvisioningPlanOwnsExactAudioTools(t *testing.T) {
 		t.Fatalf("audio stacks = %v", inspection.Workspaces[0].Stacks)
 	}
 	if len(inspection.ToolVersions) != 2 || inspection.ToolVersions[0].Tool != "AudioGridder" ||
-		inspection.ToolVersions[0].Version != "1.2.0" || inspection.ToolVersions[1].Tool != packageREAPER ||
-		inspection.ToolVersions[1].Version != "7.79" {
+		inspection.ToolVersions[0].Version != "" || inspection.ToolVersions[1].Tool != packageREAPER ||
+		inspection.ToolVersions[1].Version != "" {
 		t.Fatalf("audio tool plan = %#v", inspection.ToolVersions)
 	}
 	if !projectStackOwnsPackage(packageREAPER) {

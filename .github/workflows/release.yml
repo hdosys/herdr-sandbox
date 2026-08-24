@@ -8,11 +8,6 @@ on:
 permissions:
   contents: write
 
-env:
-  NSIS_VERSION: "3.12"
-  NSIS_URL: https://downloads.sourceforge.net/project/nsis/NSIS%203/3.12/nsis-3.12.zip
-  NSIS_SHA256: 56581f90db321581c5381193d796fffcf2d24b2f8fed2160a6c6a3baa67f2c4f
-
 jobs:
   release:
     name: Windows release
@@ -39,32 +34,47 @@ jobs:
       - name: Run checked build
         shell: powershell
         run: go run ./cmd/task verify-integration
-      - name: Prepare pinned NSIS compiler
+      - name: Prepare current stable NSIS compiler
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $archive = Join-Path $env:RUNNER_TEMP "nsis-$($env:NSIS_VERSION).zip"
-          $destination = Join-Path $env:RUNNER_TEMP 'nsis'
-          $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
-          if (-not (Test-Path -LiteralPath $curl -PathType Leaf)) {
-              throw "System curl.exe was not found at $curl"
-          }
-          & $curl --fail --location --silent --show-error --output $archive $env:NSIS_URL
+          $metadata = @(& winget.exe show --id NSIS.NSIS --exact --source winget --architecture x86 --installer-type nullsoft --scope machine --accept-source-agreements --disable-interactivity 2>&1 | ForEach-Object { [string]$_ })
           if ($LASTEXITCODE -ne 0) {
-              throw "NSIS archive download failed with exit code $LASTEXITCODE."
+              throw "NSIS metadata resolution failed with exit code $LASTEXITCODE."
           }
-          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualHash -cne $env:NSIS_SHA256) {
-              throw "NSIS archive SHA-256 = $actualHash, expected $($env:NSIS_SHA256)"
+          $versions = @($metadata | Where-Object { $_ -match '^Version:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+          $urls = @($metadata | Where-Object { $_ -match '^\s*Installer Url:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+          $hashes = @($metadata | Where-Object { $_ -match '^\s*Installer SHA256:\s*([A-Fa-f0-9]{64})\s*$' } | ForEach-Object { $Matches[1] })
+          if ($versions.Count -ne 1 -or $versions[0] -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$' -or
+              $urls.Count -ne 1 -or $hashes.Count -ne 1) {
+              throw 'NSIS metadata did not resolve one stable version, installer URL, and digest.'
           }
-          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
-          $compiler = Join-Path $destination "nsis-$($env:NSIS_VERSION)\makensis.exe"
+          $resolvedVersion = $versions[0]
+          $installerURL = [string]$urls[0]
+          $expectedURLPrefix = "https://sourceforge.net/projects/nsis/files/NSIS%203/$resolvedVersion/"
+          if (-not $installerURL.StartsWith($expectedURLPrefix, [StringComparison]::Ordinal) -or
+              -not $installerURL.EndsWith("/nsis-$resolvedVersion-setup.exe/download", [StringComparison]::Ordinal)) {
+              throw "NSIS installer URL is unexpected: $installerURL"
+          }
+          $installer = Join-Path $env:RUNNER_TEMP "nsis-$resolvedVersion-setup.exe"
+          $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+          & $curl --fail --location --silent --show-error --output $installer $installerURL
+          if ($LASTEXITCODE -ne 0) { throw "NSIS download failed with exit code $LASTEXITCODE." }
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+          if ($actualHash -ine [string]$hashes[0]) {
+              throw "NSIS installer SHA-256 = $actualHash, expected $($hashes[0])"
+          }
+          $installProcess = Start-Process -FilePath $installer -ArgumentList @('/S') -WindowStyle Hidden -Wait -PassThru
+          if ($installProcess.ExitCode -ne 0) {
+              throw "NSIS installation failed with exit code $($installProcess.ExitCode)."
+          }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
           if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
-              throw "Pinned NSIS compiler was not found at $compiler"
+              throw "NSIS compiler was not found at $compiler"
           }
           $actualVersion = (& $compiler /VERSION).Trim()
-          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne "v$($env:NSIS_VERSION)") {
-              throw "NSIS compiler version = '$actualVersion', expected v$($env:NSIS_VERSION)"
+          if ($LASTEXITCODE -ne 0 -or $actualVersion -cne "v$resolvedVersion") {
+              throw "NSIS compiler version = '$actualVersion', expected v$resolvedVersion"
           }
           "MAKENSIS=$compiler" | Add-Content -Path $env:GITHUB_ENV
       - name: Package Windows release

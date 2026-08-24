@@ -6,15 +6,11 @@ import (
 	"testing"
 )
 
-func TestTradingViewPortableMetadataUsesReleasePinInWindowsPowerShell51(t *testing.T) {
+func TestTradingViewPortableMetadataDelegatesStableWinGetResolutionInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 metadata regression")
 	}
 	functionSetup := provisioningPowerShellFunctionSetup(t,
-		provisioningPowerShellFunctionSource{
-			path:  defaultProvisioningPath(t, baseProvisioningName),
-			names: []string{"Get-ProvisioningToolVersion"},
-		},
 		provisioningPowerShellFunctionSource{
 			path:  defaultProvisioningPath(t, stackProvisioningName),
 			names: []string{"Get-TradingViewDesktopPortableMetadata"},
@@ -22,25 +18,30 @@ func TestTradingViewPortableMetadataUsesReleasePinInWindowsPowerShell51(t *testi
 	)
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
+$script:metadataCalls = @()
+function Get-ProvisioningWinGetMetadata {
+    param([string]$Role, [string]$Id, [string]$Version, [string]$Architecture,
+        [string]$InstallerType, [string]$PayloadExtension)
+    $script:metadataCalls += ,@($Role, $Id, $Version, $Architecture, $InstallerType, $PayloadExtension)
+    $resolved = if ([string]::IsNullOrWhiteSpace($Version)) { '4.1.2.9000' } else { $Version }
+    return [pscustomobject]@{ Id = $Id; Version = $resolved; Architecture = $Architecture;
+        InstallerType = $InstallerType; Url = 'https://tvd-packages.tradingview.com/release.msix';
+        Sha256 = ('A' * 64); PayloadName = 'payload.msix' }
+}
 $metadata = Get-TradingViewDesktopPortableMetadata
 if ([string]$metadata.Id -cne 'TradingView.TradingViewDesktop' -or
-    [string]$metadata.Version -cne '3.3.0.7992' -or
-    [string]$metadata.Url -cne 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix' -or
-    [string]$metadata.Sha256 -cne '96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF' -or
-    [string]$metadata.PayloadName -cne 'payload.msix') {
+    [string]$metadata.Version -cne '4.1.2.9000' -or
+    ($script:metadataCalls[0] -join '|') -cne 'TradingView Desktop|TradingView.TradingViewDesktop||x64|msix|.msix') {
     throw "Unexpected TradingView metadata: $($metadata | ConvertTo-Json -Compress)"
 }
-$rejected = $false
-try {
-    Get-TradingViewDesktopPortableMetadata -Version '3.3.0.7993' | Out-Null
-} catch {
-    if ([string]$_.Exception.Message -notmatch 'version 3\.3\.0\.7993 is unsupported') { throw }
-    $rejected = $true
+$explicit = Get-TradingViewDesktopPortableMetadata -Version '4.0.0.8000'
+if ([string]$explicit.Version -cne '4.0.0.8000' -or $script:metadataCalls.Count -ne 2 -or
+    [string]$script:metadataCalls[1][2] -cne '4.0.0.8000') {
+    throw 'TradingView explicit version was not passed to the shared metadata owner.'
 }
-if (-not $rejected) { throw 'TradingView metadata accepted a version outside this release pin.' }
 `, functionSetup)
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("TradingView pinned metadata regression: %v: %s", err, output)
+		t.Fatalf("TradingView metadata delegation regression: %v: %s", err, output)
 	}
 }

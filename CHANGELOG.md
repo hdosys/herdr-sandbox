@@ -25,8 +25,13 @@ artifacts remain available on the
   one stable default voice across segments. Projects can explicitly select Voice
   Design or another reference, and the concise `tts.ps1` command exposes both paths
   directly in the guest.
-- The audio stack now installs REAPER 7.79 and disables its in-app update checks
-  before first launch while preserving existing REAPER settings.
+- Provisioning now resolves the current stable release of external programs at
+  execution time, while explicit project versions remain exact and release
+  metadata, signatures, and checksums still bind each selected payload.
+- OpenSSH now prefers a digest-backed stable server MSI and uses the strictly
+  named official Preview package only when no usable stable server release exists.
+- The audio stack disables REAPER's in-app update checks before first launch while
+  preserving existing REAPER settings.
 - Fresh TradingView guests now reject optional analytics and advertising cookies
   before first launch, so the privacy consent prompt does not block the chart.
 
@@ -44,7 +49,9 @@ artifacts remain available on the
   compatibility.
 - Guest OpenCode now keeps automatic clipboard copy when text is selected in
   Herdr, matching the established mouse-selection workflow.
-- Microsoft OpenJDK 25 provisioning now trusts the exact WinGet package and
+- Guest agent configuration repositories can now create linked worktrees while
+  the managed routing overlay remains excluded from commits.
+- Microsoft OpenJDK provisioning now trusts the resolved stable WinGet package and
   publisher-owned command paths, then proves the compiler/runtime pair with a real
   Java compile and run instead of rejecting valid package-to-runtime version
   formatting differences.

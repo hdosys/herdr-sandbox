@@ -138,10 +138,13 @@ function Get-CommandToolRequirements {
     $version = ''
     $series = ''
     switch ($name) {
+        'Install-AndroidStack' {
+            return @(New-ToolRequirement 'Microsoft.OpenJDK' '' '' 'android')
+        }
         'Install-AudioStack' {
             return @(
-                (New-ToolRequirement 'Cockos.REAPER' '7.79' '' 'audio'),
-                (New-ToolRequirement 'AudioGridder' '1.2.0' '' 'audio')
+                (New-ToolRequirement 'Cockos.REAPER' '' '' 'audio'),
+                (New-ToolRequirement 'AudioGridder' '' '' 'audio')
             )
         }
         'Install-BunStack' {
@@ -154,7 +157,7 @@ function Get-CommandToolRequirements {
         }
         'Install-DotNetStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
-            return @(New-ToolRequirement 'Microsoft.DotNet.SDK.10' $version '' 'dotnet')
+            return @(New-ToolRequirement 'Microsoft.DotNet.SDK' $version '' 'dotnet')
         }
         'Install-GoStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
@@ -164,7 +167,7 @@ function Get-CommandToolRequirements {
             $projectDirectory = Get-LiteralCommandParameter $Command @('ProjectDirectory') 'ProjectDirectory' $Role -AllowProjectDirectoryVariable
             return @(
                 (New-ToolRequirement 'Kitware.CMake' '' '' 'handy'),
-                (New-ToolRequirement 'KhronosGroup.VulkanSDK' '1.4.309.0' '' 'handy'),
+                (New-ToolRequirement 'KhronosGroup.VulkanSDK' '' '' 'handy'),
                 (New-ToolRequirement 'Microsoft.EdgeWebView2Runtime' '' '' 'handy'),
                 (New-ToolRequirement 'Oven-sh.Bun' '' '' 'handy'),
                 (New-ToolRequirement 'Rustlang.Rustup' '' '' 'handy'),
@@ -174,8 +177,8 @@ function Get-CommandToolRequirements {
         'Install-HerdrStack' {
             $projectDirectory = Get-LiteralCommandParameter $Command @('ProjectDirectory') 'ProjectDirectory' $Role -AllowProjectDirectoryVariable
             return @(
-                (New-ToolRequirement 'Python' '' '3.13' 'herdr'),
-                (New-ToolRequirement 'zig.zig' '0.15.2' '' 'herdr'),
+                (New-ToolRequirement 'Python' '' '' 'herdr'),
+                (New-ToolRequirement 'zig.zig' '' '' 'herdr'),
                 (New-ToolRequirement 'Rustlang.Rustup' '' '' 'herdr'),
                 (New-ToolRequirement 'rust-toolchain' '' '' 'herdr' $projectDirectory),
                 (New-ToolRequirement 'Oven-sh.Bun' '' '' 'herdr'),
@@ -195,7 +198,7 @@ function Get-CommandToolRequirements {
         }
         'Install-JavaStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
-            return @(New-ToolRequirement 'Microsoft.OpenJDK.25' $version '' 'java')
+            return @(New-ToolRequirement 'Microsoft.OpenJDK' $version '' 'java')
         }
         'Install-Just' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
@@ -225,7 +228,6 @@ function Get-CommandToolRequirements {
         'Install-PlaywrightCLIStack' {
             $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'NodeVersion' $Role
             $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'Version' $Role
-            if ([string]::IsNullOrWhiteSpace($version)) { $version = '0.1.17' }
             return @(
                 (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'playwright-cli'),
                 (New-ToolRequirement '@playwright/cli' $version '' 'playwright-cli')
@@ -233,7 +235,7 @@ function Get-CommandToolRequirements {
         }
         'Install-PythonAIStack' {
             return @(
-                (New-ToolRequirement 'Python' '' '3.13' 'python-ai'),
+                (New-ToolRequirement 'Python' '' '' 'python-ai'),
                 (New-ToolRequirement 'astral-sh.uv' '' '' 'python-ai')
             )
         }

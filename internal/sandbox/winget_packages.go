@@ -35,7 +35,6 @@ const (
 	packageTerminalPreview = "Microsoft.WindowsTerminal.Preview"
 	packageTradingView     = "TradingView.TradingViewDesktop"
 	packageUV              = "astral-sh.uv"
-	packageOpenJDK25       = "Microsoft.OpenJDK.25"
 	packageNSIS            = "NSIS.NSIS"
 	packageNushell         = "Nushell.Nushell"
 	packageCMake           = "Kitware.CMake"
@@ -61,8 +60,6 @@ var basePackageIDs = []string{
 }
 
 var projectStackPackageIDs = []string{
-	"Microsoft.DotNet.SDK.10",
-	packageOpenJDK25,
 	"GoLang.Go",
 	"OpenJS.NodeJS.LTS",
 	packageFFmpeg,
@@ -455,7 +452,32 @@ func projectStackOwnsPackage(id string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(strings.ToLower(id), "python.python.")
+	lower := strings.ToLower(id)
+	return numericPackageFamily(lower, "python.python.", 2) ||
+		numericPackageFamily(lower, "microsoft.dotnet.sdk.", 1) ||
+		numericPackageFamily(lower, "microsoft.openjdk.", 1)
+}
+
+func numericPackageFamily(id, prefix string, partCount int) bool {
+	suffix, found := strings.CutPrefix(id, prefix)
+	if !found || suffix == "" {
+		return false
+	}
+	parts := strings.Split(suffix, ".")
+	if len(parts) != partCount {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validWingetPackageVersion(value string) bool {

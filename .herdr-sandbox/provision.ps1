@@ -7,4 +7,4 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 Install-GoStack
-Install-NSISStack -Version '3.12'
+Install-NSISStack

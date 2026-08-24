@@ -177,28 +177,22 @@ function Invoke-HerdrHostNative {
     return $output
 }
 
-function Get-HerdrHostWebResponseText {
-    param([Parameter(Mandatory = $true)][object]$Response)
-
-    if ($null -eq $Response.Content) { throw 'Visual Studio channel response content is empty.' }
-    if ($Response.Content -is [byte[]]) {
-        return [Text.Encoding]::UTF8.GetString([byte[]]$Response.Content)
-    }
-    if ($Response.Content -is [string]) { return [string]$Response.Content }
-    throw "Unexpected Visual Studio response content type: $($Response.Content.GetType().FullName)"
-}
-
 function Get-HerdrHostVisualStudioTargetFromChannel {
     param(
         [Parameter(Mandatory = $true)][object]$Channel,
         [Parameter(Mandatory = $true)][string]$SourceDescription
     )
 
+    $channelID = [string]$Channel.info.id
+    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release$') {
+        throw "Visual Studio channel identity is unexpected: $SourceDescription"
+    }
+    $productMajor = [string]$Matches['major']
     if ([string]$Channel.manifestVersion -cne '1.1' -or
-        [string]$Channel.info.manifestName -cne 'VisualStudio.17.Release' -or
+        [string]$Channel.info.manifestName -cne $channelID -or
         [string]$Channel.info.manifestType -cne 'channel' -or
-        [string]$Channel.info.productLine -cne 'Dev17' -or
-        [string]$Channel.info.productLineVersion -cne '2022' -or
+        [string]$Channel.info.productLine -cne "Dev$productMajor" -or
+        [string]$Channel.info.productLineVersion -notmatch '^\d{4}$' -or
         [string]$Channel.info.productMilestone -cne 'RTW' -or
         [string]$Channel.info.productMilestoneIsPreRelease -cne 'False') {
         throw "Visual Studio channel metadata is unexpected: $SourceDescription"
@@ -213,7 +207,7 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
     })
     $setups = @($Channel.channelItems | Where-Object {
         [string]$_.type -ceq 'Bootstrapper' -and
-        [string]$_.id -ceq 'VisualStudio.17.Release.Bootstrappers.Setup'
+        [string]$_.id -ceq "$channelID.Bootstrappers.Setup"
     })
     if ($products.Count -ne 1 -or $manifests.Count -ne 1 -or $setups.Count -ne 1) {
         throw "Visual Studio channel selection is ambiguous: $SourceDescription"
@@ -239,7 +233,9 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
         }
     }
     return [pscustomobject]@{
-        ChannelID = [string]$Channel.info.id
+        ChannelID = $channelID
+        ProductLine = [string]$Channel.info.productLine
+        ProductLineVersion = [string]$Channel.info.productLineVersion
         BuildVersion = $buildVersion
         SemanticVersion = $semanticVersion
         ProductVersion = [string]$products[0].version
@@ -249,23 +245,34 @@ function Get-HerdrHostVisualStudioTargetFromChannel {
     }
 }
 
-function Get-HerdrHostVisualStudioCurrentTarget {
-    $uri = 'https://aka.ms/vs/17/release/channel'
-    $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -ErrorAction Stop
-    $channel = (Get-HerdrHostWebResponseText -Response $response) | ConvertFrom-Json
-    return Get-HerdrHostVisualStudioTargetFromChannel -Channel $channel -SourceDescription $uri
-}
-
 function Test-HerdrHostVisualStudioTargetEqual {
     param([object]$Left, [object]$Right)
 
     return [string]$Left.ChannelID -ceq [string]$Right.ChannelID -and
+        [string]$Left.ProductLine -ceq [string]$Right.ProductLine -and
+        [string]$Left.ProductLineVersion -ceq [string]$Right.ProductLineVersion -and
         [string]$Left.BuildVersion -ceq [string]$Right.BuildVersion -and
         [string]$Left.SemanticVersion -ceq [string]$Right.SemanticVersion -and
         [string]$Left.ProductVersion -ceq [string]$Right.ProductVersion -and
         [string]$Left.CatalogSHA256 -ceq [string]$Right.CatalogSHA256 -and
         [string]$Left.SetupVersion -ceq [string]$Right.SetupVersion -and
         [string]$Left.SetupSHA256 -ceq [string]$Right.SetupSHA256
+}
+
+function Get-HerdrHostVisualStudioTargetFromDescriptor {
+    param([Parameter(Mandatory = $true)][object]$Descriptor)
+
+    return [pscustomobject]@{
+        ChannelID = [string]$Descriptor.channelID
+        ProductLine = [string]$Descriptor.productLine
+        ProductLineVersion = [string]$Descriptor.productLineVersion
+        BuildVersion = [string]$Descriptor.buildVersion
+        SemanticVersion = [string]$Descriptor.semanticVersion
+        ProductVersion = [string]$Descriptor.productVersion
+        CatalogSHA256 = [string]$Descriptor.catalogSHA256
+        SetupVersion = [string]$Descriptor.setupVersion
+        SetupSHA256 = [string]$Descriptor.setupSHA256
+    }
 }
 
 function Assert-HerdrHostVisualStudioBootstrapper {
@@ -299,36 +306,34 @@ function Assert-HerdrHostVisualStudioBootstrapper {
     }
 }
 
-function Save-HerdrHostVisualStudioBootstrapper {
-    param([string]$Destination)
-
-    $request = [Net.HttpWebRequest]::Create('https://aka.ms/vs/17/release/vs_buildtools.exe')
-    $request.AllowAutoRedirect = $true
-    $request.MaximumAutomaticRedirections = 5
-    $request.UserAgent = 'herdr-sandbox'
-    $response = $null
-    $inputStream = $null
-    $outputStream = $null
-    try {
-        $response = $request.GetResponse()
-        $finalURI = [Uri]$response.ResponseUri
-        if ($finalURI.Scheme -cne 'https' -or $finalURI.Host -cne 'download.visualstudio.microsoft.com' -or
-            $finalURI.AbsolutePath -notmatch '/([A-Fa-f0-9]{64})/vs_BuildTools\.exe$') {
-            throw "Visual Studio evergreen bootstrapper redirected to an unsafe URI: $finalURI"
-        }
-        $expectedHash = $Matches[1].ToUpperInvariant()
-        $inputStream = $response.GetResponseStream()
-        $outputStream = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew,
-            [IO.FileAccess]::Write, [IO.FileShare]::None)
-        $inputStream.CopyTo($outputStream)
-        $outputStream.Flush()
-    } finally {
-        if ($null -ne $outputStream) { $outputStream.Dispose() }
-        if ($null -ne $inputStream) { $inputStream.Dispose() }
-        if ($null -ne $response) { $response.Dispose() }
+function Get-HerdrHostVisualStudioPackageMetadata {
+    $winget = Get-Command 'winget.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $lines = @(Invoke-HerdrHostNative -Role 'Visual Studio Build Tools metadata resolution' `
+        -FilePath ([string]$winget.Source) -ArgumentList @(
+            'show', '--id', 'Microsoft.VisualStudio.BuildTools', '--exact', '--source', 'winget',
+            '--architecture', 'x64', '--accept-source-agreements', '--disable-interactivity'))
+    $versions = @($lines | Where-Object { $_ -match '^Version:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+    $urls = @($lines | Where-Object { $_ -match '^\s*Installer Url:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+    $digests = @($lines | Where-Object { $_ -match '^\s*Installer SHA256:\s*([A-Fa-f0-9]{64})\s*$' } |
+        ForEach-Object { $Matches[1].ToUpperInvariant() })
+    if ($versions.Count -ne 1 -or $urls.Count -ne 1 -or $digests.Count -ne 1 -or
+        [string]$versions[0] -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'Visual Studio Build Tools metadata is incomplete.'
     }
-    Assert-HerdrHostVisualStudioBootstrapper -Path $Destination -ExpectedSHA256 $expectedHash
-    return [pscustomobject]@{ Url = [string]$finalURI.AbsoluteUri; SHA256 = $expectedHash }
+    $uri = [Uri][string]$urls[0]
+    if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'download.visualstudio.microsoft.com' -or
+        $uri.AbsolutePath -notmatch '/[A-Fa-f0-9]{64}/vs_BuildTools\.exe$') {
+        throw "Visual Studio Build Tools metadata URL is unsafe: $uri"
+    }
+    return [pscustomobject]@{ Version = [string]$versions[0]; Url = [string]$uri.AbsoluteUri; SHA256 = [string]$digests[0] }
+}
+
+function Save-HerdrHostVisualStudioBootstrapper {
+    param([string]$Destination, [Parameter(Mandatory = $true)][object]$Metadata)
+
+    Invoke-WebRequest -Uri ([string]$Metadata.Url) -OutFile $Destination -UseBasicParsing
+    Assert-HerdrHostVisualStudioBootstrapper -Path $Destination -ExpectedSHA256 ([string]$Metadata.SHA256)
+    return [pscustomobject]@{ Version = [string]$Metadata.Version; Url = [string]$Metadata.Url; SHA256 = [string]$Metadata.SHA256 }
 }
 
 function Publish-HerdrHostVisualStudioBootstrapper {
@@ -390,9 +395,24 @@ function Get-HerdrHostVisualStudioRequiredArtifacts {
 }
 
 function Get-HerdrHostVisualStudioComponentIDs {
+    param([Parameter(Mandatory = $true)][string]$CatalogPath)
+
+    if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
+        throw "Visual Studio catalog is missing: $CatalogPath"
+    }
+    $catalog = [IO.File]::ReadAllText($CatalogPath) | ConvertFrom-Json
+    $sdkIDs = @($catalog.packages | ForEach-Object { [string]$_.id } |
+        Where-Object { $_ -match '^Microsoft\.VisualStudio\.Component\.Windows11SDK\.\d+$' } |
+        Sort-Object -Unique)
+    $ranked = @($sdkIDs | ForEach-Object {
+            if ($_ -match '\.(?<build>\d+)$') {
+                [pscustomobject]@{ ID = $_; Build = [long]$Matches['build'] }
+            }
+        } | Sort-Object @{ Expression = 'Build'; Descending = $true }, @{ Expression = 'ID'; Descending = $true })
+    if ($ranked.Count -eq 0) { throw 'Visual Studio catalog contains no stable Windows 11 SDK component.' }
     return @(
         'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-        'Microsoft.VisualStudio.Component.Windows11SDK.26100'
+        [string]$ranked[0].ID
     )
 }
 
@@ -418,8 +438,8 @@ function Assert-HerdrHostVisualStudioLayoutIdentity {
         [string]::IsNullOrWhiteSpace([string]$catalog.engineVersion) -or
         [string]$catalog.info.buildVersion -cne $Target.BuildVersion -or
         [string]$catalog.info.productSemanticVersion -cne $Target.SemanticVersion -or
-        [string]$catalog.info.productLine -cne 'Dev17' -or
-        [string]$catalog.info.productLineVersion -cne '2022' -or
+        [string]$catalog.info.productLine -cne $Target.ProductLine -or
+        [string]$catalog.info.productLineVersion -cne $Target.ProductLineVersion -or
         [string]$catalog.info.productMilestone -cne 'RTW' -or
         [string]$catalog.info.productMilestoneIsPreRelease -cne 'False') {
         throw 'Visual Studio catalog identity is unexpected.'
@@ -427,9 +447,9 @@ function Assert-HerdrHostVisualStudioLayoutIdentity {
     $layoutText = [IO.File]::ReadAllText($layoutPath)
     $layoutConfig = $layoutText | ConvertFrom-Json
     $archProperty = $layoutConfig.PSObject.Properties['arch']
-    $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs | Sort-Object)
+    $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs -CatalogPath $catalogPath | Sort-Object)
     $actualComponents = @(@($layoutConfig.add) | ForEach-Object { [string]$_ } | Sort-Object)
-    if ([string]$layoutConfig.channelId -cne 'VisualStudio.17.Release' -or
+    if ([string]$layoutConfig.channelId -cne $Target.ChannelID -or
         [string]$layoutConfig.productId -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
         ($null -ne $archProperty -and [string]$archProperty.Value -cne 'x64') -or
         ($actualComponents -join '|') -cne ($expectedComponents -join '|') -or
@@ -449,12 +469,14 @@ function Test-HerdrHostVisualStudioLayoutSlot {
         Assert-HerdrHostCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
         $properties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
-            'catalogSHA256', 'channelID', 'componentIDs', 'productID', 'productVersion',
-            'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
-        $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs | Sort-Object)
+            'catalogSHA256', 'channelID', 'componentIDs', 'packageVersion', 'productID', 'productLine',
+            'productLineVersion', 'productVersion', 'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
+        $expectedComponents = @(Get-HerdrHostVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
         $actualComponents = @(@($descriptor.componentIDs) | ForEach-Object { [string]$_ } | Sort-Object)
         if ((@($descriptor.PSObject.Properties.Name | Sort-Object) -join '|') -cne (($properties | Sort-Object) -join '|') -or
-            [int]$descriptor.schemaVersion -ne 2 -or [string]$descriptor.channelID -cne $Target.ChannelID -or
+            [int]$descriptor.schemaVersion -ne 3 -or [string]$descriptor.channelID -cne $Target.ChannelID -or
+            [string]$descriptor.productLine -cne $Target.ProductLine -or
+            [string]$descriptor.productLineVersion -cne $Target.ProductLineVersion -or
             [string]$descriptor.buildVersion -cne $Target.BuildVersion -or
             [string]$descriptor.semanticVersion -cne $Target.SemanticVersion -or
             [string]$descriptor.productVersion -cne $Target.ProductVersion -or
@@ -482,24 +504,6 @@ function Test-HerdrHostVisualStudioLayoutSlot {
     } catch { return $false }
 }
 
-function Test-HerdrHostUnpublishedVisualStudioLayoutSlot {
-    param([string]$Slot, [object]$Target)
-
-    try {
-        if (Test-Path -LiteralPath (Join-Path $Slot 'complete.json')) { return $false }
-        $layout = Join-Path $Slot 'layout'
-        foreach ($relativePath in @(Get-HerdrHostVisualStudioRequiredArtifacts)) {
-            $path = Join-Path $layout $relativePath
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
-                return $false
-            }
-            Assert-HerdrHostCachePath -Path $path
-        }
-        Assert-HerdrHostVisualStudioLayoutIdentity -Layout $layout -Target $Target
-        return $true
-    } catch { return $false }
-}
-
 function Test-HerdrHostStoredVisualStudioLayoutSlot {
     param([string]$Slot)
 
@@ -507,12 +511,7 @@ function Test-HerdrHostStoredVisualStudioLayoutSlot {
         $descriptorPath = Join-Path $Slot 'complete.json'
         if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $false }
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-        $target = [pscustomobject]@{
-            ChannelID = [string]$descriptor.channelID; BuildVersion = [string]$descriptor.buildVersion
-            SemanticVersion = [string]$descriptor.semanticVersion; ProductVersion = [string]$descriptor.productVersion
-            CatalogSHA256 = [string]$descriptor.catalogSHA256; SetupVersion = [string]$descriptor.setupVersion
-            SetupSHA256 = [string]$descriptor.setupSHA256
-        }
+        $target = Get-HerdrHostVisualStudioTargetFromDescriptor -Descriptor $descriptor
         return Test-HerdrHostVisualStudioLayoutSlot -Slot $Slot -Target $target
     } catch { return $false }
 }
@@ -557,15 +556,20 @@ $stage = Join-Path $env:TEMP ('herdr-sandbox-vsbt-' + [Guid]::NewGuid().ToString
 try {
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
         [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    $target = Get-HerdrHostVisualStudioCurrentTarget
+    $packageMetadata = Get-HerdrHostVisualStudioPackageMetadata
     $slotA = Join-Path $cacheRoot 'a'
     $slotB = Join-Path $cacheRoot 'b'
     $matching = @(@($slotA, $slotB) | Where-Object {
-        Test-HerdrHostVisualStudioLayoutSlot -Slot $_ -Target $target
+        if (-not (Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $_)) { return $false }
+        $descriptor = [IO.File]::ReadAllText((Join-Path $_ 'complete.json')) | ConvertFrom-Json
+        return [string]$descriptor.packageVersion -ceq $packageMetadata.Version -and
+            [string]$descriptor.bootstrapperURL -ceq $packageMetadata.Url -and
+            [string]$descriptor.bootstrapperSHA256 -ceq $packageMetadata.SHA256
     })
     if ($matching.Count -gt 0) {
         $selectedLayout = Join-Path $matching[0] 'layout'
         $selectedDescriptor = [IO.File]::ReadAllText((Join-Path $matching[0] 'complete.json')) | ConvertFrom-Json
+        $target = Get-HerdrHostVisualStudioTargetFromDescriptor -Descriptor $selectedDescriptor
         $stableBootstrapper = Publish-HerdrHostVisualStudioBootstrapper `
             -Source (Join-Path $selectedLayout 'vs_BuildTools.exe') -Destination $stableBootstrapper `
             -ExpectedSHA256 ([string]$selectedDescriptor.bootstrapperSHA256)
@@ -577,64 +581,62 @@ try {
         exit 0
     }
 
-    Write-Host "Visual Studio Build Tools host layout cache miss: $($target.BuildVersion)"
+    Write-Host "Visual Studio Build Tools host layout cache miss: $($packageMetadata.Version)"
     New-Item -ItemType Directory -Path $stage | Out-Null
     $downloadedBootstrapper = Join-Path $stage 'vs_BuildTools.exe'
-    $bootstrapperInfo = Save-HerdrHostVisualStudioBootstrapper -Destination $downloadedBootstrapper
+    $bootstrapperInfo = Save-HerdrHostVisualStudioBootstrapper -Destination $downloadedBootstrapper `
+        -Metadata $packageMetadata
     $stableBootstrapper = Publish-HerdrHostVisualStudioBootstrapper -Source $downloadedBootstrapper `
         -Destination $stableBootstrapper -ExpectedSHA256 $bootstrapperInfo.SHA256
-    $recoverable = @(@($slotA, $slotB) | Where-Object {
-        Test-HerdrHostUnpublishedVisualStudioLayoutSlot -Slot $_ -Target $target
-    })
-    if ($recoverable.Count -gt 0) {
-        $selectedSlot = $recoverable[0]
-        $layout = Join-Path $selectedSlot 'layout'
-        $layoutBootstrapper = Join-Path $layout 'vs_BuildTools.exe'
-        Assert-HerdrHostVisualStudioBootstrapper -Path $layoutBootstrapper -ExpectedSHA256 $bootstrapperInfo.SHA256
-        Write-Host "Recovering completed unpublished Visual Studio layout: $($target.BuildVersion)"
-        Invoke-HerdrHostNative -Role 'Visual Studio host recovered layout verification' -FilePath $stableBootstrapper `
-            -ArgumentList @('--layout', $layout, '--verify', '--passive', '--wait') | Out-Null
+
+    $aValid = Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $slotA
+    $bValid = Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $slotB
+    $selectedSlot = if (-not (Test-Path -LiteralPath $slotA)) {
+        $slotA
+    } elseif (-not (Test-Path -LiteralPath $slotB)) {
+        $slotB
+    } elseif ($aValid) {
+        $slotB
+    } elseif ($bValid) {
+        $slotA
     } else {
-        $aValid = Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $slotA
-        $bValid = Test-HerdrHostStoredVisualStudioLayoutSlot -Slot $slotB
-        $selectedSlot = if (-not (Test-Path -LiteralPath $slotA)) {
-            $slotA
-        } elseif (-not (Test-Path -LiteralPath $slotB)) {
-            $slotB
-        } elseif ($aValid) {
-            $slotB
-        } elseif ($bValid) {
-            $slotA
-        } else {
-            throw 'Both Visual Studio layout slots exist but neither matches the active component contract.'
-        }
-        if (Test-Path -LiteralPath $selectedSlot) {
-            Assert-HerdrHostCacheTree -Path $selectedSlot
-            Remove-Item -LiteralPath $selectedSlot -Recurse -Force
-        }
-        $layout = Join-Path $selectedSlot 'layout'
-        New-Item -ItemType Directory -Path $layout -Force | Out-Null
-        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-        $layoutArguments = @('--layout', $layout)
-        foreach ($componentID in @(Get-HerdrHostVisualStudioComponentIDs)) {
-            $layoutArguments += @('--add', $componentID)
-        }
-        $layoutArguments += @('--lang', 'en-US', '--passive', '--wait')
-        Invoke-HerdrHostNative -Role 'Visual Studio host layout download' -FilePath $stableBootstrapper `
-            -ArgumentList $layoutArguments | Out-Null
-        $layoutBootstrapper = Join-Path $layout 'vs_BuildTools.exe'
-        if (-not (Test-Path -LiteralPath $layoutBootstrapper -PathType Leaf)) {
-            Copy-Item -LiteralPath $stableBootstrapper -Destination $layoutBootstrapper
-        }
-        Wait-HerdrHostVisualStudioLayoutFiles -Layout $layout -Deadline $deadline
-        Assert-HerdrHostVisualStudioBootstrapper -Path $layoutBootstrapper -ExpectedSHA256 $bootstrapperInfo.SHA256
-        Assert-HerdrHostVisualStudioLayoutIdentity -Layout $layout -Target $target
-        Invoke-HerdrHostNative -Role 'Visual Studio host layout verification' -FilePath $stableBootstrapper `
-            -ArgumentList @('--layout', $layout, '--verify', '--passive', '--wait') | Out-Null
+        $slotA
     }
+    if (Test-Path -LiteralPath $selectedSlot) {
+        Assert-HerdrHostCacheTree -Path $selectedSlot
+        Remove-Item -LiteralPath $selectedSlot -Recurse -Force
+    }
+    $layout = Join-Path $selectedSlot 'layout'
+    New-Item -ItemType Directory -Path $layout -Force | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $initialArguments = @('--layout', $layout, '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        '--lang', 'en-US', '--passive', '--wait')
+    Invoke-HerdrHostNative -Role 'Visual Studio host catalog layout download' -FilePath $stableBootstrapper `
+        -ArgumentList $initialArguments | Out-Null
+    $layoutBootstrapper = Join-Path $layout 'vs_BuildTools.exe'
+    if (-not (Test-Path -LiteralPath $layoutBootstrapper -PathType Leaf)) {
+        Copy-Item -LiteralPath $stableBootstrapper -Destination $layoutBootstrapper
+    }
+    Wait-HerdrHostVisualStudioLayoutFiles -Layout $layout -Deadline $deadline
+    Assert-HerdrHostVisualStudioBootstrapper -Path $layoutBootstrapper -ExpectedSHA256 $bootstrapperInfo.SHA256
+    $target = Get-HerdrHostVisualStudioTargetFromChannel `
+        -Channel ([IO.File]::ReadAllText((Join-Path $layout 'ChannelManifest.json')) | ConvertFrom-Json) `
+        -SourceDescription (Join-Path $layout 'ChannelManifest.json')
+    $componentIDs = @(Get-HerdrHostVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json'))
+    $layoutArguments = @('--layout', $layout)
+    foreach ($componentID in $componentIDs) { $layoutArguments += @('--add', $componentID) }
+    $layoutArguments += @('--lang', 'en-US', '--passive', '--wait')
+    Invoke-HerdrHostNative -Role 'Visual Studio host complete layout download' -FilePath $stableBootstrapper `
+        -ArgumentList $layoutArguments | Out-Null
+    Wait-HerdrHostVisualStudioLayoutFiles -Layout $layout -Deadline $deadline
     Assert-HerdrHostVisualStudioLayoutIdentity -Layout $layout -Target $target
-    $currentAfterDownload = Get-HerdrHostVisualStudioCurrentTarget
-    if (-not (Test-HerdrHostVisualStudioTargetEqual -Left $target -Right $currentAfterDownload)) {
+    Invoke-HerdrHostNative -Role 'Visual Studio host layout verification' -FilePath $stableBootstrapper `
+        -ArgumentList @('--layout', $layout, '--verify', '--passive', '--wait') | Out-Null
+    Assert-HerdrHostVisualStudioLayoutIdentity -Layout $layout -Target $target
+    $packageAfterDownload = Get-HerdrHostVisualStudioPackageMetadata
+    if ([string]$packageMetadata.Version -cne [string]$packageAfterDownload.Version -or
+        [string]$packageMetadata.Url -cne [string]$packageAfterDownload.Url -or
+        [string]$packageMetadata.SHA256 -cne [string]$packageAfterDownload.SHA256) {
         throw 'Visual Studio Current changed while the host layout was downloading.'
     }
     $artifactHashes = [ordered]@{}
@@ -643,12 +645,14 @@ try {
         $artifactHashes[$relativePath] = Get-HerdrHostSHA256 -Path $path
     }
     $descriptor = [ordered]@{
-        schemaVersion = 2; channelID = $target.ChannelID; buildVersion = $target.BuildVersion
+        schemaVersion = 3; packageVersion = $packageMetadata.Version; channelID = $target.ChannelID
+        productLine = $target.ProductLine; productLineVersion = $target.ProductLineVersion
+        buildVersion = $target.BuildVersion
         semanticVersion = $target.SemanticVersion; productVersion = $target.ProductVersion
         catalogSHA256 = $target.CatalogSHA256; setupVersion = $target.SetupVersion
         setupSHA256 = $target.SetupSHA256; bootstrapperURL = $bootstrapperInfo.Url
         bootstrapperSHA256 = $bootstrapperInfo.SHA256; productID = 'Microsoft.VisualStudio.Product.BuildTools'
-        componentIDs = @(Get-HerdrHostVisualStudioComponentIDs); artifacts = $artifactHashes
+        componentIDs = $componentIDs; artifacts = $artifactHashes
     } | ConvertTo-Json -Depth 4 -Compress
     $temporaryDescriptor = Join-Path $selectedSlot 'complete.json.tmp'
     [IO.File]::WriteAllText($temporaryDescriptor, $descriptor, (New-Object Text.UTF8Encoding($false)))

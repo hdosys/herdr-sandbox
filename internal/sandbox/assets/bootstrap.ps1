@@ -367,7 +367,7 @@ function Get-BootstrapFileSHA256 {
     return ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
 }
 
-function Get-PinnedBootstrapAsset {
+function Get-ResolvedBootstrapAsset {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Role,
@@ -476,6 +476,106 @@ function Get-PinnedBootstrapAsset {
     return $destination
 }
 
+function Get-LatestGitHubRelease {
+    param([Parameter(Mandatory = $true)][string]$Repository)
+
+    if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        throw "GitHub release repository is invalid: $Repository"
+    }
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" `
+        -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox-bootstrap' }
+    if ([bool]$release.draft -or [bool]$release.prerelease -or [string]::IsNullOrWhiteSpace([string]$release.tag_name)) {
+        throw "GitHub latest release is not published: $Repository"
+    }
+    return $release
+}
+
+function Get-OpenSSHRelease {
+    $repository = 'PowerShell/Win32-OpenSSH'
+    $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=100" `
+        -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox-bootstrap' }
+    $releases = @($releaseResponse | ForEach-Object { $_ })
+    if ($releases.Count -lt 1 -or $releases.Count -gt 100) {
+        throw "OpenSSH release inventory count is invalid: $($releases.Count)"
+    }
+
+    $stable = @()
+    $preview = @()
+    foreach ($release in $releases) {
+        $tag = [string]$release.tag_name
+        if ([bool]$release.draft -or [string]::IsNullOrWhiteSpace($tag)) { continue }
+        $stableMatch = [regex]::Match($tag, '^v?(?<version>\d+\.\d+\.\d+\.\d+)$')
+        if ($stableMatch.Success -and -not [bool]$release.prerelease) {
+            $versionText = $stableMatch.Groups['version'].Value
+            $version = [Version]$versionText
+            $previewNumber = 0
+            $channel = 'stable'
+            $bannerVersion = "$($version.Major).$($version.Minor)"
+        } else {
+            $previewMatch = [regex]::Match($tag, '^v?(?<version>\d+\.\d+\.\d+\.\d+)p(?<preview>\d+)-Preview$')
+            if (-not $previewMatch.Success) { continue }
+            $versionText = $previewMatch.Groups['version'].Value
+            $version = [Version]$versionText
+            $previewNumber = [int]$previewMatch.Groups['preview'].Value
+            $channel = 'Preview exception'
+            $bannerVersion = "$($version.Major).$($version.Minor)p$previewNumber"
+        }
+        $expectedAssetName = "OpenSSH-Win64-v$versionText.msi"
+        $usableAssets = @($release.assets | Where-Object {
+                [string]$_.name -ceq $expectedAssetName -and
+                [string]$_.digest -match '^sha256:[0-9a-f]{64}$'
+            })
+        if ($usableAssets.Count -ne 1) { continue }
+        $candidate = [pscustomobject]@{
+            Release = $release
+            Version = $version
+            VersionText = $versionText
+            Preview = $previewNumber
+            Channel = $channel
+            BannerVersion = $bannerVersion
+        }
+        if ($channel -ceq 'stable') { $stable += $candidate } else { $preview += $candidate }
+    }
+
+    $selected = if ($stable.Count -gt 0) {
+        @($stable | Sort-Object @{ Expression = 'Version'; Descending = $true })[0]
+    } elseif ($preview.Count -gt 0) {
+        @($preview | Sort-Object @{ Expression = 'Version'; Descending = $true }, `
+                @{ Expression = 'Preview'; Descending = $true })[0]
+    } else {
+        throw 'OpenSSH has no published production release or strictly named Preview exception.'
+    }
+    return [pscustomobject]@{
+        Release = $selected.Release
+        Version = [string]$selected.Release.tag_name
+        AssetVersion = $selected.VersionText
+        Channel = $selected.Channel
+        BannerVersion = $selected.BannerVersion
+    }
+}
+
+function Get-GitHubReleaseAsset {
+    param(
+        [Parameter(Mandatory = $true)][object]$Release,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$NamePattern,
+        [Parameter(Mandatory = $true)][string]$Role
+    )
+
+    $assets = @($Release.assets | Where-Object { [string]$_.name -match $NamePattern })
+    if ($assets.Count -ne 1) { throw "$Role resolved $($assets.Count) release assets; expected one." }
+    $asset = $assets[0]
+    $digest = [string]$asset.digest
+    if ($digest -notmatch '^sha256:(?<sha>[0-9a-f]{64})$') { throw "$Role release asset has no SHA-256 digest." }
+    $sha256 = [string]$Matches['sha']
+    $tag = [string]$Release.tag_name
+    $url = [string]$asset.browser_download_url
+    if (-not $url.StartsWith("https://github.com/$Repository/releases/download/$tag/", [StringComparison]::Ordinal)) {
+        throw "$Role release asset URL is unexpected: $url"
+    }
+    return [pscustomobject]@{ Name = [string]$asset.name; Url = $url; SHA256 = $sha256 }
+}
+
 function Get-PowerShell7Installation {
     $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue)
     if ($packages.Count -ne 1) {
@@ -524,50 +624,23 @@ try {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    $releaseMetadataPath = Join-Path $InputDirectory 'bootstrap-release.json'
-    $releaseMetadata = Get-Content -LiteralPath $releaseMetadataPath -Raw | ConvertFrom-Json
-    $releaseMetadataProperties = @($releaseMetadata.PSObject.Properties.Name | Sort-Object)
-    if (($releaseMetadataProperties -join '|') -cne 'openSSHMSISha256|openSSHMSIUrl|openSSHVersion|schemaVersion|vcRuntimeSha256|vcRuntimeUrl|wingetBundleSha256|wingetBundleUrl|wingetDependenciesSha256|wingetDependenciesUrl|wingetVersion' -or
-        [int]$releaseMetadata.schemaVersion -ne 1) {
-        throw 'Unsupported bootstrap release metadata schema.'
+    $wingetRelease = Get-LatestGitHubRelease -Repository 'microsoft/winget-cli'
+    $ExpectedWinGetVersion = [string]$wingetRelease.tag_name
+    if ($ExpectedWinGetVersion -notmatch '^v\d+\.\d+\.\d+$') {
+        throw "WinGet latest release tag is invalid: $ExpectedWinGetVersion"
     }
-    $VCRuntimeUrl = [string]$releaseMetadata.vcRuntimeUrl
-    $VCRuntimeSha256 = [string]$releaseMetadata.vcRuntimeSha256
-    $ExpectedWinGetVersion = [string]$releaseMetadata.wingetVersion
-    $WinGetBundleUrl = [string]$releaseMetadata.wingetBundleUrl
-    $WinGetBundleSha256 = [string]$releaseMetadata.wingetBundleSha256
-    $WinGetDependenciesUrl = [string]$releaseMetadata.wingetDependenciesUrl
-    $WinGetDependenciesSha256 = [string]$releaseMetadata.wingetDependenciesSha256
-    $OpenSSHVersion = [string]$releaseMetadata.openSSHVersion
-    $OpenSSHMSIUrl = [string]$releaseMetadata.openSSHMSIUrl
-    $OpenSSHMSISha256 = [string]$releaseMetadata.openSSHMSISha256
-    if (-not $VCRuntimeUrl.StartsWith('https://download.visualstudio.microsoft.com/download/pr/', [StringComparison]::Ordinal) -or
-        -not $VCRuntimeUrl.EndsWith('/VC_redist.x64.exe', [StringComparison]::Ordinal)) {
-        throw 'VC++ runtime URL is not an immutable Microsoft x64 redistributable URL.'
-    }
-    if ($VCRuntimeSha256 -notmatch '^[0-9a-f]{64}$') {
-        throw 'VC++ runtime SHA-256 is malformed.'
-    }
-    $expectedWinGetUrlPrefix = 'https://github.com/microsoft/winget-cli/releases/download/' + $ExpectedWinGetVersion + '/'
-    if (-not $WinGetBundleUrl.StartsWith($expectedWinGetUrlPrefix, [StringComparison]::Ordinal) -or
-        -not $WinGetBundleUrl.EndsWith('/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle', [StringComparison]::Ordinal)) {
-        throw 'WinGet bundle URL does not match the pinned Microsoft release.'
-    }
-    if (-not $WinGetDependenciesUrl.StartsWith($expectedWinGetUrlPrefix, [StringComparison]::Ordinal) -or
-        -not $WinGetDependenciesUrl.EndsWith('/DesktopAppInstaller_Dependencies.zip', [StringComparison]::Ordinal)) {
-        throw 'WinGet dependency URL does not match the pinned Microsoft release.'
-    }
-    if ($WinGetBundleSha256 -notmatch '^[0-9a-f]{64}$' -or $WinGetDependenciesSha256 -notmatch '^[0-9a-f]{64}$') {
-        throw 'WinGet release SHA-256 is malformed.'
-    }
-    $expectedOpenSSHUrlPrefix = 'https://github.com/PowerShell/Win32-OpenSSH/releases/download/' + $OpenSSHVersion + '/'
-    if (-not $OpenSSHMSIUrl.StartsWith($expectedOpenSSHUrlPrefix, [StringComparison]::Ordinal) -or
-        -not $OpenSSHMSIUrl.EndsWith('/OpenSSH-Win64-v10.0.0.0.msi', [StringComparison]::Ordinal)) {
-        throw 'OpenSSH MSI URL does not match the pinned Microsoft release.'
-    }
-    if ($OpenSSHMSISha256 -notmatch '^[0-9a-f]{64}$') {
-        throw 'OpenSSH MSI SHA-256 is malformed.'
-    }
+    $wingetBundleAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
+        -NamePattern '^Microsoft\.DesktopAppInstaller_8wekyb3d8bbwe\.msixbundle$' -Role 'WinGet bundle'
+    $wingetDependenciesAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
+        -NamePattern '^DesktopAppInstaller_Dependencies\.zip$' -Role 'WinGet dependencies'
+    $openSSHSelection = Get-OpenSSHRelease
+    $openSSHRelease = $openSSHSelection.Release
+    $OpenSSHVersion = $openSSHSelection.Version
+    $openSSHAssetVersion = $openSSHSelection.AssetVersion
+    $openSSHChannel = $openSSHSelection.Channel
+    $openSSHAssetName = "OpenSSH-Win64-v$openSSHAssetVersion.msi"
+    $openSSHAsset = Get-GitHubReleaseAsset -Release $openSSHRelease -Repository 'PowerShell/Win32-OpenSSH' `
+        -NamePattern ('^' + [regex]::Escape($openSSHAssetName) + '$') -Role 'OpenSSH MSI'
 
     $provisioningDirectory = Join-Path $InputDirectory 'provisioning'
     $baseProvisioning = Join-Path $provisioningDirectory 'base.ps1'
@@ -632,20 +705,20 @@ try {
 
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
-    Write-ProgressStatus -Phase 'winget-download' -Message 'Restoring the pinned Microsoft WinGet package'
+    Write-ProgressStatus -Phase 'winget-download' -Message "Restoring Microsoft WinGet $ExpectedWinGetVersion"
     $wingetBundle = Join-Path $env:TEMP 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
     $wingetDependenciesArchive = Join-Path $env:TEMP 'DesktopAppInstaller_Dependencies.zip'
-    $wingetBundle = Get-PinnedBootstrapAsset -Role 'WinGet bundle' -CacheKey 'winget-bundle' `
-        -Uri $WinGetBundleUrl -ExpectedSHA256 $WinGetBundleSha256 `
+    $wingetBundle = Get-ResolvedBootstrapAsset -Role 'WinGet bundle' -CacheKey 'winget-bundle' `
+        -Uri $wingetBundleAsset.Url -ExpectedSHA256 $wingetBundleAsset.SHA256 `
         -FileName 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' `
         -DestinationPath $wingetBundle -CacheRoot $bootstrapCacheRoot -CacheTrustRoot $bootstrapCacheTrustRoot
-    $wingetDependenciesArchive = Get-PinnedBootstrapAsset -Role 'WinGet dependencies' `
-        -CacheKey 'winget-dependencies' -Uri $WinGetDependenciesUrl `
-        -ExpectedSHA256 $WinGetDependenciesSha256 -FileName 'DesktopAppInstaller_Dependencies.zip' `
+    $wingetDependenciesArchive = Get-ResolvedBootstrapAsset -Role 'WinGet dependencies' `
+        -CacheKey 'winget-dependencies' -Uri $wingetDependenciesAsset.Url `
+        -ExpectedSHA256 $wingetDependenciesAsset.SHA256 -FileName 'DesktopAppInstaller_Dependencies.zip' `
         -DestinationPath $wingetDependenciesArchive -CacheRoot $bootstrapCacheRoot `
         -CacheTrustRoot $bootstrapCacheTrustRoot
 
-    Write-ProgressStatus -Phase 'winget-install' -Message 'Installing the pinned WinGet package and dependencies'
+    Write-ProgressStatus -Phase 'winget-install' -Message 'Installing the resolved WinGet package and dependencies'
     $wingetDependenciesDirectory = Join-Path $env:TEMP 'winget-dependencies'
     Expand-Archive -LiteralPath $wingetDependenciesArchive -DestinationPath $wingetDependenciesDirectory
     $wingetDependencyPaths = @(Get-ChildItem -LiteralPath (Join-Path $wingetDependenciesDirectory 'x64') -File -Filter '*.appx' |
@@ -696,16 +769,39 @@ try {
     }
 
     Write-ProgressStatus -Phase 'development-provisioning' `
-        -Message 'Installing the pinned Microsoft VC++ runtime required by development tools and Herdr'
+        -Message 'Installing the current stable Microsoft VC++ runtime required by development tools and Herdr'
+    $vcMetadata = @(Invoke-Native -Role 'VC++ runtime metadata resolution' -FilePath $wingetPath -ArgumentList @(
+        'show', '--id', 'Microsoft.VCRedist.2015+.x64', '--exact', '--source', 'winget', '--architecture', 'x64',
+        '--accept-source-agreements', '--disable-interactivity'))
+    $vcVersions = @($vcMetadata | Where-Object { $_ -match '^Version:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+    $vcURLs = @($vcMetadata | Where-Object { $_ -match '^\s*Installer Url:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
+    $vcDigests = @($vcMetadata | Where-Object { $_ -match '^\s*Installer SHA256:\s*([A-Fa-f0-9]{64})\s*$' } | ForEach-Object { $Matches[1] })
+    if ($vcVersions.Count -ne 1 -or $vcURLs.Count -ne 1 -or $vcDigests.Count -ne 1) {
+        throw 'VC++ runtime metadata is incomplete.'
+    }
+    $vcRuntimeURI = [Uri][string]$vcURLs[0]
+    if ($vcRuntimeURI.Scheme -cne 'https' -or $vcRuntimeURI.Host -cne 'download.visualstudio.microsoft.com' -or
+        $vcRuntimeURI.AbsolutePath -notmatch '/(?<sha>[A-Fa-f0-9]{64})/VC_redist\.x64\.exe$' -or
+        [string]$Matches['sha'] -ine [string]$vcDigests[0]) {
+        throw "VC++ runtime metadata URL is unexpected: $vcRuntimeURI"
+    }
     $vcRuntimeInstaller = Join-Path $env:TEMP 'VC_redist.x64.exe'
-    $vcRuntimeInstaller = Get-PinnedBootstrapAsset -Role 'VC++ runtime' -CacheKey 'vc-runtime' `
-        -Uri $VCRuntimeUrl -ExpectedSHA256 $VCRuntimeSha256 -FileName 'VC_redist.x64.exe' `
-        -DestinationPath $vcRuntimeInstaller -CacheRoot $bootstrapCacheRoot `
-        -CacheTrustRoot $bootstrapCacheTrustRoot
+    $vcRuntimeInstaller = Get-ResolvedBootstrapAsset -Role 'VC++ runtime' -CacheKey 'vc-runtime' `
+        -Uri ([string]$vcRuntimeURI.AbsoluteUri) -ExpectedSHA256 ([string]$vcDigests[0]) `
+        -FileName 'VC_redist.x64.exe' -DestinationPath $vcRuntimeInstaller `
+        -CacheRoot $bootstrapCacheRoot -CacheTrustRoot $bootstrapCacheTrustRoot
     $vcRuntimeProcess = Start-Process -FilePath $vcRuntimeInstaller `
         -ArgumentList @('/install', '/quiet', '/norestart') -WindowStyle Hidden -Wait -PassThru
     if ($vcRuntimeProcess.ExitCode -notin @(0, 1638)) {
         throw "VC++ runtime installer exited with code $($vcRuntimeProcess.ExitCode)."
+    }
+    $vcInstalled = @(Invoke-Native -Role 'VC++ runtime installed-package verification' -FilePath $wingetPath -ArgumentList @(
+        'list', '--id', 'Microsoft.VCRedist.2015+.x64', '--exact', '--source', 'winget',
+        '--accept-source-agreements', '--disable-interactivity'))
+    $vcInstalledPattern = '(?:^|\s)' + [regex]::Escape('Microsoft.VCRedist.2015+.x64') + '\s+' +
+        [regex]::Escape([string]$vcVersions[0]) + '(?:\s|$)'
+    if (@($vcInstalled | Where-Object { [string]$_ -match $vcInstalledPattern }).Count -lt 1) {
+        throw "VC++ runtime installed package does not match resolved version $($vcVersions[0])."
     }
 
     Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
@@ -715,12 +811,19 @@ try {
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
 
-    Write-ProgressStatus -Phase 'openssh-install' -Message 'Installing the pinned Microsoft OpenSSH Server'
-    $openSSHInstaller = Join-Path $env:TEMP 'OpenSSH-Win64-v10.0.0.0.msi'
-    $openSSHInstaller = Get-PinnedBootstrapAsset -Role 'OpenSSH MSI' -CacheKey 'openssh-msi' `
-        -Uri $OpenSSHMSIUrl -ExpectedSHA256 $OpenSSHMSISha256 -FileName 'OpenSSH-Win64-v10.0.0.0.msi' `
+    Write-ProgressStatus -Phase 'openssh-install' `
+        -Message "Installing Microsoft OpenSSH Server $OpenSSHVersion ($openSSHChannel)"
+    $openSSHInstaller = Join-Path $env:TEMP $openSSHAsset.Name
+    $openSSHInstaller = Get-ResolvedBootstrapAsset -Role 'OpenSSH MSI' -CacheKey 'openssh-msi' `
+        -Uri $openSSHAsset.Url -ExpectedSHA256 $openSSHAsset.SHA256 -FileName $openSSHAsset.Name `
         -DestinationPath $openSSHInstaller -CacheRoot $bootstrapCacheRoot `
         -CacheTrustRoot $bootstrapCacheTrustRoot
+    $openSSHInstallerSignature = Get-AuthenticodeSignature -LiteralPath $openSSHInstaller
+    if ($openSSHInstallerSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $null -eq $openSSHInstallerSignature.SignerCertificate -or
+        $openSSHInstallerSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+        throw "OpenSSH MSI signature is invalid: $($openSSHInstallerSignature.Status)"
+    }
     $openSSHInstallProcess = Start-Process -FilePath 'msiexec.exe' `
         -ArgumentList @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server') `
         -WindowStyle Hidden -Wait -PassThru
@@ -728,10 +831,24 @@ try {
         throw "OpenSSH MSI installer exited with code $($openSSHInstallProcess.ExitCode)."
     }
     $openSSHDirectory = Join-Path $env:ProgramFiles 'OpenSSH'
-    foreach ($requiredFile in @((Join-Path $openSSHDirectory 'ssh-keygen.exe'), (Join-Path $openSSHDirectory 'sshd.exe'))) {
+    $sshKeygen = Join-Path $openSSHDirectory 'ssh-keygen.exe'
+    $sshd = Join-Path $openSSHDirectory 'sshd.exe'
+    foreach ($requiredFile in @($sshKeygen, $sshd)) {
         if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
             throw "OpenSSH package is missing required file: $requiredFile"
         }
+        $requiredItem = Get-Item -LiteralPath $requiredFile -Force
+        if (($requiredItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            [string]$requiredItem.VersionInfo.FileVersion -cne $openSSHAssetVersion) {
+            throw "OpenSSH installed file does not match release $OpenSSHVersion`: $requiredFile"
+        }
+    }
+    $openSSHBanner = (Invoke-HerdrBoundary -Role 'OpenSSH Server version verification' `
+            -FilePath $sshd -ArgumentList @('-V') -TimeoutSeconds 10).Trim()
+    $openSSHBannerVersion = [regex]::Escape([string]$openSSHSelection.BannerVersion)
+    if ($openSSHChannel -ceq 'stable') { $openSSHBannerVersion += '(?:p\d+)?' }
+    if ($openSSHBanner -notmatch ('(?m)^OpenSSH_for_Windows_' + $openSSHBannerVersion + '(?:,|\s|$)')) {
+        throw "OpenSSH installed version output does not match release $OpenSSHVersion`: $openSSHBanner"
     }
 
     Write-ProgressStatus -Phase 'openssh-config' -Message 'Configuring OpenSSH keys, authentication, and PowerShell shell'
@@ -762,8 +879,6 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     $sshdConfigPath = Join-Path $sshDirectory 'sshd_config'
     [IO.File]::WriteAllText($sshdConfigPath, $sshdConfig, $script:Utf8NoBom)
 
-    $sshKeygen = Join-Path $openSSHDirectory 'ssh-keygen.exe'
-    $sshd = Join-Path $openSSHDirectory 'sshd.exe'
     Invoke-Native -Role 'SSH host-key generation' -FilePath $sshKeygen -ArgumentList @('-A') | Out-Null
     Invoke-Native -Role 'sshd configuration validation' -FilePath $sshd -ArgumentList @('-t', '-f', $sshdConfigPath) | Out-Null
 

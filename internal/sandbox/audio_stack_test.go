@@ -104,3 +104,54 @@ if ($accepted) { throw 'Malformed AudioGridder configuration was replaced.' }
 		t.Fatalf("AudioGridder endpoint regression: %v: %s", err, output)
 	}
 }
+
+func TestAudioGridderReleaseManifestBindsSourceAndInstalledFilesInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 AudioGridder release manifest regression")
+	}
+	stackPath := defaultProvisioningPath(t, stackProvisioningName)
+	root := t.TempDir()
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+foreach ($name in @('Get-StackAudioGridderFiles', 'Get-StackFileSHA256', 'Get-StackAudioGridderPayloadHashes', 'Write-StackAudioGridderReleaseManifest', 'Test-StackAudioGridderReleaseManifest')) {
+    $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
+    if ($null -eq $definition) { throw "Missing AudioGridder release helper: $name" }
+    Invoke-Expression $definition.Extent.Text
+}
+$root = '%s'
+foreach ($relativeName in @(Get-StackAudioGridderFiles)) {
+    $path = Join-Path $root $relativeName
+    $parent = Split-Path -Parent $path
+    $null = New-Item -ItemType Directory -Path $parent -Force
+    [IO.File]::WriteAllText($path, "fixture:$relativeName", $script:Utf8NoBom)
+}
+$sourceA = 'A' * 64
+Write-StackAudioGridderReleaseManifest -Root $root -Version '1.2.3' -SourceSHA256 $sourceA
+if (-not (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.2.3' -ExpectedSourceSHA256 $sourceA)) {
+    throw 'AudioGridder release manifest did not accept matching payload bytes.'
+}
+$firstFile = Join-Path $root ([string](Get-StackAudioGridderFiles)[0])
+[IO.File]::AppendAllText($firstFile, 'changed', $script:Utf8NoBom)
+if (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.2.3' -ExpectedSourceSHA256 $sourceA) {
+    throw 'AudioGridder release manifest accepted changed payload bytes.'
+}
+[IO.File]::WriteAllText($firstFile, "fixture:$([string](Get-StackAudioGridderFiles)[0])", $script:Utf8NoBom)
+Write-StackAudioGridderReleaseManifest -Root $root -Version '1.2.3' -SourceSHA256 $sourceA
+if (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.2.3' -ExpectedSourceSHA256 ('B' * 64)) {
+    throw 'AudioGridder release manifest accepted another source release digest.'
+}
+`, quote(stackPath), quote(root))
+	scriptPath := filepath.Join(t.TempDir(), "audio-release-manifest-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("AudioGridder release manifest regression: %v: %s", err, output)
+	}
+}

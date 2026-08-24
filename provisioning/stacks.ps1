@@ -27,11 +27,16 @@ function Get-StackVisualStudioTargetFromChannel {
     )
 
     $channel = $Channel
+    $channelID = [string]$channel.info.id
+    if ($channelID -notmatch '^VisualStudio\.(?<major>\d+)\.Release$') {
+        throw "Visual Studio channel identity is unexpected: $SourceDescription"
+    }
+    $productMajor = [string]$Matches['major']
     if ([string]$channel.manifestVersion -cne '1.1' -or
-        [string]$channel.info.manifestName -cne 'VisualStudio.17.Release' -or
+        [string]$channel.info.manifestName -cne $channelID -or
         [string]$channel.info.manifestType -cne 'channel' -or
-        [string]$channel.info.productLine -cne 'Dev17' -or
-        [string]$channel.info.productLineVersion -cne '2022' -or
+        [string]$channel.info.productLine -cne "Dev$productMajor" -or
+        [string]$channel.info.productLineVersion -notmatch '^\d{4}$' -or
         [string]$channel.info.productMilestone -cne 'RTW' -or
         [string]$channel.info.productMilestoneIsPreRelease -cne 'False') {
         throw "Visual Studio channel metadata is unexpected: $SourceDescription"
@@ -46,7 +51,7 @@ function Get-StackVisualStudioTargetFromChannel {
     })
     $setups = @($channel.channelItems | Where-Object {
         [string]$_.type -ceq 'Bootstrapper' -and
-        [string]$_.id -ceq 'VisualStudio.17.Release.Bootstrappers.Setup'
+        [string]$_.id -ceq "$channelID.Bootstrappers.Setup"
     })
     if ($products.Count -ne 1 -or $manifests.Count -ne 1 -or $setups.Count -ne 1) {
         throw "Visual Studio channel did not resolve one Build Tools product, manifest, and setup bootstrapper: $SourceDescription"
@@ -72,7 +77,9 @@ function Get-StackVisualStudioTargetFromChannel {
         }
     }
     return [pscustomobject]@{
-        ChannelID = [string]$channel.info.id
+        ChannelID = $channelID
+        ProductLine = [string]$channel.info.productLine
+        ProductLineVersion = [string]$channel.info.productLineVersion
         BuildVersion = $buildVersion
         SemanticVersion = $semanticVersion
         ProductVersion = [string]$products[0].version
@@ -80,14 +87,6 @@ function Get-StackVisualStudioTargetFromChannel {
         SetupVersion = [string]$setups[0].version
         SetupSHA256 = ([string]$setupPayloads[0].sha256).ToUpperInvariant()
     }
-}
-
-function Get-StackVisualStudioCurrentTarget {
-    $channelURI = 'https://aka.ms/vs/17/release/channel'
-    $response = Invoke-WebRequest -Uri $channelURI -UseBasicParsing -ErrorAction Stop
-    $channelText = Get-StackWebResponseText -Response $response
-    $channel = $channelText | ConvertFrom-Json
-    return Get-StackVisualStudioTargetFromChannel -Channel $channel -SourceDescription $channelURI
 }
 
 function Test-StackVisualStudioTargetEqual {
@@ -99,6 +98,8 @@ function Test-StackVisualStudioTargetEqual {
     )
 
     return [string]$Left.ChannelID -ceq [string]$Right.ChannelID -and
+        [string]$Left.ProductLine -ceq [string]$Right.ProductLine -and
+        [string]$Left.ProductLineVersion -ceq [string]$Right.ProductLineVersion -and
         [string]$Left.BuildVersion -ceq [string]$Right.BuildVersion -and
         [string]$Left.SemanticVersion -ceq [string]$Right.SemanticVersion -and
         [string]$Left.ProductVersion -ceq [string]$Right.ProductVersion -and
@@ -154,9 +155,24 @@ function Get-StackVisualStudioRequiredArtifacts {
 }
 
 function Get-StackVisualStudioComponentIDs {
+    param([Parameter(Mandatory = $true)][string]$CatalogPath)
+
+    if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) {
+        throw "Visual Studio catalog is missing: $CatalogPath"
+    }
+    $catalog = [IO.File]::ReadAllText($CatalogPath) | ConvertFrom-Json
+    $sdkIDs = @($catalog.packages | ForEach-Object { [string]$_.id } |
+        Where-Object { $_ -match '^Microsoft\.VisualStudio\.Component\.Windows11SDK\.\d+$' } |
+        Sort-Object -Unique)
+    $ranked = @($sdkIDs | ForEach-Object {
+            if ($_ -match '\.(?<build>\d+)$') {
+                [pscustomobject]@{ ID = $_; Build = [long]$Matches['build'] }
+            }
+        } | Sort-Object @{ Expression = 'Build'; Descending = $true }, @{ Expression = 'ID'; Descending = $true })
+    if ($ranked.Count -eq 0) { throw 'Visual Studio catalog contains no stable Windows 11 SDK component.' }
     return @(
         'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-        'Microsoft.VisualStudio.Component.Windows11SDK.26100'
+        [string]$ranked[0].ID
     )
 }
 
@@ -199,8 +215,8 @@ function Assert-StackVisualStudioLayoutIdentity {
         [string]::IsNullOrWhiteSpace([string]$catalog.engineVersion) -or
         [string]$catalog.info.buildVersion -cne $Target.BuildVersion -or
         [string]$catalog.info.productSemanticVersion -cne $Target.SemanticVersion -or
-        [string]$catalog.info.productLine -cne 'Dev17' -or
-        [string]$catalog.info.productLineVersion -cne '2022' -or
+        [string]$catalog.info.productLine -cne $Target.ProductLine -or
+        [string]$catalog.info.productLineVersion -cne $Target.ProductLineVersion -or
         [string]$catalog.info.productMilestone -cne 'RTW' -or
         [string]$catalog.info.productMilestoneIsPreRelease -cne 'False') {
         throw 'Visual Studio layout catalog identity is unexpected.'
@@ -208,9 +224,9 @@ function Assert-StackVisualStudioLayoutIdentity {
     $layoutText = [IO.File]::ReadAllText($layoutPath)
     $layoutConfig = $layoutText | ConvertFrom-Json
     $archProperty = $layoutConfig.PSObject.Properties['arch']
-    $expectedComponents = @(Get-StackVisualStudioComponentIDs | Sort-Object)
+    $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath $catalogPath | Sort-Object)
     $actualComponents = @(@($layoutConfig.add) | ForEach-Object { [string]$_ } | Sort-Object)
-    if ([string]$layoutConfig.channelId -cne 'VisualStudio.17.Release' -or
+    if ([string]$layoutConfig.channelId -cne $Target.ChannelID -or
         [string]$layoutConfig.productId -cne 'Microsoft.VisualStudio.Product.BuildTools' -or
         ($null -ne $archProperty -and [string]$archProperty.Value -cne 'x64') -or
         ($actualComponents -join '|') -cne ($expectedComponents -join '|') -or
@@ -281,14 +297,16 @@ function Test-StackVisualStudioLayoutSlot {
         Assert-ProvisioningCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
         $expectedProperties = @('artifacts', 'bootstrapperSHA256', 'bootstrapperURL', 'buildVersion',
-            'catalogSHA256', 'channelID', 'componentIDs', 'productID', 'productVersion',
-            'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
+            'catalogSHA256', 'channelID', 'componentIDs', 'packageVersion', 'productID', 'productLine',
+            'productLineVersion', 'productVersion', 'schemaVersion', 'semanticVersion', 'setupSHA256', 'setupVersion')
         $actualProperties = @($descriptor.PSObject.Properties.Name | Sort-Object)
-        $expectedComponents = @(Get-StackVisualStudioComponentIDs | Sort-Object)
+        $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
         $actualComponents = @(@($descriptor.componentIDs) | ForEach-Object { [string]$_ } | Sort-Object)
         if (($actualProperties -join '|') -cne (($expectedProperties | Sort-Object) -join '|') -or
-            [int]$descriptor.schemaVersion -ne 2 -or
+            [int]$descriptor.schemaVersion -ne 3 -or
             [string]$descriptor.channelID -cne $Target.ChannelID -or
+            [string]$descriptor.productLine -cne $Target.ProductLine -or
+            [string]$descriptor.productLineVersion -cne $Target.ProductLineVersion -or
             [string]$descriptor.buildVersion -cne $Target.BuildVersion -or
             [string]$descriptor.semanticVersion -cne $Target.SemanticVersion -or
             [string]$descriptor.productVersion -cne $Target.ProductVersion -or
@@ -331,11 +349,7 @@ function Get-StackVisualStudioInstallation {
     if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
         return ''
     }
-    $arguments = @(
-        '-latest', '-products', '*', '-requires',
-        'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-        'Microsoft.VisualStudio.Component.Windows11SDK.26100'
-    )
+    $arguments = @('-latest', '-products', '*', '-requires') + [string[]]@($Target.ComponentIDs)
     $pathResult = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation path inspection' `
         -FilePath $vswhere -ArgumentList ($arguments + @('-property', 'installationPath')) -TimeoutSeconds 30
     $versionResult = Invoke-ProvisioningNativeResult -Role 'Visual Studio installation version inspection' `
@@ -502,16 +516,30 @@ function Install-StackVisualStudioBuildTools {
     try {
         $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-        $target = Get-StackVisualStudioCurrentTarget
         $slotA = Join-Path $cacheRoot 'a'
         $slotB = Join-Path $cacheRoot 'b'
-        $matchingSlots = @(@($slotA, $slotB) | Where-Object {
-            Test-StackVisualStudioLayoutSlot -Slot $_ -Target $target
-        })
+        $matchingSlots = @(@($slotA, $slotB) | ForEach-Object {
+                $descriptorPath = Join-Path $_ 'complete.json'
+                if (Test-Path -LiteralPath $descriptorPath -PathType Leaf) {
+                    $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
+                    $candidate = [pscustomobject]@{
+                        ChannelID = [string]$descriptor.channelID; ProductLine = [string]$descriptor.productLine
+                        ProductLineVersion = [string]$descriptor.productLineVersion
+                        BuildVersion = [string]$descriptor.buildVersion; SemanticVersion = [string]$descriptor.semanticVersion
+                        ProductVersion = [string]$descriptor.productVersion; CatalogSHA256 = [string]$descriptor.catalogSHA256
+                        SetupVersion = [string]$descriptor.setupVersion; SetupSHA256 = [string]$descriptor.setupSHA256
+                        ComponentIDs = [string[]]@($descriptor.componentIDs)
+                    }
+                    if (Test-StackVisualStudioLayoutSlot -Slot $_ -Target $candidate) {
+                        [pscustomobject]@{ Slot = $_; Target = $candidate }
+                    }
+                }
+            })
         if ($matchingSlots.Count -ne 1) {
             throw "Expected one host-prepared Visual Studio Current layout, found $($matchingSlots.Count)."
         }
-        $selectedSlot = $matchingSlots[0]
+        $selectedSlot = [string]$matchingSlots[0].Slot
+        $target = $matchingSlots[0].Target
         Write-Output "Visual Studio Build Tools host layout cache hit: $($target.BuildVersion)"
         $installedPath = Get-StackVisualStudioInstallation -Target $target
         if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
@@ -536,10 +564,10 @@ function Install-StackVisualStudioBuildTools {
             $channelManifest = Join-Path $guestLayout 'ChannelManifest.json'
             $catalog = Join-Path $guestLayout 'Catalog.json'
             $installationArguments = @('--noWeb', '--noUpdateInstaller', '--wait', '--quiet', '--norestart',
-                '--installPath', 'C:\HerdrSandbox\toolchains\visual-studio', '--channelId', 'VisualStudio.17.Release',
+                '--installPath', 'C:\HerdrSandbox\toolchains\visual-studio', '--channelId', $target.ChannelID,
                 '--productId', 'Microsoft.VisualStudio.Product.BuildTools', '--channelUri', $channelManifest,
                 '--installChannelUri', $channelManifest, '--installCatalogUri', $catalog)
-            foreach ($componentID in @(Get-StackVisualStudioComponentIDs)) {
+            foreach ($componentID in @($target.ComponentIDs)) {
                 $installationArguments += @('--add', $componentID)
             }
             $installationArguments += @('--addProductLang', 'en-US')
@@ -1213,22 +1241,6 @@ function Assert-StackAndroidGoogleSignature {
     }
 }
 
-function Assert-StackAndroidMicrosoftSignature {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    $signature = Get-AuthenticodeSignature -LiteralPath $Path
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-        $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.GetNameInfo(
-            [Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Microsoft Corporation' -or
-        $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
-        throw "Android JDK Authenticode signature is invalid: $($signature.Status)"
-    }
-}
-
 function Install-StackAndroidDirectArchive {
     param(
         [Parameter(Mandatory = $true)]
@@ -1239,8 +1251,6 @@ function Install-StackAndroidDirectArchive {
         [string]$Destination,
         [Parameter(Mandatory = $true)]
         [string]$ArchiveRoot,
-        [Parameter(Mandatory = $true)]
-        [int]$ExpectedEntryCount,
         [Parameter(Mandatory = $true)]
         [string[]]$RequiredRelativePaths,
         [string]$SignedRelativePath = ''
@@ -1287,9 +1297,7 @@ function Install-StackAndroidDirectArchive {
         $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
         $archiveEntries = @(Invoke-ProvisioningNative -Role "$Role archive inspection" -FilePath $tar `
             -ArgumentList @('-tf', $guestPayload) -TimeoutSeconds 120 | ForEach-Object { [string]$_ })
-        if ($archiveEntries.Count -ne $ExpectedEntryCount) {
-            throw "$Role archive contains $($archiveEntries.Count) entries; expected $ExpectedEntryCount."
-        }
+        if ($archiveEntries.Count -eq 0) { throw "$Role archive is empty." }
         foreach ($archiveEntry in $archiveEntries) {
             Test-StackAndroidArchiveEntry -Entry $archiveEntry -Root $ArchiveRoot
         }
@@ -1374,42 +1382,57 @@ function Install-AndroidStack {
     [CmdletBinding()]
     param()
 
-    $androidCLIRevision = '22.0'
-    $androidCLIVersion = '1.0.15985488'
+    $downloadPageURI = 'https://developer.android.com/studio'
+    $downloadPage = Get-StackWebResponseText -Response (Invoke-WebRequest -Uri $downloadPageURI -UseBasicParsing)
+    $windowsRows = @([regex]::Matches($downloadPage,
+            '<tr>\s*<td>Windows</td>.*?>(?<name>commandlinetools-win-(?<build>\d+)_latest\.zip)</button>.*?<td>(?<sha>[A-Fa-f0-9]{64})</td>\s*</tr>',
+            [Text.RegularExpressions.RegexOptions]::Singleline))
+    if ($windowsRows.Count -ne 1) {
+        throw 'Android stable download page did not resolve one Windows command-line tools archive.'
+    }
+    $androidCLIFileName = [string]$windowsRows[0].Groups['name'].Value
+    $androidCLISHA256 = [string]$windowsRows[0].Groups['sha'].Value.ToUpperInvariant()
+    $repositoryURI = 'https://dl.google.com/android/repository/repository2-3.xml'
+    $repository = [xml](Get-StackWebResponseText -Response (Invoke-WebRequest -Uri $repositoryURI -UseBasicParsing))
+    $stablePackages = @($repository.'sdk-repository'.remotePackage | Where-Object {
+            [string]$_.path -match '^cmdline-tools;\d+\.\d+$' -and
+            [string]$_.channelRef.ref -ceq 'channel-0' -and
+            @($_.archives.archive | Where-Object {
+                    [string]$_.'host-os' -ceq 'windows' -and [string]$_.complete.url -ceq $androidCLIFileName
+                }).Count -eq 1
+        })
+    if ($stablePackages.Count -ne 1) {
+        throw 'Android stable archive does not map to one published command-line tools revision.'
+    }
+    $androidCLIRevision = ([string]$stablePackages[0].path).Substring('cmdline-tools;'.Length)
     $androidCLIMetadata = [pscustomobject]@{
         Id = 'Google.AndroidCommandLineTools'
         Version = $androidCLIRevision
         Architecture = 'x64'
         InstallerType = 'zip'
         Scope = ''
-        Url = 'https://dl.google.com/android/repository/commandlinetools-win-15859902_latest.zip'
-        Sha256 = '90AE805D20434428BFFCB699C290860F19BB5F66A67E6B330067E3DE801FB04A'
+        Url = "https://dl.google.com/android/repository/$androidCLIFileName"
+        Sha256 = $androidCLISHA256
         PayloadName = 'payload.zip'
-    }
-    $jdkVersion = '17.0.20'
-    $jdkBuild = '8'
-    $jdkMetadata = [pscustomobject]@{
-        Id = 'Microsoft.OpenJDK.17.Android'
-        Version = "$jdkVersion.$jdkBuild"
-        Architecture = 'x64'
-        InstallerType = 'zip'
-        Scope = ''
-        Url = 'https://aka.ms/download-jdk/microsoft-jdk-17.0.20-windows-x64.zip'
-        Sha256 = 'E46FD292317C6BB0A8FE9DC63115021329F3A63CAEBA791C185F89F3666A68E5'
-        PayloadName = 'payload.zip'
-    }
-    foreach ($metadata in @($androidCLIMetadata, $jdkMetadata)) {
-        $uri = [Uri][string]$metadata.Url
-        if ($uri.Scheme -cne 'https' -or [string]$metadata.Sha256 -cnotmatch '^[A-F0-9]{64}$' -or
-            [string]$metadata.Architecture -cne 'x64' -or [string]$metadata.InstallerType -cne 'zip') {
-            throw "Android stack package metadata is invalid: $($metadata.Id)"
-        }
     }
     $androidCLIURI = [Uri][string]$androidCLIMetadata.Url
-    $jdkURI = [Uri][string]$jdkMetadata.Url
-    if ($androidCLIURI.Host -cne 'dl.google.com' -or $jdkURI.Host -cne 'aka.ms') {
-        throw 'Android stack package host is invalid.'
+    if ($androidCLIURI.Scheme -cne 'https' -or $androidCLIURI.Host -cne 'dl.google.com' -or
+        [string]$androidCLIMetadata.Sha256 -cnotmatch '^[A-F0-9]{64}$') {
+        throw 'Android stack package metadata is invalid.'
     }
+
+    Install-JavaStack
+    $jdkRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($jdkRoot)) { throw 'Android Java stack did not publish JAVA_HOME.' }
+    $jdkReleasePath = Join-Path $jdkRoot 'release'
+    if (-not (Test-Path -LiteralPath $jdkReleasePath -PathType Leaf)) {
+        throw 'Android Java release identity is missing.'
+    }
+    $jdkRelease = [IO.File]::ReadAllText($jdkReleasePath)
+    if ($jdkRelease -notmatch '(?m)^JAVA_VERSION="(?<version>\d+\.\d+\.\d+)"\r?$') {
+        throw 'Android Java release version is invalid.'
+    }
+    $jdkVersion = [string]$Matches['version']
 
     $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
@@ -1417,31 +1440,18 @@ function Install-AndroidStack {
     $androidCLI = Join-Path $androidCLIBin 'android.exe'
     $platformTools = Join-Path $androidSDK 'platform-tools'
     $adb = Join-Path $platformTools 'adb.exe'
-    $jdkRoot = 'C:\HerdrSandbox\toolchains\android-jdk-17'
     $androidUserHome = 'C:\HerdrSandbox\build\android-user'
     Write-Output "Installing Android SDK Command-line Tools $androidCLIRevision and Microsoft OpenJDK $jdkVersion..."
     Install-StackAndroidDirectArchive -Role 'Android SDK Command-line Tools' -Metadata $androidCLIMetadata `
-        -Destination $androidCLIRoot -ArchiveRoot 'cmdline-tools' -ExpectedEntryCount 330 `
+        -Destination $androidCLIRoot -ArchiveRoot 'cmdline-tools' `
         -RequiredRelativePaths @('source.properties', 'bin\android.exe', 'bin\sdkmanager.bat',
             'lib\sdk-common\tools.sdk-common.jar') -SignedRelativePath 'bin\android.exe'
-    Install-StackAndroidDirectArchive -Role 'Android Microsoft OpenJDK 17' -Metadata $jdkMetadata `
-        -Destination $jdkRoot -ArchiveRoot "jdk-$jdkVersion+$jdkBuild" -ExpectedEntryCount 576 `
-        -RequiredRelativePaths @('release', 'bin\java.exe', 'bin\javac.exe', 'lib\modules')
 
     $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
     if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
         $sourceProperties -notmatch ('(?m)^Pkg\.Path=cmdline-tools;' + [regex]::Escape($androidCLIRevision) + '\r?$')) {
         throw 'Android SDK Command-line Tools source identity is unexpected.'
     }
-    $jdkRelease = [IO.File]::ReadAllText((Join-Path $jdkRoot 'release'))
-    if ($jdkRelease -notmatch ('(?m)^JAVA_VERSION="' + [regex]::Escape($jdkVersion) + '"\r?$') -or
-        $jdkRelease -notmatch '(?m)^IMPLEMENTOR="Microsoft"\r?$' -or
-        $jdkRelease -notmatch '(?m)^OS_ARCH="x86_64"\r?$') {
-        throw 'Android Microsoft OpenJDK release identity is unexpected.'
-    }
-    Assert-StackAndroidMicrosoftSignature -Path (Join-Path $jdkRoot 'bin\java.exe')
-    Assert-StackAndroidMicrosoftSignature -Path (Join-Path $jdkRoot 'bin\javac.exe')
-
     $androidJava = Join-Path $jdkRoot 'bin\java.exe'
     $androidJavac = Join-Path $jdkRoot 'bin\javac.exe'
     Invoke-ProvisioningNative -Role 'Android JDK runtime smoke' -FilePath $androidJava `
@@ -1467,16 +1477,6 @@ function Install-AndroidStack {
         }
     }
 
-    $machineJavaHome = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
-    if ([string]::IsNullOrWhiteSpace($machineJavaHome)) {
-        $env:JAVA_HOME = $jdkRoot
-        [Environment]::SetEnvironmentVariable('JAVA_HOME', $jdkRoot, 'Machine')
-        if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine') -cne $jdkRoot) {
-            throw 'Android JAVA_HOME activation read-back failed.'
-        }
-        Add-ProvisioningMachinePath -Directory (Join-Path $jdkRoot 'bin')
-    }
-
     $previousJavaHome = [string]$env:JAVA_HOME
     $platformToolsVersion = ''
     try {
@@ -1490,8 +1490,12 @@ function Install-AndroidStack {
                 -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
                 -TimeoutSeconds 600 | Out-Null
         }
-        Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
-            -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | Out-Null
+        $androidCLIVersions = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
+                -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | Where-Object {
+                ([string]$_).Trim() -match '^\d+\.\d+\.\d+\.\d+$'
+            })
+        if ($androidCLIVersions.Count -ne 1) { throw 'Android CLI did not report one stable version.' }
+        $androidCLIVersion = ([string]$androidCLIVersions[0]).Trim()
         $reportedSDK = (@(Invoke-ProvisioningNative -Role 'Android SDK location verification' `
                     -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
                     -TimeoutSeconds 30 | Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
@@ -1518,52 +1522,136 @@ function Install-AndroidStack {
 }
 
 function Get-StackAudioGridderFiles {
-    return [ordered]@{
-        'bin\AudioGridderPluginTray.exe' = '681626482BC2A084D439D1D29F42E874DADF41A3DB342156B8B6F35F65CCC280'
-        'bin\AudioGridderServer.exe' = '6C1A125EE26977DA22C95086B710C5DBF4667AA253EEEBBFB540EE8D4EACB52E'
-        'bin\crashpad_handler.exe' = '1ED7B6EB8BE0ABC034A6630199A38A925395758D3B476160BC0A01BFE037D441'
-        'lib\VST\AudioGridder.dll' = 'B349EAE03268F4D521D8741B0BA4A7366102D1BF2C7B2959962706FB37AC1C1A'
-        'lib\VST\AudioGridderInst.dll' = 'B45F4F0FB66C82BD8575E993AF7277185A5C98C4D23FF1B0C4462A0B7FA6F3F9'
-        'lib\VST\AudioGridderMidi.dll' = '68DAF126507A60598BA94C24322F441DBCA46B4C76632EBFCDB4F5CCFD5FE3E2'
-        'lib\VST3\AudioGridder.vst3' = '59D8054E7C094178DE35ADE6F92EEE5ED256D7785739DCC795EDFC0F7839EBBF'
-        'lib\VST3\AudioGridderInst.vst3' = 'EA89147EB0460852033076AC1C5DD9571B879936805BDFD29139D52D8BD13782'
-        'lib\VST3\AudioGridderMidi.vst3' = '2D163D7B9E7D9CAE4D7B62FDB05473AD811C418897E573903B514DC04E7E6CCB'
+    return @(
+        'bin\AudioGridderPluginTray.exe',
+        'bin\AudioGridderServer.exe',
+        'bin\crashpad_handler.exe',
+        'lib\VST\AudioGridder.dll',
+        'lib\VST\AudioGridderInst.dll',
+        'lib\VST\AudioGridderMidi.dll',
+        'lib\VST3\AudioGridder.vst3',
+        'lib\VST3\AudioGridderInst.vst3',
+        'lib\VST3\AudioGridderMidi.vst3'
+    )
+}
+
+function Get-StackFileSHA256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToUpperInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Get-StackAudioGridderPayloadHashes {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $rootInfo = Get-Item -LiteralPath $rootPath -Force -ErrorAction Stop
+    if (-not $rootInfo.PSIsContainer -or
+        ($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "AudioGridder payload root is unsafe: $Root"
+    }
+    $manifestName = '.herdr-sandbox-release.json'
+    $files = @(Get-ChildItem -LiteralPath $rootPath -File -Recurse -Force)
+    if (@($files | Where-Object {
+                ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $_.Length -le 0
+            }).Count -ne 0) {
+        throw 'AudioGridder payload contains an unsafe file.'
+    }
+    $relativeNames = @($files | ForEach-Object { $_.FullName.Substring($rootPath.Length + 1) })
+    $payloadNames = @($relativeNames | Where-Object { $_ -cne $manifestName } | Sort-Object)
+    $expectedNames = @(Get-StackAudioGridderFiles | Sort-Object)
+    if (($payloadNames -join '|') -cne ($expectedNames -join '|') -or
+        @($relativeNames | Where-Object { $_ -ceq $manifestName }).Count -gt 1) {
+        throw 'AudioGridder payload contains missing or unsupported files.'
+    }
+    $hashes = [ordered]@{}
+    foreach ($relativeName in $expectedNames) {
+        $hashes[$relativeName] = Get-StackFileSHA256 -Path (Join-Path $rootPath $relativeName)
+    }
+    return $hashes
+}
+
+function Write-StackAudioGridderReleaseManifest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$SourceSHA256
+    )
+
+    if ($Version -notmatch '^\d+\.\d+\.\d+$' -or $SourceSHA256 -notmatch '^[A-F0-9]{64}$') {
+        throw 'AudioGridder release manifest identity is invalid.'
+    }
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        version = $Version
+        sourceSHA256 = $SourceSHA256
+        files = Get-StackAudioGridderPayloadHashes -Root $Root
+    }
+    $manifestPath = Join-Path $Root '.herdr-sandbox-release.json'
+    [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 4 -Compress), $script:Utf8NoBom)
+}
+
+function Test-StackAudioGridderReleaseManifest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][string]$ExpectedSourceSHA256
+    )
+
+    try {
+        $manifestPath = Join-Path $Root '.herdr-sandbox-release.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $false }
+        $manifestInfo = Get-Item -LiteralPath $manifestPath -Force
+        if (($manifestInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $manifestInfo.Length -le 0 -or $manifestInfo.Length -gt 65536) { return $false }
+        $manifest = [IO.File]::ReadAllText($manifestPath) | ConvertFrom-Json
+        $properties = @($manifest.PSObject.Properties.Name | Sort-Object)
+        if (($properties -join '|') -cne 'files|schemaVersion|sourceSHA256|version' -or
+            [int]$manifest.schemaVersion -ne 1 -or
+            [string]$manifest.version -cne $ExpectedVersion -or
+            [string]$manifest.sourceSHA256 -cne $ExpectedSourceSHA256) { return $false }
+        $expectedNames = @(Get-StackAudioGridderFiles | Sort-Object)
+        $manifestNames = @($manifest.files.PSObject.Properties.Name | Sort-Object)
+        if (($manifestNames -join '|') -cne ($expectedNames -join '|')) { return $false }
+        $actualHashes = Get-StackAudioGridderPayloadHashes -Root $Root
+        foreach ($name in $expectedNames) {
+            $expectedHash = [string]$manifest.files.PSObject.Properties[$name].Value
+            if ($expectedHash -notmatch '^[A-F0-9]{64}$' -or [string]$actualHashes[$name] -cne $expectedHash) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
     }
 }
 
 function Test-StackAudioGridderPayload {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Root
+        [string]$Root,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSourceSHA256
     )
 
     try {
-        if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $false }
-        $rootInfo = Get-Item -LiteralPath $Root -Force
-        if (($rootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
-        $expected = Get-StackAudioGridderFiles
-        $files = @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force)
-        if (@($files | Where-Object {
-                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-                }).Count -ne 0) {
-            return $false
-        }
+        if (-not (Test-StackAudioGridderReleaseManifest -Root $Root -ExpectedVersion $ExpectedVersion `
+                    -ExpectedSourceSHA256 $ExpectedSourceSHA256)) { return $false }
         $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\')
-        $actualNames = @($files | ForEach-Object {
-                $_.FullName.Substring($rootPath.Length + 1)
-            } | Sort-Object)
-        $expectedNames = @($expected.Keys | Sort-Object)
-        if (($actualNames -join '|') -cne ($expectedNames -join '|')) { return $false }
-        foreach ($entry in $expected.GetEnumerator()) {
-            $path = Join-Path $rootPath ([string]$entry.Key)
-            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
-            if ($hash -cne [string]$entry.Value) { return $false }
-        }
         $server = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderServer.exe') -Force
         $tray = Get-Item -LiteralPath (Join-Path $rootPath 'bin\AudioGridderPluginTray.exe') -Force
-        return [string]$server.VersionInfo.FileVersion -ceq '1.2.0' -and
+        return [string]$server.VersionInfo.FileVersion -ceq $ExpectedVersion -and
             [string]$server.VersionInfo.ProductName -ceq 'AudioGridderServer' -and
-            [string]$tray.VersionInfo.FileVersion -ceq '1.2.0' -and
+            [string]$tray.VersionInfo.FileVersion -ceq $ExpectedVersion -and
             [string]$tray.VersionInfo.ProductName -ceq 'AudioGridderPluginTray'
     } catch {
         return $false
@@ -1596,7 +1684,6 @@ function Install-StackAudioGridderClientFiles {
         [string]$SourceRoot
     )
 
-    $expected = Get-StackAudioGridderFiles
     $destinations = [ordered]@{
         'bin\AudioGridderPluginTray.exe' = 'C:\Program Files\AudioGridderPluginTray\AudioGridderPluginTray.exe'
         'bin\crashpad_handler.exe' = 'C:\Program Files\AudioGridderPluginTray\crashpad_handler.exe'
@@ -1624,7 +1711,7 @@ function Install-StackAudioGridderClientFiles {
                 throw "AudioGridder plugin destination is unsafe: $destination"
             }
         }
-        $expectedHash = [string]$expected[[string]$entry.Key]
+        $expectedHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToUpperInvariant()
         $actualHash = if (Test-Path -LiteralPath $destination -PathType Leaf) {
             (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToUpperInvariant()
         } else { '' }
@@ -1984,33 +2071,38 @@ function Install-AudioStack {
     [CmdletBinding()]
     param()
 
-    $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER' -Requested '7.79'
-    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder' -Requested '1.2.0'
-    if ($reaperVersion -cne '7.79' -or $audioGridderVersion -cne '1.2.0') {
-        throw "Audio stack version plan is unsupported: REAPER=$reaperVersion AudioGridder=$audioGridderVersion"
-    }
+    $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER'
+    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder'
 
     $reaperMetadata = Get-ProvisioningWinGetMetadata -Role 'REAPER' -Id 'Cockos.REAPER' `
         -Version $reaperVersion -Architecture 'x64' -InstallerType 'exe' -Scope 'machine' -PayloadExtension '.exe'
     $reaperURI = [Uri][string]$reaperMetadata.Url
+    $reaperVersionText = [string]$reaperMetadata.Version
+    $reaperVersionMatch = [regex]::Match($reaperVersionText, '^(?<major>\d+)\.(?<minor>\d+)$')
+    $expectedReaperPath = if ($reaperVersionMatch.Success) {
+        '/files/' + $reaperVersionMatch.Groups['major'].Value + '.x/reaper' +
+            $reaperVersionMatch.Groups['major'].Value + $reaperVersionMatch.Groups['minor'].Value +
+            '_x64-install.exe'
+    } else { '' }
     if ([string]$reaperMetadata.Id -cne 'Cockos.REAPER' -or
-        [string]$reaperMetadata.Version -cne '7.79' -or
+        -not $reaperVersionMatch.Success -or
         [string]$reaperMetadata.Architecture -cne 'x64' -or
         [string]$reaperMetadata.InstallerType -cne 'exe' -or
         [string]$reaperMetadata.Scope -cne 'machine' -or
-        [string]$reaperMetadata.Sha256 -cne 'F07714D894A073DF40E88568F8AA524A74230F574B0688DF681F9B7C0877F9DF' -or
+        [string]$reaperMetadata.Sha256 -notmatch '^[A-F0-9]{64}$' -or
         $reaperURI.Scheme -cne 'https' -or $reaperURI.Host -cne 'www.reaper.fm' -or
-        $reaperURI.AbsolutePath -cne '/files/7.x/reaper779_x64-install.exe') {
-        throw 'REAPER metadata does not match the approved 7.79 x64 installer.'
+        $reaperURI.AbsolutePath -cne $expectedReaperPath) {
+        throw 'REAPER metadata does not match the resolved stable x64 installer.'
     }
-    Write-Output 'Installing REAPER 7.79...'
+    $reaperVersion = [string]$reaperMetadata.Version
+    Write-Output "Installing REAPER $reaperVersion..."
     Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
         -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223) `
         -RequireAuthenticodeSignature
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
     if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-        [string]$reaperInfo.VersionInfo.FileVersion -cne '7.79') {
+        [string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
         throw "REAPER installation identity is invalid: $reaper"
     }
     Assert-ProvisioningAuthenticodeSignature -Role 'REAPER executable' -Path $reaper
@@ -2021,45 +2113,80 @@ function Install-AudioStack {
     Set-StackREAPERConfiguration
     Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
 
-    $audioGridderMetadata = [pscustomobject]@{
-        Id = 'AudioGridder'
-        Version = '1.2.0'
-        Architecture = 'x64'
-        InstallerType = 'zip'
-        Scope = ''
-        Url = 'https://github.com/apohl79/audiogridder/releases/download/release_1_2_0/AudioGridder_1.2.0-Windows.zip'
-        Sha256 = '97E1B9484257B4A6B4A33FCFD7906DDE737513E26AE756B2E42E9466B0637D7D'
-        PayloadName = 'AudioGridder_1.2.0-Windows.zip'
+    $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/apohl79/audiogridder/releases/latest' `
+        -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
+    $tag = [string]$release.tag_name
+    if ([bool]$release.draft -or [bool]$release.prerelease -or
+        $tag -notmatch '^release_(?<major>\d+)_(?<minor>\d+)_(?<patch>\d+)$') {
+        throw "AudioGridder latest release is not stable: $tag"
     }
-    $audioGridderURI = [Uri][string]$audioGridderMetadata.Url
+    $resolvedAudioGridderVersion = "$($Matches['major']).$($Matches['minor']).$($Matches['patch'])"
+    if (-not [string]::IsNullOrWhiteSpace($audioGridderVersion) -and $audioGridderVersion -cne $resolvedAudioGridderVersion) {
+        throw "AudioGridder requested version $audioGridderVersion is not the latest stable release $resolvedAudioGridderVersion."
+    }
+    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder' -Requested $resolvedAudioGridderVersion
+    $assetName = "AudioGridder_$audioGridderVersion-Windows.zip"
+    $assets = @($release.assets | Where-Object { [string]$_.name -ceq $assetName })
+    if ($assets.Count -ne 1) { throw "AudioGridder latest release did not contain $assetName exactly once." }
+    $audioGridderURL = [string]$assets[0].browser_download_url
+    $audioGridderURI = [Uri]$audioGridderURL
     if ($audioGridderURI.Scheme -cne 'https' -or $audioGridderURI.Host -cne 'github.com' -or
-        $audioGridderURI.AbsolutePath -cne '/apohl79/audiogridder/releases/download/release_1_2_0/AudioGridder_1.2.0-Windows.zip') {
-        throw 'AudioGridder metadata does not match the official 1.2.0 Windows release.'
+        $audioGridderURI.AbsolutePath -cne "/apohl79/audiogridder/releases/download/$tag/$assetName" -or
+        [long]$assets[0].size -le 0) {
+        throw 'AudioGridder metadata does not match the resolved official Windows release.'
     }
     $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
-    if ((Test-Path -LiteralPath $audioGridderRoot) -and
-        -not (Test-StackAudioGridderPayload -Root $audioGridderRoot)) {
-        Remove-StackAudioGridderRoot -Root $audioGridderRoot
-    }
-    Write-Output 'Installing AudioGridder 1.2.0 server and VST2/VST3 clients...'
-    Install-ProvisioningCachedPackage -Role 'AudioGridder' -Metadata $audioGridderMetadata `
-        -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'AudioGridderServer.exe' `
-        -PortableVersionSource 'File'
-    $aax = Join-Path $audioGridderRoot 'lib\AAX'
-    if (Test-Path -LiteralPath $aax) {
-        $unwantedItems = @((Get-Item -LiteralPath $aax -Force))
-        if ($unwantedItems[0].PSIsContainer) {
-            $unwantedItems += @(Get-ChildItem -LiteralPath $aax -Recurse -Force)
+    $resolvedPayload = ''
+    try {
+        $digest = [string]$assets[0].digest
+        if ($digest -match '^sha256:(?<sha>[0-9a-f]{64})$') {
+            $audioGridderSHA256 = $Matches['sha'].ToUpperInvariant()
+        } else {
+            $resolvedPayload = Join-Path $env:TEMP ('audiogridder-' + [Guid]::NewGuid().ToString('N') + '.zip')
+            Invoke-WebRequest -Uri $audioGridderURL -OutFile $resolvedPayload
+            if ((Get-Item -LiteralPath $resolvedPayload -Force).Length -ne [long]$assets[0].size) {
+                throw 'AudioGridder resolved release payload size is unexpected.'
+            }
+            $audioGridderSHA256 = (Get-FileHash -LiteralPath $resolvedPayload -Algorithm SHA256).Hash.ToUpperInvariant()
         }
-        if (@($unwantedItems | Where-Object {
-                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-                }).Count -ne 0) {
-            throw "AudioGridder AAX payload contains a reparse point: $aax"
+        $payloadAlreadyCurrent = Test-StackAudioGridderPayload -Root $audioGridderRoot `
+            -ExpectedVersion $audioGridderVersion -ExpectedSourceSHA256 $audioGridderSHA256
+        if (-not $payloadAlreadyCurrent) {
+            if (Test-Path -LiteralPath $audioGridderRoot) { Remove-StackAudioGridderRoot -Root $audioGridderRoot }
+            $audioGridderMetadata = [pscustomobject]@{
+                Id = 'AudioGridder'; Version = $audioGridderVersion; Architecture = 'x64'; InstallerType = 'zip'; Scope = ''
+                Url = $audioGridderURL; Sha256 = $audioGridderSHA256; PayloadName = 'payload.zip'
+            }
+            Write-Output "Installing AudioGridder $audioGridderVersion server and VST2/VST3 clients..."
+            Install-ProvisioningCachedPackage -Role 'AudioGridder' -Metadata $audioGridderMetadata `
+                -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'AudioGridderServer.exe' `
+                -PortableVersionSource 'File' -ResolvedDirectPayloadPath $resolvedPayload
+            $aax = Join-Path $audioGridderRoot 'lib\AAX'
+            if (Test-Path -LiteralPath $aax) {
+                $unwantedItems = @((Get-Item -LiteralPath $aax -Force))
+                if ($unwantedItems[0].PSIsContainer) {
+                    $unwantedItems += @(Get-ChildItem -LiteralPath $aax -Recurse -Force)
+                }
+                if (@($unwantedItems | Where-Object {
+                            ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+                        }).Count -ne 0) {
+                    throw "AudioGridder AAX payload contains a reparse point: $aax"
+                }
+                Remove-Item -LiteralPath $aax -Recurse -Force
+            }
+            Write-StackAudioGridderReleaseManifest -Root $audioGridderRoot -Version $audioGridderVersion `
+                -SourceSHA256 $audioGridderSHA256
+        } else {
+            Write-Output "AudioGridder already matches latest stable release: $audioGridderVersion"
         }
-        Remove-Item -LiteralPath $aax -Recurse -Force
-    }
-    if (-not (Test-StackAudioGridderPayload -Root $audioGridderRoot)) {
-        throw 'AudioGridder payload does not match the approved server and VST2/VST3 release.'
+        if (-not (Test-StackAudioGridderPayload -Root $audioGridderRoot -ExpectedVersion $audioGridderVersion `
+                    -ExpectedSourceSHA256 $audioGridderSHA256)) {
+            throw 'AudioGridder payload does not match the resolved server and VST2/VST3 release.'
+        }
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($resolvedPayload) -and (Test-Path -LiteralPath $resolvedPayload)) {
+            Remove-Item -LiteralPath $resolvedPayload -Force
+        }
     }
     Install-StackAudioGridderClientFiles -SourceRoot $audioGridderRoot
     $server = Join-Path $audioGridderRoot 'bin\AudioGridderServer.exe'
@@ -2081,20 +2208,24 @@ function Install-AudioStack {
 function Install-DotNetStack {
     [CmdletBinding()]
     param(
-        [ValidatePattern('^$|^10\.0\.(?:0|[1-9][0-9]*)$')]
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.0\.(?:0|[1-9][0-9]*)$')]
         [string]$Version = ''
     )
 
-    $packageID = 'Microsoft.DotNet.SDK.10'
-    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
-    $metadata = Get-ProvisioningWinGetMetadata -Role '.NET 10 SDK' -Id $packageID -Version $Version `
-        -InstallerType 'burn'
-    if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Version -notmatch '^10\.0\.(?:0|[1-9][0-9]*)$') {
-        throw ".NET SDK metadata is not the current modern .NET 10 family: $($metadata.Id) $($metadata.Version)"
+    $tool = 'Microsoft.DotNet.SDK'
+    $Version = Get-ProvisioningToolVersion -Tool $tool -Requested $Version
+    $packageID = if ([string]::IsNullOrWhiteSpace($Version)) {
+        Resolve-ProvisioningWinGetNumericFamilyID -Role '.NET SDK' -Prefix 'Microsoft.DotNet.SDK.'
+    } else { 'Microsoft.DotNet.SDK.' + ($Version -split '\.')[0] }
+    $metadata = Get-ProvisioningWinGetMetadata -Role '.NET SDK' -Id $packageID -Version $Version `
+        -VersionTool $tool -InstallerType 'burn'
+    $sdkMajor = [regex]::Escape($packageID.Substring('Microsoft.DotNet.SDK.'.Length))
+    if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Version -notmatch ('^' + $sdkMajor + '\.0\.(?:0|[1-9][0-9]*)$')) {
+        throw ".NET SDK metadata is not the newest stable family: $($metadata.Id) $($metadata.Version)"
     }
     $Version = [string]$metadata.Version
     Write-Output "Installing modern .NET SDK $Version..."
-    Install-ProvisioningCachedPackage -Role '.NET 10 SDK' -Metadata $metadata -DownloadSource 'WinGet' `
+    Install-ProvisioningCachedPackage -Role '.NET SDK' -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter 'Burn' -ExecutableName 'dotnet.exe' `
         -InstallerArguments @('/install', '/quiet', '/norestart') `
         -InstallerSuccessExitCodes @(0, 3010) -RequireAuthenticodeSignature
@@ -2127,7 +2258,7 @@ function Get-StackJavaInstalledVersions {
         [object]$Metadata
     )
 
-    $result = Invoke-ProvisioningNativeResult -Role 'Microsoft OpenJDK 25 installed-version inspection' `
+    $result = Invoke-ProvisioningNativeResult -Role 'Microsoft OpenJDK installed-version inspection' `
         -FilePath 'winget.exe' -ArgumentList @(
             'list', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--scope', 'machine', '--accept-source-agreements', '--disable-interactivity'
@@ -2157,8 +2288,8 @@ function Remove-StackJavaPreviousInstallation {
         ($installedVersions.Count -eq 1 -and $installedVersions[0] -ceq [string]$Metadata.Version)) {
         return
     }
-    Write-Output "Replacing previous Microsoft OpenJDK 25 versions: $($installedVersions -join ', ')"
-    Invoke-ProvisioningNative -Role 'Microsoft OpenJDK 25 previous-version uninstall' `
+    Write-Output "Replacing previous $($Metadata.Id) versions: $($installedVersions -join ', ')"
+    Invoke-ProvisioningNative -Role 'Microsoft OpenJDK previous-version uninstall' `
         -FilePath 'winget.exe' -ArgumentList @(
             'uninstall', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--scope', 'machine', '--all-versions', '--silent', '--accept-source-agreements',
@@ -2166,29 +2297,33 @@ function Remove-StackJavaPreviousInstallation {
         ) -TimeoutSeconds 600 | Out-Null
     $remainingVersions = @(Get-StackJavaInstalledVersions -Metadata $Metadata)
     if ($remainingVersions.Count -ne 0) {
-        throw "Microsoft OpenJDK 25 previous-version uninstall left installed versions: $($remainingVersions -join ', ')"
+        throw "Microsoft OpenJDK previous-version uninstall left installed versions: $($remainingVersions -join ', ')"
     }
 }
 
 function Install-JavaStack {
     [CmdletBinding()]
     param(
-        [ValidatePattern('^$|^25\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
         [string]$Version = ''
     )
 
-    $packageID = 'Microsoft.OpenJDK.25'
-    $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
-    $metadata = Get-ProvisioningWinGetMetadata -Role 'Microsoft OpenJDK 25' -Id $packageID `
-        -Version $Version -InstallerType 'wix' -Scope 'machine'
+    $tool = 'Microsoft.OpenJDK'
+    $Version = Get-ProvisioningToolVersion -Tool $tool -Requested $Version
+    $packageID = if ([string]::IsNullOrWhiteSpace($Version)) {
+        Resolve-ProvisioningWinGetNumericFamilyID -Role 'Microsoft OpenJDK' -Prefix 'Microsoft.OpenJDK.'
+    } else { 'Microsoft.OpenJDK.' + ($Version -split '\.')[0] }
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'Microsoft OpenJDK' -Id $packageID `
+        -Version $Version -VersionTool $tool -InstallerType 'wix' -Scope 'machine'
+    $jdkMajor = [regex]::Escape($packageID.Substring('Microsoft.OpenJDK.'.Length))
     if ([string]$metadata.Id -cne $packageID -or
-        [string]$metadata.Version -notmatch '^25\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
-        throw "Java metadata is not the Microsoft OpenJDK 25 LTS family: $($metadata.Id) $($metadata.Version)"
+        [string]$metadata.Version -notmatch ('^' + $jdkMajor + '\.0\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')) {
+        throw "Java metadata is not the newest stable Microsoft OpenJDK family: $($metadata.Id) $($metadata.Version)"
     }
     $Version = [string]$metadata.Version
     Write-Output "Installing Microsoft OpenJDK $Version..."
     Remove-StackJavaPreviousInstallation -Metadata $metadata
-    Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK 25' -Metadata $metadata `
+    Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK' -Metadata $metadata `
         -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe' `
         -InstallerArguments @('ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome') `
         -RequireAuthenticodeSignature
@@ -2593,8 +2728,8 @@ function Install-PlaywrightCLIStack {
     param(
         [ValidatePattern('^$|^\d+\.\d+\.\d+$')]
         [string]$NodeVersion = '',
-        [ValidateSet('0.1.17')]
-        [string]$Version = '0.1.17'
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
     )
 
     $Version = Get-ProvisioningToolVersion -Tool '@playwright/cli' -Requested $Version
@@ -2602,12 +2737,10 @@ function Install-PlaywrightCLIStack {
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
-    $playwrightVersion = '1.62.0-alpha-1783623505000'
 
     $cliRoot = 'C:\HerdrSandbox\tools\playwright-cli'
-    $toolRoot = Join-Path $cliRoot $Version
     $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $cliRoot, $toolRoot, $npmCache)) {
+    foreach ($directory in @('C:\HerdrSandbox\tools', $cliRoot, $npmCache)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -2623,6 +2756,29 @@ function Install-PlaywrightCLIStack {
     [Environment]::SetEnvironmentVariable('NO_UPDATE_NOTIFIER', '1', 'Machine')
     if ([Environment]::GetEnvironmentVariable('NO_UPDATE_NOTIFIER', 'Machine') -cne '1') {
         throw 'Playwright CLI update-notifier environment was not persisted.'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $versionJSON = ((Invoke-ProvisioningNative -Role 'Playwright CLI latest version resolution' `
+            -FilePath $node -ArgumentList @($npmCLI, 'view', '@playwright/cli@latest', 'version', '--json')) `
+            -join [Environment]::NewLine).Trim()
+        try { $resolvedVersion = $versionJSON | ConvertFrom-Json } catch {
+            throw "Playwright CLI latest version resolution returned invalid JSON: $($_.Exception.Message)"
+        }
+        if ($resolvedVersion -isnot [string] -or
+            [string]$resolvedVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+            throw "Playwright CLI latest version resolution returned an invalid stable version: $resolvedVersion"
+        }
+        $Version = Get-ProvisioningToolVersion -Tool '@playwright/cli' -Requested ([string]$resolvedVersion)
+    }
+    $toolRoot = Join-Path $cliRoot $Version
+    if (-not (Test-Path -LiteralPath $toolRoot)) {
+        New-Item -ItemType Directory -Path $toolRoot -Force | Out-Null
+    }
+    $toolRootInfo = Get-Item -LiteralPath $toolRoot -Force
+    if (-not $toolRootInfo.PSIsContainer -or
+        ($toolRootInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Playwright CLI versioned directory is unsafe: $toolRoot"
     }
 
     Write-Output "Installing Playwright CLI $Version without browser binaries..."
@@ -2671,9 +2827,10 @@ function Install-PlaywrightCLIStack {
     } catch {
         throw "Playwright CLI package identity is unreadable: $($_.Exception.Message)"
     }
+    $playwrightVersion = [string]$cliPackage.dependencies.playwright
     if ([string]$cliPackage.name -cne '@playwright/cli' -or
         [string]$cliPackage.version -cne $Version -or
-        [string]$cliPackage.dependencies.playwright -cne $playwrightVersion -or
+        $playwrightVersion -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$' -or
         [string]$cliPackage.dependencies.'playwright-core' -cne $playwrightVersion -or
         [string]$playwrightPackage.name -cne 'playwright' -or
         [string]$playwrightPackage.version -cne $playwrightVersion -or
@@ -3545,26 +3702,8 @@ function Get-TradingViewDesktopPortableMetadata {
         [string]$Version = ''
     )
 
-    $packageID = 'TradingView.TradingViewDesktop'
-    $pinnedVersion = '3.3.0.7992'
-    $resolvedVersion = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
-    if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
-        $resolvedVersion = $pinnedVersion
-    }
-    if ($resolvedVersion -cne $pinnedVersion) {
-        throw "TradingView Desktop version $resolvedVersion is unsupported; this release owns $pinnedVersion."
-    }
-    $null = Get-ProvisioningToolVersion -Tool $packageID -Requested $resolvedVersion
-    return [pscustomobject]@{
-        Id = $packageID
-        Version = $resolvedVersion
-        Architecture = 'x64'
-        InstallerType = 'msix'
-        Scope = ''
-        Url = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
-        Sha256 = '96B5EBC196A3824EF22667BA9AE1A6AB92E83B70615D0AFE96031AB11C6CE6DF'
-        PayloadName = 'payload.msix'
-    }
+    return Get-ProvisioningWinGetMetadata -Role 'TradingView Desktop' -Id 'TradingView.TradingViewDesktop' `
+        -Version $Version -Architecture 'x64' -InstallerType 'msix' -PayloadExtension '.msix'
 }
 
 function Install-TradingViewStack {
@@ -3768,9 +3907,6 @@ function Resolve-StackPythonPackage {
         return [pscustomobject]@{ Series = $derivedSeries; Version = $Version }
     }
 
-    if ([string]::IsNullOrWhiteSpace($Series)) {
-        throw 'Python series was not resolved before provisioning.'
-    }
     return [pscustomobject]@{ Series = $Series; Version = '' }
 }
 
@@ -3788,18 +3924,25 @@ function Install-PythonStack {
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
     $Series = [string]$pythonSelection.Series
     $Version = [string]$pythonSelection.Version
-    $null = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
+    $packageID = if ([string]::IsNullOrWhiteSpace($Series)) {
+        Resolve-ProvisioningWinGetNumericFamilyID -Role 'Python' -Prefix 'Python.Python.' -SuffixKind 'series'
+    } else { "Python.Python.$Series" }
+    if ([string]::IsNullOrWhiteSpace($Series)) {
+        $Series = $packageID.Substring('Python.Python.'.Length)
+        $null = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
+    }
     $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
     $pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'
     $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
     $pythonSourceExclusions = @('*\Microsoft\WindowsApps\python.exe', $pythonAlias)
     $pythonTarget = if ([string]::IsNullOrWhiteSpace($Version)) { $Series } else { $Version }
     Write-Output "Installing Python $pythonTarget..."
-    Install-ProvisioningWinGetPackage -Role 'Python' -Id "Python.Python.$Series" -Version $Version `
-        -VersionTool 'Python' -InstallerType 'burn' -Scope 'machine' -Adapter 'Burn' -ExecutableName 'python.exe' `
-        -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' -DeferCommandReadiness `
-        -RequireAuthenticodeSignature
-    $Version = Get-ProvisioningToolVersion -Tool 'Python'
+    $pythonMetadata = Get-ProvisioningWinGetMetadata -Role 'Python' -Id $packageID -Version $Version `
+        -VersionTool 'Python' -InstallerType 'burn' -Scope 'machine'
+    Install-ProvisioningCachedPackage -Role 'Python' -Metadata $pythonMetadata -DownloadSource 'WinGet' `
+        -Adapter 'Burn' -ExecutableName 'python.exe' -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' `
+        -DeferCommandReadiness -RequireAuthenticodeSignature
+    $Version = [string]$pythonMetadata.Version
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
     $Series = [string]$pythonSelection.Series
     $Version = [string]$pythonSelection.Version
@@ -3915,7 +4058,7 @@ function Install-PythonAIStack {
     [CmdletBinding()]
     param()
 
-    Install-PythonStack -Series '3.13'
+    Install-PythonStack
     Install-Uv
     Write-Output 'Python AI development toolchain ready.'
 }
@@ -4473,13 +4616,14 @@ function Install-HandyStack {
         -VersionArguments @('--version') `
         -ExpectedPattern ('^cmake version ' + [regex]::Escape([string]$cmakeMetadata.Version) + '(?:\r?\n|$)')
 
-    $vulkanVersion = '1.4.309.0'
+    $vulkanVersion = Get-ProvisioningToolVersion -Tool 'KhronosGroup.VulkanSDK'
     $vulkanMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy Vulkan SDK' `
         -Id 'KhronosGroup.VulkanSDK' -Version $vulkanVersion -InstallerType 'exe' -Scope 'machine'
     if ([string]$vulkanMetadata.Id -cne 'KhronosGroup.VulkanSDK' -or
-        [string]$vulkanMetadata.Version -cne $vulkanVersion) {
+        [string]$vulkanMetadata.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
         throw "Handy Vulkan SDK metadata is unexpected: $($vulkanMetadata.Id) $($vulkanMetadata.Version)"
     }
+    $vulkanVersion = [string]$vulkanMetadata.Version
     Install-ProvisioningCachedPackage -Role 'Handy Vulkan SDK' -Metadata $vulkanMetadata `
         -DownloadSource 'WinGet' -Adapter 'Exe' `
         -InstallerArguments @('--accept-licenses', '--default-answer', '--confirm-command', 'install') `
@@ -4549,8 +4693,8 @@ function Install-HerdrStack {
         throw "Herdr Cargo.toml is missing from mapped project: $projectRoot"
     }
 
-    Install-PythonStack -Series '3.13'
-    Install-ZigStack -Version '0.15.2'
+    Install-PythonStack
+    Install-ZigStack
     Install-RustMSVCStack -ProjectDirectory $projectRoot
 
     $expectedCargoTarget = 'C:\HerdrSandbox\build\cargo-target'

@@ -30,7 +30,6 @@ const (
 	toolVersionSourceSelectedProject     = "explicit-project-version"
 	toolVersionSourceProject             = "project-version-file"
 	toolVersionSourceDefault             = "stack-default"
-	defaultPythonSeries                  = "3.14"
 )
 
 //go:embed assets/project-provisioning-plan.ps1
@@ -118,9 +117,9 @@ var (
 		"hyperframes":                    "hyperframes",
 		"khronosgroup.vulkansdk":         "KhronosGroup.VulkanSDK",
 		"kitware.cmake":                  "Kitware.CMake",
-		"microsoft.dotnet.sdk.10":        "Microsoft.DotNet.SDK.10",
+		"microsoft.dotnet.sdk":           "Microsoft.DotNet.SDK",
 		"microsoft.edgewebview2runtime":  "Microsoft.EdgeWebView2Runtime",
-		"microsoft.openjdk.25":           "Microsoft.OpenJDK.25",
+		"microsoft.openjdk":              "Microsoft.OpenJDK",
 		"nextest.cargo-nextest":          "nextest.cargo-nextest",
 		"nsis.nsis":                      "NSIS.NSIS",
 		"nushell.nushell":                "Nushell.Nushell",
@@ -499,9 +498,6 @@ func mergeProjectToolVersions(userTools []projectToolRequirement, projects []pro
 		}
 		if len(values.versions) == 0 && len(values.series) == 0 {
 			source = toolVersionSourceDefault
-			if identity == "python" {
-				values.series[defaultPythonSeries] = nil
-			}
 		}
 		if len(values.versions) > 1 {
 			kind := "versions"

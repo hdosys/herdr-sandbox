@@ -370,20 +370,20 @@ and is intended for exhaustive environments rather than the usual first run.
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with Python 3.13 and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
-| `android` | Android SDK command-line tools, Platform Tools/ADB, and an isolated Microsoft OpenJDK 17 |
+| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with current stable Python and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
+| `android` | Current Android SDK command-line tools, Platform Tools/ADB, and the shared current stable Microsoft OpenJDK stack |
 | `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
-| `cpp` | C and C++ with MSVC Build Tools and Windows 11 SDK 26100 |
-| `dotnet` | .NET 10 LTS SDK |
+| `cpp` | C and C++ with current stable Visual Studio Build Tools and Windows 11 SDK |
+| `dotnet` | Current stable .NET SDK family |
 | `go` | Go |
 | `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |
-| `java` | Microsoft OpenJDK 25 LTS |
+| `java` | Current stable Microsoft OpenJDK family |
 | `node` | Node.js LTS, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
 | `nushell` | Latest stable Nushell command-line shell |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
-| `python-ai` | Python 3.13 and uv for CPU inference, notebooks, and API-based projects |
+| `python-ai` | Current stable Python and uv for CPU inference, notebooks, and API-based projects |
 | `rust` | Rust with MSVC Build Tools |
 | `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
 | `zig` | Zig |
@@ -391,6 +391,8 @@ and is intended for exhaustive environments rather than the usual first run.
 Project profiles may also call direct Bun, Cargo Nextest, Just, and uv helpers.
 The `all` expansion uses the Python AI composition as its single Python and uv
 owner, avoiding redundant standalone calls.
+Omitted external-tool versions resolve to the current official stable release at
+provisioning time. Explicit project versions remain exact and never fall back.
 
 </details>
 
@@ -511,8 +513,9 @@ repeated. Do not create a second browser or profile for this integration.
 <summary><strong>AudioGridder VST server</strong></summary>
 
 The `audio` stack runs VSTs inside Windows Sandbox while the normal host DAW uses
-the AudioGridder client. Install the 1.2.0 client plugin on the host, select the
-stack, and add desired VST installers to project or user provisioning. Use
+the AudioGridder client. Install the matching client release reported by
+provisioning on the host, select the stack, and add desired VST installers to
+project or user provisioning. Use
 `C:\Program Files\VstPlugins` for VST2 and
 `C:\Program Files\Common Files\VST3` for VST3.
 

@@ -160,9 +160,19 @@ uncached packages.
 
 ## Packages and releases
 
-Omitted package versions intentionally resolve the latest available stable
-version. Pin every required `wingetPackages.versions` entry and project toolchain
-version when reproducibility is part of the threat model.
+Omitted external program and package versions intentionally resolve the latest
+available stable release during provisioning. Explicit `wingetPackages.versions`
+entries and project toolchain versions remain exact. Each selected payload is
+bound to the strongest publisher evidence available for that operation, including
+published digests, package hashes, signatures, or the exact once-downloaded bytes.
+Pin every required version when reproducibility is part of the threat model.
+
+OpenSSH is the narrow channel exception. Provisioning prefers the newest official
+stable release that publishes one digest-backed Win64 server MSI. Only when no
+such stable release exists may it accept an official tag matching the strict
+`<version>p<number>-Preview` form. Other prerelease names are rejected. This keeps
+the required server capability available on Windows 10 Sandbox, but it accepts
+Preview-channel risk when Microsoft publishes no usable stable server MSI.
 
 Opt-in model persistence also enables HyperFrames VoxCPM2 preparation from the latest stable
 `hdosys/hyperframes-voxcpm2` GitHub release instead of a Sandbox-owned version
@@ -179,10 +189,11 @@ the selected release channel, but GitHub and the named upstream repositories
 remain trusted distribution authorities. Disable the setting when that dynamic
 release policy or outbound download is outside the accepted threat model.
 
-The upstream Windows `opensrc` executable provisioned by Base is unsigned. Its
-release-owned URL and SHA-256 are pinned, and both cache hits and guest-local
-copies are revalidated before execution. That digest comes from the same upstream
-GitHub release channel and supplies integrity checking, not publisher signing.
+The upstream Windows `opensrc` executable provisioned by Base is unsigned. Base
+resolves the current stable release and binds its official asset URL and SHA-256;
+both cache hits and guest-local copies are revalidated before execution. That
+digest comes from the same upstream GitHub release channel and supplies integrity
+checking, not publisher signing.
 
 The current installer is unsigned and may trigger SmartScreen. Compare its local
 SHA-256 with the digest GitHub displays for that Release asset, understand that

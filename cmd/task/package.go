@@ -22,8 +22,6 @@ import (
 	"herdr-sandbox/internal/productidentity"
 )
 
-const installerEngineVersion = "3.12"
-
 const installerUninstallerName = "uninstall.exe"
 
 const installerBuildValidatorName = "validate-build.ps1"
@@ -480,8 +478,8 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 	if err != nil {
 		return fmt.Errorf("inspect NSIS compiler version: %w: %s", err, strings.TrimSpace(string(versionOutput)))
 	}
-	if actual := strings.TrimSpace(string(versionOutput)); actual != "v"+installerEngineVersion {
-		return fmt.Errorf("NSIS compiler version = %q, want v%s", actual, installerEngineVersion)
+	if actual := strings.TrimSpace(string(versionOutput)); !regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$`).MatchString(actual) {
+		return fmt.Errorf("NSIS compiler returned invalid version %q", actual)
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("create installer output directory: %w", err)
@@ -618,7 +616,7 @@ func findMakeNSIS() (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("NSIS v%s makensis.exe was not found; set MAKENSIS or install the pinned compiler", installerEngineVersion)
+	return "", errors.New("makensis.exe was not found; set MAKENSIS or provision the current stable NSIS compiler")
 }
 
 func requireExecutable(path, role string) (string, error) {

@@ -131,10 +131,6 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	defer clear(authKey)
 
-	_, err = loadBootstrapRelease()
-	if err != nil {
-		return Connection{}, err
-	}
 	dataDirectory := options.DataDirectory
 	if dataDirectory == "" {
 		dataDirectory, err = defaultDataDirectory()
@@ -607,7 +603,6 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		mode os.FileMode
 	}{
 		{path: filepath.Join(plan.InputDirectory, "bootstrap.ps1"), data: bootstrapScript, mode: 0o644},
-		{path: filepath.Join(plan.InputDirectory, "bootstrap-release.json"), data: bootstrapReleaseJSON, mode: 0o644},
 		{path: filepath.Join(plan.InputDirectory, "authorized_key.pub"), data: publicKeyData, mode: 0o644},
 	}
 	for _, file := range files {

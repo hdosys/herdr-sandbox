@@ -96,11 +96,12 @@ $openSrc = (Get-Command 'opensrc.exe' -CommandType Application -ErrorAction Stop
 $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
 $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
 $reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
+$reaperVersion = [string]$reaperInfo.VersionInfo.FileVersion
 if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-    [string]$reaperInfo.VersionInfo.FileVersion -cne '7.79' -or
+    $reaperVersion -notmatch '^\d+\.\d+$' -or
     $reaperSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
     $reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
-    throw 'REAPER 7.79 installation identity is invalid.'
+    throw 'REAPER installation identity is invalid.'
 }
 $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
 $audioGridderCopies = [ordered]@{
@@ -131,9 +132,10 @@ foreach ($entry in $audioGridderCopies.GetEnumerator()) {
 }
 $audioGridderServer = Get-Item -LiteralPath (Join-Path $audioGridderRoot 'bin\AudioGridderServer.exe') -Force
 $audioGridderTray = Get-Item -LiteralPath 'C:\Program Files\AudioGridderPluginTray\AudioGridderPluginTray.exe' -Force
-if ([string]$audioGridderServer.VersionInfo.FileVersion -cne '1.2.0' -or
+$audioGridderVersion = [string]$audioGridderServer.VersionInfo.FileVersion
+if ($audioGridderVersion -notmatch '^\d+\.\d+\.\d+$' -or
     [string]$audioGridderServer.VersionInfo.ProductName -cne 'AudioGridderServer' -or
-    [string]$audioGridderTray.VersionInfo.FileVersion -cne '1.2.0' -or
+    [string]$audioGridderTray.VersionInfo.FileVersion -cne $audioGridderVersion -or
     [string]$audioGridderTray.VersionInfo.ProductName -cne 'AudioGridderPluginTray') {
     throw 'AudioGridder server or Plugin Tray identity is invalid.'
 }
@@ -172,7 +174,7 @@ foreach ($ruleName in @('HerdrSandbox-AudioGridder-Server0', 'HerdrSandbox-Audio
         throw "AudioGridder guest firewall rule is invalid: $ruleName"
     }
 }
-[Console]::Out.WriteLine("[all-stacks] audio: REAPER 7.79, AudioGridder server 0, local clients, and host-gateway firewall ready")
+[Console]::Out.WriteLine("[all-stacks] audio: REAPER $reaperVersion, AudioGridder $audioGridderVersion server 0, local clients, and host-gateway firewall ready")
 
 $expectedOpenSrc = 'C:\HerdrSandbox\tools\vercel-labs.opensrc\opensrc.exe'
 $expectedOpenSrcHome = 'C:\HerdrSandbox\cache\opensrc'
@@ -183,11 +185,12 @@ if ([IO.Path]::GetFullPath($openSrc) -ine $expectedOpenSrc -or
     throw 'opensrc command or persistent source cache is unavailable in the SSH session.'
 }
 $openSrcVersion = Invoke-SmokeTool 'opensrc-version' $openSrc @('--version')
-if ($openSrcVersion -cne 'opensrc 0.7.3') { throw "opensrc version is unexpected: $openSrcVersion" }
+if ($openSrcVersion -notmatch '^opensrc (?<version>\d+\.\d+\.\d+)$') { throw "opensrc version is unexpected: $openSrcVersion" }
+$openSrcReleaseVersion = [string]$Matches['version']
 $openSrcSmokeHome = Join-Path $root 'opensrc-cache'
 try {
     $env:OPENSRC_HOME = $openSrcSmokeHome
-    $openSrcPath = Invoke-SmokeTool 'opensrc-path' $openSrc @('path','vercel-labs/opensrc@v0.7.3')
+    $openSrcPath = Invoke-SmokeTool 'opensrc-path' $openSrc @('path',"vercel-labs/opensrc@v$openSrcReleaseVersion")
 } finally {
     $env:OPENSRC_HOME = $expectedOpenSrcHome
 }
@@ -200,8 +203,10 @@ if (-not $openSrcSource.StartsWith($openSrcSmokeRoot, [StringComparison]::Ordina
 [Console]::Out.WriteLine('[all-stacks] opensrc: pinned native CLI and isolated source fetch OK')
 
 $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
-$androidJDK = 'C:\HerdrSandbox\toolchains\android-jdk-17'
-if ($env:ANDROID_HOME -cne $androidSDK -or $env:ANDROID_JAVA_HOME -cne $androidJDK -or
+$androidJDK = [string]$env:ANDROID_JAVA_HOME
+if ($env:ANDROID_HOME -cne $androidSDK -or [string]::IsNullOrWhiteSpace($androidJDK) -or
+    -not [IO.Path]::IsPathRooted($androidJDK) -or
+    -not [IO.Path]::GetFullPath($androidJDK).StartsWith((Join-Path $env:ProgramFiles 'Microsoft\jdk-'), [StringComparison]::OrdinalIgnoreCase) -or
     $env:ANDROID_USER_HOME -cne 'C:\HerdrSandbox\build\android-user' -or
     [IO.Path]::GetFullPath($androidCLI) -ine (Join-Path $androidSDK 'cmdline-tools\latest\bin\android.exe') -or
     [IO.Path]::GetFullPath($adb) -ine (Join-Path $androidSDK 'platform-tools\adb.exe')) {
@@ -209,8 +214,13 @@ if ($env:ANDROID_HOME -cne $androidSDK -or $env:ANDROID_JAVA_HOME -cne $androidJ
 }
 $androidVersion = Remove-AndroidJVMWarning (Invoke-SmokeTool 'android-cli-version' $androidCLI @('--no-metrics','--version'))
 if ($androidVersion -notmatch '^1\.0\.\d+$') { throw "Android CLI version is unexpected: $androidVersion" }
-$androidJDKVersion = Invoke-SmokeTool 'android-jdk-version' (Join-Path $androidJDK 'bin\java.exe') @('-version')
-Assert-SmokeOutput 'android-jdk-version' $androidJDKVersion 'openjdk version "17.0.20"'
+$androidJDKRelease = [IO.File]::ReadAllText((Join-Path $androidJDK 'release'))
+if ($androidJDKRelease -notmatch '(?m)^JAVA_VERSION="(?<version>\d+\.\d+\.\d+)"\r?$') {
+    throw 'Android JDK release identity is unexpected.'
+}
+$androidJDKVersion = [string]$Matches['version']
+$androidJDKVersionOutput = Invoke-SmokeTool 'android-jdk-version' (Join-Path $androidJDK 'bin\java.exe') @('-version')
+Assert-SmokeOutput 'android-jdk-version' $androidJDKVersionOutput "openjdk version `"$androidJDKVersion`""
 $reportedAndroidSDK = Remove-AndroidJVMWarning (Invoke-SmokeTool 'android-sdk-location' $androidCLI @('--no-metrics',"--sdk=$androidSDK",'info','sdk'))
 if ([IO.Path]::GetFullPath($reportedAndroidSDK).TrimEnd('\') -ine $androidSDK) {
     throw "Android SDK location is unexpected: $reportedAndroidSDK"
@@ -227,7 +237,7 @@ Assert-SmokeOutput 'adb-version' $adbVersion "Version ${platformToolsVersion}-"
 $adbHelp = Invoke-SmokeTool 'adb-wireless-help' $adb @('help')
 Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'pair HOST[:PORT]'
 Assert-SmokeOutput 'adb-wireless-help' $adbHelp 'connect HOST[:PORT]'
-[Console]::Out.WriteLine('[all-stacks] android: command-line SDK, isolated JDK 17, and wireless ADB commands OK')
+[Console]::Out.WriteLine("[all-stacks] android: command-line SDK, OpenJDK $androidJDKVersion, and wireless ADB commands OK")
 
 $nsisRoot = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
 if ([IO.Path]::GetFullPath($makensis) -ine [IO.Path]::GetFullPath((Join-Path $nsisRoot 'makensis.exe'))) {
@@ -342,8 +352,18 @@ if ($playwrightScreenshotBytes.Length -lt 8 -or
 [Console]::Out.WriteLine('[all-stacks] playwright-chromium: headless launch OK')
 
 $playwrightAgentVersion = Invoke-SmokeTool 'playwright-cli-version' $playwrightAgentCLI @('--version')
-if ($playwrightAgentVersion -cne '0.1.17') { throw "Playwright CLI version is unexpected: $playwrightAgentVersion" }
-$playwrightPowerShellShim = Join-Path (Split-Path -Parent $playwrightAgentCLI) 'playwright-cli.ps1'
+$playwrightAgentVersionRoot = Split-Path -Parent $playwrightAgentCLI
+$playwrightAgentRootVersion = Split-Path -Leaf $playwrightAgentVersionRoot
+$playwrightAgentPackagePath = Join-Path $playwrightAgentVersionRoot 'node_modules\@playwright\cli\package.json'
+$playwrightAgentPackage = [IO.File]::ReadAllText($playwrightAgentPackagePath) | ConvertFrom-Json
+if ($playwrightAgentVersion -notmatch '^\d+\.\d+\.\d+$' -or
+    $playwrightAgentRootVersion -cne $playwrightAgentVersion -or
+    [IO.Path]::GetFullPath((Split-Path -Parent $playwrightAgentVersionRoot)).TrimEnd('\') -ine 'C:\HerdrSandbox\tools\playwright-cli' -or
+    [string]$playwrightAgentPackage.name -cne '@playwright/cli' -or
+    [string]$playwrightAgentPackage.version -cne $playwrightAgentVersion) {
+    throw "Playwright CLI version is unexpected: $playwrightAgentVersion"
+}
+$playwrightPowerShellShim = Join-Path $playwrightAgentVersionRoot 'playwright-cli.ps1'
 if (Test-Path -LiteralPath $playwrightPowerShellShim) {
     throw "Playwright CLI PowerShell shim remains installed: $playwrightPowerShellShim"
 }
@@ -393,12 +413,19 @@ foreach ($shim in @((Join-Path $tvControlRoot 'tv.ps1'), (Join-Path $tvControlRo
 }
 [Console]::Out.WriteLine('[all-stacks] tradingview: portable signed-MSIX payload and direct TVControl commands OK; launch intentionally skipped')
 
-$null = Invoke-SmokeTool 'python-version' $python @('--version')
+$pythonVersionOutput = Invoke-SmokeTool 'python-version' $python @('--version')
+if ($pythonVersionOutput -notmatch '^Python (?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$') {
+    throw "Python version is unexpected: $pythonVersionOutput"
+}
+$pythonVersion = "$($Matches['major']).$($Matches['minor']).$($Matches['patch'])"
+$pythonSeries = "$($Matches['major']).$($Matches['minor'])"
+$pythonUpperSeries = "$($Matches['major']).$([int]$Matches['minor'] + 1)"
 $pythonFile = Join-Path $root 'python\smoke.py'
 Write-SmokeFile $pythonFile @('print("python-smoke-ok")')
 $pythonOutput = Invoke-SmokeTool 'python-run' $python @($pythonFile)
 Assert-SmokeOutput 'python-run' $pythonOutput 'python-smoke-ok'
-$null = Invoke-SmokeTool 'python3-version' $python3 @('--version')
+$python3VersionOutput = Invoke-SmokeTool 'python3-version' $python3 @('--version')
+if ($python3VersionOutput -cne $pythonVersionOutput) { throw 'python and python3 resolved different runtimes.' }
 $null = Invoke-SmokeTool 'uv-version' $uv @('--version')
 $expectedUvCache = 'C:\HerdrSandbox\cache\uv'
 if ($env:UV_CACHE_DIR -cne $expectedUvCache -or $env:UV_NO_MANAGED_PYTHON -cne '1') {
@@ -409,7 +436,7 @@ if ([IO.Path]::GetFullPath($uvCache).TrimEnd('\') -ine $expectedUvCache) {
     throw "uv cache path is unexpected: $uvCache"
 }
 $uvRoot = Join-Path $root 'python-ai'
-Write-SmokeFile (Join-Path $uvRoot 'pyproject.toml') @('[project]','name = "herdr-python-ai-smoke"','version = "0.0.0"','requires-python = ">=3.13,<3.14"','dependencies = []','','[tool.uv]','package = false')
+Write-SmokeFile (Join-Path $uvRoot 'pyproject.toml') @('[project]','name = "herdr-python-ai-smoke"','version = "0.0.0"',"requires-python = `">=$pythonSeries,<$pythonUpperSeries`"",'dependencies = []','','[tool.uv]','package = false')
 Write-SmokeFile (Join-Path $uvRoot 'smoke.py') @('print("python-ai-smoke-ok")')
 Push-Location $uvRoot
 try {
@@ -419,8 +446,10 @@ try {
 Assert-SmokeOutput 'uv-run' $uvOutput 'python-ai-smoke-ok'
 if (-not (Test-Path -LiteralPath (Join-Path $uvRoot 'uv.lock') -PathType Leaf) -or
     -not (Test-Path -LiteralPath (Join-Path $uvRoot '.venv\Scripts\python.exe') -PathType Leaf)) {
-    throw 'uv did not create the locked Python 3.13 project environment.'
+    throw "uv did not create the locked Python $pythonSeries project environment."
 }
+$uvPythonVersion = Invoke-SmokeTool 'uv-python-version' (Join-Path $uvRoot '.venv\Scripts\python.exe') @('--version')
+if ($uvPythonVersion -cne "Python $pythonVersion") { throw "uv selected an unexpected Python runtime: $uvPythonVersion" }
 
 $null = Invoke-SmokeTool 'cargo-version' $cargo @('--version')
 $null = Invoke-SmokeTool 'bun-version' $bun @('--version')
@@ -455,10 +484,16 @@ Assert-SmokeOutput 'rust-run' $rustOutput 'rust-smoke-ok'
 $cmakeVersion = Invoke-SmokeTool 'handy-cmake-version' $cmake @('--version')
 Assert-SmokeOutput 'handy-cmake-version' $cmakeVersion 'cmake version '
 $null = Invoke-SmokeTool 'handy-glslc-version' $glslc @('--version')
-$expectedVulkanRoot = 'C:\VulkanSDK\1.4.309.0'
+$vulkanRoot = [string]$env:VULKAN_SDK
+if ([string]::IsNullOrWhiteSpace($vulkanRoot) -or -not [IO.Path]::IsPathRooted($vulkanRoot)) {
+    throw "Handy Vulkan SDK environment is unavailable: $vulkanRoot"
+}
+$vulkanVersion = Split-Path -Leaf $vulkanRoot
+$expectedVulkanRoot = "C:\VulkanSDK\$vulkanVersion"
 $expectedHandyPrefix = 'C:\HerdrSandbox\tools\handy-cmake-prefix'
 $handyConfig = Join-Path $expectedHandyPrefix 'share\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake'
-if ($env:VULKAN_SDK -cne $expectedVulkanRoot -or
+if ($vulkanVersion -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
+    [IO.Path]::GetFullPath($vulkanRoot).TrimEnd('\') -cne $expectedVulkanRoot -or
     @($env:CMAKE_PREFIX_PATH -split ';')[0] -cne $expectedHandyPrefix -or
     -not (Test-Path -LiteralPath $handyConfig -PathType Leaf) -or
     -not ([IO.File]::ReadAllText($handyConfig).Contains(($expectedVulkanRoot + '/Include').Replace('\','/')))) {
@@ -474,7 +509,7 @@ if ([string]$webView.name -cne 'Microsoft Edge WebView2 Runtime' -or
     $webViewSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
     throw 'Handy WebView2 Runtime is unavailable or untrusted.'
 }
-[Console]::Out.WriteLine('[all-stacks] handy-native-toolchain: CMake, Vulkan 1.4.309.0, SPIRV-Headers, and WebView2 OK')
+[Console]::Out.WriteLine("[all-stacks] handy-native-toolchain: CMake, Vulkan $vulkanVersion, SPIRV-Headers, and WebView2 OK")
 
 $null = Invoke-SmokeTool 'zig-version' $zig @('version')
 $zigSource = Join-Path $root 'zig\smoke.zig'

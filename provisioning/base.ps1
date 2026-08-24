@@ -332,8 +332,10 @@ function Read-ProvisioningPackagePlan {
         $known[$id] = $true
     }
     $projectStackPackages = @{}
-    foreach ($id in @('Microsoft.DotNet.SDK.10', 'GoLang.Go', 'OpenJS.NodeJS.LTS', 'Oven-sh.Bun', 'zig.zig', 'Rustlang.Rustup',
-        'nextest.cargo-nextest', 'Casey.Just')) {
+    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS.LTS', 'Gyan.FFmpeg', 'NSIS.NSIS', 'Nushell.Nushell',
+        'Oven-sh.Bun', 'zig.zig', 'Rustlang.Rustup', 'nextest.cargo-nextest', 'Casey.Just',
+        'TradingView.TradingViewDesktop', 'astral-sh.uv', 'Kitware.CMake', 'KhronosGroup.VulkanSDK',
+        'Microsoft.EdgeWebView2Runtime', 'Cockos.REAPER')) {
         $projectStackPackages[$id] = $true
     }
     $enabled = @{}
@@ -353,7 +355,10 @@ function Read-ProvisioningPackagePlan {
                     $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
                 $enabled.ContainsKey($id) -or $known.ContainsKey($id) -ne [bool]$group.Defaults -or
                 (-not [bool]$group.Defaults -and
-                    ($projectStackPackages.ContainsKey($id) -or $id.StartsWith('Python.Python.', [StringComparison]::OrdinalIgnoreCase)))) {
+                    ($projectStackPackages.ContainsKey($id) -or
+                        $id -match '^Python\.Python\.\d+\.\d+$' -or
+                        $id -match '^Microsoft\.DotNet\.SDK\.\d+$' -or
+                        $id -match '^Microsoft\.OpenJDK\.\d+$'))) {
                 throw "WinGet package plan entry is invalid: $id"
             }
             $enabled[$id] = $true
@@ -815,6 +820,89 @@ function Get-ProvisioningMetadataValue {
         throw "WinGet metadata field $Name resolved to $($values.Count) values; expected exactly one."
     }
     return $values[0].Trim()
+}
+
+function Resolve-ProvisioningWinGetNumericFamilyID {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Prefix,
+        [ValidateSet('major', 'series')][string]$SuffixKind = 'major'
+    )
+
+    $lines = @(Invoke-ProvisioningNative -Role "$Role package-family resolution" -FilePath 'winget.exe' `
+        -ArgumentList @('search', '--id', $Prefix, '--source', 'winget', '--accept-source-agreements', '--disable-interactivity') |
+        ForEach-Object { [string]$_ })
+    $suffixPattern = if ($SuffixKind -eq 'series') { '\d+\.\d+' } else { '\d+' }
+    $pattern = '(?<![A-Za-z0-9._-])' + [regex]::Escape($Prefix) + '(?<suffix>' + $suffixPattern + ')(?![A-Za-z0-9._-])'
+    $candidates = @{}
+    foreach ($line in $lines) {
+        foreach ($match in [regex]::Matches($line, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+            $id = $Prefix + $match.Groups['suffix'].Value
+            try {
+                $sortVersion = if ($SuffixKind -eq 'series') {
+                    [Version]$match.Groups['suffix'].Value
+                } else {
+                    [long]$match.Groups['suffix'].Value
+                }
+            } catch { continue }
+            $candidates[$id] = $sortVersion
+        }
+    }
+    if ($candidates.Count -eq 0) {
+        throw "$Role did not resolve a stable numeric WinGet package family for $Prefix."
+    }
+    return [string](@($candidates.GetEnumerator() | Sort-Object `
+        @{ Expression = 'Value'; Descending = $true }, @{ Expression = 'Key'; Descending = $false })[0].Key)
+}
+
+function Get-ProvisioningGitHubLatestAssetMetadata {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$AssetName,
+        [Parameter(Mandatory = $true)][string]$Id,
+        [Parameter(Mandatory = $true)][string]$Architecture,
+        [Parameter(Mandatory = $true)][string]$InstallerType,
+        [Parameter(Mandatory = $true)][string]$PayloadName
+    )
+
+    if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $AssetName -match '[/\\]') {
+        throw "$Role GitHub release request is invalid."
+    }
+    $api = "https://api.github.com/repos/$Repository/releases/latest"
+    $release = Invoke-RestMethod -Uri $api -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
+    $tag = [string]$release.tag_name
+    if ([bool]$release.draft -or [bool]$release.prerelease -or
+        $tag -notmatch '^v?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$') {
+        throw "$Role latest GitHub release is not a stable semantic version: $tag"
+    }
+    $version = [string]$Matches['version']
+    $assets = @($release.assets | Where-Object { [string]$_.name -ceq $AssetName })
+    if ($assets.Count -ne 1) {
+        throw "$Role latest GitHub release resolved $($assets.Count) matching assets; expected one."
+    }
+    $asset = $assets[0]
+    $digest = [string]$asset.digest
+    if ($digest -notmatch '^sha256:(?<sha>[0-9a-f]{64})$') {
+        throw "$Role latest GitHub asset does not publish a SHA-256 digest."
+    }
+    $sha256 = [string]$Matches['sha']
+    $url = [string]$asset.browser_download_url
+    $expectedPrefix = "https://github.com/$Repository/releases/download/$tag/"
+    if (-not $url.StartsWith($expectedPrefix, [StringComparison]::Ordinal) -or
+        [IO.Path]::GetFileName(([Uri]$url).AbsolutePath) -cne $AssetName) {
+        throw "$Role latest GitHub asset URL is unexpected: $url"
+    }
+    return [pscustomobject]@{
+        Id = $Id
+        Version = $version
+        Architecture = $Architecture
+        InstallerType = $InstallerType
+        Scope = ''
+        Url = $url
+        Sha256 = $sha256.ToUpperInvariant()
+        PayloadName = $PayloadName
+    }
 }
 
 function Get-ProvisioningWinGetMetadata {
@@ -1450,8 +1538,9 @@ function Test-ProvisioningGeistMonoFontPayload {
         [object]$Metadata
     )
 
-    if ([string]$Metadata.Id -cne 'NerdFonts.GeistMono' -or [string]$Metadata.Version -cne '3.4.0' -or
-        [string]$Metadata.Sha256 -cne 'A9F61B7B7F0429DB4FA9A526940F71190127ED95DBE3533163D80D7CAFDB3EC9') {
+    if ([string]$Metadata.Id -cne 'NerdFonts.GeistMono' -or
+        [string]$Metadata.Version -notmatch '^\d+\.\d+\.\d+$' -or
+        [string]$Metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
         return $false
     }
     $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
@@ -1536,9 +1625,9 @@ function Install-ProvisioningGeistMonoFontPayload {
         [string]$PayloadPath
     )
 
-    if ([string]$Metadata.Id -cne 'NerdFonts.GeistMono' -or [string]$Metadata.Version -cne '3.4.0' -or
+    if ([string]$Metadata.Id -cne 'NerdFonts.GeistMono' -or [string]$Metadata.Version -notmatch '^\d+\.\d+\.\d+$' -or
         [string]$Metadata.Architecture -cne 'neutral' -or [string]$Metadata.InstallerType -cne 'zip') {
-        throw "$Role metadata does not match the pinned GeistMono Nerd Font contract."
+        throw "$Role metadata does not match the resolved GeistMono Nerd Font contract."
     }
     $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
     if (-not (Test-ProvisioningGeistMonoFontPayload -Metadata $Metadata)) {
@@ -1781,11 +1870,15 @@ function Install-ProvisioningCachedPackage {
         [ValidateSet('Command', 'File')]
         [string]$PortableVersionSource = 'Command',
         [switch]$DeferCommandReadiness,
-        [switch]$RequireAuthenticodeSignature
+        [switch]$RequireAuthenticodeSignature,
+        [string]$ResolvedDirectPayloadPath = ''
     )
 
     $packageStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $metadata = $Metadata
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedDirectPayloadPath) -and $DownloadSource -ne 'Direct') {
+        throw "$Role resolved direct payload requires the Direct download owner."
+    }
     Update-ProvisioningPath
     if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
             -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource) {
@@ -1832,7 +1925,12 @@ function Install-ProvisioningCachedPackage {
                 Get-ProvisioningDownloadedPackage -Role $Role -Metadata $metadata `
                     -DownloadDirectory $downloadDirectory -GuestPayloadPath $guestPayload
             } else {
-                Get-ProvisioningDirectPackage -Role $Role -Metadata $metadata -GuestPayloadPath $guestPayload
+                if ([string]::IsNullOrWhiteSpace($ResolvedDirectPayloadPath)) {
+                    Get-ProvisioningDirectPackage -Role $Role -Metadata $metadata -GuestPayloadPath $guestPayload
+                } else {
+                    Copy-ProvisioningPackageToGuest -Source $ResolvedDirectPayloadPath -Destination $guestPayload `
+                        -ExpectedSHA256 $metadata.Sha256
+                }
             }
         }
         Write-ProvisioningProgress -Message "$Role cached installation"
@@ -1929,43 +2027,17 @@ function Install-ProvisioningWinGetPackage {
 }
 
 function Install-ProvisioningGeistMonoNerdFont {
-    $metadata = [pscustomobject]@{
-        Id = 'NerdFonts.GeistMono'
-        Version = '3.4.0'
-        Architecture = 'neutral'
-        InstallerType = 'zip'
-        Scope = ''
-        Url = 'https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/GeistMono.zip'
-        Sha256 = 'A9F61B7B7F0429DB4FA9A526940F71190127ED95DBE3533163D80D7CAFDB3EC9'
-        PayloadName = 'payload.zip'
-    }
-    $uri = [Uri]$metadata.Url
-    if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'github.com' -or
-        $uri.AbsolutePath -cne '/ryanoasis/nerd-fonts/releases/download/v3.4.0/GeistMono.zip' -or
-        [string]$metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
-        throw 'Pinned GeistMono Nerd Font metadata is invalid.'
-    }
+    $metadata = Get-ProvisioningGitHubLatestAssetMetadata -Role 'GeistMono Nerd Font' `
+        -Repository 'ryanoasis/nerd-fonts' -AssetName 'GeistMono.zip' -Id 'NerdFonts.GeistMono' `
+        -Architecture 'neutral' -InstallerType 'zip' -PayloadName 'payload.zip'
     Install-ProvisioningCachedPackage -Role 'GeistMono Nerd Font' -Metadata $metadata `
         -DownloadSource 'Direct' -Adapter 'GeistMonoFont'
 }
 
 function Install-ProvisioningOpenSrc {
-    $metadata = [pscustomobject]@{
-        Id = 'vercel-labs.opensrc'
-        Version = '0.7.3'
-        Architecture = 'x64'
-        InstallerType = 'portable-exe'
-        Scope = ''
-        Url = 'https://github.com/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-win32-x64.exe'
-        Sha256 = 'C43465DD6E5B344A57DD073AC6432FD270D586E461CA28A56F5DB3AA1C1F85AC'
-        PayloadName = 'payload.exe'
-    }
-    $uri = [Uri]$metadata.Url
-    if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'github.com' -or
-        $uri.AbsolutePath -cne '/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-win32-x64.exe' -or
-        [string]$metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
-        throw 'Pinned opensrc metadata is invalid.'
-    }
+    $metadata = Get-ProvisioningGitHubLatestAssetMetadata -Role 'opensrc' `
+        -Repository 'vercel-labs/opensrc' -AssetName 'opensrc-win32-x64.exe' -Id 'vercel-labs.opensrc' `
+        -Architecture 'x64' -InstallerType 'portable-exe' -PayloadName 'payload.exe'
 
     Write-Output 'Installing opensrc...'
     Install-ProvisioningCachedPackage -Role 'opensrc' -Metadata $metadata `
@@ -1980,7 +2052,7 @@ function Install-ProvisioningOpenSrc {
         throw 'opensrc cache environment verification failed.'
     }
     $openSrcVersion = Assert-ProvisioningCommand -Role 'opensrc' -Name 'opensrc.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^opensrc 0\.7\.3$'
+        -VersionArguments @('--version') -ExpectedPattern ('^opensrc ' + [regex]::Escape([string]$metadata.Version) + '$')
     Write-Output "opensrc ready: $openSrcVersion"
 }
 

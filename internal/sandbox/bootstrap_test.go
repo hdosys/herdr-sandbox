@@ -2,14 +2,12 @@ package sandbox
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,10 +19,10 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"Net.SecurityProtocolType]::Tls12",
 		"-ErrorAction Stop",
 		"[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)",
-		"github.com/microsoft/winget-cli/releases/download/",
+		"https://api.github.com/repos/$Repository/releases/latest",
 		"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
 		"DesktopAppInstaller_Dependencies.zip",
-		"function Get-PinnedBootstrapAsset",
+		"function Get-ResolvedBootstrapAsset",
 		"function Get-BootstrapFileSHA256",
 		"function Assert-BootstrapCacheTree",
 		"C:\\HerdrSandbox\\cache",
@@ -49,12 +47,15 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"Get-AuthenticodeSignature -LiteralPath $executable",
 		"-Value $powerShell7Executable",
 		"OpenSSH default shell verification failed",
-		"bootstrap-release.json",
-		"download.visualstudio.microsoft.com/download/pr/",
-		"VC_redist.x64.exe",
-		"@('/install', '/quiet', '/norestart')",
-		"github.com/PowerShell/Win32-OpenSSH/releases/download/",
-		"OpenSSH-Win64-v10.0.0.0.msi",
+		"Microsoft.VCRedist.2015+.x64",
+		"PowerShell/Win32-OpenSSH",
+		"function Get-OpenSSHRelease",
+		"releases?per_page=100",
+		"p(?<preview>\\d+)-Preview$",
+		"strictly named Preview exception",
+		"$openSSHAssetName = \"OpenSSH-Win64-v$openSSHAssetVersion.msi\"",
+		"OpenSSH MSI signature is invalid",
+		"OpenSSH Server version verification",
 		"'ADDLOCAL=Server'",
 		"administrators_authorized_keys",
 		"'connectable.json'",
@@ -117,11 +118,78 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 	}
 }
 
+func TestBootstrapSelectsStableOpenSSHBeforeStrictPreviewInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 OpenSSH release selection regression")
+	}
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-OpenSSHRelease' }, $true)
+if ($null -eq $definition) { throw 'Missing OpenSSH release selector.' }
+Invoke-Expression $definition.Extent.Text
+function Invoke-RestMethod {
+    param([string]$Uri, [hashtable]$Headers)
+    if ($Uri -cne 'https://api.github.com/repos/PowerShell/Win32-OpenSSH/releases?per_page=100') { throw "Unexpected URI: $Uri" }
+    Write-Output -NoEnumerate $script:ReleaseFixture
+}
+function New-ReleaseFixture {
+    param([string]$Tag, [bool]$Prerelease, [string]$AssetVersion = '')
+    $assets = @()
+    if (-not [string]::IsNullOrWhiteSpace($AssetVersion)) {
+        $assets = @([pscustomobject]@{
+            name = "OpenSSH-Win64-v$AssetVersion.msi"
+            digest = 'sha256:' + (('a' * 64) -join '')
+        })
+    }
+    return [pscustomobject]@{ tag_name = $Tag; draft = $false; prerelease = $Prerelease; assets = $assets }
+}
+$script:ReleaseFixture = @(
+    (New-ReleaseFixture -Tag 'v9.7.0.0' -Prerelease $false -AssetVersion '9.7.0.0'),
+    (New-ReleaseFixture -Tag '10.0.0.0p2-Preview' -Prerelease $true -AssetVersion '10.0.0.0'),
+    (New-ReleaseFixture -Tag 'v9.9.0.0' -Prerelease $false -AssetVersion '9.9.0.0')
+)
+$selection = Get-OpenSSHRelease
+if ([string]$selection.Version -cne 'v9.9.0.0' -or [string]$selection.AssetVersion -cne '9.9.0.0' -or
+    [string]$selection.Channel -cne 'stable' -or [string]$selection.BannerVersion -cne '9.9') {
+    throw 'OpenSSH stable release did not win over Preview.'
+}
+$script:ReleaseFixture = @(
+    (New-ReleaseFixture -Tag 'v11.0.0.0' -Prerelease $false),
+    (New-ReleaseFixture -Tag '10.0.0.0p1-Preview' -Prerelease $false -AssetVersion '10.0.0.0'),
+    (New-ReleaseFixture -Tag '10.0.0.0p2-Preview' -Prerelease $true -AssetVersion '10.0.0.0'),
+    (New-ReleaseFixture -Tag '10.1.0.0p1-Beta' -Prerelease $false -AssetVersion '10.1.0.0')
+)
+$selection = Get-OpenSSHRelease
+if ([string]$selection.Version -cne '10.0.0.0p2-Preview' -or [string]$selection.AssetVersion -cne '10.0.0.0' -or
+    [string]$selection.Channel -cne 'Preview exception' -or [string]$selection.BannerVersion -cne '10.0p2') {
+    throw 'OpenSSH strict Preview fallback is invalid.'
+}
+$script:ReleaseFixture = @(
+    (New-ReleaseFixture -Tag '10.1.0.0p1-Beta' -Prerelease $false -AssetVersion '10.1.0.0')
+)
+$rejected = $false
+try { $null = Get-OpenSSHRelease } catch { $rejected = $_.Exception.Message.Contains('strictly named Preview') }
+if (-not $rejected) { throw 'OpenSSH accepted an unsupported release channel.' }
+`, quote(bootstrapPath))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("OpenSSH release selection regression: %v: %s", err, output)
+	}
+}
+
 func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	script := string(bootstrapScript)
 	needles := []string{
 		"-Phase 'Registry'",
-		"Get-PinnedBootstrapAsset -Role 'WinGet bundle'",
+		"Get-ResolvedBootstrapAsset -Role 'WinGet bundle'",
 		"Add-AppxPackage -Path $wingetBundle",
 		"$vcRuntimeProcess = Start-Process",
 		"-Phase 'Development'",
@@ -177,11 +245,11 @@ func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
 	}
 }
 
-func TestPinnedBootstrapAssetCachesRepairsAndStagesInWindowsPowerShell51(t *testing.T) {
+func TestResolvedBootstrapAssetCachesRepairsAndStagesInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
-	payload := []byte("pinned bootstrap payload\n")
+	payload := []byte("resolved bootstrap payload\n")
 	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -202,7 +270,7 @@ Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-foreach ($name in @('Assert-BootstrapCachePath', 'Assert-BootstrapCacheTree', 'Get-BootstrapFileSHA256', 'Get-PinnedBootstrapAsset')) {
+foreach ($name in @('Assert-BootstrapCachePath', 'Assert-BootstrapCacheTree', 'Get-BootstrapFileSHA256', 'Get-ResolvedBootstrapAsset')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if ($null -eq $definition) { throw "Missing function: $name" }
     Invoke-Expression $definition.Extent.Text
@@ -226,7 +294,7 @@ $arguments = @{
     CacheRoot = $cacheRoot
     CacheTrustRoot = $trustRoot
 }
-$first = @(Get-PinnedBootstrapAsset @arguments)
+$first = @(Get-ResolvedBootstrapAsset @arguments)
 if ($first.Count -ne 1 -or [string]$first[0] -cne $expectedDestination -or
     (Get-BootstrapFileSHA256 -Path ([string]$first[0])) -cne '%s') {
     throw 'Initial cached asset result is invalid.'
@@ -236,12 +304,12 @@ if (Test-Path -LiteralPath $staleDirectory) {
 }
 $cached = Join-Path $cacheRoot 'test-asset\%s\payload.bin'
 [IO.File]::WriteAllText($cached, 'corrupt')
-$second = @(Get-PinnedBootstrapAsset @arguments)
+$second = @(Get-ResolvedBootstrapAsset @arguments)
 if ($second.Count -ne 1 -or [string]$second[0] -cne $expectedDestination -or
     (Get-BootstrapFileSHA256 -Path ([string]$second[0])) -cne '%s') {
     throw 'Repaired cached asset result is invalid.'
 }
-$third = @(Get-PinnedBootstrapAsset @arguments)
+$third = @(Get-ResolvedBootstrapAsset @arguments)
 if ($third.Count -ne 1 -or [string]$third[0] -cne $expectedDestination -or
     (Get-BootstrapFileSHA256 -Path ([string]$third[0])) -cne '%s') {
     throw 'Cache-hit staged asset result is invalid.'
@@ -251,29 +319,10 @@ exit 0
 	powerShell := mustWindowsPowerShellPath(t)
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("pinned bootstrap cache regression: %v: %s", err, output)
+		t.Fatalf("resolved bootstrap cache regression: %v: %s", err, output)
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("bootstrap cache HTTP requests = %d, want 2 (miss + corrupt repair)", got)
-	}
-}
-
-func TestBootstrapReleasePowerShellSchemaMatchesEmbeddedMetadata(t *testing.T) {
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal(bootstrapReleaseJSON, &metadata); err != nil {
-		t.Fatal(err)
-	}
-	properties := make([]string, 0, len(metadata))
-	for name := range metadata {
-		properties = append(properties, name)
-	}
-	sort.Slice(properties, func(left, right int) bool {
-		return strings.ToLower(properties[left]) < strings.ToLower(properties[right])
-	})
-	shape := strings.Join(properties, "|")
-	expected := "($releaseMetadataProperties -join '|') -cne '" + shape + "'"
-	if !strings.Contains(string(bootstrapScript), expected) {
-		t.Fatalf("bootstrap PowerShell schema does not match embedded metadata: want %q", shape)
 	}
 }
 
