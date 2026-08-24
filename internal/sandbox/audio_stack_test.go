@@ -113,7 +113,7 @@ func TestAudioGridderReleaseManifestBindsSourceAndInstalledFilesInWindowsPowerSh
 	root := t.TempDir()
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
+$utf8NoBom = New-Object Text.UTF8Encoding($false)
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
@@ -128,7 +128,7 @@ foreach ($relativeName in @(Get-StackAudioGridderFiles)) {
     $path = Join-Path $root $relativeName
     $parent = Split-Path -Parent $path
     $null = New-Item -ItemType Directory -Path $parent -Force
-    [IO.File]::WriteAllText($path, "fixture:$relativeName", $script:Utf8NoBom)
+    [IO.File]::WriteAllText($path, "fixture:$relativeName", $utf8NoBom)
 }
 $sourceA = 'A' * 64
 Write-StackAudioGridderReleaseManifest -Root $root -Version '1.2.3' -SourceSHA256 $sourceA
@@ -136,11 +136,11 @@ if (-not (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.
     throw 'AudioGridder release manifest did not accept matching payload bytes.'
 }
 $firstFile = Join-Path $root ([string](Get-StackAudioGridderFiles)[0])
-[IO.File]::AppendAllText($firstFile, 'changed', $script:Utf8NoBom)
+[IO.File]::AppendAllText($firstFile, 'changed', $utf8NoBom)
 if (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.2.3' -ExpectedSourceSHA256 $sourceA) {
     throw 'AudioGridder release manifest accepted changed payload bytes.'
 }
-[IO.File]::WriteAllText($firstFile, "fixture:$([string](Get-StackAudioGridderFiles)[0])", $script:Utf8NoBom)
+[IO.File]::WriteAllText($firstFile, "fixture:$([string](Get-StackAudioGridderFiles)[0])", $utf8NoBom)
 Write-StackAudioGridderReleaseManifest -Root $root -Version '1.2.3' -SourceSHA256 $sourceA
 if (Test-StackAudioGridderReleaseManifest -Root $root -ExpectedVersion '1.2.3' -ExpectedSourceSHA256 ('B' * 64)) {
     throw 'AudioGridder release manifest accepted another source release digest.'

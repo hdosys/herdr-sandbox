@@ -1595,7 +1595,8 @@ function Write-StackAudioGridderReleaseManifest {
         files = Get-StackAudioGridderPayloadHashes -Root $Root
     }
     $manifestPath = Join-Path $Root '.herdr-sandbox-release.json'
-    [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 4 -Compress), $script:Utf8NoBom)
+    $utf8NoBom = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 4 -Compress), $utf8NoBom)
 }
 
 function Test-StackAudioGridderReleaseManifest {
