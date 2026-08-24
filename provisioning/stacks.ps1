@@ -521,17 +521,21 @@ function Install-StackVisualStudioBuildTools {
         $matchingSlots = @(@($slotA, $slotB) | ForEach-Object {
                 $descriptorPath = Join-Path $_ 'complete.json'
                 if (Test-Path -LiteralPath $descriptorPath -PathType Leaf) {
-                    $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
-                    $candidate = [pscustomobject]@{
-                        ChannelID = [string]$descriptor.channelID; ProductLine = [string]$descriptor.productLine
-                        ProductLineVersion = [string]$descriptor.productLineVersion
-                        BuildVersion = [string]$descriptor.buildVersion; SemanticVersion = [string]$descriptor.semanticVersion
-                        ProductVersion = [string]$descriptor.productVersion; CatalogSHA256 = [string]$descriptor.catalogSHA256
-                        SetupVersion = [string]$descriptor.setupVersion; SetupSHA256 = [string]$descriptor.setupSHA256
-                        ComponentIDs = [string[]]@($descriptor.componentIDs)
-                    }
-                    if (Test-StackVisualStudioLayoutSlot -Slot $_ -Target $candidate) {
-                        [pscustomobject]@{ Slot = $_; Target = $candidate }
+                    try {
+                        $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
+                        $candidate = [pscustomobject]@{
+                            ChannelID = [string]$descriptor.channelID; ProductLine = [string]$descriptor.productLine
+                            ProductLineVersion = [string]$descriptor.productLineVersion
+                            BuildVersion = [string]$descriptor.buildVersion; SemanticVersion = [string]$descriptor.semanticVersion
+                            ProductVersion = [string]$descriptor.productVersion; CatalogSHA256 = [string]$descriptor.catalogSHA256
+                            SetupVersion = [string]$descriptor.setupVersion; SetupSHA256 = [string]$descriptor.setupSHA256
+                            ComponentIDs = [string[]]@($descriptor.componentIDs)
+                        }
+                        if (Test-StackVisualStudioLayoutSlot -Slot $_ -Target $candidate) {
+                            [pscustomobject]@{ Slot = $_; Target = $candidate }
+                        }
+                    } catch {
+                        # An invalid A/B cache slot does not participate in selection.
                     }
                 }
             })
