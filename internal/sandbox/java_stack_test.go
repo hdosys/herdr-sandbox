@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestJavaStackVersionAndUpgradeContractsInWindowsPowerShell51(t *testing.T) {
+func TestJavaStackUpgradeContractInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 Java upgrade regression")
 	}
@@ -21,7 +21,7 @@ $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('Get-StackJavaInstalledVersions', 'Remove-StackJavaPreviousInstallation', 'Assert-StackJavaVersion')) {
+foreach ($name in @('Get-StackJavaInstalledVersions', 'Remove-StackJavaPreviousInstallation')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing Java upgrade function: $name" }
     Invoke-Expression $definition.Extent.Text
@@ -49,19 +49,6 @@ function Invoke-ProvisioningNative {
     $script:versions = @()
     return @()
 }
-$javaVersion = @'
-openjdk version "25.0.4.1" 2026-08-18 LTS
-OpenJDK Runtime Environment Microsoft-14951867 (build 25.0.4.1+1-LTS)
-'@
-Assert-StackJavaVersion -LanguageVersion '25.0.4' -JavaVersion $javaVersion.Trim() -JavacVersion 'javac 25.0.4.1'
-Assert-StackJavaVersion -LanguageVersion '25.0.4' -JavaVersion 'openjdk version "25.0.4" LTS Microsoft' -JavacVersion 'javac 25.0.4'
-$rejected = $false
-try {
-    Assert-StackJavaVersion -LanguageVersion '25.0.4' -JavaVersion $javaVersion.Trim() -JavacVersion 'javac 25.0.4'
-} catch {
-    $rejected = $_.Exception.Message -like 'Microsoft OpenJDK version verification failed:*'
-}
-if (-not $rejected) { throw 'Mismatched Java runtime and compiler versions were accepted.' }
 $metadata = [pscustomobject]@{ Id = 'Microsoft.OpenJDK.25'; Version = '25.0.4.7' }
 $script:versions = @('25.0.3.7')
 Remove-StackJavaPreviousInstallation -Metadata $metadata

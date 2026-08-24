@@ -78,7 +78,6 @@ func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t
 	for _, required := range []string{
 		`C:\HerdrSandbox\staging`,
 		"transport-aaaaaaaaaaaaaaaa",
-		"[ssh-transport] receive-archive",
 		"$expectedTransportLength = [long]12345",
 		"New-Object byte[] 8192",
 		"Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue",
@@ -86,7 +85,7 @@ func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t
 		"'-WindowStyle','Hidden'",
 		"-RedirectStandardInput $archive",
 		"-NoNewWindow -Wait -PassThru",
-		encodePowerShell(inner),
+		encodePowerShell(withPlainPowerShellErrors(inner)),
 		"Remove-GuestArchiveStaging",
 	} {
 		if !strings.Contains(command, required) {
@@ -108,6 +107,29 @@ if ($errors.Count -ne 0) { throw ($errors | ForEach-Object { $_.ToString() } | O
 		parser := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(parserScript))
 		if output, err := parser.CombinedOutput(); err != nil {
 			t.Fatalf("SSH archive transport PowerShell parse: %v: %s", err, output)
+		}
+	}
+}
+
+func TestSSHPowerShellFailureWrapperWritesPlainDiagnostics(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 SSH diagnostics")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 SSH diagnostic regression")
+	}
+	script := withPlainPowerShellErrors(`$ErrorActionPreference = 'Stop'
+throw 'clear remote failure'`)
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("wrapped PowerShell failure returned success")
+	}
+	diagnostic := string(output)
+	if !strings.Contains(diagnostic, "clear remote failure") {
+		t.Fatalf("plain diagnostic is missing: %q", diagnostic)
+	}
+	for _, forbidden := range []string{"#< CLIXML", "<Objs Version=", "CategoryInfo", "FullyQualifiedErrorId"} {
+		if strings.Contains(diagnostic, forbidden) {
+			t.Fatalf("PowerShell diagnostic contains %q: %q", forbidden, diagnostic)
 		}
 	}
 }

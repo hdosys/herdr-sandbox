@@ -681,8 +681,7 @@ try {
     } catch {
         $detail = @($captured | Select-Object -Last 20 | ForEach-Object { [string]$_ })
         $detail += [string]$_.Exception.Message
-        [Console]::Error.WriteLine(($detail -join [Environment]::NewLine))
-        throw
+        throw ($detail -join [Environment]::NewLine)
     }
     $explorerRestartScheduled = [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ceq '1'
     $explorerRestartID = if ($explorerRestartScheduled) { [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_ID } else { '' }

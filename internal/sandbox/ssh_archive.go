@@ -58,7 +58,6 @@ $ProgressPreference = 'SilentlyContinue'
 %s
 $expectedTransportLength = [long]%d
 try {
-    [Console]::Error.WriteLine('[ssh-transport] receive-archive')
     $inputStream = [Console]::OpenStandardInput()
     $outputStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try {
@@ -78,10 +77,19 @@ try {
     Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
     $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-EncodedCommand','%s') -RedirectStandardInput $archive -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+} catch {
+    [Console]::Error.WriteLine([string]$_.Exception.Message)
+    exit 1
 } finally {
     Remove-GuestArchiveStaging
 }
-exit 0`, staging, expectedArchiveLength, encodePowerShell(launcherScript))
+exit 0`, staging, expectedArchiveLength, encodePowerShell(withPlainPowerShellErrors(launcherScript)))
+}
+
+func withPlainPowerShellErrors(script string) string {
+	return "try {\n& {\n" + script + "\n}\n} catch {\n" +
+		"    [Console]::Error.WriteLine([string]$_.Exception.Message)\n" +
+		"    exit 1\n}\n"
 }
 
 func runSSHPowerShell(ctx context.Context, connection Connection, input io.Reader, launcherScript, role string, maximumOutput int) ([]byte, error) {
@@ -95,7 +103,7 @@ func runSecretSSHPowerShell(ctx context.Context, connection Connection, input io
 func runSSHPowerShellWithDiagnostics(ctx context.Context, connection Connection, input io.Reader, launcherScript, role string, maximumOutput int, includeRemoteDiagnostics bool) ([]byte, error) {
 	return runSSHRemoteCommandWithDiagnostics(ctx, connection, input, []string{
 		"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
-		"-EncodedCommand", encodePowerShell(launcherScript),
+		"-EncodedCommand", encodePowerShell(withPlainPowerShellErrors(launcherScript)),
 	}, role, maximumOutput, includeRemoteDiagnostics)
 }
 
@@ -135,14 +143,21 @@ func runSSHRemoteCommandWithDiagnostics(ctx context.Context, connection Connecti
 }
 
 func sshPowerShellError(role string, commandError, contextError error, remoteDiagnostics string, includeRemoteDiagnostics bool) error {
+	remoteDiagnostics = strings.TrimSpace(remoteDiagnostics)
 	if contextError != nil {
-		if includeRemoteDiagnostics {
+		if includeRemoteDiagnostics && remoteDiagnostics != "" {
 			return fmt.Errorf("%s over SSH: %w (%v): %s", role, commandError, contextError, remoteDiagnostics)
+		}
+		if includeRemoteDiagnostics {
+			return fmt.Errorf("%s over SSH: %w (%v)", role, commandError, contextError)
 		}
 		return fmt.Errorf("%s over SSH: %w (%v); remote diagnostics redacted", role, commandError, contextError)
 	}
-	if includeRemoteDiagnostics {
+	if includeRemoteDiagnostics && remoteDiagnostics != "" {
 		return fmt.Errorf("%s over SSH: %w: %s", role, commandError, remoteDiagnostics)
+	}
+	if includeRemoteDiagnostics {
+		return fmt.Errorf("%s over SSH: %w", role, commandError)
 	}
 	return fmt.Errorf("%s over SSH: %w; remote diagnostics redacted", role, commandError)
 }

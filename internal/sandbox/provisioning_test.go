@@ -84,6 +84,46 @@ func TestValidateBaseProvisioningContract(t *testing.T) {
 	}
 }
 
+func TestProvisioningCommandMatchesRequiredLineAroundDiagnosticsInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 provisioning command output")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 provisioning command output regression")
+	}
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw $errors[0].Message }
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-ProvisioningCommand' }, $true)
+if ($null -eq $definition) { throw 'Missing provisioning command assertion.' }
+Invoke-Expression $definition.Extent.Text
+function Get-Command { return [pscustomobject]@{ Source = 'C:\fixture.exe' } }
+function Get-ProvisioningBoundedDiagnosticText { param([string]$Text, [int]$MaximumBytes) return $Text }
+$script:output = @('nonfatal tool warning', 'fixture 1.2.3', 'trailing diagnostic')
+function Invoke-ProvisioningNative { param($Role, $FilePath, $ArgumentList) return $script:output }
+$actual = Assert-ProvisioningCommand -Role 'Fixture' -Name 'fixture.exe' -VersionArguments @('--version') -ExpectedPattern '^fixture 1\.2\.3$'
+if ($actual -cne 'fixture 1.2.3') { throw "Matched command output is unexpected: $actual" }
+$script:output = @('nonfatal tool warning', 'fixture 2.0.0')
+$rejected = $false
+try {
+    Assert-ProvisioningCommand -Role 'Fixture' -Name 'fixture.exe' -VersionArguments @('--version') -ExpectedPattern '^fixture 1\.2\.3$' | Out-Null
+} catch {
+    $rejected = $_.Exception.Message -like 'Fixture did not report its required version or capability:*'
+}
+if (-not $rejected) { throw 'Missing required command output was accepted.' }
+`, quote(basePath))
+	scriptPath := filepath.Join(t.TempDir(), "command-output-regression.ps1")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("provisioning command output regression: %v: %s", err, output)
+	}
+}
+
 func TestValidateStackProvisioningContract(t *testing.T) {
 	path := filepath.Join(t.TempDir(), stackProvisioningName)
 	writeTestFile(t, path, stackProvisioningContract+"\nfunction Install-GoStack {}\n")

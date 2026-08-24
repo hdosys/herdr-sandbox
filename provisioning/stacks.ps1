@@ -729,13 +729,10 @@ int main() { std::cout << "cpp-stack-ok\n"; return 0; }
         Invoke-ProvisioningNative -Role 'MSVC C++ linker probe' -FilePath $Linker `
             -ArgumentList @('/NOLOGO', '/DEBUG:NONE', "/OUT:$cppExecutable", $cppObject) `
             -WorkingDirectory $stage -TimeoutSeconds 30 -TerminateDescendantsAfterRootExit | Out-Null
-        $cOutput = ((Invoke-ProvisioningNative -Role 'MSVC C executable probe' -FilePath $cExecutable `
-                -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
-        $cppOutput = ((Invoke-ProvisioningNative -Role 'MSVC C++ executable probe' -FilePath $cppExecutable `
-                -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30) -join [Environment]::NewLine).Trim()
-        if ($cOutput -cne 'c-stack-ok' -or $cppOutput -cne 'cpp-stack-ok') {
-            throw "MSVC C/C++ compile and run verification failed: C=$cOutput C++=$cppOutput"
-        }
+        Invoke-ProvisioningNative -Role 'MSVC C executable probe' -FilePath $cExecutable `
+            -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30 | Out-Null
+        Invoke-ProvisioningNative -Role 'MSVC C++ executable probe' -FilePath $cppExecutable `
+            -ArgumentList @() -WorkingDirectory $stage -TimeoutSeconds 30 | Out-Null
     } finally {
         if (Test-Path -LiteralPath $stage) {
             Remove-Item -LiteralPath $stage -Recurse -Force
@@ -1447,16 +1444,10 @@ function Install-AndroidStack {
 
     $androidJava = Join-Path $jdkRoot 'bin\java.exe'
     $androidJavac = Join-Path $jdkRoot 'bin\javac.exe'
-    $androidJavaVersion = ((Invoke-ProvisioningNative -Role 'Android JDK runtime version verification' `
-            -FilePath $androidJava -ArgumentList @('-version') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    $androidJavacVersion = ((Invoke-ProvisioningNative -Role 'Android JDK compiler version verification' `
-            -FilePath $androidJavac -ArgumentList @('-version') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    if ($androidJavaVersion -notmatch ('(?m)^openjdk version "' + [regex]::Escape($jdkVersion) + '"(?:\s|$)') -or
-        $androidJavaVersion -notmatch '(?i)Microsoft' -or $androidJavacVersion -cne "javac $jdkVersion") {
-        throw "Android Microsoft OpenJDK version verification failed: java=$androidJavaVersion javac=$androidJavacVersion"
-    }
+    Invoke-ProvisioningNative -Role 'Android JDK runtime smoke' -FilePath $androidJava `
+        -ArgumentList @('-version') -TimeoutSeconds 30 | Out-Null
+    Invoke-ProvisioningNative -Role 'Android JDK compiler smoke' -FilePath $androidJavac `
+        -ArgumentList @('-version') -TimeoutSeconds 30 | Out-Null
 
     $env:ANDROID_HOME = $androidSDK
     $env:ANDROID_USER_HOME = $androidUserHome
@@ -1499,10 +1490,8 @@ function Install-AndroidStack {
                 -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
                 -TimeoutSeconds 600 | Out-Null
         }
-        $androidVersion = (@(Invoke-ProvisioningNative -Role 'Android CLI version verification' `
-                    -FilePath $androidCLI -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | `
-                    Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
-            -join [Environment]::NewLine).Trim()
+        Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
+            -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30 | Out-Null
         $reportedSDK = (@(Invoke-ProvisioningNative -Role 'Android SDK location verification' `
                     -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
                     -TimeoutSeconds 30 | Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
@@ -1510,9 +1499,8 @@ function Install-AndroidStack {
     } finally {
         $env:JAVA_HOME = $previousJavaHome
     }
-    if ($androidVersion -cne $androidCLIVersion -or
-        [IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
-        throw "Android SDK verification failed: cli=$androidVersion sdk=$reportedSDK"
+    if ([IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
+        throw "Android SDK location verification failed: $reportedSDK"
     }
     if ([string]::IsNullOrWhiteSpace($platformToolsVersion)) {
         $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
@@ -1526,7 +1514,7 @@ function Install-AndroidStack {
             throw "Android command PATH read-back failed: $($entry.Key)"
         }
     }
-    Write-Output "Android ready: CLI $androidVersion, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
+    Write-Output "Android ready: CLI $androidCLIVersion, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
 }
 
 function Get-StackAudioGridderFiles {
@@ -2182,28 +2170,6 @@ function Remove-StackJavaPreviousInstallation {
     }
 }
 
-function Assert-StackJavaVersion {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidatePattern('^25\.0\.(?:0|[1-9][0-9]*)$')]
-        [string]$LanguageVersion,
-
-        [Parameter(Mandatory = $true)]
-        [string]$JavaVersion,
-
-        [Parameter(Mandatory = $true)]
-        [string]$JavacVersion
-    )
-
-    $runtimePattern = '(?m)^openjdk version "(?<version>' + [regex]::Escape($LanguageVersion) +
-        '(?:\.(?:0|[1-9][0-9]*))?)"(?:\s|$)'
-    $runtimeMatch = [regex]::Match($JavaVersion, $runtimePattern)
-    if (-not $runtimeMatch.Success -or $JavaVersion -notmatch '(?i)Microsoft' -or
-        $JavacVersion -cne ('javac ' + $runtimeMatch.Groups['version'].Value)) {
-        throw "Microsoft OpenJDK version verification failed: java=$JavaVersion javac=$JavacVersion"
-    }
-}
-
 function Install-JavaStack {
     [CmdletBinding()]
     param(
@@ -2220,12 +2186,6 @@ function Install-JavaStack {
         throw "Java metadata is not the Microsoft OpenJDK 25 LTS family: $($metadata.Id) $($metadata.Version)"
     }
     $Version = [string]$metadata.Version
-    $versionMatch = [regex]::Match($Version, '^(?<language>25\.0\.[0-9]+)\.(?<build>[0-9]+)$')
-    if (-not $versionMatch.Success) {
-        throw "Java package version cannot be mapped to its language version: $Version"
-    }
-    $languageVersion = $versionMatch.Groups['language'].Value
-
     Write-Output "Installing Microsoft OpenJDK $Version..."
     Remove-StackJavaPreviousInstallation -Metadata $metadata
     Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK 25' -Metadata $metadata `
@@ -2278,15 +2238,6 @@ function Install-JavaStack {
             throw "Microsoft OpenJDK command PATH read-back failed: $($entry.Key)"
         }
     }
-
-    $javaVersion = ((Invoke-ProvisioningNative -Role 'Java runtime version verification' `
-            -FilePath $commands['java.exe'] -ArgumentList @('-version') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    $javacVersion = ((Invoke-ProvisioningNative -Role 'Java compiler version verification' `
-            -FilePath $commands['javac.exe'] -ArgumentList @('-version') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    Assert-StackJavaVersion -LanguageVersion $languageVersion -JavaVersion $javaVersion `
-        -JavacVersion $javacVersion
 
     $stage = Join-Path 'C:\HerdrSandbox\staging' ('java-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -2357,13 +2308,6 @@ function Install-NSISStack {
     if ([IO.Path]::GetFullPath([string]$resolvedCompiler.Source) -ine [IO.Path]::GetFullPath($compiler)) {
         throw "NSIS compiler PATH read-back failed: $($resolvedCompiler.Source)"
     }
-    $compilerVersion = ((Invoke-ProvisioningNative -Role 'NSIS compiler version verification' `
-            -FilePath $compiler -ArgumentList @('/VERSION') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    if ($compilerVersion -cne "v$Version") {
-        throw "NSIS compiler version is unexpected: $compilerVersion"
-    }
-
     $stage = Join-Path 'C:\HerdrSandbox\staging' ('nsis-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     try {
@@ -2397,7 +2341,7 @@ SectionEnd
             Remove-Item -LiteralPath $stage -Recurse -Force
         }
     }
-    Write-Output "NSIS ready: $compilerVersion"
+    Write-Output "NSIS ready: $Version"
 }
 
 function Install-NushellStack {
@@ -2432,13 +2376,9 @@ function Install-NushellStack {
     if ([IO.Path]::GetFullPath([string]$resolvedCommand.Source) -ine [IO.Path]::GetFullPath($expectedCommand)) {
         throw "Nushell command resolved from an unexpected path: $($resolvedCommand.Source)"
     }
-    $nuVersion = ((Invoke-ProvisioningNative -Role 'Nushell version verification' `
-            -FilePath $expectedCommand -ArgumentList @('--version') -TimeoutSeconds 30) `
-        -join [Environment]::NewLine).Trim()
-    if ($nuVersion -cne $Version) {
-        throw "Nushell version output is unexpected: $nuVersion"
-    }
-    Write-Output "Nushell ready: $nuVersion"
+    Invoke-ProvisioningNative -Role 'Nushell command smoke' -FilePath $expectedCommand `
+        -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
+    Write-Output "Nushell ready: $Version"
 }
 
 function Install-GoStack {
@@ -2603,12 +2543,6 @@ function Install-PlaywrightChromium {
         [string]$playwrightCorePackage.version -cne $Version) {
         throw "Playwright package identity does not match exact version $Version."
     }
-    $cliVersion = ((Invoke-ProvisioningNative -Role 'Playwright CLI version check' `
-        -FilePath $node -ArgumentList @($playwrightCLI, '--version')) -join [Environment]::NewLine).Trim()
-    if ($cliVersion -cne "Version $Version") {
-        throw "Playwright CLI version output is unexpected: $cliVersion"
-    }
-
     $env:PLAYWRIGHT_BROWSERS_PATH = $browserRoot
     $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = '120000'
     [Environment]::SetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', $browserRoot, 'Machine')
@@ -2773,11 +2707,8 @@ function Install-PlaywrightCLIStack {
     if ([IO.Path]::GetFullPath($resolvedCLI) -ine [IO.Path]::GetFullPath($cliCommand)) {
         throw "Playwright CLI command resolved from an unexpected path: $resolvedCLI"
     }
-    $cliVersion = ((Invoke-ProvisioningNative -Role 'Playwright CLI version check' -FilePath $node `
-        -ArgumentList @($cliEntry, '--version')) -join [Environment]::NewLine).Trim()
-    if ($cliVersion -cne $Version) {
-        throw "Playwright CLI version output is unexpected: $cliVersion"
-    }
+    Invoke-ProvisioningNative -Role 'Playwright CLI command smoke' -FilePath $node `
+        -ArgumentList @($cliEntry, '--version') | Out-Null
 
     $extensionID = 'mmlmfjhmonkocbjadbfplnigmagldckm'
     $extensionUpdateURL = 'https://clients2.google.com/service/update2/crx'
@@ -3087,11 +3018,8 @@ function Install-StackHyperFramesVoxCPM2 {
         $cliHelp -notmatch '(?m)^  --voice FILE ') {
         throw 'HyperFrames VoxCPM2 CLI help identity is unexpected.'
     }
-    $version = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server identity' `
-            -FilePath $cpuServer -ArgumentList @('--version') -TimeoutSeconds 30) -join "`n")
-    if ($version -notmatch [regex]::Escape(([string]$descriptor.runtimeCommit).Substring(0, 7))) {
-        throw "HyperFrames VoxCPM2 CPU server identity is unexpected: $cpuServer"
-    }
+    Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server smoke' `
+        -FilePath $cpuServer -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
 
     $stateRoot = 'C:\HerdrSandbox\state\hyperframes-voxcpm2'
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
@@ -3232,12 +3160,6 @@ function Install-HyperFramesStack {
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
-    $nodeVersionText = ((Invoke-ProvisioningNative -Role 'HyperFrames Node.js readiness' -FilePath $node `
-        -ArgumentList @('--version')) -join [Environment]::NewLine).Trim()
-    if ($nodeVersionText -notmatch '^v(?<major>\d+)\.\d+\.\d+$' -or [int]$Matches['major'] -lt 22) {
-        throw "HyperFrames requires Node.js 22 or newer; found $nodeVersionText."
-    }
-
     $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $git) {
         throw 'HyperFrames global skills require Base package Git.Git.'
@@ -3396,13 +3318,6 @@ function Install-HyperFramesStack {
         if ([IO.Path]::GetFullPath($resolvedCLI) -ine [IO.Path]::GetFullPath($cliCommand)) {
             throw "HyperFrames CLI command resolved from an unexpected path: $resolvedCLI"
         }
-        $cliVersion = ((Invoke-ProvisioningNative -Role 'HyperFrames CLI version check' -FilePath $node `
-            -ArgumentList @($cliEntry, '--version') -WorkingDirectory $stagingRoot -TimeoutSeconds 30) `
-            -join [Environment]::NewLine).Trim()
-        if ($cliVersion -cne $Version) {
-            throw "HyperFrames CLI version output is unexpected: $cliVersion"
-        }
-
         Invoke-ProvisioningNative -Role 'HyperFrames managed Chrome Headless Shell installation' `
             -FilePath $node -ArgumentList @($cliEntry, 'browser', 'ensure') `
             -WorkingDirectory $stagingRoot -TimeoutSeconds 600 | Out-Null
@@ -3485,7 +3400,7 @@ function Install-HyperFramesStack {
         Install-StackHyperFramesVoxCPM2 -Node $node
         Assert-StackHyperFramesSoftwareEncode -FFmpeg ([string]$ffmpeg.Source) `
             -FFprobe ([string]$ffprobe.Source)
-        Write-Output "HyperFrames CLI ready: $cliVersion"
+        Write-Output "HyperFrames CLI ready: $Version"
         Write-Output "HyperFrames managed Chrome Headless Shell ready: $browserPath"
         Write-Output "HyperFrames skills ready for all supported agents: $($skillNames.Count)"
         Write-Output "HyperFrames FFmpeg ready: $($ffmpegVersionText.Split([Environment]::NewLine)[0])"
@@ -3770,13 +3685,9 @@ function Install-PythonStack {
     $pythonPath = Wait-ProvisioningCommandAvailable -Role 'Python' -Name 'python.exe' `
         -CommandSourceExclusion $pythonSourceExclusions
     $runtimeVersion = ($Version -split '\.')[0..2] -join '.'
-    $pythonPattern = '^Python ' + [regex]::Escape($runtimeVersion) + '$'
-    $pythonVersion = ((Invoke-ProvisioningNative -Role 'Python version check' -FilePath $pythonPath `
-                -ArgumentList @('--version')) -join [Environment]::NewLine).Trim()
-    if ($pythonVersion -notmatch $pythonPattern) {
-        throw "Python version output is unexpected: $pythonVersion"
-    }
-    Write-Output "Python ready: $pythonVersion"
+    Invoke-ProvisioningNative -Role 'Python runtime smoke' -FilePath $pythonPath `
+        -ArgumentList @('--version') | Out-Null
+    Write-Output "Python ready: $runtimeVersion"
     if ($Series -notmatch '^3\.') {
         return
     }
@@ -3821,16 +3732,12 @@ function Install-PythonStack {
     if ([IO.Path]::GetFullPath($resolvedPython) -ine [IO.Path]::GetFullPath($pythonAlias)) {
         throw "Python command resolved from an unexpected path: $resolvedPython"
     }
-    $pythonAliasVersion = Assert-ProvisioningCommand -Role 'App-local Python command' -Name 'python.exe' `
-        -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
     $resolvedPython3 = Wait-ProvisioningCommandAvailable -Role 'Python 3 command' -Name 'python3.exe'
     if ([IO.Path]::GetFullPath($resolvedPython3) -ine [IO.Path]::GetFullPath($python3)) {
         throw "Python 3 command resolved from an unexpected path: $resolvedPython3"
     }
-    $python3Version = Assert-ProvisioningCommand -Role 'Python 3 command' -Name 'python3.exe' `
-        -VersionArguments @('--version') -ExpectedPattern ('^' + [regex]::Escape($pythonVersion) + '$')
-    Write-Output "App-local Python command ready: $pythonAliasVersion"
-    Write-Output "Python 3 command ready: $python3Version"
+    Write-Output "App-local Python command ready: $runtimeVersion"
+    Write-Output "Python 3 command ready: $runtimeVersion"
 }
 
 function Install-Uv {

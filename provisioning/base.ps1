@@ -2039,11 +2039,16 @@ function Assert-ProvisioningCommand {
         throw "$Role command is not available on PATH: $Name"
     }
     $output = Invoke-ProvisioningNative -Role "$Role version check" -FilePath $command.Source -ArgumentList $VersionArguments
-    $version = ($output -join [Environment]::NewLine).Trim()
-    if ($version -notmatch $ExpectedPattern) {
-        throw "$Role version output is unexpected: $version"
+    $diagnostic = ($output -join [Environment]::NewLine).Trim()
+    $matchText = $diagnostic -replace "`r`n?", "`n"
+    $options = [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+        [Text.RegularExpressions.RegexOptions]::Multiline
+    $match = [regex]::Match($matchText, $ExpectedPattern, $options)
+    if (-not $match.Success) {
+        $detail = Get-ProvisioningBoundedDiagnosticText -Text $diagnostic -MaximumBytes 1000
+        throw "$Role did not report its required version or capability: $detail"
     }
-    return $version
+    return $match.Value.Trim()
 }
 
 function Assert-ProvisioningVulkanDevice {

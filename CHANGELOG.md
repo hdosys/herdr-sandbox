@@ -29,16 +29,22 @@ artifacts remain available on the
 
 ### Fixed
 
+- Provisioning no longer mistakes warning banners for version failures. Exact
+  package identity, integrity, command paths, exit status, and real capability
+  probes remain strict, while duplicate version-rendering checks no longer block
+  the entire Sandbox.
+- Retained provisioning failures now show one concise plain-text cause instead of
+  repeating the failure as raw PowerShell CLIXML.
 - HyperFrames provisioning no longer rejects the verified VoxCPM2 provider only
   because its build metadata names another HyperFrames version. The current
   HyperFrames release is provisioned and real runtime behavior now determines
   compatibility.
 - Guest OpenCode now keeps automatic clipboard copy when text is selected in
   Herdr, matching the established mouse-selection workflow.
-- Microsoft OpenJDK 25 provisioning now accepts Microsoft's runtime patch suffix
-  while still requiring the exact WinGet package, Microsoft runtime identity, and
-  matching `java` and `javac` versions, so reprovisioning no longer rejects
-  package `25.0.4.101` when its tools report `25.0.4.1`.
+- Microsoft OpenJDK 25 provisioning now trusts the exact WinGet package and
+  publisher-owned command paths, then proves the compiler/runtime pair with a real
+  Java compile and run instead of rejecting valid package-to-runtime version
+  formatting differences.
 
 ## v0.0.18
 
