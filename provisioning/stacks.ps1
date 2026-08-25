@@ -4212,6 +4212,12 @@ function Install-PythonStack {
     if (($pythonInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Python command is a reparse point: $pythonPath"
     }
+    Assert-ProvisioningAuthenticodeSignature -Role 'Python executable' -Path $pythonPath
+    $pythonSourceSignature = Get-AuthenticodeSignature -LiteralPath $pythonPath
+    $pythonSignerSubject = [string]$pythonSourceSignature.SignerCertificate.Subject
+    if ([string]::IsNullOrWhiteSpace($pythonSignerSubject)) {
+        throw "Python executable signer identity is unavailable: $pythonPath"
+    }
     foreach ($directory in @('C:\HerdrSandbox\tools', 'C:\HerdrSandbox\tools\python', $pythonAliasDirectory)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -4222,7 +4228,7 @@ function Install-PythonStack {
             throw "Python command directory is unsafe: $directory"
         }
     }
-    $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
+    $pythonHash = ''
     foreach ($pythonCommand in @($pythonAlias, $python3)) {
         if (Test-Path -LiteralPath $pythonCommand) {
             $pythonCommandInfo = Get-Item -LiteralPath $pythonCommand -Force
@@ -4230,18 +4236,22 @@ function Install-PythonStack {
                 ($pythonCommandInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw "Python command path is unsafe: $pythonCommand"
             }
-        }
-        $pythonCommandHash = if (Test-Path -LiteralPath $pythonCommand -PathType Leaf) {
-            (Get-FileHash -LiteralPath $pythonCommand -Algorithm SHA256).Hash
+            Assert-ProvisioningAuthenticodeSignature -Role 'App-local Python command' -Path $pythonCommand
+            $pythonCommandSignature = Get-AuthenticodeSignature -LiteralPath $pythonCommand
+            $pythonCommandSignerSubject = [string]$pythonCommandSignature.SignerCertificate.Subject
+            if ([string]::IsNullOrWhiteSpace($pythonCommandSignerSubject) -or
+                $pythonCommandSignerSubject -cne $pythonSignerSubject) {
+                throw "App-local Python command signer does not match the installed Python publisher: $pythonCommand"
+            }
         } else {
-            ''
-        }
-        if ($pythonCommandHash -cne $pythonHash) {
-            Copy-Item -LiteralPath $pythonPath -Destination $pythonCommand -Force
+            if ([string]::IsNullOrWhiteSpace($pythonHash)) {
+                $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
+            }
+            Copy-Item -LiteralPath $pythonPath -Destination $pythonCommand
             $pythonCommandHash = (Get-FileHash -LiteralPath $pythonCommand -Algorithm SHA256).Hash
-        }
-        if ($pythonCommandHash -cne $pythonHash) {
-            throw "Python command copy failed verification: $pythonCommand"
+            if ($pythonCommandHash -cne $pythonHash) {
+                throw "Python command copy failed verification: $pythonCommand"
+            }
         }
     }
     Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
@@ -4253,8 +4263,13 @@ function Install-PythonStack {
     if ([IO.Path]::GetFullPath($resolvedPython3) -ine [IO.Path]::GetFullPath($python3)) {
         throw "Python 3 command resolved from an unexpected path: $resolvedPython3"
     }
-    Write-Output "App-local Python command ready: $runtimeVersion"
-    Write-Output "Python 3 command ready: $runtimeVersion"
+    $pythonVersionPattern = '^Python ' + [regex]::Escape($Series) + '\.\d+(?:[^\r\n]*)?$'
+    $appLocalPythonVersion = Assert-ProvisioningCommand -Role 'App-local Python command' -Name 'python.exe' `
+        -VersionArguments @('--version') -ExpectedPattern $pythonVersionPattern
+    $python3Version = Assert-ProvisioningCommand -Role 'Python 3 command' -Name 'python3.exe' `
+        -VersionArguments @('--version') -ExpectedPattern $pythonVersionPattern
+    Write-Output "App-local Python command ready: $appLocalPythonVersion"
+    Write-Output "Python 3 command ready: $python3Version"
 }
 
 function Install-Uv {

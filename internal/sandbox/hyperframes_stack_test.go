@@ -31,6 +31,7 @@ func TestHyperFramesOpenCodeLauncherUsesProcessScopedSkillsInWindowsPowerShell51
 		t.Fatal(err)
 	}
 	fakeOpenCode := filepath.Join(root, "commands", "opencode.exe")
+	configOutput := filepath.Join(root, "opencode-config.txt")
 	if err := os.MkdirAll(filepath.Dir(fakeOpenCode), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +75,22 @@ $launcher = '%s'
 Write-StackHyperFramesOpenCodeLauncher -Path $launcher -SkillRoot $skillRoot
 $env:Path = '%s;' + $env:Path
 Remove-Item Env:\OPENCODE_CONFIG_CONTENT -ErrorAction SilentlyContinue
-$output = @(& $launcher /d /c 'echo %%OPENCODE_CONFIG_CONTENT%%')
-if ($LASTEXITCODE -ne 0 -or $output.Count -ne 1) { throw "Launcher child failed: $($output -join [Environment]::NewLine)" }
-$config = $output[0] | ConvertFrom-Json
+$env:HERDR_HYPERFRAMES_CONFIG_OUTPUT = '%s'
+try {
+    & $launcher /d /c 'set OPENCODE_CONFIG_CONTENT>"%%HERDR_HYPERFRAMES_CONFIG_OUTPUT%%"'
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $env:HERDR_HYPERFRAMES_CONFIG_OUTPUT -PathType Leaf)) {
+        throw 'Launcher child did not capture its inline configuration.'
+    }
+    $captured = [IO.File]::ReadAllText($env:HERDR_HYPERFRAMES_CONFIG_OUTPUT).Trim()
+} finally {
+    Remove-Item Env:\HERDR_HYPERFRAMES_CONFIG_OUTPUT -ErrorAction SilentlyContinue
+}
+$prefix = 'OPENCODE_CONFIG_CONTENT='
+if (-not $captured.StartsWith($prefix, [StringComparison]::Ordinal)) { throw "Launcher child returned unexpected configuration: $captured" }
+$output = $captured.Substring($prefix.Length)
+$config = $output | ConvertFrom-Json
 if (@($config.skills.paths).Count -ne 1 -or [string]$config.skills.paths[0] -ine $skillRoot) {
-    throw "Launcher supplied an unexpected skill path: $($output[0])"
+    throw "Launcher supplied an unexpected skill path: $output"
 }
 if (Test-Path Env:\OPENCODE_CONFIG_CONTENT) { throw 'Launcher leaked inline OpenCode configuration.' }
 $existing = '{"model":"preserve"}'
@@ -90,7 +102,7 @@ try { & $launcher /d /c 'exit 0' } catch {
 if (-not $rejected -or $env:OPENCODE_CONFIG_CONTENT -cne $existing) {
     throw 'Launcher replaced or accepted existing inline OpenCode configuration.'
 }
-`, quote(stackPath), quote(skillsRoot), quote(launcher), quote(filepath.Dir(fakeOpenCode)))
+`, quote(stackPath), quote(skillsRoot), quote(launcher), quote(filepath.Dir(fakeOpenCode)), quote(configOutput))
 	scriptPath := filepath.Join(root, "hyperframes-opencode-test.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
