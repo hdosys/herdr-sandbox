@@ -89,7 +89,10 @@ $prefix = 'OPENCODE_CONFIG_CONTENT='
 if (-not $captured.StartsWith($prefix, [StringComparison]::Ordinal)) { throw "Launcher child returned unexpected configuration: $captured" }
 $output = $captured.Substring($prefix.Length)
 $config = $output | ConvertFrom-Json
-if (@($config.skills.paths).Count -ne 1 -or [string]$config.skills.paths[0] -ine $skillRoot) {
+$configPaths = @($config.skills.paths)
+$actualSkillRoot = if ($configPaths.Count -eq 1) { [string]$configPaths[0] } else { '' }
+if ($configPaths.Count -ne 1 -or
+    -not [string]::Equals($actualSkillRoot, $skillRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Launcher supplied an unexpected skill path: $output"
 }
 if (Test-Path Env:\OPENCODE_CONFIG_CONTENT) { throw 'Launcher leaked inline OpenCode configuration.' }
