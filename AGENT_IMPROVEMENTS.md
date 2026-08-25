@@ -165,6 +165,13 @@ cross-project workflow in the global OpenCode configuration repository.
   active guest in 11.553 seconds, and keeps expensive installed acceptance in its
   explicit release or deferred tier. Expected benefit: preserve the real installer
   gate while avoiding repeated multi-minute runs for locally diagnosable inputs.
+- **Status: proposed. Check replaceable tool executables before current-Sandbox gates.**
+  Evidence: `package-current-sandbox v0.0.19` spent 1,023.743 seconds before a
+  concurrent process holding the app-owned Python alias blocked its required
+  refresh. Extend `provisioning-preflight` with read-only exact-image checks for
+  app-owned executable aliases that the selected plan must replace, and report the
+  owner before package build or installation. Expected benefit: turn a late
+  environment collision into a subsecond actionable release-gate result.
 - **Status: done. Match the Visual Studio parser fixture to Current.**
   Evidence: the signed Visual Studio 18 channel used a build-qualified ID and
   numeric product-line version, while the focused descriptor fixture still used
