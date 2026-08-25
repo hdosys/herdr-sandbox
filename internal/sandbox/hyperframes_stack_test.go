@@ -79,7 +79,7 @@ Write-StackHyperFramesOpenCodeLauncher -Path $launcher -SkillRoot $skillRoot
 $env:Path = '%s;' + $env:Path
 Remove-Item Env:\OPENCODE_CONFIG_CONTENT -ErrorAction SilentlyContinue
 $env:HERDR_HYPERFRAMES_TEST_HELPER = '1'
-$env:HERDR_HYPERFRAMES_EXPECTED_SKILL_ROOT = $skillRoot
+$env:HERDR_HYPERFRAMES_EXPECTED_SKILL_ROOT = [IO.Path]::GetFullPath($skillRoot)
 try {
     & $launcher '-test.run=^TestHyperFramesOpenCodeChild$'
     if ($LASTEXITCODE -ne 0) { throw "Launcher child failed with exit code $LASTEXITCODE." }
