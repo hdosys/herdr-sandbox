@@ -37,10 +37,6 @@ artifacts remain available on the
 
 ### Fixed
 
-- Retained provisioning now validates and executes existing app-local `python` and
-  `python3` commands instead of replacing executable files that active tools may
-  be using. Missing commands still come from the verified installed Python
-  publisher.
 - WinGet package read-back no longer warns when a numeric version differs only by
   omitted trailing zero fields or when a package name repeats its package ID.
 - Visual Studio Build Tools layout preparation now accepts current Visual Studio

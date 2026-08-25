@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,14 +32,16 @@ func TestHyperFramesOpenCodeLauncherUsesProcessScopedSkillsInWindowsPowerShell51
 		t.Fatal(err)
 	}
 	fakeOpenCode := filepath.Join(root, "commands", "opencode.exe")
-	configOutput := filepath.Join(root, "opencode-config.txt")
 	if err := os.MkdirAll(filepath.Dir(fakeOpenCode), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	commandInterpreter := os.Getenv("ComSpec")
-	commandBytes, err := os.ReadFile(commandInterpreter)
+	testExecutable, err := os.Executable()
 	if err != nil {
-		t.Fatalf("read command interpreter: %v", err)
+		t.Fatalf("resolve test executable: %v", err)
+	}
+	commandBytes, err := os.ReadFile(testExecutable)
+	if err != nil {
+		t.Fatalf("read test executable: %v", err)
 	}
 	if err := os.WriteFile(fakeOpenCode, commandBytes, 0o700); err != nil {
 		t.Fatalf("write fake OpenCode command: %v", err)
@@ -75,37 +78,26 @@ $launcher = '%s'
 Write-StackHyperFramesOpenCodeLauncher -Path $launcher -SkillRoot $skillRoot
 $env:Path = '%s;' + $env:Path
 Remove-Item Env:\OPENCODE_CONFIG_CONTENT -ErrorAction SilentlyContinue
-$env:HERDR_HYPERFRAMES_CONFIG_OUTPUT = '%s'
+$env:HERDR_HYPERFRAMES_TEST_HELPER = '1'
+$env:HERDR_HYPERFRAMES_EXPECTED_SKILL_ROOT = $skillRoot
 try {
-    & $launcher /d /c 'set OPENCODE_CONFIG_CONTENT>"%%HERDR_HYPERFRAMES_CONFIG_OUTPUT%%"'
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $env:HERDR_HYPERFRAMES_CONFIG_OUTPUT -PathType Leaf)) {
-        throw 'Launcher child did not capture its inline configuration.'
-    }
-    $captured = [IO.File]::ReadAllText($env:HERDR_HYPERFRAMES_CONFIG_OUTPUT).Trim()
+    & $launcher '-test.run=^TestHyperFramesOpenCodeChild$'
+    if ($LASTEXITCODE -ne 0) { throw "Launcher child failed with exit code $LASTEXITCODE." }
 } finally {
-    Remove-Item Env:\HERDR_HYPERFRAMES_CONFIG_OUTPUT -ErrorAction SilentlyContinue
-}
-$prefix = 'OPENCODE_CONFIG_CONTENT='
-if (-not $captured.StartsWith($prefix, [StringComparison]::Ordinal)) { throw "Launcher child returned unexpected configuration: $captured" }
-$output = $captured.Substring($prefix.Length)
-$config = $output | ConvertFrom-Json
-$configPaths = @($config.skills.paths)
-$actualSkillRoot = if ($configPaths.Count -eq 1) { [string]$configPaths[0] } else { '' }
-if ($configPaths.Count -ne 1 -or
-    -not [string]::Equals($actualSkillRoot, $skillRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Launcher supplied an unexpected skill path: $output"
+    Remove-Item Env:\HERDR_HYPERFRAMES_EXPECTED_SKILL_ROOT -ErrorAction SilentlyContinue
+    Remove-Item Env:\HERDR_HYPERFRAMES_TEST_HELPER -ErrorAction SilentlyContinue
 }
 if (Test-Path Env:\OPENCODE_CONFIG_CONTENT) { throw 'Launcher leaked inline OpenCode configuration.' }
 $existing = '{"model":"preserve"}'
 $env:OPENCODE_CONFIG_CONTENT = $existing
 $rejected = $false
-try { & $launcher /d /c 'exit 0' } catch {
+try { & $launcher '-test.run=^TestHyperFramesOpenCodeChild$' } catch {
     $rejected = $_.Exception.Message -like '*requires OPENCODE_CONFIG_CONTENT to be unset*'
 }
 if (-not $rejected -or $env:OPENCODE_CONFIG_CONTENT -cne $existing) {
     throw 'Launcher replaced or accepted existing inline OpenCode configuration.'
 }
-`, quote(stackPath), quote(skillsRoot), quote(launcher), quote(filepath.Dir(fakeOpenCode)), quote(configOutput))
+`, quote(stackPath), quote(skillsRoot), quote(launcher), quote(filepath.Dir(fakeOpenCode)))
 	scriptPath := filepath.Join(root, "hyperframes-opencode-test.ps1")
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
@@ -114,5 +106,24 @@ if (-not $rejected -or $env:OPENCODE_CONFIG_CONTENT -cne $existing) {
 	command.Env = append(os.Environ(), "PSModulePath="+os.Getenv("PSModulePath"))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("HyperFrames OpenCode activation contract: %v: %s", err, output)
+	}
+}
+
+func TestHyperFramesOpenCodeChild(t *testing.T) {
+	if os.Getenv("HERDR_HYPERFRAMES_TEST_HELPER") != "1" {
+		return
+	}
+	var config struct {
+		Skills struct {
+			Paths []string `json:"paths"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(os.Getenv("OPENCODE_CONFIG_CONTENT")), &config); err != nil {
+		t.Fatalf("decode inline OpenCode configuration: %v", err)
+	}
+	expected := os.Getenv("HERDR_HYPERFRAMES_EXPECTED_SKILL_ROOT")
+	if len(config.Skills.Paths) != 1 ||
+		!strings.EqualFold(filepath.Clean(config.Skills.Paths[0]), filepath.Clean(expected)) {
+		t.Fatalf("inline OpenCode skill paths = %q, want %q", config.Skills.Paths, expected)
 	}
 }
