@@ -1246,7 +1246,7 @@ try {
 	}
 }
 
-func TestWinGetListParserAcceptsInstalledIDAndWarnsOnVersionDriftInWindowsPowerShell51(t *testing.T) {
+func TestWinGetListParserAcceptsEquivalentVersionsAndRepeatedNameInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
 	}
@@ -1256,23 +1256,36 @@ func TestWinGetListParserAcceptsInstalledIDAndWarnsOnVersionDriftInWindowsPowerS
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ProvisioningWinGetListOutput' }, $true)
-Invoke-Expression $definition.Extent.Text
+foreach ($name in @('Test-ProvisioningWinGetVersionEquivalent', 'Test-ProvisioningWinGetListOutput')) {
+    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+    Invoke-Expression $definition.Extent.Text
+}
 $metadata = [pscustomobject]@{ Id = 'Microsoft.PowerShell'; Version = '7.6.4.0' }
 $matching = @('Name       Id                   Version', '---------------------------------------', 'PowerShell Microsoft.PowerShell 7.6.4.0')
 $wrongVersion = @('PowerShell Microsoft.PowerShell 7.6.3.0')
 $duplicate = @('PowerShell Microsoft.PowerShell 7.6.4.0', 'PowerShell Microsoft.PowerShell 7.6.4.0')
 $latestMetadata = [pscustomobject]@{ Id = 'Microsoft.PowerShell'; Version = '' }
+$sevenZipMetadata = [pscustomobject]@{ Id = '7zip.7zip'; Version = '26.02' }
+$sevenZip = @('7-Zip 7zip.7zip 26.02.00.0')
+$xamlMetadata = [pscustomobject]@{ Id = 'Microsoft.UI.Xaml.2.8'; Version = '8.2310.30001.0' }
+$xaml = @('Microsoft.UI.Xaml.2.8 Microsoft.UI.Xaml.2.8 8.2310.30001.0')
 $warnings = @()
+$sevenZipWarnings = @()
+$xamlWarnings = @()
 if (-not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $metadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $wrongVersion -Metadata $metadata -WarningVariable warnings) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $metadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $latestMetadata) -or
-    -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $latestMetadata)) {
+    -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $latestMetadata) -or
+    -not (Test-ProvisioningWinGetListOutput -Lines $sevenZip -Metadata $sevenZipMetadata -WarningVariable sevenZipWarnings) -or
+    -not (Test-ProvisioningWinGetListOutput -Lines $xaml -Metadata $xamlMetadata -WarningVariable xamlWarnings)) {
     throw 'WinGet list parser did not recognize an installed exact ID.'
 }
 if ($warnings.Count -ne 1 -or [string]$warnings[0] -notmatch 'Provisioning will continue') {
     throw 'WinGet version drift did not emit one continuation warning.'
+}
+if ($sevenZipWarnings.Count -ne 0 -or $xamlWarnings.Count -ne 0) {
+    throw 'Equivalent WinGet package versions emitted a warning.'
 }
 `, quote(baseScript))
 	powerShell := mustWindowsPowerShellPath(t)

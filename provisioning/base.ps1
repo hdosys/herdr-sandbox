@@ -1292,6 +1292,29 @@ function Assert-ProvisioningAuthenticodeSignature {
     }
 }
 
+function Test-ProvisioningWinGetVersionEquivalent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Actual,
+        [Parameter(Mandatory = $true)]
+        [string]$Expected
+    )
+
+    if ($Actual -ceq $Expected) {
+        return $true
+    }
+    $actualVersion = $null
+    $expectedVersion = $null
+    if (-not [Version]::TryParse($Actual, [ref]$actualVersion) -or
+        -not [Version]::TryParse($Expected, [ref]$expectedVersion)) {
+        return $false
+    }
+    return $actualVersion.Major -eq $expectedVersion.Major -and
+        $actualVersion.Minor -eq $expectedVersion.Minor -and
+        [Math]::Max(0, $actualVersion.Build) -eq [Math]::Max(0, $expectedVersion.Build) -and
+        [Math]::Max(0, $actualVersion.Revision) -eq [Math]::Max(0, $expectedVersion.Revision)
+}
+
 function Test-ProvisioningWinGetListOutput {
     param(
         [Parameter(Mandatory = $true)]
@@ -1301,19 +1324,24 @@ function Test-ProvisioningWinGetListOutput {
         [object]$Metadata
     )
 
-    $linePattern = '(?:^|\s)' + [Regex]::Escape([string]$Metadata.Id) +
-        '\s+(?<version>\S+)(?:\s|$)'
     $installedVersions = @($Lines | ForEach-Object {
-            $match = [Regex]::Match([string]$_, $linePattern,
-                [Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if ($match.Success) { [string]$match.Groups['version'].Value }
+            $fields = @(([string]$_ -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            $lineVersion = ''
+            for ($index = 0; $index -lt ($fields.Count - 1); $index++) {
+                if ($fields[$index] -ieq [string]$Metadata.Id) {
+                    $lineVersion = [string]$fields[$index + 1]
+                }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($lineVersion)) { $lineVersion }
         } | Sort-Object -Unique)
     if ($installedVersions.Count -eq 0) {
         return $false
     }
     $expectedVersion = [string]$Metadata.Version
     if (-not [string]::IsNullOrWhiteSpace($expectedVersion) -and
-        @($installedVersions | Where-Object { $_ -ceq $expectedVersion }).Count -eq 0) {
+        @($installedVersions | Where-Object {
+                Test-ProvisioningWinGetVersionEquivalent -Actual $_ -Expected $expectedVersion
+            }).Count -eq 0) {
         Write-Warning "Package $($Metadata.Id) is installed, but WinGet reports $($installedVersions -join ', ') instead of $expectedVersion. Provisioning will continue with the installed package."
     }
     return $true

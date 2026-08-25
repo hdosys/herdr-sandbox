@@ -37,6 +37,8 @@ artifacts remain available on the
 
 ### Fixed
 
+- WinGet package read-back no longer warns when a numeric version differs only by
+  omitted trailing zero fields or when a package name repeats its package ID.
 - Visual Studio Build Tools layout preparation now accepts current Visual Studio
   18 channel metadata, including build-qualified channel IDs and numeric
   product-line versions.
