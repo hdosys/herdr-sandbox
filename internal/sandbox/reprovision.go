@@ -117,6 +117,18 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
 		return Connection{}, err
 	}
+	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, provisioning.CredentialSync) {
+		if err := updateOperation("credential-sync", "Applying selected credentials before retained provisioning."); err != nil {
+			return Connection{}, err
+		}
+		fmt.Fprintln(options.Output, "Applying and verifying selected credentials before retained provisioning...")
+		syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
+		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
+		cancelSync()
+		if err != nil {
+			return Connection{}, err
+		}
+	}
 	if err := updateOperation("development-provisioning", "Running the current Base, user, and project provisioning."); err != nil {
 		return Connection{}, err
 	}
@@ -315,6 +327,18 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	}, differences, nil
 }
 
+func shouldSyncCredentialsBeforeRetainedProvisioning(plan runPlan, snapshot provisioningSnapshot, credentials credentialSyncConfiguration) bool {
+	if len(credentialSyncNames(credentials)) == 0 {
+		return false
+	}
+	previous, previousFound, err := readBoundedRegularFile(filepath.Join(plan.InputDirectory, "provisioning", wingetPackagePlanFileName), maximumConfigurationFileSize)
+	if err != nil || !previousFound {
+		return false
+	}
+	current, currentFound, err := readBoundedRegularFile(snapshot.PackagePlanPath, maximumConfigurationFileSize)
+	return err == nil && currentFound && bytes.Equal(previous, current)
+}
+
 func readRetainedWSB(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -382,12 +406,16 @@ func runRetainedProvisioning(ctx context.Context, connection Connection, snapsho
 			if required {
 				waitErr = errors.New("retained provisioning did not publish scheduled Explorer restart status")
 			}
-		} else {
+		} else if ctx.Err() == nil {
 			restartContext, cancelRestart := context.WithTimeout(context.WithoutCancel(ctx), explorerRestartStatusTimeout)
 			_, waitErr = waitForExplorerRestartStatus(restartContext, restartStatusPath, restartID, restartTaskName)
 			cancelRestart()
 		}
-		cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		cleanupTimeout := 30 * time.Second
+		if ctx.Err() != nil {
+			cleanupTimeout = 10 * time.Second
+		}
+		cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		cleanupErr := cleanupRetainedExplorerRestartTask(cleanupContext, connection, restartTaskName)
 		cancelCleanup()
 		return found, errors.Join(waitErr, cleanupErr)

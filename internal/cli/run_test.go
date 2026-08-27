@@ -633,6 +633,25 @@ func TestRunUpExplicitTimeoutOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dependencies := defaultCommandDependencies()
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		return sandbox.HostConfigurationPullResult{}, nil
+	}
+	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+		cancel()
+		return sandbox.Connection{}, context.Canceled
+	}
+	var stderr bytes.Buffer
+	code := runWithCommandDependencies(ctx, []string{"up", "--no-attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
+	if code != 130 || !strings.Contains(stderr.String(), "provisioning cancelled") {
+		t.Fatalf("cancelled up code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
 func TestRunUpRejectsIncompatibleHostHerdrBeforeCleanup(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {

@@ -419,9 +419,11 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("attach to guest Herdr server: %w", err)
 	}
+	fmt.Fprintln(stdout, "Detached. Verifying that the guest Herdr server remains ready...")
 	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return fmt.Errorf("verify guest Herdr persistence after detach: %w", err)
 	}
+	fmt.Fprintln(stdout, "Guest Herdr server remains ready.")
 	return nil
 }
 

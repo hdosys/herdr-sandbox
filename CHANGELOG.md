@@ -22,6 +22,14 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Enabling credential transfer for an existing ready Sandbox now applies selected
+  OpenCode, Claude Code, Codex, GitHub CLI, Pi, and TradingView credentials before
+  unchanged-package retained provisioning performs its longer idempotent refresh.
+- Ctrl+C now cancels retained provisioning without waiting up to 90 seconds for an
+  Explorer restart, reports standard exit status 130, and restores immediate
+  termination behavior for a second interrupt.
+- Detaching from Herdr now labels the bounded guest-server persistence check and
+  confirms when the guest remains ready instead of pausing silently.
 - Retained provisioning now restores each app-owned tool directory to the front of
   machine `PATH` after an external installer prepends a competing runtime path.
 

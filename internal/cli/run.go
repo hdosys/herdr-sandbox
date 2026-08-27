@@ -419,6 +419,10 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 
 	connection, err := dependencies.up(ctx, options, hostHerdr)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			fmt.Fprintln(stderr, "sandbox: provisioning cancelled; Sandbox state was preserved")
+			return 130
+		}
 		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}

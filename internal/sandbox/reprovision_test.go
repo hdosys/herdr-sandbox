@@ -149,6 +149,33 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	}
 }
 
+func TestCredentialSyncRunsBeforeUnchangedRetainedProvisioning(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "input")
+	previous := filepath.Join(input, "provisioning", wingetPackagePlanFileName)
+	current := filepath.Join(root, "snapshot", wingetPackagePlanFileName)
+	for _, directory := range []string{filepath.Dir(previous), filepath.Dir(current)} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, previous, `{"schemaVersion":1,"defaults":[],"additions":[]}`)
+	writeTestFile(t, current, `{"schemaVersion":1,"defaults":[],"additions":[]}`)
+	plan := runPlan{InputDirectory: input}
+	snapshot := provisioningSnapshot{PackagePlanPath: current}
+	credentials := credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
+	if !shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, credentials) {
+		t.Fatal("unchanged retained package plan did not schedule early credential sync")
+	}
+	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, credentialSyncConfiguration{}) {
+		t.Fatal("disabled credentials scheduled early credential sync")
+	}
+	writeTestFile(t, current, `{"schemaVersion":1,"defaults":[{"id":"SST.opencode","version":""}],"additions":[]}`)
+	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, credentials) {
+		t.Fatal("changed retained package plan scheduled credential sync before package provisioning")
+	}
+}
+
 func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testing.T) {
 	directory := t.TempDir()
 	projects := filepath.Join(directory, "projects")
