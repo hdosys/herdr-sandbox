@@ -19,6 +19,10 @@ func TestReleasePrecheckRunsEachGateOnceInPreTagOrder(t *testing.T) {
 		&bytes.Buffer{},
 		&bytes.Buffer{},
 		func(context.Context, io.Writer, io.Writer) error {
+			events = append(events, "resource-preflight")
+			return nil
+		},
+		func(context.Context, io.Writer, io.Writer) error {
 			verifyCalls++
 			events = append(events, "verify-integration")
 			return nil
@@ -39,7 +43,7 @@ func TestReleasePrecheckRunsEachGateOnceInPreTagOrder(t *testing.T) {
 	if verifyCalls != 1 || installedCalls != 1 {
 		t.Fatalf("gate calls = verify:%d installed:%d", verifyCalls, installedCalls)
 	}
-	want := "verify-integration,frozen-source,installed-candidate:v0.0.42"
+	want := "resource-preflight,verify-integration,frozen-source,installed-candidate:v0.0.42"
 	if strings.Join(events, ",") != want {
 		t.Fatalf("release-precheck events = %q, want %q", events, want)
 	}
@@ -52,6 +56,7 @@ func TestReleasePrecheckStopsBeforeInstalledAcceptanceOnEarlierFailure(t *testin
 		"v0.0.42",
 		&bytes.Buffer{},
 		&bytes.Buffer{},
+		func(context.Context, io.Writer, io.Writer) error { return nil },
 		func(context.Context, io.Writer, io.Writer) error { return errors.New("integration failed") },
 		func(context.Context) error { return nil },
 		func(context.Context, string, io.Writer, io.Writer) error {
@@ -61,6 +66,26 @@ func TestReleasePrecheckStopsBeforeInstalledAcceptanceOnEarlierFailure(t *testin
 	)
 	if err == nil || !strings.Contains(err.Error(), "integration verification") || installedCalled {
 		t.Fatalf("release-precheck failure = %v, installed called = %t", err, installedCalled)
+	}
+}
+
+func TestReleasePrecheckStopsBeforeIntegrationOnResourceFailure(t *testing.T) {
+	verifyCalled := false
+	err := runReleasePrecheckGates(
+		t.Context(),
+		"v0.0.42",
+		&bytes.Buffer{},
+		&bytes.Buffer{},
+		func(context.Context, io.Writer, io.Writer) error { return errors.New("insufficient capacity") },
+		func(context.Context, io.Writer, io.Writer) error {
+			verifyCalled = true
+			return nil
+		},
+		func(context.Context) error { return nil },
+		func(context.Context, string, io.Writer, io.Writer) error { return nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "resource preflight") || verifyCalled {
+		t.Fatalf("release-precheck failure = %v, integration called = %t", err, verifyCalled)
 	}
 }
 

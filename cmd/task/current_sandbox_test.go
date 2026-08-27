@@ -49,3 +49,13 @@ func TestRestoreGlobalGitSafeDirectoriesPreservesExistingEntries(t *testing.T) {
 		t.Fatalf("safe directories = %v", got)
 	}
 }
+
+func TestValidateCurrentSandboxReleaseCapacityRejectsInsufficientSpace(t *testing.T) {
+	if err := validateCurrentSandboxReleaseCapacity(`C:\`, currentSandboxReleaseMinimumFreeBytes); err != nil {
+		t.Fatalf("minimum release capacity: %v", err)
+	}
+	err := validateCurrentSandboxReleaseCapacity(`C:\`, currentSandboxReleaseMinimumFreeBytes-1)
+	if err == nil || !strings.Contains(err.Error(), "requires at least 4.00 GiB") || !strings.Contains(err.Error(), "C:\\") {
+		t.Fatalf("insufficient release capacity error = %v", err)
+	}
+}

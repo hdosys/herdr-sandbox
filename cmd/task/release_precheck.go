@@ -44,6 +44,7 @@ func releasePrecheck(ctx context.Context, tag string, stdout, stderr io.Writer) 
 		version.Tag,
 		stdout,
 		stderr,
+		currentSandboxProvisioningPreflight,
 		func(ctx context.Context, stdout, stderr io.Writer) error { return verify(ctx, stdout, stderr, false) },
 		requireFrozen,
 		packageCurrentSandbox,
@@ -62,10 +63,14 @@ func runReleasePrecheckGates(
 	ctx context.Context,
 	tag string,
 	stdout, stderr io.Writer,
+	resourcePreflight func(context.Context, io.Writer, io.Writer) error,
 	verifyIntegration func(context.Context, io.Writer, io.Writer) error,
 	requireFrozen func(context.Context) error,
 	installedAcceptance func(context.Context, string, io.Writer, io.Writer) error,
 ) error {
+	if err := resourcePreflight(ctx, stdout, stderr); err != nil {
+		return fmt.Errorf("release precheck resource preflight: %w", err)
+	}
 	if err := verifyIntegration(ctx, stdout, stderr); err != nil {
 		return fmt.Errorf("release precheck integration verification: %w", err)
 	}

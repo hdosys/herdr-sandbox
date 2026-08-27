@@ -180,11 +180,18 @@ behavior depends on that boundary.
 
 `go run ./cmd/task provisioning-preflight` must finish within 45 seconds and runs
 automatically before both current-Sandbox gates. It checks only already available
-current-guest inputs with the production parsers. It never installs, updates, or
-replaces a tool and does not replace installed or native acceptance.
+current-guest inputs, production parsers, and the task-owned minimum free capacity
+on the installation volume. `release-precheck` runs it before integration, and the
+installed-candidate path revalidates it immediately before that boundary. It never
+installs, updates, or replaces a tool and does not replace installed or native
+acceptance.
 
 For installer work, `go run ./cmd/task package VERSION` owns the early
-user-testable candidate. Never run `package-current-sandbox` from a dirty or
+user-testable candidate. Run it before `package-current-sandbox` and immediately
+report the installer path, content hash, build time, and status `candidate;
+installed acceptance pending`. Do not delay that handoff for documentation,
+repository administration, private queue routing, or cleanup, and do not describe
+the candidate as accepted. Never run `package-current-sandbox` from a dirty or
 pre-commit checkout. Freeze production source, complete the focused gates, commit
 and push, then rebuild once from that immutable commit. Run exactly one
 `package-current-sandbox VERSION` acceptance only for an explicitly requested

@@ -22,6 +22,9 @@ const (
 	currentSandboxPayloadEnvironment   = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
 	currentSandboxPreflightEnvironment = "HERDR_SANDBOX_CURRENT_PREFLIGHT"
 	currentSandboxPreflightTimeout     = 45 * time.Second
+	// The current all-stack release set includes a publisher-declared 3,171 MB
+	// installer requirement and still needs space for candidate extraction.
+	currentSandboxReleaseMinimumFreeBytes uint64 = 4 << 30
 )
 
 var currentSandboxFixtureSafeDirectories = []string{
@@ -57,6 +60,9 @@ func currentSandboxProvisioningPreflight(ctx context.Context, stdout, stderr io.
 	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") || os.Getenv("HERDR_ENV") != "1" {
 		return errors.New("provisioning-preflight requires the active Herdr-managed Windows Sandbox")
 	}
+	if err := currentSandboxReleaseResourcePreflight(stdout); err != nil {
+		return err
+	}
 	preflightContext, cancel := context.WithTimeout(ctx, currentSandboxPreflightTimeout)
 	defer cancel()
 	pattern := "^(TestAudioGridderReleaseManifestBindsSourceAndInstalledFilesInWindowsPowerShell51|TestCurrentProvisioningInputParsersInWindowsPowerShell51|TestCurrentSandboxProvisioningPreflight)$"
@@ -70,6 +76,41 @@ func currentSandboxProvisioningPreflight(ctx context.Context, stdout, stderr io.
 	}
 	_, err := fmt.Fprintln(stdout, "Current-Sandbox provisioning preflight passed.")
 	return err
+}
+
+func currentSandboxReleaseResourcePreflight(stdout io.Writer) error {
+	localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+	volume := filepath.VolumeName(localAppData)
+	if volume == "" {
+		return errors.New("resolve current-Sandbox installation volume from LOCALAPPDATA")
+	}
+	root := volume + string(os.PathSeparator)
+	available, err := currentSandboxAvailableDiskBytes(root)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(
+		stdout,
+		"Current-Sandbox resource preflight: %s has %.2f GiB free; %.2f GiB required.\n",
+		root,
+		float64(available)/(1<<30),
+		float64(currentSandboxReleaseMinimumFreeBytes)/(1<<30),
+	); err != nil {
+		return err
+	}
+	return validateCurrentSandboxReleaseCapacity(root, available)
+}
+
+func validateCurrentSandboxReleaseCapacity(root string, available uint64) error {
+	if available < currentSandboxReleaseMinimumFreeBytes {
+		return fmt.Errorf(
+			"current-Sandbox release acceptance requires at least %.2f GiB free on %s; %.2f GiB available",
+			float64(currentSandboxReleaseMinimumFreeBytes)/(1<<30),
+			root,
+			float64(available)/(1<<30),
+		)
+	}
+	return nil
 }
 
 func nativeCurrentSandboxProvisioning(ctx context.Context, stdout, stderr io.Writer, payloadDirectory string) error {
