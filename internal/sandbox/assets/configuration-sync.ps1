@@ -772,13 +772,20 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
     $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
-    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|githubCopilot|gitTrackedDeletions|herdrHookSourcePaths|opencode|pi|schemaVersion' -or
-        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 3 -or
+    if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|credentialSync|githubCopilot|gitTrackedDeletions|herdrHookSourcePaths|opencode|pi|schemaVersion' -or
+        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 4 -or
         $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
         $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or
         $agentSync.pi -isnot [bool] -or $null -eq $agentSync.gitTrackedDeletions -or
         $null -eq $agentSync.herdrHookSourcePaths) {
         throw 'Coding-agent sync manifest has an unsupported contract.'
+    }
+    $credentialSyncProperties = @($agentSync.credentialSync.PSObject.Properties.Name | Sort-Object)
+    if (($credentialSyncProperties -join '|') -cne 'claudeCode|codex|githubCLI|opencode|pi|tradingView' -or
+        $agentSync.credentialSync.opencode -isnot [bool] -or $agentSync.credentialSync.claudeCode -isnot [bool] -or
+        $agentSync.credentialSync.codex -isnot [bool] -or $agentSync.credentialSync.githubCLI -isnot [bool] -or
+        $agentSync.credentialSync.pi -isnot [bool] -or $agentSync.credentialSync.tradingView -isnot [bool]) {
+        throw 'Credential sync manifest has an unsupported contract.'
     }
     $allowedGitDeletionRoots = @{
         'opencode' = [bool]$agentSync.opencode
@@ -852,6 +859,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $tradingViewAuthenticatedCookies = 0
     $tradingViewAuthenticationVerified = $false
     $tradingViewStackEnabled = Test-Path -LiteralPath (Join-Path $expanded 'tradingview\authentication.json') -PathType Leaf
+    $tradingViewCredentialSyncEnabled = $tradingViewStackEnabled -and [bool]$agentSync.credentialSync.tradingView
 
     if ([bool]$agentSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode')
@@ -859,6 +867,9 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $openCodeDestination = Join-Path $env:USERPROFILE '.config\opencode'
         Sync-VerifiedConfigurationRoot -Source $openCodeSource -Destination $openCodeDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $openCodeDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'opencode')
+    }
+    if ([bool]$agentSync.credentialSync.opencode) {
+        [Console]::Error.WriteLine('[config-sync] apply-opencode-authentication')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'opencode-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.local\share\opencode\auth.json')
     }
 
@@ -883,8 +894,11 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
                 -SourceHookPath ([string]$claudeHookSource.Value) `
                 -DestinationHookPath (Join-Path $claudeDestination 'hooks\herdr-agent-state.ps1')
         }
-        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $claudeDestination '.credentials.json')
         Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination (Join-Path $env:USERPROFILE '.claude.json')
+    }
+    if ([bool]$agentSync.credentialSync.claudeCode) {
+        [Console]::Error.WriteLine('[config-sync] apply-claude-code-authentication')
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $env:USERPROFILE '.claude\.credentials.json')
     }
 
     if ([bool]$agentSync.codex) {
@@ -898,6 +912,10 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
                 -SourceHookPath ([string]$codexHookSource.Value) `
                 -DestinationHookPath (Join-Path $codexDestination 'herdr-agent-state.ps1')
         }
+    }
+    if ([bool]$agentSync.credentialSync.codex) {
+        [Console]::Error.WriteLine('[config-sync] apply-codex-authentication')
+        $codexDestination = Join-Path $env:USERPROFILE '.codex'
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\auth.json') -Destination (Join-Path $codexDestination 'auth.json')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\.credentials.json') -Destination (Join-Path $codexDestination '.credentials.json')
     }
@@ -920,7 +938,10 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $piDestination = Join-Path $env:USERPROFILE '.pi\agent'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'pi') -Destination $piDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $piDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'pi')
-        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $piDestination 'auth.json')
+    }
+    if ([bool]$agentSync.credentialSync.pi) {
+        [Console]::Error.WriteLine('[config-sync] apply-pi-authentication')
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.pi\agent\auth.json')
     }
 
     if ([bool]$agentSync.codex -or [bool]$agentSync.githubCopilot -or [bool]$agentSync.pi) {
@@ -1085,11 +1106,18 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     [Console]::Error.WriteLine('[config-sync] apply-github-cli')
     $githubCLISource = Join-Path $expanded 'github-cli'
     $githubCLIDestination = Join-Path $env:APPDATA 'GitHub CLI'
-    foreach ($name in @('config.yml', 'hosts.yml')) {
-        $source = Join-Path $githubCLISource $name
-        if (Test-Path -LiteralPath $source -PathType Leaf) {
-            Copy-VerifiedConfigurationFile -Source $source -Destination (Join-Path $githubCLIDestination $name)
-        }
+    $githubCLIConfigurationPath = Join-Path $githubCLISource 'config.yml'
+    if (Test-Path -LiteralPath $githubCLIConfigurationPath -PathType Leaf) {
+        Copy-VerifiedConfigurationFile -Source $githubCLIConfigurationPath -Destination (Join-Path $githubCLIDestination 'config.yml')
+    }
+    }
+
+    if ($githubCLIEnabled -and [bool]$agentSync.credentialSync.githubCLI) {
+    $githubCLISource = Join-Path $expanded 'github-cli'
+    $githubCLIDestination = Join-Path $env:APPDATA 'GitHub CLI'
+    $githubCLIHostsPath = Join-Path $githubCLISource 'hosts.yml'
+    if (Test-Path -LiteralPath $githubCLIHostsPath -PathType Leaf) {
+        Copy-VerifiedConfigurationFile -Source $githubCLIHostsPath -Destination (Join-Path $githubCLIDestination 'hosts.yml')
     }
     foreach ($name in @('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')) {
         Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
@@ -1374,7 +1402,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     if (Test-Path -LiteralPath $tradingViewAuthenticationPath) {
         throw 'TradingView authentication input cleanup failed.'
     }
-    $tradingViewAuthenticationVerified = $true
+    $tradingViewAuthenticationVerified = $tradingViewCredentialSyncEnabled
     }
 
     [Console]::Error.WriteLine('[config-sync] apply-herdr')

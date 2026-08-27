@@ -123,8 +123,11 @@ func TestDevelopmentConfigurationArchiveIncludesOnlyFilteredTradingViewAuthentic
 	}
 	archive, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		TradingViewAuthentication: payload,
-		HerdrConfig:               herdrConfig,
-		PackagePlan:               packagePlan,
+		CodingAgents: codingAgentConfigurationSources{
+			CredentialSync: credentialSyncConfiguration{TradingView: true},
+		},
+		HerdrConfig: herdrConfig,
+		PackagePlan: packagePlan,
 	}, []byte("Write-Output 'apply fixture'\n"))
 	if err != nil {
 		t.Fatalf("build archive with TradingView authentication: %v", err)
@@ -153,6 +156,51 @@ func TestDevelopmentConfigurationArchiveIncludesOnlyFilteredTradingViewAuthentic
 	if !bytes.Contains(tradingViewInitialSettings, []byte(`"https://www.tradingview.com/chart/"`)) ||
 		bytes.Contains(tradingViewInitialSettings, []byte(`tvd://new-tab`)) {
 		t.Fatal("TradingView initial settings do not open one controllable chart")
+	}
+}
+
+func TestDevelopmentConfigurationArchiveKeepsTradingViewStackWithoutCredentials(t *testing.T) {
+	root := t.TempDir()
+	packagePlan := filepath.Join(root, wingetPackagePlanFileName)
+	writeTestFile(t, packagePlan, `{}`)
+	herdrConfig := filepath.Join(root, "herdr-config.toml")
+	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
+	emptyPayload, _, err := emptyTradingViewAuthenticationPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
+		TradingViewAuthentication: emptyPayload,
+		HerdrConfig:               herdrConfig,
+		PackagePlan:               packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n"))
+	if err != nil {
+		t.Fatalf("build TradingView stack archive without credentials: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]bool{}
+	for _, file := range reader.File {
+		entries[file.Name] = true
+	}
+	for _, required := range []string{tradingViewAuthenticationArchivePath, tradingViewCookieSyncSourceArchivePath, tradingViewSettingsArchivePath} {
+		if !entries[required] {
+			t.Fatalf("TradingView stack archive without credentials is missing %s", required)
+		}
+	}
+
+	credentialPayload, _, err := encodeTradingViewAuthentication(testTradingViewAuthentication("must-not-transfer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
+		TradingViewAuthentication: credentialPayload,
+		HerdrConfig:               herdrConfig,
+		PackagePlan:               packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n")); err == nil || !strings.Contains(err.Error(), "credential sync is disabled") {
+		t.Fatalf("disabled TradingView credential archive error = %v", err)
 	}
 }
 

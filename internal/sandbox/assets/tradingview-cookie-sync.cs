@@ -1,4 +1,4 @@
-// herdr-sandbox-tradingview-cookie-sync-contract: 3
+// herdr-sandbox-tradingview-cookie-sync-contract: 4
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -59,7 +59,6 @@ namespace HerdrSandbox
             "source_scheme=2 AND source_port=443";
 
         private const string OwnedRows = "(" + SessionRows + ") OR (" + PreferenceRows + ")";
-        private const string AllowedRows = "(" + OwnedRows + ") AND has_cross_site_ancestor=1";
 
         public static int Import(string destination, TradingViewCookieRecord[] cookies)
         {
@@ -91,9 +90,10 @@ namespace HerdrSandbox
                 bool committed = false;
                 try
                 {
-                    Exec(database, "DELETE FROM cookies WHERE " + OwnedRows);
+                    string rowsToReplace = cookies.Length == 0 ? PreferenceRows : OwnedRows;
+                    Exec(database, "DELETE FROM cookies WHERE " + rowsToReplace);
                     InsertCookies(database, desired);
-                    VerifyCookies(database, desired);
+                    VerifyCookies(database, desired, rowsToReplace);
                     Exec(database, "COMMIT");
                     committed = true;
                 }
@@ -293,10 +293,10 @@ namespace HerdrSandbox
             }
         }
 
-        private static void VerifyCookies(IntPtr database, TradingViewCookieRecord[] expected)
+        private static void VerifyCookies(IntPtr database, TradingViewCookieRecord[] expected, string rowsToVerify)
         {
             List<TradingViewCookieRecord> actual = new List<TradingViewCookieRecord>();
-            IntPtr statement = Prepare(database, "SELECT " + CookieColumns + " FROM cookies WHERE " + AllowedRows +
+            IntPtr statement = Prepare(database, "SELECT " + CookieColumns + " FROM cookies WHERE (" + rowsToVerify + ") AND has_cross_site_ancestor=1" +
                 " ORDER BY lower(host_key), name, path, source_scheme, source_port");
             try
             {

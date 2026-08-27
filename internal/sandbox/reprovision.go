@@ -144,7 +144,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	}
 	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err
@@ -304,6 +304,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
+		CredentialSync:          provisioning.CredentialSync,
 		WindowsTerminal:         provisioning.WindowsTerminal,
 		Mounts:                  mounts,
 		ConfigPath:              active.ConfigPath,

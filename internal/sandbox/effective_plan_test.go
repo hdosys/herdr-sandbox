@@ -157,13 +157,14 @@ func TestBuildEffectivePlanExplainsEmptyWorkspaceNextAction(t *testing.T) {
 		StackScript:     filepath.Join("..", "..", "provisioning", stackProvisioningName),
 		MemoryMB:        defaultMemoryMB,
 		CodingAgentSync: defaultCodingAgentSyncConfiguration(),
+		CredentialSync:  credentialSyncConfiguration{OpenCode: true, TradingView: true},
 		Packages:        packages,
 		WindowsTerminal: terminal,
 	}, "missing-config.json", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Workspaces) != 0 || !strings.Contains(plan.NextAction, "init") {
+	if len(plan.Workspaces) != 0 || strings.Join(plan.CredentialTransfers, "|") != "OpenCode|TradingView" || !strings.Contains(plan.NextAction, "init") {
 		t.Fatalf("empty effective plan = %#v", plan)
 	}
 }

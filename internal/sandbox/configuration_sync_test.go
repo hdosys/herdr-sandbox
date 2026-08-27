@@ -83,6 +83,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		GitHubCLIAuthentication: githubAuthentication,
 		CodingAgents: codingAgentConfigurationSources{
 			Selection:              defaultCodingAgentSyncConfiguration(),
+			CredentialSync:         credentialSyncConfiguration{OpenCode: true, GitHubCLI: true},
 			OpenCodeDirectory:      openCode,
 			OpenCodeAuthentication: authentication,
 		},
@@ -313,8 +314,11 @@ func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitHubCLIHosts(t *test
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitHubCLIConfiguration:  githubCLI,
 		GitHubCLIAuthentication: []byte(`{"schemaVersion":1,"accounts":[]}`),
-		HerdrConfig:             herdrConfig,
-		PackagePlan:             packagePlan,
+		CodingAgents: codingAgentConfigurationSources{
+			CredentialSync: credentialSyncConfiguration{GitHubCLI: true},
+		},
+		HerdrConfig: herdrConfig,
+		PackagePlan: packagePlan,
 	}, []byte("Write-Output 'apply fixture'\n"))
 	if err != nil {
 		t.Fatalf("build archive without GitHub CLI hosts.yml: %v", err)
@@ -335,6 +339,44 @@ func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitHubCLIHosts(t *test
 	}
 }
 
+func TestBuildDevelopmentConfigurationArchiveKeepsGitHubConfigurationWithoutCredentials(t *testing.T) {
+	root := t.TempDir()
+	githubCLI := filepath.Join(root, "github-cli")
+	if err := os.MkdirAll(githubCLI, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(githubCLI, "config.yml"), "git_protocol: https\n")
+	writeTestFile(t, filepath.Join(githubCLI, "hosts.yml"), "github.com:\n  user: fixture\n")
+	packagePlan := filepath.Join(root, wingetPackagePlanFileName)
+	writeTestFile(t, packagePlan, `{}`)
+	herdrConfig := filepath.Join(root, "herdr-config.toml")
+	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
+
+	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
+		GitHubCLIConfiguration:  githubCLI,
+		GitHubCLIAuthentication: []byte(`{"schemaVersion":1,"accounts":[{"hostname":"github.com","login":"fixture","active":true,"gitProtocol":"https","token":"must-not-transfer"}]}`),
+		HerdrConfig:             herdrConfig,
+		PackagePlan:             packagePlan,
+	}, []byte("Write-Output 'apply fixture'\n"))
+	if err != nil {
+		t.Fatalf("build GitHub configuration-only archive: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]bool{}
+	for _, file := range reader.File {
+		entries[file.Name] = true
+	}
+	if !entries["github-cli/config.yml"] {
+		t.Fatalf("GitHub configuration-only archive is missing config.yml: %#v", entries)
+	}
+	if entries["github-cli/hosts.yml"] || entries[githubCLIAuthenticationArchivePath] {
+		t.Fatalf("GitHub configuration-only archive contains credentials: %#v", entries)
+	}
+}
+
 func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("APPDATA", root)
@@ -349,7 +391,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgentSyncConfiguration{}, false)
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgentSyncConfiguration{}, credentialSyncConfiguration{}, false)
 	if err != nil {
 		t.Fatalf("disabled integrations triggered host discovery: %v", err)
 	}
@@ -948,7 +990,7 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 			t.Fatal("guest TradingView Desktop is running; close it before authentication sync")
 		}
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), tradingViewEnabled, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{TradingView: tradingViewEnabled}, tradingViewEnabled, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 	if tradingViewEnabled {

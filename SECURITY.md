@@ -41,9 +41,11 @@ The product protects these boundaries:
 - The separate mobile SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
-- Approved portable agent and GitHub credentials are streamed only over the
-  verified SSH channel and are not placed in host run mappings or logs.
-- When the TradingView stack is selected, only the `sessionid` and
+- Only portable agent and GitHub credentials explicitly selected through
+  `credentialSync` are streamed over the verified SSH channel. They are not
+  placed in host run mappings or logs.
+- When the TradingView stack and `credentialSync.tradingView` are selected, only
+  the `sessionid` and
   `sessionid_sign` cookie pair for `tradingview.com` subdomains is read from the
   exact installed MSIX package profile into bounded host memory and streamed over
   that verified SSH channel. The complete cookie database, broker cookies, and
@@ -93,7 +95,8 @@ These are deliberate non-guarantees:
   the guest. Project or user provisioning owns the VST binaries that process that
   data. Herdr Sandbox adds no authentication to AudioGridder's external protocol,
   so do not broaden the firewall source and do not select untrusted VST payloads.
-- Imported GitHub CLI tokens are intentionally stored in the disposable guest's
+- When `credentialSync.githubCLI` is selected, imported GitHub CLI tokens are
+  intentionally stored in the disposable guest's
   `hosts.yml`, not Windows Credential Manager, so noninteractive provisioning and
   Git HTTPS never open a credential dialog. Any guest administrator can read that
   file; closing the Sandbox is its cleanup boundary.
@@ -138,10 +141,11 @@ These are deliberate non-guarantees:
   `--kill-existing`. TradingView terms and market-data licenses
   may prohibit automation, scraping, non-display use, or redistribution regardless
   of local execution; the stack does not grant rights or bypass access controls.
-- A transferred TradingView session is deliberately readable and usable by any
-  guest administrator process. Close the Sandbox to discard that guest copy, and
-  do not select the TradingView stack when its account session must not be exposed
-  to the guest workload. Configuration sync refuses to replace those cookies while
+- An explicitly selected transferred TradingView session is deliberately readable
+  and usable by any guest administrator process. Close the Sandbox to discard that
+  guest copy, and leave `credentialSync.tradingView` false when its account session
+  must not be exposed to the guest workload. Configuration sync refuses to replace
+  those cookies while
   guest TradingView Desktop is running rather than terminating the application.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
@@ -151,11 +155,11 @@ These are deliberate non-guarantees:
   app-owned Sandbox, and launch a fresh one; changing a live listener in place is
   intentionally unsupported.
 
-If the threat model forbids credential exfiltration, set every `codingAgentSync`
-choice to `false`, remove `GitHub.cli` from the Base package plan (or use a host
-profile with no authenticated `gh.exe` account), use read-only mounts wherever
-possible, do not authenticate inside the guest, and enforce outbound-network
-restrictions outside this product. Provisioning still needs network access for
+If the threat model forbids credential exfiltration, leave every `credentialSync`
+choice `false`, disable any unsafe configuration history separately, use a host
+profile with no authenticated `gh.exe` account, prefer read-only mounts, do not
+authenticate inside the guest, and enforce outbound-network restrictions outside
+this product. Provisioning still needs network access for
 uncached packages.
 
 ## Packages and releases

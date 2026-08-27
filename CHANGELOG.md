@@ -8,6 +8,9 @@ artifacts remain available on the
 
 ### Added
 
+- Six independent, default-off `credentialSync` choices now control portable
+  authentication for OpenCode, Claude Code, Codex, GitHub CLI/Copilot, Pi, and
+  TradingView without disabling ordinary configuration or stack setup.
 - Selected coding agents now receive Herdr awareness automatically. Existing host
   integrations are synchronized without being replaced, while Herdr installs an
   offered integration only when that agent is available and no integration exists.
@@ -18,6 +21,8 @@ artifacts remain available on the
 
 ### Changed
 
+- `sandbox up` now defaults to a four-hour launch-to-ready timeout while retaining
+  explicit positive `--timeout` overrides and parent cancellation.
 - HyperFrames skills no longer load into every OpenCode session. The stack keeps
   them outside normal agent discovery and the new `hyperframes-opencode` command
   activates them only for an explicitly started OpenCode session.

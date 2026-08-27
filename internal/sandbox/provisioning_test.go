@@ -2452,7 +2452,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		}
 	}
 	remaining := seededContents
-	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"credentialSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)

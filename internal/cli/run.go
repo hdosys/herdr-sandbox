@@ -53,10 +53,11 @@ Configuration:
   - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
   - configurationSync host Git pull choices for up and down
   - codingAgentSync choices
+  - credentialSync choices (all disabled by default)
   - wingetPackages additions, removals, and version pins
 
 Behavior:
-  - up has no overall timeout unless --timeout is supplied
+  - up has a four-hour launch-to-terminal-ready timeout; --timeout replaces it for one run
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
@@ -358,7 +359,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	flags := flag.NewFlagSet("sandbox up", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
-	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "optional launch-to-terminal-ready timeout (no default)")
+	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout (default 4h)")
 	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
 	flags.Usage = func() {}
 	if err := flags.Parse(args[1:]); err != nil {
@@ -710,6 +711,8 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 
 	fmt.Fprintln(output, "\nCoding agents")
 	printBulletList(output, sortedFold(plan.CodingAgents), "  ")
+	fmt.Fprintln(output, "\nCredential transfers")
+	printBulletList(output, sortedFold(plan.CredentialTransfers), "  ")
 	fmt.Fprintln(output, "\nGlobal stacks")
 	printBulletList(output, sortedFold(plan.GlobalStacks), "  ")
 

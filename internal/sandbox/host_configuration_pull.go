@@ -102,7 +102,7 @@ func defaultHostConfigurationSourcesForPull(configuration globalConfiguration) (
 	if err != nil {
 		return hostConfigurationSources{}, err
 	}
-	return defaultHostConfigurationSources(terminal, packages, configuration.CodingAgentSync, false)
+	return defaultHostConfigurationSources(terminal, packages, configuration.CodingAgentSync, credentialSyncConfiguration{}, false)
 }
 
 func hostConfigurationGitRoots(sources hostConfigurationSources) []hostConfigurationGitRoot {

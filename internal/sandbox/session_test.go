@@ -45,9 +45,9 @@ func TestEnsurePhysicalDirectoryRejectsReparseAncestorBeforeCreation(t *testing.
 	}
 }
 
-func TestDefaultOptionsHasNoOverallTimeout(t *testing.T) {
-	if timeout := DefaultOptions().Timeout; timeout != 0 {
-		t.Fatalf("default timeout = %s, want no timeout", timeout)
+func TestDefaultOptionsHasFourHourTimeout(t *testing.T) {
+	if timeout := DefaultOptions().Timeout; timeout != 4*time.Hour {
+		t.Fatalf("default timeout = %s, want 4h", timeout)
 	}
 }
 
@@ -62,6 +62,15 @@ func TestWithOptionalTimeoutAddsOnlyExplicitDeadline(t *testing.T) {
 	defer cancelBounded()
 	if _, found := bounded.Deadline(); !found {
 		t.Fatal("explicit timeout did not add a deadline")
+	}
+	parent, cancelParent := context.WithCancel(context.Background())
+	child, cancelChild := withOptionalTimeout(parent, 4*time.Hour)
+	cancelParent()
+	defer cancelChild()
+	select {
+	case <-child.Done():
+	case <-time.After(time.Second):
+		t.Fatal("parent cancellation did not stop the bounded operation")
 	}
 }
 

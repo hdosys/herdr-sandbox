@@ -5,6 +5,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func TestTradingViewHostExportAndGuestMergeBoundary(t *testing.T) {
 	if err := os.WriteFile(authenticationPath, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	runTradingViewCookieAdapterFixture(t, adapter, authenticationPath, destination)
+	runTradingViewCookieAdapterFixture(t, adapter, authenticationPath, destination, 2)
 
 	database, err := openTradingViewSQLiteReadOnly(destination)
 	if err != nil {
@@ -62,6 +63,38 @@ func TestTradingViewHostExportAndGuestMergeBoundary(t *testing.T) {
 	unrelated, found, err := database.readOneText("SELECT value FROM cookies WHERE name='unrelated' AND host_key='.example.com'")
 	if err != nil || !found || unrelated != "preserve-me" {
 		t.Fatalf("unrelated guest cookie = %q, found=%v, err=%v", unrelated, found, err)
+	}
+	assertTradingViewEssentialOnlyPreferences(t, database)
+}
+
+func TestTradingViewGuestEmptyAuthenticationPreservesSessionAndUpdatesPreferences(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "guest-profile", "Network", "Cookies")
+	createTradingViewCookieDatabaseFixture(t, destination, "retained-session", "preserve-me")
+	adapter := filepath.Join(root, "tradingview-cookie-sync.cs")
+	if err := os.WriteFile(adapter, tradingViewCookieSyncSource, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload, _, err := emptyTradingViewAuthenticationPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticationPath := filepath.Join(root, "authentication.json")
+	if err := os.WriteFile(authenticationPath, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTradingViewCookieAdapterFixture(t, adapter, authenticationPath, destination, 0)
+
+	database, err := openTradingViewSQLiteReadOnly(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.close()
+	for name, want := range map[string]string{"sessionid": "retained-session", "sessionid_sign": "retained-session-signature"} {
+		got, found, readErr := database.readOneText("SELECT value FROM cookies WHERE name='" + name + "' AND host_key='.tradingview.com'")
+		if readErr != nil || !found || got != want {
+			t.Fatalf("retained %s = %q, found=%v, err=%v", name, got, found, readErr)
+		}
 	}
 	assertTradingViewEssentialOnlyPreferences(t, database)
 }
@@ -369,7 +402,7 @@ try {
 	runWindowsPowerShellFixture(t, script)
 }
 
-func runTradingViewCookieAdapterFixture(t *testing.T, adapter, authentication, destination string) {
+func runTradingViewCookieAdapterFixture(t *testing.T, adapter, authentication, destination string, expectedCount int) {
 	t.Helper()
 	script := `$ErrorActionPreference = 'Stop'
 Add-Type -Path '` + strings.ReplaceAll(adapter, "'", "''") + `'
@@ -383,7 +416,7 @@ foreach ($cookie in @($input.cookies)) {
   $index += 1
 }
 $count = [HerdrSandbox.TradingViewCookieSync]::Import('` + strings.ReplaceAll(destination, "'", "''") + `', $records)
-if ($count -ne 2) { throw "imported $count cookies" }
+if ($count -ne ` + fmt.Sprintf("%d", expectedCount) + `) { throw "imported $count cookies" }
 `
 	runWindowsPowerShellFixture(t, script)
 }

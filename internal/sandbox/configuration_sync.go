@@ -638,14 +638,14 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
 	if err := packages.validate(terminal); err != nil {
 		return err
 	}
-	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgents, tradingViewEnabled)
+	sources, err := defaultHostConfigurationSources(terminal, packages, codingAgents, credentialSync, tradingViewEnabled)
 	if err != nil {
 		return err
 	}
@@ -662,7 +662,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	expectedGitHubAccounts := 0
 	expectedTradingViewCookies := 0
-	if packages.enabled(packageGitHubCLI) {
+	if packages.enabled(packageGitHubCLI) && credentialSync.GitHubCLI {
 		authenticationPayload, accountCount, err := exportGitHubCLIAuthentication(ctx, sources.GitHubCLIConfiguration)
 		if err != nil {
 			return err
@@ -672,7 +672,10 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		expectedGitHubAccounts = accountCount
 	}
 	if tradingViewEnabled {
-		authenticationPayload, cookieCount, err := exportTradingViewAuthentication(ctx, sources.TradingViewProfile)
+		authenticationPayload, cookieCount, err := emptyTradingViewAuthenticationPayload()
+		if credentialSync.TradingView {
+			authenticationPayload, cookieCount, err = exportTradingViewAuthentication(ctx, sources.TradingViewProfile)
+		}
 		if err != nil {
 			return err
 		}
@@ -725,14 +728,16 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if result.OpenCodeTVControlMCPConfigured != expectedOpenCodeTVControlMCP {
 		return fmt.Errorf("verify guest OpenCode TVControl MCP configuration: configured %t, expected %t", result.OpenCodeTVControlMCPConfigured, expectedOpenCodeTVControlMCP)
 	}
-	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != packages.enabled(packageGitHubCLI) {
-		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts)
+	expectedGitHubVerification := packages.enabled(packageGitHubCLI) && credentialSync.GitHubCLI
+	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != expectedGitHubVerification {
+		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d; verified %t, expected %t", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts, result.GitHubAuthenticationVerified, expectedGitHubVerification)
 	}
 	if !result.HerdrConfigurationPublished {
 		return errors.New("verify guest Herdr configuration: final config was not published atomically")
 	}
-	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != tradingViewEnabled {
-		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies)
+	expectedTradingViewVerification := tradingViewEnabled && credentialSync.TradingView
+	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != expectedTradingViewVerification {
+		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d; verified %t, expected %t", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies, result.TradingViewAuthenticationVerified, expectedTradingViewVerification)
 	}
 	return nil
 }
@@ -782,7 +787,7 @@ try {
 exit 0`, staging, expectedArchiveLength, expectedDigest)
 }
 
-func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, tradingViewEnabled bool) (hostConfigurationSources, error) {
+func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled bool) (hostConfigurationSources, error) {
 	if err := packages.validate(terminal); err != nil {
 		return hostConfigurationSources{}, err
 	}
@@ -801,7 +806,7 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 			return hostConfigurationSources{}, err
 		}
 	}
-	sources.CodingAgents, err = defaultCodingAgentConfigurationSources(userHome, codingAgents)
+	sources.CodingAgents, err = defaultCodingAgentConfigurationSources(userHome, codingAgents, credentialSync)
 	if err != nil {
 		return hostConfigurationSources{}, err
 	}
@@ -1015,25 +1020,30 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	}
 
 	if sources.GitHubCLIConfiguration != "" {
-		for _, name := range []string{"config.yml", "hosts.yml"} {
-			source := filepath.Join(sources.GitHubCLIConfiguration, name)
-			if err := add(source, filepath.Join("github-cli", name)); err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					continue
-				}
-				return nil, fmt.Errorf("archive GitHub CLI %s: %w", name, err)
+		configPath := filepath.Join(sources.GitHubCLIConfiguration, "config.yml")
+		if err := add(configPath, filepath.Join("github-cli", "config.yml")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("archive GitHub CLI config.yml: %w", err)
+		}
+		if sources.CodingAgents.CredentialSync.GitHubCLI {
+			hostsPath := filepath.Join(sources.GitHubCLIConfiguration, "hosts.yml")
+			if err := add(hostsPath, filepath.Join("github-cli", "hosts.yml")); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("archive GitHub CLI hosts.yml: %w", err)
 			}
-		}
-		if _, err := decodeGitHubCLIAuthentication(sources.GitHubCLIAuthentication); err != nil {
-			return nil, fmt.Errorf("validate GitHub CLI authentication payload: %w", err)
-		}
-		if err := addData(sources.GitHubCLIAuthentication, githubCLIAuthenticationArchivePath, "GitHub CLI authentication"); err != nil {
-			return nil, fmt.Errorf("archive GitHub CLI authentication: %w", err)
+			if _, err := decodeGitHubCLIAuthentication(sources.GitHubCLIAuthentication); err != nil {
+				return nil, fmt.Errorf("validate GitHub CLI authentication payload: %w", err)
+			}
+			if err := addData(sources.GitHubCLIAuthentication, githubCLIAuthenticationArchivePath, "GitHub CLI authentication"); err != nil {
+				return nil, fmt.Errorf("archive GitHub CLI authentication: %w", err)
+			}
 		}
 	}
 	if len(sources.TradingViewAuthentication) != 0 {
-		if _, err := decodeTradingViewAuthentication(sources.TradingViewAuthentication); err != nil {
+		authentication, err := decodeTradingViewAuthentication(sources.TradingViewAuthentication)
+		if err != nil {
 			return nil, fmt.Errorf("validate TradingView authentication payload: %w", err)
+		}
+		if !sources.CodingAgents.CredentialSync.TradingView && (len(authentication.Cookies) != 0 || len(authentication.UserIDs) != 0) {
+			return nil, errors.New("archive TradingView authentication: credential sync is disabled")
 		}
 		if len(tradingViewCookieSyncSource) == 0 {
 			return nil, errors.New("TradingView cookie sync source is empty")

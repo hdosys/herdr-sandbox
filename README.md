@@ -259,6 +259,7 @@ replacing it.
 | `mobileSSHAuthorizedKeys` | Up to eight device-owned Ed25519 public keys. Private keys never belong here. |
 | `configurationSync` | Controls automatic fast-forward pulls before `up` and after `down`; both default on. |
 | `codingAgentSync` | Selects configuration transfer for OpenCode, Claude Code, Codex, Copilot, and Pi. All default on. |
+| `credentialSync` | Independently opts into portable credentials for OpenCode, Claude Code, Codex, GitHub CLI/Copilot, Pi, and TradingView. All default off. |
 | `workspaces` | Named project roots mapped to `C:\Workspaces\<name>`. |
 | `mounts` | Named additional folders mapped to `C:\Mounts\<name>` with explicit read-only choice. |
 | `workspaceDiscovery` | Optionally selects direct child projects below one root, with exclusion patterns. |
@@ -283,13 +284,17 @@ Nothing is installed into the host development environment.
 <summary><strong>Agent configuration sync</strong></summary>
 
 Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
-Copilot CLI, and Pi, with every selection enabled by default. Review these choices
-before the first `up`. Approved files travel over verified SSH; a Git-backed
-configuration root also transfers repository metadata and object history,
-which may contain old secrets. Disable any root whose complete history is not safe
-for the guest. Private SSH and GPG keys, conversations, logs, caches, and
-machine-bound credentials stay on the host. Agent installation remains a separate
-`wingetPackages.add` choice.
+Copilot CLI, and Pi, with every `codingAgentSync` selection enabled by default.
+Portable credentials are separate. Exact `credentialSync` choices for OpenCode,
+Claude Code, Codex, GitHub CLI/Copilot, Pi, and TradingView all default to `false`.
+Missing selected credentials are a clean no-op. Disabling a choice stops future
+transfer but does not revoke a credential already present in a retained guest;
+close the Sandbox to discard that copy. Approved files travel over verified SSH;
+a Git-backed configuration root also transfers repository metadata and object
+history, which may contain old secrets. Disable any root whose complete history
+is not safe for the guest. Private SSH and GPG keys, conversations, logs, caches,
+and machine-bound credentials stay on the host. Agent installation remains a
+separate `wingetPackages.add` choice.
 
 When enabled, registered configuration repositories fast-forward before `up` and
 after `down`. Local edits are never rebased, stashed, or overwritten; divergence
@@ -346,7 +351,7 @@ and errors go to stderr.
 | `sandbox version` or `sandbox --version` | Prints the release and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. The launch-to-ready timeout defaults to four hours; an explicit positive `--timeout` replaces it. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. |
@@ -423,8 +428,9 @@ Guest processes have administrator access inside Windows Sandbox. Only select ho
   the optional worktree and shared model roots, cache, and run status.
 - The host home root, general AppData, unselected repositories, and private SSH or
   GPG keys are never mapped.
-- Approved portable credentials travel only over verified SSH and never enter
-  persistent run input or logs. Machine-bound credentials stay on the host.
+- Only portable credentials explicitly selected by `credentialSync` travel over
+  verified SSH; they never enter persistent run input or logs. Machine-bound
+  credentials stay on the host.
 - Downloads and cache hits are checked against package identity, versions, hashes,
   signatures, or metadata as applicable.
 - Lifecycle commands revalidate process and path ownership before attachment or

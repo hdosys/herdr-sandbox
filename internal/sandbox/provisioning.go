@@ -52,7 +52,7 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"modelsDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"modelsDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"credentialSync\": {\n    \"opencode\": false,\n    \"claudeCode\": false,\n    \"codex\": false,\n    \"githubCLI\": false,\n    \"pi\": false,\n    \"tradingView\": false\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -142,6 +142,7 @@ type provisioningPlan struct {
 	MobileSSHAuthorizedKeys []string
 	ConfigurationSync       configurationSyncConfiguration
 	CodingAgentSync         codingAgentSyncConfiguration
+	CredentialSync          credentialSyncConfiguration
 	PackageConfiguration    wingetPackageConfiguration
 	Packages                wingetPackagePlan
 	WindowsTerminal         windowsTerminalConfiguration
@@ -161,6 +162,7 @@ type globalConfiguration struct {
 	ConfigurationSync       configurationSyncConfiguration   `json:"configurationSync"`
 	Mounts                  map[string]mountConfiguration    `json:"mounts"`
 	CodingAgentSync         codingAgentSyncConfiguration     `json:"codingAgentSync"`
+	CredentialSync          credentialSyncConfiguration      `json:"credentialSync"`
 	WingetPackages          wingetPackageConfiguration       `json:"wingetPackages"`
 	WorkspaceDiscovery      *workspaceDiscoveryConfiguration `json:"workspaceDiscovery,omitempty"`
 	Workspaces              map[string]string                `json:"workspaces"`
@@ -182,6 +184,15 @@ type codingAgentSyncConfiguration struct {
 	Codex         bool `json:"codex"`
 	GitHubCopilot bool `json:"githubCopilot"`
 	Pi            bool `json:"pi"`
+}
+
+type credentialSyncConfiguration struct {
+	OpenCode    bool `json:"opencode"`
+	ClaudeCode  bool `json:"claudeCode"`
+	Codex       bool `json:"codex"`
+	GitHubCLI   bool `json:"githubCLI"`
+	Pi          bool `json:"pi"`
+	TradingView bool `json:"tradingView"`
 }
 
 type configurationSyncConfiguration struct {
@@ -683,6 +694,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		MobileSSHAuthorizedKeys: mobileSSHAuthorizedKeys,
 		ConfigurationSync:       configuration.ConfigurationSync,
 		CodingAgentSync:         configuration.CodingAgentSync,
+		CredentialSync:          configuration.CredentialSync,
 		PackageConfiguration:    configuration.WingetPackages,
 		Mounts:                  mounts,
 		Workspaces:              workspaces,
@@ -695,6 +707,7 @@ func loadGlobalConfiguration(path string) (globalConfiguration, error) {
 		MemoryMB:          &defaultMemory,
 		ConfigurationSync: defaultConfigurationSyncConfiguration(),
 		CodingAgentSync:   defaultCodingAgentSyncConfiguration(),
+		CredentialSync:    credentialSyncConfiguration{},
 		WingetPackages:    defaultWingetPackageConfiguration(),
 		Mounts:            map[string]mountConfiguration{},
 		Workspaces:        map[string]string{},
@@ -836,6 +849,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 			config.CodingAgentSync = agents
+		case "credentialSync":
+			credentials, err := decodeCredentialSyncConfiguration(decoder)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.CredentialSync = credentials
 		case "configurationSync":
 			configurationSync, err := decodeConfigurationSyncConfiguration(decoder)
 			if err != nil {
@@ -1019,6 +1038,64 @@ func decodeCodingAgentSyncConfiguration(decoder *json.Decoder) (codingAgentSyncC
 	}
 	if closing != json.Delim('}') {
 		return codingAgentSyncConfiguration{}, errors.New("coding-agent sync object is not closed")
+	}
+	return configuration, nil
+}
+
+func decodeCredentialSyncConfiguration(decoder *json.Decoder) (credentialSyncConfiguration, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return credentialSyncConfiguration{}, err
+	}
+	if opening != json.Delim('{') {
+		return credentialSyncConfiguration{}, errors.New("must be a JSON object")
+	}
+	configuration := credentialSyncConfiguration{}
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return credentialSyncConfiguration{}, err
+		}
+		name, ok := token.(string)
+		if !ok {
+			return credentialSyncConfiguration{}, errors.New("credential-sync field name must be a string")
+		}
+		if seen[name] {
+			return credentialSyncConfiguration{}, fmt.Errorf("duplicate field %q", name)
+		}
+		seen[name] = true
+		raw, err := decodeNonNullJSONValue(decoder, name)
+		if err != nil {
+			return credentialSyncConfiguration{}, err
+		}
+		var enabled bool
+		if err := json.Unmarshal(raw, &enabled); err != nil {
+			return credentialSyncConfiguration{}, fmt.Errorf("field %q: %w", name, err)
+		}
+		switch name {
+		case "opencode":
+			configuration.OpenCode = enabled
+		case "claudeCode":
+			configuration.ClaudeCode = enabled
+		case "codex":
+			configuration.Codex = enabled
+		case "githubCLI":
+			configuration.GitHubCLI = enabled
+		case "pi":
+			configuration.Pi = enabled
+		case "tradingView":
+			configuration.TradingView = enabled
+		default:
+			return credentialSyncConfiguration{}, fmt.Errorf("unknown field %q", name)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return credentialSyncConfiguration{}, err
+	}
+	if closing != json.Delim('}') {
+		return credentialSyncConfiguration{}, errors.New("credential-sync object is not closed")
 	}
 	return configuration, nil
 }

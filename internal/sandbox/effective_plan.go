@@ -62,6 +62,7 @@ type EffectivePlan struct {
 	PullHostGitRepositoriesOnUp   bool
 	PullHostGitRepositoriesOnDown bool
 	CodingAgents                  []string
+	CredentialTransfers           []string
 	GlobalStacks                  []string
 	Packages                      []EffectivePackage
 	StackPackages                 []EffectiveStackPackage
@@ -120,6 +121,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		PullHostGitRepositoriesOnUp:   provisioning.ConfigurationSync.PullHostGitRepositoriesOnUp,
 		PullHostGitRepositoriesOnDown: provisioning.ConfigurationSync.PullHostGitRepositoriesOnDown,
 		CodingAgents:                  codingAgentSyncNames(provisioning.CodingAgentSync),
+		CredentialTransfers:           credentialSyncNames(provisioning.CredentialSync),
 		RequiresVisualStudio:          requiresVisualStudio,
 	}
 	if len(toolVersions) > 0 {

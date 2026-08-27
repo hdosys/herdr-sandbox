@@ -91,9 +91,10 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	provisioning.Packages = withOpenCode
+	provisioning.CredentialSync = credentialSyncConfiguration{OpenCode: true, GitHubCLI: true}
 	plan, err = retainedRunPlan(active, provisioning, 4096)
-	if err != nil || !plan.Packages.enabled(packageOpenCode) {
-		t.Fatalf("retained package addition plan = %#v, error = %v", plan.Packages, err)
+	if err != nil || !plan.Packages.enabled(packageOpenCode) || plan.CredentialSync != provisioning.CredentialSync {
+		t.Fatalf("retained dynamic plan = %#v, error = %v", plan, err)
 	}
 	legacyConfig := bytes.Replace(config, []byte(`,&#39;-AudioPlayback&#39;,&#39;Disabled&#39;`), nil, 1)
 	if bytes.Equal(legacyConfig, config) {

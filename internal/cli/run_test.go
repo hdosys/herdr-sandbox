@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"no overall timeout unless --timeout is supplied", "workspaceDiscovery", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
+		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -581,6 +581,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	validated := false
 	attached := false
+	var upOptions sandbox.Options
 	var order []string
 	dependencies.validateAttach = func(io.Reader, io.Writer, io.Writer) error {
 		validated = true
@@ -598,8 +599,9 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 		order = append(order, "pull")
 		return sandbox.HostConfigurationPullResult{}, nil
 	}
-	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+	dependencies.up = func(_ context.Context, options sandbox.Options, _ sandbox.HostHerdr) (sandbox.Connection, error) {
 		order = append(order, "up")
+		upOptions = options
 		return sandbox.Connection{}, nil
 	}
 	dependencies.attach = func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error {
@@ -608,8 +610,26 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || strings.Join(order, "|") != "host-herdr|cleanup|pull|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
-		t.Fatalf("code = %d, validated = %t, attached = %t, order = %v, stdout = %q", code, validated, attached, order, stdout.String())
+	if code != 0 || validated || attached || upOptions.Timeout != 4*time.Hour || strings.Join(order, "|") != "host-herdr|cleanup|pull|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
+		t.Fatalf("code = %d, validated = %t, attached = %t, timeout = %s, order = %v, stdout = %q", code, validated, attached, upOptions.Timeout, order, stdout.String())
+	}
+}
+
+func TestRunUpExplicitTimeoutOverridesDefault(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		return sandbox.HostConfigurationPullResult{}, nil
+	}
+	var timeout time.Duration
+	dependencies.up = func(_ context.Context, options sandbox.Options, _ sandbox.HostHerdr) (sandbox.Connection, error) {
+		timeout = options.Timeout
+		return sandbox.Connection{}, nil
+	}
+	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach", "--timeout", "45m"}, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
+	if code != 0 || timeout != 45*time.Minute {
+		t.Fatalf("code = %d, timeout = %s", code, timeout)
 	}
 }
 
@@ -696,6 +716,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		PullHostGitRepositoriesOnUp:   true,
 		PullHostGitRepositoriesOnDown: true,
 		CodingAgents:                  []string{"OpenCode", "Claude Code"},
+		CredentialTransfers:           []string{"TradingView", "OpenCode"},
 		GlobalStacks:                  []string{"rust", "go"},
 		Packages: []sandbox.EffectivePackage{
 			{ID: "Git.Git", Version: "latest during provisioning", Source: "base"},
@@ -720,7 +741,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Models directory: F:\\models", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
 		"Mobile SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
-		"Coding agents\n  - Claude Code\n  - OpenCode", "Global stacks\n  - go\n  - rust",
+		"Coding agents\n  - Claude Code\n  - OpenCode", "Credential transfers\n  - OpenCode\n  - TradingView", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Resolved stack tools\n  Precedence: explicit provisioning (including a selected project file) > optional project version file > stack default/latest stable; incompatible stack constraints fail\n  - GoLang.Go\n    Selection: 1.26.5\n    Source: explicit provisioning value or stack constraint\n    Owners:\n      - project \"project\" (go)",
 		"Folder mounts\n  - reference\n    Host: E:\\reference\n    Guest: C:\\Mounts\\reference\n    Access: read-only",

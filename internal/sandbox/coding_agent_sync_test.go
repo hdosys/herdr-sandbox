@@ -53,6 +53,44 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigurationDefaultsAndOverridesCredentialSync(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeTestFile(t, path, `{"credentialSync":{"opencode":true,"claudeCode":true,"codex":true,"githubCLI":true,"pi":true,"tradingView":true}}`)
+	configuration, err := loadGlobalConfiguration(path)
+	if err != nil {
+		t.Fatalf("loadGlobalConfiguration: %v", err)
+	}
+	want := credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
+	if configuration.CredentialSync != want {
+		t.Fatalf("credentialSync = %#v, want %#v", configuration.CredentialSync, want)
+	}
+	missing, err := loadGlobalConfiguration(filepath.Join(t.TempDir(), "missing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.CredentialSync != (credentialSyncConfiguration{}) {
+		t.Fatalf("missing config credentialSync = %#v", missing.CredentialSync)
+	}
+}
+
+func TestLoadGlobalConfigurationRejectsInvalidCredentialSync(t *testing.T) {
+	for _, input := range []string{
+		`{"credentialSync":null}`,
+		`{"credentialSync":false}`,
+		`{"credentialSync":{"codex":null}}`,
+		`{"credentialSync":{"codex":"true"}}`,
+		`{"credentialSync":{"githubCopilot":true}}`,
+		`{"credentialSync":{"codexMCP":true}}`,
+		`{"credentialSync":{"codex":true,"codex":false}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		writeTestFile(t, path, input)
+		if _, err := loadGlobalConfiguration(path); err == nil {
+			t.Fatalf("invalid credentialSync unexpectedly succeeded: %s", input)
+		}
+	}
+}
+
 func TestLoadGlobalConfigurationDefaultsAndOverridesConfigurationSync(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeTestFile(t, path, `{"configurationSync":{"pullHostGitRepositoriesOnDown":false}}`)
@@ -105,7 +143,9 @@ func TestDefaultCodingAgentConfigurationSourcesHonorAbsoluteOverrides(t *testing
 	t.Setenv("CODEX_HOME", codex)
 	t.Setenv("COPILOT_HOME", copilot)
 	t.Setenv("PI_CODING_AGENT_DIR", pi)
-	sources, err := defaultCodingAgentConfigurationSources(home, defaultCodingAgentSyncConfiguration())
+	sources, err := defaultCodingAgentConfigurationSources(home, defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{
+		OpenCode: true, ClaudeCode: true, Codex: true, Pi: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +182,7 @@ func TestDefaultCodingAgentConfigurationSourcesRejectRelativeOverrides(t *testin
 				t.Setenv(other, "")
 			}
 			t.Setenv(name, "relative")
-			if _, err := defaultCodingAgentConfigurationSources(t.TempDir(), defaultCodingAgentSyncConfiguration()); err == nil || !strings.Contains(err.Error(), name) {
+			if _, err := defaultCodingAgentConfigurationSources(t.TempDir(), defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{}); err == nil || !strings.Contains(err.Error(), name) {
 				t.Fatalf("relative %s error = %v", name, err)
 			}
 		})
@@ -245,6 +285,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		CodingAgents: codingAgentConfigurationSources{
 			Selection:                defaultCodingAgentSyncConfiguration(),
+			CredentialSync:           credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true},
 			OpenCodeDirectory:        openCode,
 			OpenCodeAuthentication:   openCodeAuth,
 			ClaudeCodeDirectory:      claude,
@@ -309,7 +350,8 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	if err := json.Unmarshal(contents[codingAgentSyncManifestArchivePath], &syncManifest); err != nil {
 		t.Fatal(err)
 	}
-	if syncManifest.SchemaVersion != 3 || strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] ||
+	if syncManifest.SchemaVersion != 4 || syncManifest.CredentialSync != (credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) ||
+		strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] ||
 		syncManifest.HerdrHookSourcePaths["claude"] != filepath.Join(claude, "hooks", "herdr-agent-state.ps1") ||
 		syncManifest.HerdrHookSourcePaths["codex"] != filepath.Join(codex, "herdr-agent-state.ps1") ||
 		syncManifest.HerdrHookSourcePaths["copilot"] != filepath.Join(copilot, "hooks", "herdr-agent-state.ps1") {
@@ -332,6 +374,79 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	}
 	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != len(entries)-3 {
 		t.Fatalf("payload count = %d, entries = %d, err = %v", count, len(entries), err)
+	}
+}
+
+func TestArchiveCodingAgentConfigurationKeepsCredentialsIndependent(t *testing.T) {
+	root := t.TempDir()
+	openCodeConfiguration := filepath.Join(root, "opencode")
+	if err := os.MkdirAll(openCodeConfiguration, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(openCodeConfiguration, "opencode.json"), `{}`)
+	credentials := map[string]string{
+		"opencode-auth/auth.json":            filepath.Join(root, "opencode-auth.json"),
+		"claude-code-auth/.credentials.json": filepath.Join(root, "claude-credentials.json"),
+		"codex-auth/auth.json":               filepath.Join(root, "codex-auth.json"),
+		"codex-auth/.credentials.json":       filepath.Join(root, "codex-credentials.json"),
+		"pi-auth/auth.json":                  filepath.Join(root, "pi-auth.json"),
+	}
+	for _, source := range credentials {
+		writeTestFile(t, source, `{"credential":"fixture"}`)
+	}
+	archive := func(sources codingAgentConfigurationSources) map[string][]byte {
+		t.Helper()
+		entries := map[string][]byte{}
+		add := func(source, destination string) error {
+			contents, err := os.ReadFile(source)
+			if err == nil {
+				entries[filepath.ToSlash(destination)] = contents
+			}
+			return err
+		}
+		addData := func(contents []byte, destination, _ string) error {
+			entries[filepath.ToSlash(destination)] = append([]byte(nil), contents...)
+			return nil
+		}
+		if err := archiveCodingAgentConfiguration(context.Background(), sources, add, addData); err != nil {
+			t.Fatal(err)
+		}
+		return entries
+	}
+	credentialOnly := archive(codingAgentConfigurationSources{
+		CredentialSync:           credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true},
+		OpenCodeAuthentication:   credentials["opencode-auth/auth.json"],
+		ClaudeCodeAuthentication: credentials["claude-code-auth/.credentials.json"],
+		CodexAuthentication:      credentials["codex-auth/auth.json"],
+		CodexMCPAuthentication:   credentials["codex-auth/.credentials.json"],
+		PiAuthentication:         credentials["pi-auth/auth.json"],
+	})
+	for destination := range credentials {
+		if credentialOnly[destination] == nil {
+			t.Fatalf("credential-only archive is missing %s", destination)
+		}
+	}
+	if credentialOnly["opencode/opencode.json"] != nil {
+		t.Fatal("credential-only archive contains OpenCode configuration")
+	}
+	var manifest codingAgentSyncManifest
+	if err := json.Unmarshal(credentialOnly[codingAgentSyncManifestArchivePath], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.CredentialSync != (credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) || manifest.OpenCode {
+		t.Fatalf("credential-only manifest = %#v", manifest)
+	}
+
+	configurationOnly := archive(codingAgentConfigurationSources{
+		Selection:              codingAgentSyncConfiguration{OpenCode: true},
+		OpenCodeDirectory:      openCodeConfiguration,
+		OpenCodeAuthentication: credentials["opencode-auth/auth.json"],
+	})
+	if configurationOnly["opencode/opencode.json"] == nil {
+		t.Fatal("configuration-only archive is missing OpenCode configuration")
+	}
+	if configurationOnly["opencode-auth/auth.json"] != nil {
+		t.Fatal("configuration-only archive contains OpenCode credentials")
 	}
 }
 

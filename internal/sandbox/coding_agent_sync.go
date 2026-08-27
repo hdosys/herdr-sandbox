@@ -18,6 +18,7 @@ const codingAgentSyncManifestArchivePath = "herdr-sandbox/coding-agent-sync.json
 
 type codingAgentConfigurationSources struct {
 	Selection                codingAgentSyncConfiguration
+	CredentialSync           credentialSyncConfiguration
 	OpenCodeDirectory        string
 	OpenCodeAuthentication   string
 	ClaudeCodeDirectory      string
@@ -33,83 +34,104 @@ type codingAgentConfigurationSources struct {
 }
 
 type codingAgentSyncManifest struct {
-	SchemaVersion        int                 `json:"schemaVersion"`
-	OpenCode             bool                `json:"opencode"`
-	ClaudeCode           bool                `json:"claudeCode"`
-	Codex                bool                `json:"codex"`
-	GitHubCopilot        bool                `json:"githubCopilot"`
-	Pi                   bool                `json:"pi"`
-	GitTrackedDeletions  map[string][]string `json:"gitTrackedDeletions"`
-	HerdrHookSourcePaths map[string]string   `json:"herdrHookSourcePaths"`
+	SchemaVersion        int                         `json:"schemaVersion"`
+	OpenCode             bool                        `json:"opencode"`
+	ClaudeCode           bool                        `json:"claudeCode"`
+	Codex                bool                        `json:"codex"`
+	GitHubCopilot        bool                        `json:"githubCopilot"`
+	Pi                   bool                        `json:"pi"`
+	CredentialSync       credentialSyncConfiguration `json:"credentialSync"`
+	GitTrackedDeletions  map[string][]string         `json:"gitTrackedDeletions"`
+	HerdrHookSourcePaths map[string]string           `json:"herdrHookSourcePaths"`
 }
 
-func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) codingAgentSyncManifest {
+func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) codingAgentSyncManifest {
 	return codingAgentSyncManifest{
-		SchemaVersion:        3,
+		SchemaVersion:        4,
 		OpenCode:             configuration.OpenCode,
 		ClaudeCode:           configuration.ClaudeCode,
 		Codex:                configuration.Codex,
 		GitHubCopilot:        configuration.GitHubCopilot,
 		Pi:                   configuration.Pi,
+		CredentialSync:       credentialSync,
 		GitTrackedDeletions:  gitTrackedDeletions,
 		HerdrHookSourcePaths: herdrHookSourcePaths,
 	}
 }
 
-func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) ([]byte, error) {
-	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration, gitTrackedDeletions, herdrHookSourcePaths), "", "  ")
+func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) ([]byte, error) {
+	data, err := json.MarshalIndent(newCodingAgentSyncManifest(configuration, credentialSync, gitTrackedDeletions, herdrHookSourcePaths), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode coding-agent sync manifest: %w", err)
 	}
 	return append(data, '\n'), nil
 }
 
-func defaultCodingAgentConfigurationSources(userHome string, selection codingAgentSyncConfiguration) (codingAgentConfigurationSources, error) {
+func defaultCodingAgentConfigurationSources(userHome string, selection codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration) (codingAgentConfigurationSources, error) {
 	if !filepath.IsAbs(userHome) {
 		return codingAgentConfigurationSources{}, fmt.Errorf("user home is not absolute: %q", userHome)
 	}
-	sources := codingAgentConfigurationSources{Selection: selection}
-	var err error
-	if selection.OpenCode {
+	sources := codingAgentConfigurationSources{Selection: selection, CredentialSync: credentialSync}
+	if selection.OpenCode || credentialSync.OpenCode {
 		configuration, data, resolveErr := defaultOpenCodeDirectories(userHome)
 		if resolveErr != nil {
 			return codingAgentConfigurationSources{}, resolveErr
 		}
-		sources.OpenCodeDirectory = configuration
-		sources.OpenCodeAuthentication = filepath.Join(data, "auth.json")
+		if selection.OpenCode {
+			sources.OpenCodeDirectory = configuration
+		}
+		if credentialSync.OpenCode {
+			sources.OpenCodeAuthentication = filepath.Join(data, "auth.json")
+		}
 	}
-	if selection.ClaudeCode {
-		sources.ClaudeCodeDirectory, err = configuredAgentRoot(userHome, "CLAUDE_CONFIG_DIR", ".claude")
+	if selection.ClaudeCode || credentialSync.ClaudeCode {
+		claudeCodeDirectory, err := configuredAgentRoot(userHome, "CLAUDE_CONFIG_DIR", ".claude")
 		if err != nil {
 			return codingAgentConfigurationSources{}, err
 		}
-		if strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")) == "" {
-			sources.ClaudeCodeState = filepath.Join(userHome, ".claude.json")
-		} else {
-			sources.ClaudeCodeState = filepath.Join(sources.ClaudeCodeDirectory, ".claude.json")
+		if selection.ClaudeCode {
+			sources.ClaudeCodeDirectory = claudeCodeDirectory
+			if strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")) == "" {
+				sources.ClaudeCodeState = filepath.Join(userHome, ".claude.json")
+			} else {
+				sources.ClaudeCodeState = filepath.Join(claudeCodeDirectory, ".claude.json")
+			}
 		}
-		sources.ClaudeCodeAuthentication = filepath.Join(sources.ClaudeCodeDirectory, ".credentials.json")
+		if credentialSync.ClaudeCode {
+			sources.ClaudeCodeAuthentication = filepath.Join(claudeCodeDirectory, ".credentials.json")
+		}
 	}
-	if selection.Codex {
-		sources.CodexDirectory, err = configuredAgentRoot(userHome, "CODEX_HOME", ".codex")
+	if selection.Codex || credentialSync.Codex {
+		codexDirectory, err := configuredAgentRoot(userHome, "CODEX_HOME", ".codex")
 		if err != nil {
 			return codingAgentConfigurationSources{}, err
 		}
-		sources.CodexAuthentication = filepath.Join(sources.CodexDirectory, "auth.json")
-		sources.CodexMCPAuthentication = filepath.Join(sources.CodexDirectory, ".credentials.json")
+		if selection.Codex {
+			sources.CodexDirectory = codexDirectory
+		}
+		if credentialSync.Codex {
+			sources.CodexAuthentication = filepath.Join(codexDirectory, "auth.json")
+			sources.CodexMCPAuthentication = filepath.Join(codexDirectory, ".credentials.json")
+		}
 	}
 	if selection.GitHubCopilot {
-		sources.GitHubCopilotDirectory, err = configuredAgentRoot(userHome, "COPILOT_HOME", ".copilot")
+		githubCopilotDirectory, err := configuredAgentRoot(userHome, "COPILOT_HOME", ".copilot")
 		if err != nil {
 			return codingAgentConfigurationSources{}, err
 		}
+		sources.GitHubCopilotDirectory = githubCopilotDirectory
 	}
-	if selection.Pi {
-		sources.PiDirectory, err = configuredAgentRoot(userHome, "PI_CODING_AGENT_DIR", ".pi", "agent")
+	if selection.Pi || credentialSync.Pi {
+		piDirectory, err := configuredAgentRoot(userHome, "PI_CODING_AGENT_DIR", ".pi", "agent")
 		if err != nil {
 			return codingAgentConfigurationSources{}, err
 		}
-		sources.PiAuthentication = filepath.Join(sources.PiDirectory, "auth.json")
+		if selection.Pi {
+			sources.PiDirectory = piDirectory
+		}
+		if credentialSync.Pi {
+			sources.PiAuthentication = filepath.Join(piDirectory, "auth.json")
+		}
 	}
 	if selection.Codex || selection.GitHubCopilot || selection.Pi {
 		sources.SharedSkillsDirectory = filepath.Join(userHome, ".agents", "skills")
@@ -178,6 +200,8 @@ func archiveCodingAgentConfiguration(
 		if err := archiveGit(sources.OpenCodeDirectory, "opencode"); err != nil {
 			return fmt.Errorf("archive OpenCode Git repository: %w", err)
 		}
+	}
+	if sources.CredentialSync.OpenCode {
 		if err := addOptionalConfigurationFile(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode authentication: %w", err)
 		}
@@ -208,6 +232,8 @@ func archiveCodingAgentConfiguration(
 				return fmt.Errorf("archive Claude Code user MCP configuration: %w", err)
 			}
 		}
+	}
+	if sources.CredentialSync.ClaudeCode {
 		if err := addOptionalConfigurationFile(sources.ClaudeCodeAuthentication, filepath.Join("claude-code-auth", ".credentials.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code authentication: %w", err)
 		}
@@ -221,6 +247,8 @@ func archiveCodingAgentConfiguration(
 			return fmt.Errorf("archive Codex Git repository: %w", err)
 		}
 		recordHerdrHookSource("codex", filepath.Join("codex", "herdr-agent-state.ps1"))
+	}
+	if sources.CredentialSync.Codex {
 		if err := addOptionalConfigurationFile(sources.CodexAuthentication, filepath.Join("codex-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Codex authentication: %w", err)
 		}
@@ -253,6 +281,8 @@ func archiveCodingAgentConfiguration(
 		if err := archiveGit(sources.PiDirectory, "pi"); err != nil {
 			return fmt.Errorf("archive Pi Git repository: %w", err)
 		}
+	}
+	if sources.CredentialSync.Pi {
 		if err := addOptionalConfigurationFile(sources.PiAuthentication, filepath.Join("pi-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive Pi authentication: %w", err)
 		}
@@ -266,7 +296,7 @@ func archiveCodingAgentConfiguration(
 			return fmt.Errorf("archive shared agent skills Git repository: %w", err)
 		}
 	}
-	manifest, err := encodeCodingAgentSyncManifest(sources.Selection, gitTrackedDeletions, herdrHookSourcePaths)
+	manifest, err := encodeCodingAgentSyncManifest(sources.Selection, sources.CredentialSync, gitTrackedDeletions, herdrHookSourcePaths)
 	if err != nil {
 		return err
 	}
@@ -461,6 +491,27 @@ func codingAgentSyncNames(configuration codingAgentSyncConfiguration) []string {
 		{configuration.Codex, "Codex"},
 		{configuration.GitHubCopilot, "GitHub Copilot"},
 		{configuration.Pi, "Pi"},
+	} {
+		if entry.enabled {
+			selected = append(selected, entry.name)
+		}
+	}
+	sort.Strings(selected)
+	return selected
+}
+
+func credentialSyncNames(configuration credentialSyncConfiguration) []string {
+	selected := []string{}
+	for _, entry := range []struct {
+		enabled bool
+		name    string
+	}{
+		{configuration.OpenCode, "OpenCode"},
+		{configuration.ClaudeCode, "Claude Code"},
+		{configuration.Codex, "Codex"},
+		{configuration.GitHubCLI, "GitHub CLI"},
+		{configuration.Pi, "Pi"},
+		{configuration.TradingView, "TradingView"},
 	} {
 		if entry.enabled {
 			selected = append(selected, entry.name)

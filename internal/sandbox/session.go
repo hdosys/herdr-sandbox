@@ -23,6 +23,7 @@ import (
 
 const (
 	defaultMemoryMB             = 32768
+	defaultSandboxUpTimeout     = 4 * time.Hour
 	configurationSyncTimeout    = 5 * time.Minute
 	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + hostHerdrProvisionTimeout + guestHerdrIntegrationTimeout + mobileSSHPreparationTimeout + 2*time.Minute
 	sshTargetName               = "sandbox"
@@ -70,6 +71,7 @@ type runPlan struct {
 	MobileSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
 	CodingAgentSync            codingAgentSyncConfiguration
+	CredentialSync             credentialSyncConfiguration
 	TradingViewEnabled         bool
 	WindowsTerminal            windowsTerminalConfiguration
 	ConfigPath                 string
@@ -96,7 +98,7 @@ type provisioningSnapshot struct {
 }
 
 func DefaultOptions() Options {
-	return Options{Output: io.Discard}
+	return Options{Timeout: defaultSandboxUpTimeout, Output: io.Discard}
 }
 
 func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -301,7 +303,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"))
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"))
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -535,6 +537,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		MobileSSHAuthorizedKeys: append([]string(nil), provisioning.MobileSSHAuthorizedKeys...),
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
+		CredentialSync:          provisioning.CredentialSync,
 		WorktreeDirectory:       provisioning.WorktreeDirectory,
 		ModelsDirectory:         provisioning.ModelsDirectory,
 		Mounts:                  provisioning.Mounts,
