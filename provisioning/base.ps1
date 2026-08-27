@@ -689,8 +689,13 @@ function Add-ProvisioningMachinePath {
     }
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $entries = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if (-not ($entries | Where-Object { $_.TrimEnd('\') -ieq $Directory.TrimEnd('\') })) {
-        [Environment]::SetEnvironmentVariable('Path', ((@($Directory) + $entries) -join ';'), 'Machine')
+    $directoryPath = $Directory.TrimEnd('\')
+    $otherEntries = @($entries | Where-Object {
+            -not [string]::Equals($_.TrimEnd('\'), $directoryPath, [StringComparison]::OrdinalIgnoreCase)
+        })
+    $updatedPath = (@($Directory) + $otherEntries) -join ';'
+    if (-not [string]::Equals([string]$machinePath, $updatedPath, [StringComparison]::Ordinal)) {
+        [Environment]::SetEnvironmentVariable('Path', $updatedPath, 'Machine')
     }
     Update-ProvisioningPath
 }

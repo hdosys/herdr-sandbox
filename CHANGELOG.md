@@ -20,6 +20,11 @@ represent failed tag attempts; this changelog does not recreate them.
 - The C/C++ stack now includes current stable CMake alongside Visual Studio Build
   Tools and the Windows 11 SDK.
 
+### Fixed
+
+- Retained provisioning now restores each app-owned tool directory to the front of
+  machine `PATH` after an external installer prepends a competing runtime path.
+
 ## v0.0.19
 
 ### Added
