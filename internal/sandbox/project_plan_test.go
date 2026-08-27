@@ -77,6 +77,19 @@ throw 'the AST adapter must not execute project code'
 	if strings.Join(projectStackStrings(userStacks), "|") != "android|audio|cpp|rust-msvc|uv" {
 		t.Fatalf("user stacks = %v", userStacks)
 	}
+	var cmake resolvedToolVersion
+	foundCMake := false
+	for _, tool := range inspection.ToolVersions {
+		if tool.Tool == packageCMake {
+			cmake = tool
+			foundCMake = true
+			break
+		}
+	}
+	if !foundCMake || cmake.Version != "" || cmake.Source != toolVersionSourceDefault ||
+		strings.Join(cmake.Owners, "|") != `project "alpha" (cpp)|project "alpha" (handy)|user.ps1 (cpp)` {
+		t.Fatalf("CMake tool plan = %#v", cmake)
+	}
 }
 
 func TestInspectProjectProvisioningPlanAcceptsEmptyGoProject(t *testing.T) {

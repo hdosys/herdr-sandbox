@@ -155,6 +155,9 @@ function Get-CommandToolRequirements {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'nextest.cargo-nextest' $version '' 'cargo-nextest')
         }
+        'Install-CppStack' {
+            return @(New-ToolRequirement 'Kitware.CMake' '' '' 'cpp')
+        }
         'Install-DotNetStack' {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'Microsoft.DotNet.SDK' $version '' 'dotnet')

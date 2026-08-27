@@ -373,7 +373,7 @@ and is intended for exhaustive environments rather than the usual first run.
 | `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with current stable Python and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
 | `android` | Current Android SDK command-line tools, Platform Tools/ADB, and the shared current stable Microsoft OpenJDK stack |
 | `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
-| `cpp` | C and C++ with current stable Visual Studio Build Tools and Windows 11 SDK |
+| `cpp` | C and C++ with current stable Visual Studio Build Tools, Windows 11 SDK, and CMake |
 | `dotnet` | Current stable .NET SDK family |
 | `go` | Go |
 | `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |

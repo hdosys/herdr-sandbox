@@ -229,7 +229,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackCargoNextest:
 		return "nextest.cargo-nextest"
 	case stackCpp:
-		return "current stable Visual Studio Build Tools C++ workload"
+		return "current stable Visual Studio Build Tools C++ workload + " + packageCMake
 	case stackDotNet:
 		return "current stable Microsoft.DotNet.SDK family"
 	case stackGitSH:

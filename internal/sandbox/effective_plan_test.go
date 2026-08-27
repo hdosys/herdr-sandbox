@@ -62,7 +62,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		len(plan.StackPackages) != 14 || plan.StackPackages[0].PackageOwner != "Android SDK Command-line Tools + Platform Tools + current stable JDK" ||
 		plan.StackPackages[1].PackageOwner != packageREAPER+" + AudioGridder Server + VST2/VST3 clients" ||
 		plan.StackPackages[2].PackageOwner != "Oven-sh.Bun" ||
-		plan.StackPackages[3].PackageOwner != "current stable Visual Studio Build Tools C++ workload" ||
+		plan.StackPackages[3].PackageOwner != "current stable Visual Studio Build Tools C++ workload + "+packageCMake ||
 		plan.StackPackages[6].PackageOwner != "Kitware.CMake + KhronosGroup.VulkanSDK + Microsoft.EdgeWebView2Runtime" ||
 		plan.StackPackages[7].PackageOwner != "current stable Microsoft.OpenJDK family" ||
 		plan.StackPackages[8].PackageOwner != packageNSIS ||

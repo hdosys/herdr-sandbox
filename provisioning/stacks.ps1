@@ -811,6 +811,26 @@ function Enable-StackVisualStudioDeveloperEnvironment {
     }
 }
 
+function Install-StackCMake {
+    [CmdletBinding()]
+    param()
+
+    $versionRequest = Get-ProvisioningToolVersion -Tool 'Kitware.CMake'
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'CMake' -Id 'Kitware.CMake' -Version $versionRequest `
+        -InstallerType 'wix' -Scope 'machine'
+    if ([string]$metadata.Id -cne 'Kitware.CMake' -or
+        [string]$metadata.Version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "CMake metadata is unexpected: $($metadata.Id) $($metadata.Version)"
+    }
+    Install-ProvisioningCachedPackage -Role 'CMake' -Metadata $metadata `
+        -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'cmake.exe' `
+        -InstallerArguments @('ADD_CMAKE_TO_PATH=System') -RequireAuthenticodeSignature
+    Add-ProvisioningMachinePath -Directory (Join-Path $env:ProgramFiles 'CMake\bin')
+    return Assert-ProvisioningCommand -Role 'CMake' -Name 'cmake.exe' `
+        -VersionArguments @('--version') `
+        -ExpectedPattern ('^cmake version ' + [regex]::Escape([string]$metadata.Version) + '(?:\r?\n|$)')
+}
+
 function Assert-StackCppToolchain {
     param(
         [Parameter(Mandatory = $true)]
@@ -868,9 +888,11 @@ function Install-CppStack {
 
     Write-Output 'Installing Visual Studio C/C++ Build Tools...'
     Install-StackVisualStudioBuildTools
+    $cmakeVersion = Install-StackCMake
     $environment = Enable-StackVisualStudioDeveloperEnvironment
     Assert-StackCppToolchain -Compiler $environment.Compiler -Linker $environment.Linker
     Write-Output "C/C++ ready: $($environment.Compiler)"
+    Write-Output "CMake ready: $cmakeVersion"
 }
 
 function Get-StackRustSHA256 {
@@ -4865,21 +4887,7 @@ function Install-HandyStack {
         throw "Handy Cargo package identity is unexpected: $cargoPath"
     }
 
-    $cmakeVersionRequest = Get-ProvisioningToolVersion -Tool 'Kitware.CMake'
-    $cmakeMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy CMake' -Id 'Kitware.CMake' -Version $cmakeVersionRequest `
-        -InstallerType 'wix' -Scope 'machine'
-    if ([string]$cmakeMetadata.Id -cne 'Kitware.CMake' -or
-        [string]$cmakeMetadata.Version -notmatch '^\d+\.\d+\.\d+$') {
-        throw "Handy CMake metadata is unexpected: $($cmakeMetadata.Id) $($cmakeMetadata.Version)"
-    }
-    Install-ProvisioningCachedPackage -Role 'Handy CMake' -Metadata $cmakeMetadata `
-        -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'cmake.exe' `
-        -InstallerArguments @('ADD_CMAKE_TO_PATH=System') -RequireAuthenticodeSignature
-    $cmakeDirectory = Join-Path $env:ProgramFiles 'CMake\bin'
-    Add-ProvisioningMachinePath -Directory $cmakeDirectory
-    $cmakeVersion = Assert-ProvisioningCommand -Role 'Handy CMake' -Name 'cmake.exe' `
-        -VersionArguments @('--version') `
-        -ExpectedPattern ('^cmake version ' + [regex]::Escape([string]$cmakeMetadata.Version) + '(?:\r?\n|$)')
+    $cmakeVersion = Install-StackCMake
 
     $vulkanVersion = Get-ProvisioningToolVersion -Tool 'KhronosGroup.VulkanSDK'
     $vulkanMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy Vulkan SDK' `

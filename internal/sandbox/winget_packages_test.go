@@ -137,7 +137,7 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass Nushell stack case-insensitively": {
 			Add: []string{"nUsHeLl.NuShElL"}, Versions: map[string]string{},
 		},
-		"bypass Handy CMake stack": {
+		"bypass CMake stack": {
 			Add: []string{packageCMake}, Versions: map[string]string{},
 		},
 		"bypass Handy Vulkan SDK stack": {

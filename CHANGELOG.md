@@ -28,6 +28,8 @@ artifacts remain available on the
 - Provisioning now resolves the current stable release of external programs at
   execution time, while explicit project versions remain exact and release
   metadata, signatures, and checksums still bind each selected payload.
+- The C/C++ stack now includes current stable CMake alongside Visual Studio Build
+  Tools and the Windows 11 SDK.
 - OpenSSH now prefers a digest-backed stable server MSI and uses the strictly
   named official Preview package only when no usable stable server release exists.
 - The audio stack disables REAPER's in-app update checks before first launch while
