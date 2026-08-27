@@ -12,6 +12,22 @@ import (
 	"time"
 )
 
+func TestCancellationOutcomeNamesSandboxStateByStage(t *testing.T) {
+	for _, test := range []struct {
+		stage provisioningCancellationStage
+		want  string
+	}{
+		{provisioningCancellationBeforeLaunch, "before a Sandbox was launched"},
+		{provisioningCancellationRetained, "ready Sandbox was preserved"},
+		{provisioningCancellationFresh, "may continue guest bootstrap"},
+	} {
+		err := cancellationOutcomeError(context.Canceled, test.stage)
+		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("stage %d cancellation = %v, want %q", test.stage, err, test.want)
+		}
+	}
+}
+
 func TestPrepareHostStateDirectoriesRejectsIdentityReparseBeforeMutation(t *testing.T) {
 	dataDirectory := t.TempDir()
 	outside := t.TempDir()

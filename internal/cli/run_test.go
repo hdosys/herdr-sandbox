@@ -612,7 +612,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	}
 	var stdout bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"up", "--no-attach"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{}, dependencies)
-	if code != 0 || validated || attached || upOptions.Timeout != 4*time.Hour || strings.Join(order, "|") != "host-herdr|cleanup|pull|up" || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
+	if code != 0 || validated || attached || upOptions.Timeout != 4*time.Hour || strings.Join(order, "|") != "host-herdr|cleanup|pull|up" || !strings.Contains(stdout.String(), "Timing: preparation") || !strings.Contains(stdout.String(), "; provisioning") || !strings.Contains(stdout.String(), "; total") || !strings.Contains(stdout.String(), "Next: run `sandbox attach`") {
 		t.Fatalf("code = %d, validated = %t, attached = %t, timeout = %s, order = %v, stdout = %q", code, validated, attached, upOptions.Timeout, order, stdout.String())
 	}
 }
@@ -645,7 +645,7 @@ func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
 	}
 	dependencies.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
 		cancel()
-		return sandbox.Connection{}, context.Canceled
+		return sandbox.Connection{}, errors.New("retained provisioning cancelled; the ready Sandbox was preserved. Run `sandbox status` to inspect it")
 	}
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(ctx, []string{"up", "--no-attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
@@ -779,6 +779,12 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 		if strings.Contains(output.String(), packed) {
 			t.Fatalf("plan contains packed or placeholder output %q:\n%s", packed, output.String())
 		}
+	}
+	plan.CredentialTransfers = nil
+	output.Reset()
+	printEffectivePlan(&output, plan)
+	if !strings.Contains(output.String(), "Secure default: credential transfer is disabled") {
+		t.Fatalf("plan has no disabled-credential guidance:\n%s", output.String())
 	}
 }
 

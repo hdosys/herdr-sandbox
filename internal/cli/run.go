@@ -405,6 +405,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 	}
+	startedAt := time.Now()
 	fmt.Fprintln(stdout, "Preparing Sandbox...")
 	hostHerdr, err := dependencies.resolveHerdr(ctx)
 	if err != nil {
@@ -422,15 +423,21 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		printHostConfigurationPullResult(stdout, pulled)
 	}
 
+	provisioningStartedAt := time.Now()
 	connection, err := dependencies.up(ctx, options, hostHerdr)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			fmt.Fprintln(stderr, "sandbox: provisioning cancelled; Sandbox state was preserved. Run `sandbox status` to inspect it.")
+			fmt.Fprintln(stderr, "sandbox:", err)
 			return 130
 		}
 		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
+	completedAt := time.Now()
+	fmt.Fprintf(stdout, "Timing: preparation %s; provisioning %s; total %s\n",
+		provisioningStartedAt.Sub(startedAt).Round(100*time.Millisecond),
+		completedAt.Sub(provisioningStartedAt).Round(100*time.Millisecond),
+		completedAt.Sub(startedAt).Round(100*time.Millisecond))
 	if noAttach {
 		fmt.Fprintln(stdout, "Next: run `sandbox attach` or `herdr --remote sandbox`.")
 		return 0
@@ -722,6 +729,9 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	printBulletList(output, sortedFold(plan.CodingAgents), "  ")
 	fmt.Fprintln(output, "\nCredential transfers")
 	printBulletList(output, sortedFold(plan.CredentialTransfers), "  ")
+	if len(plan.CredentialTransfers) == 0 {
+		fmt.Fprintln(output, "  Secure default: credential transfer is disabled; enable individual providers in `credentialSync`.")
+	}
 	fmt.Fprintln(output, "\nGlobal stacks")
 	printBulletList(output, sortedFold(plan.GlobalStacks), "  ")
 

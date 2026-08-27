@@ -17,8 +17,11 @@ represent failed tag attempts; this changelog does not recreate them.
 
 - `sandbox up` now uses a four-hour launch-to-ready timeout by default. A positive
   `--timeout` value replaces it for one run.
-- `sandbox up` now identifies fresh versus retained mode before provisioning and
-  reports a non-secret result for every enabled credential provider.
+- `sandbox up` now identifies fresh versus retained mode before provisioning,
+  reports a non-secret result for every enabled credential provider, and prints
+  preparation, provisioning, and total elapsed time before optional attach.
+- `sandbox plan` now explains that disabled credential transfer is the secure
+  default and points to the explicit `credentialSync` opt-in.
 - `sandbox config` now distinguishes a newly created default from an existing
   configuration and points to `sandbox plan` as the next validation step.
 - The C/C++ stack now includes current stable CMake alongside Visual Studio Build
@@ -29,10 +32,10 @@ represent failed tag attempts; this changelog does not recreate them.
 - Enabling credential transfer for an existing ready Sandbox now applies selected
   OpenCode, Claude Code, Codex, GitHub CLI, Pi, and TradingView credentials before
   unchanged-package retained provisioning performs its longer idempotent refresh.
-- Ctrl+C now acknowledges cancellation immediately, cancels retained provisioning
-  without waiting up to 90 seconds for an Explorer restart, reports standard exit
-  status 130 with a status command, and restores immediate termination behavior
-  for a second interrupt.
+- Ctrl+C now acknowledges cancellation immediately, identifies pre-launch,
+  retained-ready, and fresh-bootstrap outcomes, cancels retained provisioning
+  without waiting up to 90 seconds for an Explorer restart, reports status 130,
+  and restores immediate termination behavior for a second interrupt.
 - Detaching from Herdr now labels the bounded guest-server persistence check and
   confirms when the guest remains ready instead of pausing silently.
 - Retained provisioning now restores each app-owned tool directory to the front of

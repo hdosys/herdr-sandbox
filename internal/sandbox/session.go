@@ -108,7 +108,40 @@ func withOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Co
 	return context.WithTimeout(ctx, timeout)
 }
 
+type provisioningCancellationStage uint8
+
+const (
+	provisioningCancellationBeforeLaunch provisioningCancellationStage = iota
+	provisioningCancellationRetained
+	provisioningCancellationFresh
+)
+
+type provisioningCancellationError struct {
+	message string
+	cause   error
+}
+
+func (e provisioningCancellationError) Error() string { return e.message }
+func (e provisioningCancellationError) Unwrap() error { return e.cause }
+
+func cancellationOutcomeError(cause error, stage provisioningCancellationStage) error {
+	message := "startup cancelled before a Sandbox was launched"
+	switch stage {
+	case provisioningCancellationRetained:
+		message = "retained provisioning cancelled; the ready Sandbox was preserved. Run `sandbox status` to inspect it"
+	case provisioningCancellationFresh:
+		message = "fresh provisioning wait cancelled; the Sandbox may continue guest bootstrap. Run `sandbox status` to inspect it"
+	}
+	return provisioningCancellationError{message: message, cause: cause}
+}
+
 func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Connection, resultErr error) {
+	cancellationStage := provisioningCancellationBeforeLaunch
+	defer func() {
+		if resultErr != nil && errors.Is(ctx.Err(), context.Canceled) {
+			resultErr = cancellationOutcomeError(resultErr, cancellationStage)
+		}
+	}()
 	if runtime.GOOS != "windows" {
 		return Connection{}, errors.New("this command requires Windows Sandbox on Windows")
 	}
@@ -179,6 +212,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	var retainedReady readyStatus
 	var tailscaleBootstrap tailscaleBootstrap
 	if sessionStatus.State == SessionReady {
+		cancellationStage = provisioningCancellationRetained
 		sandboxExecutable, err := windowsSandboxExecutable()
 		if err != nil {
 			return Connection{}, err
@@ -258,6 +292,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if err != nil {
 		return Connection{}, err
 	}
+	cancellationStage = provisioningCancellationFresh
 	if err := releaseLifecycle(); err != nil {
 		return Connection{}, err
 	}
