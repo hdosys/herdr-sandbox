@@ -25,9 +25,9 @@ func TestParseReleaseVersion(t *testing.T) {
 		input string
 		want  releaseVersion
 	}{
-		{input: "v0.0.0", want: releaseVersion{Tag: "v0.0.0", Display: "0.0.0", Fixed: "0.0.0.0"}},
-		{input: "v0.0.42", want: releaseVersion{Tag: "v0.0.42", Display: "0.0.42", Fixed: "0.0.42.0"}},
-		{input: " v0.0.65535 ", want: releaseVersion{Tag: "v0.0.65535", Display: "0.0.65535", Fixed: "0.0.65535.0"}},
+		{input: "v0.0.0", want: releaseVersion{ReleaseID: 0, Tag: "v0.0.0", Display: "0.0.0", Fixed: "0.0.0.0"}},
+		{input: "v0.0.42", want: releaseVersion{ReleaseID: 42, Tag: "v0.0.42", Display: "0.0.42", Fixed: "0.0.42.0"}},
+		{input: " v0.0.65535 ", want: releaseVersion{ReleaseID: 65535, Tag: "v0.0.65535", Display: "0.0.65535", Fixed: "0.0.65535.0"}},
 	} {
 		got, err := parseReleaseVersion(test.input)
 		if err != nil || got != test.want {
@@ -38,6 +38,27 @@ func TestParseReleaseVersion(t *testing.T) {
 		if _, err := parseReleaseVersion(input); err == nil {
 			t.Fatalf("parseReleaseVersion(%q) unexpectedly succeeded", input)
 		}
+	}
+}
+
+func TestImmediatePredecessorVersionRequiresAPositiveReleaseID(t *testing.T) {
+	candidate, err := parseReleaseVersion("v0.0.42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := immediatePredecessorVersion(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous.ReleaseID != 41 || previous.Tag != "v0.0.41" || previous.Display != "0.0.41" {
+		t.Fatalf("previous release = %#v", previous)
+	}
+	first, err := parseReleaseVersion("v0.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := immediatePredecessorVersion(first); err == nil || !strings.Contains(err.Error(), "greater than zero") {
+		t.Fatalf("zero release predecessor error = %v", err)
 	}
 }
 

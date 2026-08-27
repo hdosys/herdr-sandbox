@@ -259,7 +259,7 @@ replacing it.
 | `mobileSSHAuthorizedKeys` | Up to eight device-owned Ed25519 public keys. Private keys never belong here. |
 | `configurationSync` | Controls automatic fast-forward pulls before `up` and after `down`; both default on. |
 | `codingAgentSync` | Selects configuration transfer for OpenCode, Claude Code, Codex, Copilot, and Pi. All default on. |
-| `credentialSync` | Independently opts into portable credentials for OpenCode, Claude Code, Codex, GitHub CLI/Copilot, Pi, and TradingView. All default off. |
+| `credentialSync` | Independently opts into credential transfer for `opencode`, `claudeCode`, `codex`, `githubCLI`, `pi`, and `tradingView`. All default off. |
 | `workspaces` | Named project roots mapped to `C:\Workspaces\<name>`. |
 | `mounts` | Named additional folders mapped to `C:\Mounts\<name>` with explicit read-only choice. |
 | `workspaceDiscovery` | Optionally selects direct child projects below one root, with exclusion patterns. |
@@ -284,17 +284,32 @@ Nothing is installed into the host development environment.
 <summary><strong>Agent configuration sync</strong></summary>
 
 Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
-Copilot CLI, and Pi, with every `codingAgentSync` selection enabled by default.
-Portable credentials are separate. Exact `credentialSync` choices for OpenCode,
-Claude Code, Codex, GitHub CLI/Copilot, Pi, and TradingView all default to `false`.
-Missing selected credentials are a clean no-op. Disabling a choice stops future
-transfer but does not revoke a credential already present in a retained guest;
-close the Sandbox to discard that copy. Approved files travel over verified SSH;
-a Git-backed configuration root also transfers repository metadata and object
-history, which may contain old secrets. Disable any root whose complete history
-is not safe for the guest. Private SSH and GPG keys, conversations, logs, caches,
-and machine-bound credentials stay on the host. Agent installation remains a
-separate `wingetPackages.add` choice.
+Copilot CLI, and Pi, with every selection enabled by default. Credential transfer
+is a separate opt-in through `credentialSync`. Missing host credentials leave the
+guest unchanged. Turning an entry off stops later transfers but does not revoke a
+credential already present in a retained guest; closing the Sandbox remains the
+cleanup boundary. GitHub CLI `config.yml` and TradingView stack/privacy settings
+remain usable without transferring accounts or session cookies. Review these
+choices before the first `up`. Approved files travel over verified SSH; a
+Git-backed configuration root also transfers repository metadata and object
+history, which may contain old secrets. Disable any root whose complete history is
+not safe for the guest. Private SSH and GPG keys, conversations, logs, caches, and
+machine-bound credentials stay on the host. Agent installation remains a separate
+`wingetPackages.add` choice. `sandbox plan` lists configuration and credential
+selections separately.
+
+```json
+{
+  "credentialSync": {
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCLI": false,
+    "pi": false,
+    "tradingView": false
+  }
+}
+```
 
 When enabled, registered configuration repositories fast-forward before `up` and
 after `down`. Local edits are never rebased, stashed, or overwritten; divergence
@@ -351,7 +366,7 @@ and errors go to stderr.
 | `sandbox version` or `sandbox --version` | Prints the release and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. The launch-to-ready timeout defaults to four hours; an explicit positive `--timeout` replaces it. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. |
@@ -362,7 +377,10 @@ and errors go to stderr.
 Lifecycle commands remove stale data only after verifying that no owned Sandbox
 process still uses it. Changed or uncertain state is preserved and reported.
 Settings that change host mappings or the isolation boundary require
-`sandbox down` before the next `up`.
+`sandbox down` before the next `up`. `sandbox up` has a four-hour
+launch-to-terminal-ready timeout by default. A positive `--timeout DURATION`
+replaces it for one run, while caller cancellation can still stop the operation
+sooner.
 
 ## Supported stacks
 
@@ -390,7 +408,7 @@ and is intended for exhaustive environments rather than the usual first run.
 | `python` | Latest stable Python |
 | `python-ai` | Current stable Python and uv for CPU inference, notebooks, and API-based projects |
 | `rust` | Rust with MSVC Build Tools |
-| `tradingview` | TradingView Desktop and TVControl, with available host TradingView login transferred into the disposable guest |
+| `tradingview` | TradingView Desktop and TVControl; host login transfer requires `credentialSync.tradingView` |
 | `zig` | Zig |
 
 Project profiles may also call direct Bun, Cargo Nextest, Just, and uv helpers.
@@ -428,9 +446,8 @@ Guest processes have administrator access inside Windows Sandbox. Only select ho
   the optional worktree and shared model roots, cache, and run status.
 - The host home root, general AppData, unselected repositories, and private SSH or
   GPG keys are never mapped.
-- Only portable credentials explicitly selected by `credentialSync` travel over
-  verified SSH; they never enter persistent run input or logs. Machine-bound
-  credentials stay on the host.
+- Approved portable credentials travel only over verified SSH and never enter
+  persistent run input or logs. Machine-bound credentials stay on the host.
 - Downloads and cache hits are checked against package identity, versions, hashes,
   signatures, or metadata as applicable.
 - Lifecycle commands revalidate process and path ownership before attachment or
@@ -622,6 +639,7 @@ architecture.
 ```powershell
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
+go run ./cmd/task release-precheck VERSION
 go run ./cmd/task provisioning-preflight
 go run ./cmd/task native-current-sandbox
 go run ./cmd/task package-current-sandbox v0.0.RELEASE_ID
@@ -633,6 +651,11 @@ go run ./cmd/task native-all-stacks
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
+- `release-precheck VERSION` is required before creating a release tag. From a
+  clean committed checkout contained in its configured upstream, it validates the
+  matching changelog section, runs integration verification and installed-candidate
+  acceptance once, and confirms the source commit stays unchanged. It adds no
+  push-triggered CI.
 - `provisioning-preflight` checks production provisioning parsers plus available
   Java, Android, and Visual Studio inputs in the active Sandbox before a slower
   native or installed-candidate run. It does not install or update tools.
@@ -640,9 +663,10 @@ go run ./cmd/task native-all-stacks
   active development Sandbox, then proves a task-owned REAPER client connection
   to AudioGridder server 0 without launching a nested Sandbox or restarting its
   existing SSH and Herdr processes.
-- `package-current-sandbox` builds and installs the exact candidate, provisions
-  through its installed files, preserves the existing development environment,
-  then quietly uninstalls and verifies cleanup.
+- `package-current-sandbox` covers fresh install, same-version repair, a
+  current-layout immediate-predecessor upgrade, installed-payload provisioning,
+  configuration and development-environment preservation, and quiet uninstall
+  cleanup.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the
   complete toolchain, managed SSH, REAPER-to-AudioGridder connection, and a real
   NSIS compile without installing a release candidate.

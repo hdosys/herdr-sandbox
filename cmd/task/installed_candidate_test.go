@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,61 @@ import (
 
 	"herdr-sandbox/internal/productidentity"
 )
+
+func TestInstalledCandidateValidationBindsIdentityPayloadAndSourceVersion(t *testing.T) {
+	version, err := parseReleaseVersion("v0.0.42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "installed")
+	stage := filepath.Join(root, "stage")
+	for _, directory := range []string{installRoot, stage} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range releasePackageFiles {
+		contents := []byte("payload:" + file.Name)
+		for _, directory := range []string{installRoot, stage} {
+			if err := os.WriteFile(filepath.Join(directory, file.Name), contents, file.Mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	quietHelper := filepath.Join(installRoot, productidentity.QuietUninstallHelperName)
+	uninstaller := filepath.Join(installRoot, installerUninstallerName)
+	state := installedCandidateState{
+		SchemaVersion:        1,
+		Installed:            true,
+		DisplayName:          productidentity.DisplayName,
+		DisplayVersion:       version.Display,
+		InstallLocation:      installRoot,
+		QuietUninstallString: fmt.Sprintf(`powershell -File "%s" -Uninstaller "%s"`, quietHelper, uninstaller),
+	}
+	if err := validateInstalledCandidate(state, version, installRoot, stage); err != nil {
+		t.Fatalf("validate exact installed candidate: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(installRoot, releasePackageFiles[0].Name), []byte("different"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstalledCandidate(state, version, installRoot, stage); err == nil || !strings.Contains(err.Error(), "differs from staged payload") {
+		t.Fatalf("mismatched installed payload error = %v", err)
+	}
+
+	revision := "0123456789abcdef0123456789abcdef01234567"
+	got, err := expectedInstalledCandidateVersion(version, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%s %s (0123456789ab)", productidentity.CommandName, version.Display)
+	if got != want {
+		t.Fatalf("installed version output = %q, want %q", got, want)
+	}
+	if _, err := expectedInstalledCandidateVersion(version, "short"); err == nil {
+		t.Fatal("invalid installed source revision unexpectedly accepted")
+	}
+}
 
 func TestCurrentSandboxFirstInstallSeedsBecomePreservationBaseline(t *testing.T) {
 	appData := t.TempDir()

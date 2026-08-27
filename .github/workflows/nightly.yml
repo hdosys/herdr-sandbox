@@ -26,3 +26,6 @@ jobs:
       - name: Run checked build
         shell: powershell
         run: go run ./cmd/task verify-integration
+      - name: Scan Go dependencies
+        shell: powershell
+        run: go tool govulncheck ./...

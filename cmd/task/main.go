@@ -24,6 +24,7 @@ const (
 	integrationTaskTimeout     = 30 * time.Minute
 	currentSandboxTaskTimeout  = 45 * time.Minute
 	currentPackageTaskTimeout  = 60 * time.Minute
+	releasePrecheckTaskTimeout = integrationTaskTimeout + currentPackageTaskTimeout
 	nativeAllStacksTaskTimeout = 2 * time.Hour
 	fastTestsEnvironment       = "HERDR_SANDBOX_FAST_TESTS"
 )
@@ -37,8 +38,9 @@ Tasks:
   build            build intermediate CLI output at build/bin/%s
   provisioning-preflight  validate current guest inputs before an expensive native or installed-candidate gate
   native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
-  package-current-sandbox VERSION  package, install, provision through, and uninstall the candidate in this Sandbox
+  package-current-sandbox VERSION  package and exercise fresh install, repair, upgrade, provisioning, and uninstall in this Sandbox
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
+  release-precheck VERSION  manually run the frozen pre-tag integration and installed-candidate gates
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION  build the validated installable ZIP and NSIS candidate artifacts
   verify           verify format, modernization, analysis, tests, and the stable build
@@ -110,6 +112,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("package-current-sandbox requires one v0.0.RELEASE_ID version")
 		}
 		return packageCurrentSandbox(ctx, args[1], stdout, stderr)
+	case "release-precheck":
+		if len(args) != 2 {
+			return errors.New("release-precheck requires one v0.0.RELEASE_ID version")
+		}
+		return releasePrecheck(ctx, args[1], stdout, stderr)
 	case "package":
 		if len(args) != 2 {
 			return errors.New("package requires one v0.0.RELEASE_ID version")
@@ -144,6 +151,9 @@ func taskTimeoutFor(args []string) time.Duration {
 	}
 	if len(args) > 0 && args[0] == "package-current-sandbox" {
 		return currentPackageTaskTimeout
+	}
+	if len(args) > 0 && args[0] == "release-precheck" {
+		return releasePrecheckTaskTimeout
 	}
 	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "verify-integration") {
 		return integrationTaskTimeout
@@ -331,14 +341,6 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 type buildIdentity struct {
 	Version  string
 	Revision string
-}
-
-func buildRelease(ctx context.Context, version releaseVersion, stdout, stderr io.Writer) error {
-	revision, err := sourceRevision(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve release source revision: %w", err)
-	}
-	return buildWithIdentity(ctx, buildIdentity{Version: version.Display, Revision: revision}, stdout, stderr)
 }
 
 func sourceRevision(ctx context.Context) (string, error) {

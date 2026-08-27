@@ -26,7 +26,9 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "go run ./cmd/task") ||
 		!strings.Contains(stdout.String(), "build intermediate CLI output") ||
-		!strings.Contains(stdout.String(), "validated installable ZIP and NSIS candidate artifacts") {
+		!strings.Contains(stdout.String(), "validated installable ZIP and NSIS candidate artifacts") ||
+		!strings.Contains(stdout.String(), "release-precheck VERSION") ||
+		!strings.Contains(stdout.String(), "frozen pre-tag") {
 		t.Fatalf("help output = %q", stdout.String())
 	}
 }
@@ -47,6 +49,15 @@ func TestRunRejectsArgumentsForFixedTasks(t *testing.T) {
 	}
 }
 
+func TestRunRejectsInvalidReleasePrecheckArity(t *testing.T) {
+	for _, args := range [][]string{{"release-precheck"}, {"release-precheck", "v0.0.1", "unexpected"}} {
+		err := run(context.Background(), args, &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "release-precheck requires one") {
+			t.Fatalf("run %v error = %v", args, err)
+		}
+	}
+}
+
 func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	if got := taskTimeoutFor([]string{"native-all-stacks"}); got != nativeAllStacksTaskTimeout {
 		t.Fatalf("native timeout = %s", got)
@@ -56,6 +67,9 @@ func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	}
 	if got := taskTimeoutFor([]string{"package-current-sandbox", "v0.0.1"}); got != currentPackageTaskTimeout {
 		t.Fatalf("current-Sandbox package timeout = %s", got)
+	}
+	if got := taskTimeoutFor([]string{"release-precheck", "v0.0.1"}); got != releasePrecheckTaskTimeout {
+		t.Fatalf("release precheck timeout = %s", got)
 	}
 	if got := taskTimeoutFor([]string{"verify"}); got != taskTimeout {
 		t.Fatalf("ordinary timeout = %s", got)

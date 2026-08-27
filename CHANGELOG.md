@@ -1,16 +1,29 @@
 # Changelog
 
-Notable user-visible changes are recorded here. Exact publication times and
-artifacts remain available on the
-[GitHub Releases](https://github.com/hdosys/herdr-sandbox/releases) page.
+Notable user-visible changes are recorded here. Only published
+[GitHub Releases](https://github.com/hdosys/herdr-sandbox/releases) retain release
+artifacts and exact publication times. Gaps between release identifiers may
+represent failed tag attempts; this changelog does not recreate them.
+
+## v0.0.20
+
+### Added
+
+- Credential transfer can now be enabled independently for OpenCode, Claude Code,
+  Codex, GitHub CLI, Pi, and TradingView. Every provider defaults off, while
+  configuration and non-secret TradingView behavior remain available separately.
+
+### Changed
+
+- `sandbox up` now uses a four-hour launch-to-ready timeout by default. A positive
+  `--timeout` value replaces it for one run.
+- The C/C++ stack now includes current stable CMake alongside Visual Studio Build
+  Tools and the Windows 11 SDK.
 
 ## v0.0.19
 
 ### Added
 
-- Six independent, default-off `credentialSync` choices now control portable
-  authentication for OpenCode, Claude Code, Codex, GitHub CLI/Copilot, Pi, and
-  TradingView without disabling ordinary configuration or stack setup.
 - Selected coding agents now receive Herdr awareness automatically. Existing host
   integrations are synchronized without being replaced, while Herdr installs an
   offered integration only when that agent is available and no integration exists.
@@ -21,8 +34,6 @@ artifacts remain available on the
 
 ### Changed
 
-- `sandbox up` now defaults to a four-hour launch-to-ready timeout while retaining
-  explicit positive `--timeout` overrides and parent cancellation.
 - HyperFrames skills no longer load into every OpenCode session. The stack keeps
   them outside normal agent discovery and the new `hyperframes-opencode` command
   activates them only for an explicitly started OpenCode session.
@@ -33,8 +44,6 @@ artifacts remain available on the
 - Provisioning now resolves the current stable release of external programs at
   execution time, while explicit project versions remain exact and release
   metadata, signatures, and checksums still bind each selected payload.
-- The C/C++ stack now includes current stable CMake alongside Visual Studio Build
-  Tools and the Windows 11 SDK.
 - OpenSSH now prefers a digest-backed stable server MSI and uses the strictly
   named official Preview package only when no usable stable server release exists.
 - The audio stack disables REAPER's in-app update checks before first launch while

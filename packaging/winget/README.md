@@ -5,21 +5,25 @@ the Microsoft community repository. The intended independent package ID is
 `hdosys.herdr-sandbox`; Herdr/Herdr-Win is never bundled or declared as a package
 dependency.
 
-## Published release
+## Current WinGet mirror
 
-- Version: `0.0.18`
-- Release: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.18>
-- Community package: `hdosys.herdr-sandbox`
-- Installer:
+The mirrored community package version may intentionally lag the newest GitHub
+release. These facts describe the currently mirrored WinGet package, version
+`0.0.18`, not the current Herdr Sandbox product release.
+
+- Mirrored package version: `0.0.18`
+- Source tag: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.18>
+- Community package ID: `hdosys.herdr-sandbox`
+- Installer asset:
   <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.18/herdr-sandbox_v0.0.18_windows_amd64_setup.exe>
-- Published installer SHA-256:
+- Installer SHA-256:
   `64480ac608a802d9bf905079ff3a95df5363c3c89a2f4a7afc0235bf362efdc6`
 - Manifest schema: `1.12.0`
 
-The v0.0.18 manifest passed the repository release gate, public GitHub asset
-digest verification, WinGetCreate generation, and `winget validate`. Community
-validation, installation, and publication remain downstream. The installer is
-currently not Authenticode-signed.
+The currently mirrored v0.0.18 manifest passed the repository release gate,
+public GitHub asset digest verification, WinGetCreate generation, and `winget
+validate`. Community validation, installation, and publication remain downstream.
+The installer is currently not Authenticode-signed.
 
 ## Validate locally
 

@@ -43,9 +43,6 @@ Open, planned, blocked, or deferred product features and fixes only. User-visibl
   the extension-generated profile-local token and publish it only to disposable
   guest environment state without UI automation, logging, project persistence,
   remote debugging, another profile, or a custom extension.
-- Publish `hdosys.herdr-win` as an independent package so users can install both
-  `hdosys.herdr-sandbox` and `hdosys.herdr-win` from the WinGet community source
-  without a package dependency or shared payload.
 - Design intelligent lifecycle, refresh, and explicit reset management for
   durable Windows development VMs as a future product mode. Start with one
   concrete VM owner; define reset so it removes only that VM's proven mutable

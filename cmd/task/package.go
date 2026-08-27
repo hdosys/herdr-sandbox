@@ -42,9 +42,10 @@ var releasePackageFiles = []releasePackageFile{
 }
 
 type releaseVersion struct {
-	Tag     string
-	Display string
-	Fixed   string
+	ReleaseID uint16
+	Tag       string
+	Display   string
+	Fixed     string
 }
 
 type releasePackagePaths struct {
@@ -71,10 +72,25 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := validateWingetManifestProductCodes(); err != nil {
 		return err
 	}
-	if err := buildRelease(ctx, version, stdout, stderr); err != nil {
-		return err
+	revision, err := sourceRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve release source revision: %w", err)
 	}
 	paths := releasePaths(".", version)
+	if err := buildWindowsReleasePackage(ctx, version, revision, paths, stdout, stderr); err != nil {
+		return err
+	}
+	return writeReleaseArtifactEvidence(stdout, paths)
+}
+
+func buildWindowsReleasePackage(ctx context.Context, version releaseVersion, revision string, paths releasePackagePaths, stdout, stderr io.Writer) error {
+	revision, err := normalizeSourceRevision(revision)
+	if err != nil {
+		return fmt.Errorf("validate release source revision: %w", err)
+	}
+	if err := buildWithIdentity(ctx, buildIdentity{Version: version.Display, Revision: revision}, stdout, stderr); err != nil {
+		return err
+	}
 	if err := stageReleasePackage(filepath.Join("build", "bin"), paths.Stage); err != nil {
 		return err
 	}
@@ -101,9 +117,6 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 		return err
 	}
 	if err := publishReleaseArtifactSet(generated, paths); err != nil {
-		return err
-	}
-	if err := writeReleaseArtifactEvidence(stdout, paths); err != nil {
 		return err
 	}
 	return nil
@@ -224,7 +237,14 @@ func parseReleaseVersion(tag string) (releaseVersion, error) {
 		return releaseVersion{}, fmt.Errorf("release ID must fit the Windows version segment 0..65535: %q", match[1])
 	}
 	display := fmt.Sprintf("0.0.%d", releaseID)
-	return releaseVersion{Tag: tag, Display: display, Fixed: display + ".0"}, nil
+	return releaseVersion{ReleaseID: uint16(releaseID), Tag: tag, Display: display, Fixed: display + ".0"}, nil
+}
+
+func immediatePredecessorVersion(version releaseVersion) (releaseVersion, error) {
+	if version.ReleaseID == 0 {
+		return releaseVersion{}, errors.New("installed upgrade acceptance requires a release ID greater than zero")
+	}
+	return parseReleaseVersion(fmt.Sprintf("v0.0.%d", version.ReleaseID-1))
 }
 
 func releasePaths(root string, version releaseVersion) releasePackagePaths {
