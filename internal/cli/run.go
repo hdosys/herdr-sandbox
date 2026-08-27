@@ -89,7 +89,7 @@ type commandDependencies struct {
 	validateAttach             func(io.Reader, io.Writer, io.Writer) error
 	resolvePlan                func(context.Context, string) (sandbox.EffectivePlan, error)
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
-	openConfig                 func() (string, error)
+	openConfig                 func() (string, bool, error)
 	seedInstaller              func() error
 	stopInstallerProcesses     func(context.Context) error
 	cleanInstaller             func(context.Context, bool) error
@@ -148,12 +148,17 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintf(stderr, "sandbox: config does not accept arguments\n\n%s", usage)
 			return 2
 		}
-		path, err := dependencies.openConfig()
+		path, created, err := dependencies.openConfig()
 		if err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Opened configuration: %s\n", path)
+		if created {
+			fmt.Fprintf(stdout, "Created default configuration: %s\n", path)
+		} else {
+			fmt.Fprintf(stdout, "Opened existing configuration: %s\n", path)
+		}
+		fmt.Fprintln(stdout, "Next: save your changes, then run `sandbox plan`.")
 		return 0
 	case "pull-host-config":
 		if commandHelpRequested(args) {
@@ -176,7 +181,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintln(stderr, "sandbox: installer configuration open does not accept arguments")
 			return 2
 		}
-		if _, err := dependencies.openConfig(); err != nil {
+		if _, _, err := dependencies.openConfig(); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
@@ -420,7 +425,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	connection, err := dependencies.up(ctx, options, hostHerdr)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			fmt.Fprintln(stderr, "sandbox: provisioning cancelled; Sandbox state was preserved")
+			fmt.Fprintln(stderr, "sandbox: provisioning cancelled; Sandbox state was preserved. Run `sandbox status` to inspect it.")
 			return 130
 		}
 		fmt.Fprintln(stderr, "sandbox:", err)

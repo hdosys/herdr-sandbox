@@ -1913,8 +1913,13 @@ func seedUserProvisioning(path string) error {
 }
 
 func ensureGlobalWorkspaceConfig(globalRoot string) error {
+	_, err := ensureGlobalWorkspaceConfigResult(globalRoot)
+	return err
+}
+
+func ensureGlobalWorkspaceConfigResult(globalRoot string) (bool, error) {
 	path := filepath.Join(globalRoot, globalConfigurationName)
-	return seedFileOnce(path, defaultGlobalConfiguration, "global workspace config", validateExistingGlobalWorkspaceConfig)
+	return seedFileOnceResult(path, defaultGlobalConfiguration, "global workspace config", validateExistingGlobalWorkspaceConfig)
 }
 
 func validateExistingGlobalWorkspaceConfig(path string) error {

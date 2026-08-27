@@ -379,6 +379,52 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	return count, nil
 }
 
+func writeCredentialTransferReport(output io.Writer, archive []byte, selection credentialSyncConfiguration, githubCLIEnabled bool, githubAccounts int, tradingViewEnabled, tradingViewCredentialsFound bool) error {
+	names := credentialSyncNames(selection)
+	if len(names) == 0 || output == nil {
+		return nil
+	}
+	reader, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return fmt.Errorf("inspect development configuration archive for credential report: %w", err)
+	}
+	files := make(map[string]bool, len(reader.File))
+	for _, file := range reader.File {
+		if !file.FileInfo().IsDir() {
+			files[file.Name] = true
+		}
+	}
+	fileStatus := func(found bool) string {
+		if found {
+			return "transferred and verified"
+		}
+		return "skipped (portable host credentials not found)"
+	}
+	statuses := map[string]string{
+		"OpenCode":    fileStatus(files["opencode-auth/auth.json"]),
+		"Claude Code": fileStatus(files["claude-code-auth/.credentials.json"]),
+		"Codex":       fileStatus(files["codex-auth/auth.json"] || files["codex-auth/.credentials.json"]),
+		"GitHub CLI":  "transferred and verified",
+		"Pi":          fileStatus(files["pi-auth/auth.json"]),
+		"TradingView": "transferred and verified",
+	}
+	if !githubCLIEnabled {
+		statuses["GitHub CLI"] = "skipped (package is not selected)"
+	} else if githubAccounts == 0 {
+		statuses["GitHub CLI"] = "skipped (no authenticated host accounts found)"
+	}
+	if !tradingViewEnabled {
+		statuses["TradingView"] = "skipped (stack is not selected)"
+	} else if !tradingViewCredentialsFound {
+		statuses["TradingView"] = "skipped (host login not found)"
+	}
+	fmt.Fprintln(output, "Credential transfers")
+	for _, name := range names {
+		fmt.Fprintf(output, "  %s: %s\n", name, statuses[name])
+	}
+	return nil
+}
+
 func decodeDevelopmentConfigurationSyncResult(output []byte) (developmentConfigurationSyncResult, error) {
 	trimmed := bytes.TrimSpace(output)
 	if err := validateExactJSONObjectShape(trimmed, "guest development configuration result", []string{
@@ -638,7 +684,7 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string, reportOutput io.Writer) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
@@ -662,6 +708,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	expectedGitHubAccounts := 0
 	expectedTradingViewCookies := 0
+	tradingViewCredentialsFound := false
 	if packages.enabled(packageGitHubCLI) && credentialSync.GitHubCLI {
 		authenticationPayload, accountCount, err := exportGitHubCLIAuthentication(ctx, sources.GitHubCLIConfiguration)
 		if err != nil {
@@ -682,6 +729,11 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		sources.TradingViewAuthentication = authenticationPayload
 		defer clear(sources.TradingViewAuthentication)
 		expectedTradingViewCookies = cookieCount
+		authentication, decodeErr := decodeTradingViewAuthentication(authenticationPayload)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		tradingViewCredentialsFound = len(authentication.Cookies) > 0 || len(authentication.UserIDs) > 0
 	}
 	archive, err := buildDevelopmentConfigurationArchive(ctx, sources, configurationSyncScript)
 	if err != nil {
@@ -739,7 +791,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != expectedTradingViewVerification {
 		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d; verified %t, expected %t", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies, result.TradingViewAuthenticationVerified, expectedTradingViewVerification)
 	}
-	return nil
+	return writeCredentialTransferReport(reportOutput, archive, credentialSync, packages.enabled(packageGitHubCLI), expectedGitHubAccounts, tradingViewEnabled, tradingViewCredentialsFound)
 }
 
 func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int) string {

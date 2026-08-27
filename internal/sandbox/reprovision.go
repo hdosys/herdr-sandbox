@@ -117,13 +117,14 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
 		return Connection{}, err
 	}
-	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, provisioning.CredentialSync) {
+	credentialsSyncedEarly := shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, provisioning.CredentialSync)
+	if credentialsSyncedEarly {
 		if err := updateOperation("credential-sync", "Applying selected credentials before retained provisioning."); err != nil {
 			return Connection{}, err
 		}
 		fmt.Fprintln(options.Output, "Applying and verifying selected credentials before retained provisioning...")
 		syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
+		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, options.Output)
 		cancelSync()
 		if err != nil {
 			return Connection{}, err
@@ -156,7 +157,11 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	}
 	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory)
+	credentialReportOutput := options.Output
+	if credentialsSyncedEarly {
+		credentialReportOutput = nil
+	}
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err

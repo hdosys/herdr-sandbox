@@ -13,7 +13,7 @@ func TestOpenConfigurationSeedsOnlyMissingConfigAndUsesRegisteredApplication(t *
 	configurationRoot := t.TempDir()
 	expectedPath := filepath.Join(configurationRoot, applicationName, globalConfigurationName)
 	opened := ""
-	path, err := openConfigurationAt(configurationRoot, func(path string) error {
+	path, created, err := openConfigurationAt(configurationRoot, func(path string) error {
 		opened = path
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("configuration was not created before open: %v", err)
@@ -23,8 +23,8 @@ func TestOpenConfigurationSeedsOnlyMissingConfigAndUsesRegisteredApplication(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != expectedPath || opened != expectedPath {
-		t.Fatalf("path = %q, opened = %q, want %q", path, opened, expectedPath)
+	if path != expectedPath || !created || opened != expectedPath {
+		t.Fatalf("path = %q, created = %t, opened = %q, want created %q", path, created, opened, expectedPath)
 	}
 	if _, err := os.Stat(filepath.Join(configurationRoot, applicationName, userProvisioningName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("config command seeded the user provisioning script: %v", err)
@@ -34,8 +34,12 @@ func TestOpenConfigurationSeedsOnlyMissingConfigAndUsesRegisteredApplication(t *
 	if err := os.WriteFile(expectedPath, custom, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openConfigurationAt(configurationRoot, func(string) error { return nil }); err != nil {
+	_, created, err = openConfigurationAt(configurationRoot, func(string) error { return nil })
+	if err != nil {
 		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("existing configuration was reported as created")
 	}
 	contents, err := os.ReadFile(expectedPath)
 	if err != nil {
@@ -48,18 +52,18 @@ func TestOpenConfigurationSeedsOnlyMissingConfigAndUsesRegisteredApplication(t *
 
 func TestOpenConfigurationReportsRegisteredApplicationFailure(t *testing.T) {
 	configurationRoot := t.TempDir()
-	path, err := openConfigurationAt(configurationRoot, func(string) error {
+	path, created, err := openConfigurationAt(configurationRoot, func(string) error {
 		return errors.New("association fixture")
 	})
 	expectedPath := filepath.Join(configurationRoot, applicationName, globalConfigurationName)
-	if path != expectedPath || err == nil || !strings.Contains(err.Error(), "association fixture") || !strings.Contains(err.Error(), expectedPath) {
-		t.Fatalf("path = %q, error = %v", path, err)
+	if path != expectedPath || !created || err == nil || !strings.Contains(err.Error(), "association fixture") || !strings.Contains(err.Error(), expectedPath) {
+		t.Fatalf("path = %q, created = %t, error = %v", path, created, err)
 	}
 }
 
 func TestOpenConfigurationRejectsRelativeConfigurationRoot(t *testing.T) {
 	called := false
-	if _, err := openConfigurationAt("relative", func(string) error { called = true; return nil }); err == nil || called {
+	if _, _, err := openConfigurationAt("relative", func(string) error { called = true; return nil }); err == nil || called {
 		t.Fatalf("relative root error = %v, open called = %t", err, called)
 	}
 }

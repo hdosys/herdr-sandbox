@@ -216,6 +216,11 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		}
 		defer tailscaleBootstrap.clear()
 	}
+	if sessionStatus.State == SessionReady {
+		fmt.Fprintln(options.Output, "Mode: reusing and reprovisioning the ready Sandbox")
+	} else {
+		fmt.Fprintln(options.Output, "Mode: starting and provisioning a new Sandbox")
+	}
 	if provisioning.ModelsDirectory != "" {
 		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
 		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, options.Output); err != nil {
@@ -303,7 +308,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"))
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"), options.Output)
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)

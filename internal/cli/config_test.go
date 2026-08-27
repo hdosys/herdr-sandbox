@@ -12,15 +12,23 @@ func TestRunConfigOpensCanonicalConfiguration(t *testing.T) {
 	dependencies := defaultCommandDependencies()
 	const path = `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`
 	calls := 0
-	dependencies.openConfig = func() (string, error) {
+	dependencies.openConfig = func() (string, bool, error) {
 		calls++
-		return path, nil
+		return path, true, nil
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"config"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
-	if code != 0 || calls != 1 || stdout.String() != "Opened configuration: "+path+"\n" || stderr.Len() != 0 {
+	want := "Created default configuration: " + path + "\nNext: save your changes, then run `sandbox plan`.\n"
+	if code != 0 || calls != 1 || stdout.String() != want || stderr.Len() != 0 {
 		t.Fatalf("code = %d, calls = %d, stdout = %q, stderr = %q", code, calls, stdout.String(), stderr.String())
+	}
+	dependencies.openConfig = func() (string, bool, error) { return path, false, nil }
+	stdout.Reset()
+	code = runWithCommandDependencies(context.Background(), []string{"config"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	want = "Opened existing configuration: " + path + "\nNext: save your changes, then run `sandbox plan`.\n"
+	if code != 0 || stdout.String() != want || stderr.Len() != 0 {
+		t.Fatalf("existing config code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }
 
@@ -28,21 +36,26 @@ func TestRunConfigRejectsArgumentsAndReportsOpenFailure(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		args     []string
-		open     func() (string, error)
+		open     func() (string, bool, error)
 		wantCode int
 		wantText string
 	}{
 		{
-			name:     "argument",
-			args:     []string{"config", "extra"},
-			open:     func() (string, error) { t.Fatal("config owner called for invalid syntax"); return "", nil },
+			name: "argument",
+			args: []string{"config", "extra"},
+			open: func() (string, bool, error) {
+				t.Fatal("config owner called for invalid syntax")
+				return "", false, nil
+			},
 			wantCode: 2,
 			wantText: "config does not accept arguments",
 		},
 		{
-			name:     "open failure",
-			args:     []string{"config"},
-			open:     func() (string, error) { return "", errors.New("no application is registered to open .json files") },
+			name: "open failure",
+			args: []string{"config"},
+			open: func() (string, bool, error) {
+				return "", false, errors.New("no application is registered to open .json files")
+			},
 			wantCode: 1,
 			wantText: "no application is registered to open .json files",
 		},
@@ -62,9 +75,9 @@ func TestRunConfigRejectsArgumentsAndReportsOpenFailure(t *testing.T) {
 
 func TestRunConfigHelpDoesNotOpenConfiguration(t *testing.T) {
 	dependencies := defaultCommandDependencies()
-	dependencies.openConfig = func() (string, error) {
+	dependencies.openConfig = func() (string, bool, error) {
 		t.Fatal("config owner called for help")
-		return "", nil
+		return "", false, nil
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

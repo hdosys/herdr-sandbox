@@ -121,9 +121,9 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 	stopCalls := 0
 	cleanCalls := []bool{}
 	lockedCleanCalls := []bool{}
-	dependencies.openConfig = func() (string, error) {
+	dependencies.openConfig = func() (string, bool, error) {
 		openCalls++
-		return `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`, nil
+		return `C:\Users\user\AppData\Roaming\herdr-sandbox\config.json`, false, nil
 	}
 	dependencies.seedInstaller = func() error {
 		seedCalls++
@@ -168,7 +168,9 @@ func TestRunInstallerOnlyCommandsUseExactOwners(t *testing.T) {
 
 func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 	dependencies := defaultCommandDependencies()
-	dependencies.openConfig = func() (string, error) { return "", errors.New("open fixture") }
+	dependencies.openConfig = func() (string, bool, error) {
+		return "", false, errors.New("open fixture")
+	}
 	dependencies.seedInstaller = func() error { return errors.New("seed fixture") }
 	dependencies.stopInstallerProcesses = func(context.Context) error { return errors.New("stop fixture") }
 	dependencies.cleanInstaller = func(context.Context, bool) error { return errors.New("clean fixture") }
@@ -647,7 +649,7 @@ func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(ctx, []string{"up", "--no-attach"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr, dependencies)
-	if code != 130 || !strings.Contains(stderr.String(), "provisioning cancelled") {
+	if code != 130 || !strings.Contains(stderr.String(), "provisioning cancelled") || !strings.Contains(stderr.String(), "sandbox status") {
 		t.Fatalf("cancelled up code = %d, stderr = %q", code, stderr.String())
 	}
 }

@@ -98,6 +98,20 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	if err != nil {
 		t.Fatalf("buildDevelopmentConfigurationArchive: %v", err)
 	}
+	var credentialReport bytes.Buffer
+	allCredentials := credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
+	if err := writeCredentialTransferReport(&credentialReport, data, allCredentials, true, 1, false, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"OpenCode: transferred and verified", "Claude Code: skipped (portable host credentials not found)",
+		"Codex: skipped (portable host credentials not found)", "GitHub CLI: transferred and verified",
+		"Pi: skipped (portable host credentials not found)", "TradingView: skipped (stack is not selected)",
+	} {
+		if !strings.Contains(credentialReport.String(), expected) {
+			t.Fatalf("credential report %q is missing %q", credentialReport.String(), expected)
+		}
+	}
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		t.Fatal(err)
@@ -990,7 +1004,7 @@ func TestNativeDevelopmentConfigurationSync(t *testing.T) {
 			t.Fatal("guest TradingView Desktop is running; close it before authentication sync")
 		}
 	}
-	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{TradingView: tradingViewEnabled}, tradingViewEnabled, false, filepath.Join(runDirectory, "input", "provisioning")); err != nil {
+	if err := syncDevelopmentConfiguration(ctx, connection, terminal, packages, defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{TradingView: tradingViewEnabled}, tradingViewEnabled, false, filepath.Join(runDirectory, "input", "provisioning"), nil); err != nil {
 		t.Fatalf("syncDevelopmentConfiguration: %v", err)
 	}
 	if tradingViewEnabled {
