@@ -42,7 +42,7 @@ Tasks:
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release-precheck VERSION  manually run the frozen pre-tag integration and installed-candidate gates
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
-  package VERSION  build the validated installable ZIP and NSIS candidate artifacts
+  package VERSION [--release]  build one canonical local installer or the versioned release pair
   verify           verify format, modernization, analysis, tests, and the stable build
   verify-integration run the full nightly/release verification
 `, productidentity.ExecutableName)
@@ -118,10 +118,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return releasePrecheck(ctx, args[1], stdout, stderr)
 	case "package":
-		if len(args) != 2 {
-			return errors.New("package requires one v0.0.RELEASE_ID version")
+		if len(args) != 2 && !(len(args) == 3 && args[2] == "--release") {
+			return errors.New("package requires one v0.0.RELEASE_ID version and optional --release")
 		}
-		return packageWindowsRelease(ctx, args[1], stdout, stderr)
+		return packageWindowsRelease(ctx, args[1], len(args) == 3, stdout, stderr)
 	case "release-notes":
 		if len(args) != 2 {
 			return errors.New("release-notes requires one v0.0.RELEASE_ID version")
@@ -331,7 +331,7 @@ if ($failed) {
 }
 
 func build(ctx context.Context, stdout, stderr io.Writer) error {
-	identity := buildIdentity{Version: "devel", Revision: "unknown"}
+	identity := buildIdentity{Version: "devel", Revision: "unknown", Freshness: productidentity.FormatBuildFreshness(time.Now())}
 	if revision, err := sourceRevision(ctx); err == nil {
 		identity.Revision = revision
 	}
@@ -339,8 +339,9 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 }
 
 type buildIdentity struct {
-	Version  string
-	Revision string
+	Version   string
+	Revision  string
+	Freshness string
 }
 
 func sourceRevision(ctx context.Context) (string, error) {
@@ -361,6 +362,9 @@ func normalizeSourceRevision(value string) (string, error) {
 }
 
 func buildWithIdentity(ctx context.Context, identity buildIdentity, stdout, stderr io.Writer) error {
+	if !productidentity.ValidBuildFreshness(identity.Freshness) {
+		return fmt.Errorf("build freshness must use %s UTC format: %q", productidentity.BuildFreshnessLayout, identity.Freshness)
+	}
 	output := filepath.Join("build", "bin", productidentity.ExecutableName)
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("create build output directory: %w", err)
@@ -391,7 +395,7 @@ func buildWithIdentity(ctx context.Context, identity buildIdentity, stdout, stde
 }
 
 func goBuildArgs(output string, identity buildIdentity) []string {
-	linkerFlags := fmt.Sprintf("-s -w -X herdr-sandbox/internal/productidentity.Version=%s -X herdr-sandbox/internal/productidentity.Revision=%s", identity.Version, identity.Revision)
+	linkerFlags := fmt.Sprintf("-s -w -X herdr-sandbox/internal/productidentity.Version=%s -X herdr-sandbox/internal/productidentity.Revision=%s -X herdr-sandbox/internal/productidentity.BuildFreshness=%s", identity.Version, identity.Revision, identity.Freshness)
 	return []string{
 		"build",
 		"-trimpath",

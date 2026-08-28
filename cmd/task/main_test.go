@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "go run ./cmd/task") ||
 		!strings.Contains(stdout.String(), "build intermediate CLI output") ||
-		!strings.Contains(stdout.String(), "validated installable ZIP and NSIS candidate artifacts") ||
+		!strings.Contains(stdout.String(), "one canonical local installer or the versioned release pair") ||
 		!strings.Contains(stdout.String(), "release-precheck VERSION") ||
 		!strings.Contains(stdout.String(), "frozen pre-tag") {
 		t.Fatalf("help output = %q", stdout.String())
@@ -109,11 +109,11 @@ func TestGoBuildArgsUseStrippedProductionBuild(t *testing.T) {
 		"build",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags", "-s -w -X herdr-sandbox/internal/productidentity.Version=0.0.7 -X herdr-sandbox/internal/productidentity.Revision=0123456789abcdef0123456789abcdef01234567",
+		"-ldflags", "-s -w -X herdr-sandbox/internal/productidentity.Version=0.0.7 -X herdr-sandbox/internal/productidentity.Revision=0123456789abcdef0123456789abcdef01234567 -X herdr-sandbox/internal/productidentity.BuildFreshness=2026.08.28.0927Z",
 		"-o", `build\bin\sandbox.exe`,
 		"./cmd/sandbox",
 	}
-	got := goBuildArgs(`build\bin\sandbox.exe`, buildIdentity{Version: "0.0.7", Revision: "0123456789abcdef0123456789abcdef01234567"})
+	got := goBuildArgs(`build\bin\sandbox.exe`, buildIdentity{Version: "0.0.7", Revision: "0123456789abcdef0123456789abcdef01234567", Freshness: "2026.08.28.0927Z"})
 	if !slices.Equal(got, want) {
 		t.Fatalf("goBuildArgs = %#v, want %#v", got, want)
 	}

@@ -52,15 +52,17 @@ func TestInstalledCandidateValidationBindsIdentityPayloadAndSourceVersion(t *tes
 	}
 
 	revision := "0123456789abcdef0123456789abcdef01234567"
-	got, err := expectedInstalledCandidateVersion(version, revision)
+	identity := buildIdentity{Version: version.Display, Revision: revision, Freshness: "2026.08.28.0927Z"}
+	got, err := expectedInstalledCandidateVersion(identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("%s %s (0123456789ab)", productidentity.CommandName, version.Display)
+	want := fmt.Sprintf("%s %s 2026.08.28.0927Z (0123456789ab)", productidentity.CommandName, version.Display)
 	if got != want {
 		t.Fatalf("installed version output = %q, want %q", got, want)
 	}
-	if _, err := expectedInstalledCandidateVersion(version, "short"); err == nil {
+	identity.Revision = "short"
+	if _, err := expectedInstalledCandidateVersion(identity); err == nil {
 		t.Fatal("invalid installed source revision unexpectedly accepted")
 	}
 }

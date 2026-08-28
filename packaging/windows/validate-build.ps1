@@ -2,6 +2,9 @@ param(
     [Parameter(Mandatory = $true)][string]$InstallerScript,
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$FixedVersion,
+    [Parameter(Mandatory = $true)][string]$BuildFreshness,
+    [Parameter(Mandatory = $true)][string]$BuildRevision,
+    [Parameter(Mandatory = $true)][string]$BuildDisplay,
     [Parameter(Mandatory = $true)][string]$AppName,
     [Parameter(Mandatory = $true)][string]$AppApplicationName,
     [Parameter(Mandatory = $true)][string]$AppDisplayName,
@@ -223,6 +226,9 @@ function Assert-ValidSignature {
 foreach ($textValue in ([ordered]@{
     Version = $Version
     FixedVersion = $FixedVersion
+    BuildFreshness = $BuildFreshness
+    BuildRevision = $BuildRevision
+    BuildDisplay = $BuildDisplay
     AppName = $AppName
     AppApplicationName = $AppApplicationName
     AppDisplayName = $AppDisplayName
@@ -240,6 +246,21 @@ foreach ($textValue in ([ordered]@{
     AssetsDirectory = $AssetsDirectory
 }).GetEnumerator()) {
     Assert-SafeInstallerText -Name $textValue.Key -Value ([string]$textValue.Value)
+}
+
+$parsedFreshness = [DateTime]::MinValue
+$freshnessStyles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+if ($BuildFreshness -cnotmatch '^\d{4}\.\d{2}\.\d{2}\.\d{4}Z$' -or
+    -not [DateTime]::TryParseExact($BuildFreshness, 'yyyy.MM.dd.HHmmZ', [Globalization.CultureInfo]::InvariantCulture, $freshnessStyles, [ref]$parsedFreshness) -or
+    $parsedFreshness.ToUniversalTime().ToString('yyyy.MM.dd.HHmmZ', [Globalization.CultureInfo]::InvariantCulture) -cne $BuildFreshness) {
+    throw 'BuildFreshness must use a real UTC YYYY.MM.DD.HHMMZ timestamp.'
+}
+if ($BuildRevision -cnotmatch '^[0-9a-f]{12}$') {
+    throw 'BuildRevision must contain exactly 12 lowercase hexadecimal characters.'
+}
+$expectedBuildDisplay = $Version + ' ' + $BuildFreshness + ' (' + $BuildRevision + ')'
+if ($BuildDisplay -cne $expectedBuildDisplay) {
+    throw "BuildDisplay must equal '$expectedBuildDisplay'."
 }
 
 $productUri = $null

@@ -363,7 +363,7 @@ and errors go to stderr.
 | Command | Behavior |
 | --- | --- |
 | `sandbox config` | Creates and opens user configuration without replacing an existing file. |
-| `sandbox version` or `sandbox --version` | Prints the release and abbreviated source revision. |
+| `sandbox version` or `sandbox --version` | Prints the release, sortable UTC build freshness, and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
 | `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |

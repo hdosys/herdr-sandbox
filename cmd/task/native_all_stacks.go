@@ -72,6 +72,10 @@ func nativeAllStacks(ctx context.Context, stdout, stderr io.Writer) (resultErr e
 	if err != nil {
 		return err
 	}
+	defer func() {
+		retained := map[string]bool{canonicalLocalInstallerName: true}
+		resultErr = errors.Join(resultErr, cleanBuildOutputs(".", retained))
+	}()
 	if err := build(ctx, stdout, stderr); err != nil {
 		return fmt.Errorf("build stable CLI for native all-stack test: %w", err)
 	}

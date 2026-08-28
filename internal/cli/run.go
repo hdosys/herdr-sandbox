@@ -34,7 +34,7 @@ const usage = `Usage:
 Commands:
   config  create the global config when absent and open it with the registered .json application
   pull-host-config  fast-forward transferred Git-backed configuration roots on the host
-  version, --version  print the application version and source revision when available
+  version, --version  print version, UTC build freshness, and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled

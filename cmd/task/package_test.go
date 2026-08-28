@@ -73,6 +73,90 @@ func TestReleasePathsKeepZIPAndInstallerTogether(t *testing.T) {
 		len(releaseOutputPaths(paths)) != 2 {
 		t.Fatalf("release paths = %#v", paths)
 	}
+	if got := filepath.Clean(canonicalLocalInstallerPath("root")); got != filepath.Join("root", "build", "dist", "herdr-sandbox_setup.exe") {
+		t.Fatalf("canonical local installer = %q", got)
+	}
+}
+
+func TestCleanBuildOutputsRetainsCanonicalInstallerToolsAndPrivateMedia(t *testing.T) {
+	root := t.TempDir()
+	buildRoot := filepath.Join(root, "build")
+	for _, directory := range []string{
+		"bin", "candidates", "native-all-stacks", "package", "verification", "verified", "videos",
+		"acceptance-all-fixture", "release-v0.0.1", filepath.Join("tools", "nsis"), "dist",
+	} {
+		path := filepath.Join(buildRoot, directory)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if directory != "dist" {
+			if err := os.WriteFile(filepath.Join(path, "generated.txt"), []byte("generated"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	canonical := canonicalLocalInstallerPath(root)
+	for _, path := range []string{canonical, filepath.Join(buildRoot, "dist", "old.zip"), filepath.Join(buildRoot, "installer-welcome-finish-preview.png")} {
+		if err := os.WriteFile(path, []byte("generated"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cleanBuildOutputs(root, map[string]bool{filepath.Base(canonical): true}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(buildRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("retained build roots = %v", entries)
+	}
+	if names := []string{entries[0].Name(), entries[1].Name(), entries[2].Name()}; !slices.Equal(names, []string{"dist", "tools", "videos"}) {
+		t.Fatalf("retained build roots = %v", names)
+	}
+	distEntries, err := os.ReadDir(filepath.Dir(canonical))
+	if err != nil || len(distEntries) != 1 || distEntries[0].Name() != filepath.Base(canonical) {
+		t.Fatalf("retained dist entries = %v, %v", distEntries, err)
+	}
+}
+
+func TestCleanBuildOutputsRejectsUnknownRootBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	known := filepath.Join(root, "build", "bin")
+	unknown := filepath.Join(root, "build", "user-data")
+	for _, path := range []string{known, unknown} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cleanBuildOutputs(root, nil); err == nil || !strings.Contains(err.Error(), "unknown build-root entry") {
+		t.Fatalf("unknown build-root error = %v", err)
+	}
+	if _, err := os.Stat(known); err != nil {
+		t.Fatalf("known output changed before unknown-root rejection: %v", err)
+	}
+}
+
+func TestReplaceGeneratedFileReplacesCanonicalArtifact(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "candidate.exe")
+	destination := filepath.Join(root, canonicalLocalInstallerName)
+	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceGeneratedFile(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil || string(data) != "new" {
+		t.Fatalf("canonical artifact = %q, %v", data, err)
+	}
+	if _, err := os.Stat(source); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("candidate remains after replacement: %v", err)
+	}
 }
 
 func TestInstallerBuildInputsBindSafeCurrentIdentity(t *testing.T) {
@@ -303,7 +387,7 @@ func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
 			t.Fatalf("decode artifact evidence %d: %v", index, err)
 		}
 		wantHash := fmt.Sprintf("%x", sha256.Sum256(contents[index]))
-		if evidence.Kind != "candidate-artifact" || evidence.Path != filepath.Clean(path) ||
+		if evidence.Kind != "release-artifact" || evidence.Path != filepath.Clean(path) ||
 			evidence.Bytes != int64(len(contents[index])) || evidence.SHA256 != wantHash ||
 			evidence.SHA256 != strings.ToLower(evidence.SHA256) {
 			t.Fatalf("artifact evidence %d = %#v", index, evidence)
@@ -337,6 +421,9 @@ func TestInstallerTemplateExposesSandboxIntegrationContract(t *testing.T) {
 		`Close every running ${APP_DISPLAY_NAME} command, then run setup again.`,
 		`Close every running ${APP_DISPLAY_NAME} command, then run uninstall again.`,
 		`Setup is complete. No app window opens. Open a new terminal:`,
+		`MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${BUILD_DISPLAY}"`,
+		`VIAddVersionKey "BuildFreshness" "${BUILD_FRESHNESS}"`,
+		`VIAddVersionKey "BuildIdentity" "${BUILD_DISPLAY}"`,
 		`${APP_NAME} init: Create a project profile`,
 		`${APP_NAME} up: Start or reconnect`,
 		`${APP_NAME} config: Open the configuration file`,
@@ -616,7 +703,7 @@ func TestReleaseWorkflowUsesCanonicalPackageTaskAndResolvedNSIS(t *testing.T) {
 		`$actualHash -ine [string]$hashes[0]`,
 		`Start-Process -FilePath $installer -ArgumentList @('/S')`,
 		`$actualVersion -cne "v$resolvedVersion"`,
-		`go run ./cmd/task package $env:RELEASE_TAG`,
+		`go run ./cmd/task package $env:RELEASE_TAG --release`,
 		`go run ./cmd/task release-notes $env:RELEASE_TAG`,
 		`Get-ChildItem -LiteralPath 'build\dist' -File`,
 		`$assets.Count -ne 2`,

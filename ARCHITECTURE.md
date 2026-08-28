@@ -435,12 +435,14 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 ### Artifact And Identity Ownership
 
-- `cmd/task` owns one Windows amd64 release layout built through the existing production build owner.
+- `cmd/task` owns one Windows amd64 package layout built through the existing production build owner.
 - It stages exactly `sandbox.exe`, `base.ps1`, `stacks.ps1`, and `LICENSE.txt`; validates that no file is missing or extra; and feeds that same flat directory to both the deterministic ZIP writer and the installer.
-- The ZIP and installer are generated and verified together below one temporary output directory before the complete set replaces any prior same-version outputs; their SHA-256 values are computed locally for release evidence.
+- Routine `package VERSION` generation verifies both formats below one temporary output directory and then replaces the single canonical local installer at `build/dist/herdr-sandbox_setup.exe`. Explicit `package VERSION --release` instead publishes the exact versioned ZIP and installer pair required by GitHub Actions.
+- Before and after packaging, `cmd/task` removes only its known generated stages, isolated outputs, and obsolete package artifacts. It preserves the shared compiler cache and unrelated private work, and refuses unknown build-root entries.
+- The release ZIP and installer are generated and verified together before publication; their SHA-256 values are computed locally for release evidence.
 - A failed generation leaves the prior coherent set, while failed publication removes partial new targets.
 - Generated stages and artifacts stay below ignored `build/` paths.
-- The production build links one version and full Git revision into `internal/productidentity`; `sandbox version` prints the version plus a 12-hex revision without crossing a Sandbox boundary.
+- The production build links one version, one UTC `YYYY.MM.DD.HHMMZ` freshness label, and the full Git revision into `internal/productidentity`; `sandbox version` prints the version and freshness followed by the 12-hex revision in parentheses without crossing a Sandbox boundary. The installer carries the same display identity and metadata.
 - Ordinary development builds fall back to `devel`/unknown revision when Git is unavailable, while release packaging requires one valid full `HEAD` revision.
 - The same identity owner supplies the current product GUID, GUID uninstall key, and quiet-uninstall helper name.
 - `cmd/task` rejects empty, unsafe, reserved, colliding, path-bearing, overlong, or inconsistent identity/version/output values before invoking NSIS, validates the exact staged package, and treats compiler warnings as failures.
@@ -498,7 +500,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Standard WinGet's Nullsoft path and explicit silent setup skip the page; repair and upgrade hide the option.
 - No product GUI, browser, local readme, or restart is launched.
 - The tag remains the release identity.
-- GitHub Actions resolves and installs the current stable x86 NSIS compiler through exact WinGet metadata and its published installer digest, runs the repository package task, requires its exact two generated files, derives the release title from the installer's compiled `ProductName`, publishes one concise link to the tagged `CHANGELOG.md` without copying its entries, publishes the installer and ZIP without another product-name constant, and compares each local SHA-256 with GitHub's uploaded asset digest.
+- GitHub Actions resolves and installs the current stable x86 NSIS compiler through exact WinGet metadata and its published installer digest, runs `package <tag> --release`, requires its exact two generated files, derives the release title from the installer's compiled `ProductName`, publishes one concise link to the tagged `CHANGELOG.md` without copying its entries, publishes the installer and ZIP without another product-name constant, and compares each local SHA-256 with GitHub's uploaded asset digest.
 - Both formats permanently contain only the same four Sandbox-owned application files and are never combined with a Herdr artifact.
 
 ## External Boundaries
@@ -549,7 +551,8 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - It neither starts Windows Audio services nor uses a host audio interface.
 - It starts after bootstrap, OpenSSH, and Herdr remote provisioning, invokes none of those owners, launches no nested Sandbox, and requires the exact pre-existing Herdr server, remote-client bridge, and OpenSSH service process identities to remain unchanged.
 - The explicit `go run ./cmd/task package-current-sandbox VERSION` gate builds the exact ZIP and installer plus an immediate-predecessor installer from the same current layout and immutable source revision. It starts only when the canonical per-user registration and fixed binary root are absent.
-- It requires exact registered identity, staged payload digests, and linked version/revision after fresh install, same-version repair, immediate-predecessor current-layout install, and upgrade to the candidate. Between repair and upgrade it proves quiet uninstall removed registration and the binary root.
+- The current installer being exercised replaces the canonical local installer before installation; terminal cleanup removes its internal ZIP, predecessor, stage, and compile outputs while retaining that exact candidate.
+- It requires exact registered identity, staged payload digests, and linked version, freshness, and revision after fresh install, same-version repair, immediate-predecessor current-layout install, and upgrade to the candidate. Between repair and upgrade it proves quiet uninstall removed registration and the binary root.
 - It executes the same current-Sandbox provisioning gate through the upgraded installed payload, then uses the installed bounded quiet-uninstall owner and again proves registration and binary-root state are absent.
 - Exact Herdr, remote-client bridge, OpenSSH, `config.json`, and `user.ps1` state must survive every install, repair, upgrade, provisioning, and uninstall transition.
 - Packaging also rejects any checked-in WinGet installer manifest whose ProductCode differs from the canonical uninstall key.
@@ -557,7 +560,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 ### CI, Release, And Fresh Native Gates
 
 - The manual `go run ./cmd/task release-precheck VERSION` owner is required before creating a release tag. It accepts only a clean committed source with a matching structured changelog section and containment in the configured upstream, records the immutable commit, runs `verify-integration` and the installed-candidate gate once, and confirms the source stayed unchanged after each boundary.
-- GitHub Actions is thin orchestration over those owners: one read-only Windows workflow runs `go run ./cmd/task verify-integration` and pinned `go tool govulncheck ./...` nightly or on manual dispatch, with no ordinary push trigger. An exact `v0.0.RELEASE_ID` tag reruns integration verification and `go run ./cmd/task package <tag>`, then publishes the Windows amd64 ZIP and installer through a release-only `contents: write` job and verifies GitHub's SHA-256 asset digests.
+- GitHub Actions is thin orchestration over those owners: one read-only Windows workflow runs `go run ./cmd/task verify-integration` and pinned `go tool govulncheck ./...` nightly or on manual dispatch, with no ordinary push trigger. An exact `v0.0.RELEASE_ID` tag reruns integration verification and `go run ./cmd/task package <tag> --release`, then publishes the Windows amd64 ZIP and installer through a release-only `contents: write` job and verifies GitHub's SHA-256 asset digests.
 - Release IDs begin at zero, increase for every tagged attempt, and are never reused; a failed attempt may therefore leave a gap between published releases.
 - Official checkout/setup actions are commit-pinned, while the installer compiler resolves from current stable WinGet metadata and remains bound to its selected digest.
 - The tag is the only release identity; no Actions-only build or packaging implementation, second version source, signing, or updater path exists.

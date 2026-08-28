@@ -15,6 +15,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- `sandbox --version` and Windows setup metadata now include one lexically sortable
+  UTC build-freshness label before the abbreviated source revision.
 - `sandbox up` now uses a four-hour launch-to-ready timeout by default. A positive
   `--timeout` value replaces it for one run.
 - `sandbox up` now identifies fresh versus retained mode before provisioning,

@@ -46,6 +46,11 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := currentSandboxProvisioningPreflight(ctx, stdout, stderr); err != nil {
 		return err
 	}
+	retained := map[string]bool{canonicalLocalInstallerName: true}
+	if err := cleanBuildOutputs(".", retained); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, cleanBuildOutputs(".", retained)) }()
 	identityBefore, err := inspectCurrentSandboxIdentity(ctx)
 	if err != nil {
 		return err
@@ -83,6 +88,9 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := validateWingetManifestProductCodes(); err != nil {
 		return err
 	}
+	freshness := productidentity.FormatBuildFreshness(time.Now())
+	identity := buildIdentity{Version: version.Display, Revision: revision, Freshness: freshness}
+	predecessorIdentity := buildIdentity{Version: predecessorVersion.Display, Revision: revision, Freshness: freshness}
 	predecessorRoot, err := os.MkdirTemp("", "herdr-sandbox-predecessor-*")
 	if err != nil {
 		return fmt.Errorf("create predecessor package workspace: %w", err)
@@ -96,17 +104,18 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if _, err := fmt.Fprintf(stdout, "Building current-layout %s from source commit %s for immediate-predecessor upgrade acceptance.\n", predecessorVersion.Tag, revision); err != nil {
 		return err
 	}
-	if err := buildWindowsReleasePackage(ctx, predecessorVersion, revision, predecessorPaths, stdout, stderr); err != nil {
+	if err := buildWindowsReleasePackage(ctx, predecessorVersion, predecessorIdentity, predecessorPaths, stdout, stderr); err != nil {
 		return err
 	}
 	paths := releasePaths(".", version)
-	if err := buildWindowsReleasePackage(ctx, version, revision, paths, stdout, stderr); err != nil {
+	if err := buildWindowsReleasePackage(ctx, version, identity, paths, stdout, stderr); err != nil {
 		return err
 	}
-	if err := writeReleaseArtifactEvidence(stdout, paths); err != nil {
-		return err
+	canonicalInstaller := canonicalLocalInstallerPath(".")
+	if err := replaceGeneratedFile(paths.Installer, canonicalInstaller); err != nil {
+		return fmt.Errorf("publish installed candidate as canonical local installer: %w", err)
 	}
-	installer, err := filepath.Abs(paths.Installer)
+	installer, err := filepath.Abs(canonicalInstaller)
 	if err != nil {
 		return fmt.Errorf("resolve current-Sandbox candidate installer: %w", err)
 	}
@@ -148,13 +157,13 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 		return err
 	}
 	preserved = seededConfiguration
-	if err := validateInstalledCandidateTransition(ctx, version, revision, installRoot, paths.Stage, "fresh candidate install", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "fresh candidate install", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := install(installer); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, version, revision, installRoot, paths.Stage, "same-version repair", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "same-version repair", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := uninstallCurrentSandboxCandidate(ctx, installRoot, stdout, stderr); err != nil {
@@ -170,13 +179,13 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := install(predecessorInstaller); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, predecessorVersion, revision, installRoot, predecessorPaths.Stage, "immediate-predecessor current-layout install", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, predecessorVersion, predecessorIdentity, installRoot, predecessorPaths.Stage, "immediate-predecessor current-layout install", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := install(installer); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, version, revision, installRoot, paths.Stage, "immediate-predecessor upgrade", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "immediate-predecessor upgrade", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := nativeCurrentSandboxProvisioning(ctx, stdout, stderr, installRoot); err != nil {
@@ -195,11 +204,13 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := verifyCurrentSandboxUserConfiguration(preserved); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(stdout, "Installed candidate passed fresh install, same-version repair, immediate-predecessor upgrade, current-Sandbox provisioning, configuration preservation, and quiet uninstall cleanup.")
-	return err
+	if _, err := fmt.Fprintln(stdout, "Installed candidate passed fresh install, same-version repair, immediate-predecessor upgrade, current-Sandbox provisioning, configuration preservation, and quiet uninstall cleanup."); err != nil {
+		return err
+	}
+	return writeArtifactEvidence(stdout, "accepted-local-installer", canonicalInstaller)
 }
 
-func validateInstalledCandidateTransition(ctx context.Context, version releaseVersion, revision, installRoot, stage, outcome string, preserved []preservedFile, stdout, stderr io.Writer) error {
+func validateInstalledCandidateTransition(ctx context.Context, version releaseVersion, identity buildIdentity, installRoot, stage, outcome string, preserved []preservedFile, stdout, stderr io.Writer) error {
 	state, err := inspectInstalledCandidate(ctx)
 	if err != nil {
 		return fmt.Errorf("validate %s: %w", outcome, err)
@@ -207,7 +218,7 @@ func validateInstalledCandidateTransition(ctx context.Context, version releaseVe
 	if err := validateInstalledCandidate(state, version, installRoot, stage); err != nil {
 		return fmt.Errorf("validate %s: %w", outcome, err)
 	}
-	if err := runInstalledCandidateVersion(ctx, filepath.Join(installRoot, productidentity.ExecutableName), version, revision, stdout, stderr); err != nil {
+	if err := runInstalledCandidateVersion(ctx, filepath.Join(installRoot, productidentity.ExecutableName), identity, stdout, stderr); err != nil {
 		return fmt.Errorf("validate %s: %w", outcome, err)
 	}
 	if err := verifyCurrentSandboxUserConfiguration(preserved); err != nil {
@@ -306,7 +317,7 @@ func validateInstalledCandidate(state installedCandidateState, version releaseVe
 	return nil
 }
 
-func runInstalledCandidateVersion(ctx context.Context, executable string, version releaseVersion, revision string, stdout, stderr io.Writer) error {
+func runInstalledCandidateVersion(ctx context.Context, executable string, identity buildIdentity, stdout, stderr io.Writer) error {
 	command := hiddenCommandContext(ctx, executable, "--version")
 	var output bytes.Buffer
 	command.Stdout = &output
@@ -315,7 +326,7 @@ func runInstalledCandidateVersion(ctx context.Context, executable string, versio
 		return fmt.Errorf("run installed candidate version: %w", err)
 	}
 	text := strings.TrimSpace(output.String())
-	expected, err := expectedInstalledCandidateVersion(version, revision)
+	expected, err := expectedInstalledCandidateVersion(identity)
 	if err != nil {
 		return err
 	}
@@ -326,12 +337,15 @@ func runInstalledCandidateVersion(ctx context.Context, executable string, versio
 	return err
 }
 
-func expectedInstalledCandidateVersion(version releaseVersion, revision string) (string, error) {
-	revision, err := normalizeSourceRevision(revision)
+func expectedInstalledCandidateVersion(identity buildIdentity) (string, error) {
+	revision, err := normalizeSourceRevision(identity.Revision)
 	if err != nil {
 		return "", fmt.Errorf("validate installed candidate source revision: %w", err)
 	}
-	return fmt.Sprintf("%s %s (%s)", productidentity.CommandName, version.Display, revision[:12]), nil
+	if !productidentity.ValidBuildFreshness(identity.Freshness) {
+		return "", fmt.Errorf("validate installed candidate freshness: %q", identity.Freshness)
+	}
+	return productidentity.CommandName + " " + productidentity.IdentitySummary(identity.Version, identity.Freshness, revision), nil
 }
 
 func uninstallCurrentSandboxCandidate(ctx context.Context, installRoot string, stdout, stderr io.Writer) error {

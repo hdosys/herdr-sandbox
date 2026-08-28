@@ -81,7 +81,7 @@ jobs:
         shell: powershell
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: go run ./cmd/task package $env:RELEASE_TAG
+        run: go run ./cmd/task package $env:RELEASE_TAG --release
       - name: Publish GitHub release
         shell: powershell
         env:

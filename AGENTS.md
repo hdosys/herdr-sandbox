@@ -187,8 +187,11 @@ installs, updates, or replaces a tool and does not replace installed or native
 acceptance.
 
 For installer work, `go run ./cmd/task package VERSION` owns the early
-user-testable candidate. Run it before `package-current-sandbox` and immediately
-report the installer path, content hash, build time, and status `candidate;
+user-testable candidate at `build/dist/herdr-sandbox_setup.exe`; it is the only
+routine local installable artifact. `go run ./cmd/task package VERSION --release`
+is reserved for the exact versioned ZIP and installer release pair. Run the local
+package task before `package-current-sandbox` and immediately report the canonical
+installer path, content hash, build time, and status `candidate;
 installed acceptance pending`. Do not delay that handoff for documentation,
 repository administration, private queue routing, or cleanup, and do not describe
 the candidate as accepted. Never run `package-current-sandbox` from a dirty or

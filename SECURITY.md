@@ -3,8 +3,8 @@
 ## Supported version
 
 Security fixes target the latest published GitHub release. Before reporting a
-problem, run `sandbox --version` and include its version and abbreviated
-source revision without attaching configuration, credentials, logs, or run-state
+problem, run `sandbox --version` and include its version, build freshness, and
+abbreviated source revision without attaching configuration, credentials, logs, or run-state
 archives.
 
 ## Reporting a vulnerability

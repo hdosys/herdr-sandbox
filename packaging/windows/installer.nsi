@@ -50,6 +50,9 @@ Unicode true
 
 !insertmacro Require VERSION
 !insertmacro Require FIXED_VERSION
+!insertmacro Require BUILD_FRESHNESS
+!insertmacro Require BUILD_REVISION
+!insertmacro Require BUILD_DISPLAY
 !insertmacro Require PACKAGE_DIR
 !insertmacro Require PATH_HELPER
 !insertmacro Require QUIET_UNINSTALL_HELPER
@@ -75,6 +78,9 @@ Unicode true
 
 !insertmacro RequireValue VERSION "${VERSION}"
 !insertmacro RequireValue FIXED_VERSION "${FIXED_VERSION}"
+!insertmacro RequireValue BUILD_FRESHNESS "${BUILD_FRESHNESS}"
+!insertmacro RequireValue BUILD_REVISION "${BUILD_REVISION}"
+!insertmacro RequireValue BUILD_DISPLAY "${BUILD_DISPLAY}"
 !insertmacro RequireValue PACKAGE_DIR "${PACKAGE_DIR}"
 !insertmacro RequireValue PATH_HELPER "${PATH_HELPER}"
 !insertmacro RequireValue QUIET_UNINSTALL_HELPER "${QUIET_UNINSTALL_HELPER}"
@@ -237,9 +243,11 @@ AutoCloseWindow true
 VIProductVersion "${FIXED_VERSION}"
 VIFileVersion "${FIXED_VERSION}"
 VIAddVersionKey "ProductName" "${APP_DISPLAY_NAME}"
-VIAddVersionKey "FileDescription" "${APP_DISPLAY_NAME} Installer"
+VIAddVersionKey "FileDescription" "${APP_DISPLAY_NAME} Installer ${BUILD_FRESHNESS}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "BuildFreshness" "${BUILD_FRESHNESS}"
+VIAddVersionKey "BuildIdentity" "${BUILD_DISPLAY}"
 VIAddVersionKey "CompanyName" "${APP_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "${APP_COPYRIGHT}"
 VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
@@ -269,11 +277,11 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_150}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_175}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_200}"
-!define MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${VERSION}"
+!define MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${BUILD_DISPLAY}"
 !define MUI_WELCOMEPAGE_TEXT "This setup installs ${APP_DISPLAY_NAME} for your Windows account and creates its default configuration when missing.$\r$\n$\r$\nNo administrator access is required. Open a new terminal after setup so it can find ${APP_NAME} on PATH."
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !define MUI_FINISHPAGE_TEXT_LARGE
-!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
+!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${BUILD_DISPLAY} is installed"
 !define MUI_FINISHPAGE_TEXT "Setup is complete. No app window opens. Open a new terminal:$\r$\n$\r$\n${APP_NAME} init: Create a project profile$\r$\n${APP_NAME} up: Start or reconnect$\r$\n${APP_NAME} config: Open the configuration file$\r$\n${APP_NAME} status: Inspect Sandbox state"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open ${APP_DISPLAY_NAME} configuration"

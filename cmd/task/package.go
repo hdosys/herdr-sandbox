@@ -22,7 +22,10 @@ import (
 	"herdr-sandbox/internal/productidentity"
 )
 
-const installerUninstallerName = "uninstall.exe"
+const (
+	installerUninstallerName    = "uninstall.exe"
+	canonicalLocalInstallerName = "herdr-sandbox_setup.exe"
+)
 
 const installerBuildValidatorName = "validate-build.ps1"
 
@@ -61,7 +64,7 @@ type releaseArtifactEvidence struct {
 	SHA256 string `json:"sha256"`
 }
 
-func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Writer) error {
+func packageWindowsRelease(ctx context.Context, tag string, releaseMode bool, stdout, stderr io.Writer) (resultErr error) {
 	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		return fmt.Errorf("package requires windows/amd64, got %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
@@ -76,19 +79,72 @@ func packageWindowsRelease(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err != nil {
 		return fmt.Errorf("resolve release source revision: %w", err)
 	}
+	identity := buildIdentity{
+		Version:   version.Display,
+		Revision:  revision,
+		Freshness: productidentity.FormatBuildFreshness(time.Now()),
+	}
+	if releaseMode {
+		return packageReleaseArtifacts(ctx, version, identity, stdout, stderr)
+	}
+	return packageLocalInstaller(ctx, version, identity, stdout, stderr)
+}
+
+func packageLocalInstaller(ctx context.Context, version releaseVersion, identity buildIdentity, stdout, stderr io.Writer) (resultErr error) {
+	canonical := canonicalLocalInstallerPath(".")
+	retained := map[string]bool{filepath.Base(canonical): true}
+	if err := cleanBuildOutputs(".", retained); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, cleanBuildOutputs(".", retained)) }()
+	buildRoot := filepath.Join(".", "build")
+	if err := os.MkdirAll(buildRoot, 0o755); err != nil {
+		return fmt.Errorf("create local package workspace root: %w", err)
+	}
+	temporaryRoot, err := os.MkdirTemp(buildRoot, ".local-package-*")
+	if err != nil {
+		return fmt.Errorf("create local package workspace: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, removeGeneratedPath(temporaryRoot)) }()
+	paths := releasePaths(temporaryRoot, version)
+	if err := buildWindowsReleasePackage(ctx, version, identity, paths, stdout, stderr); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		return fmt.Errorf("create canonical local artifact directory: %w", err)
+	}
+	if err := replaceGeneratedFile(paths.Installer, canonical); err != nil {
+		return fmt.Errorf("publish canonical local installer: %w", err)
+	}
+	if err := verifyInstallerArtifact(canonical); err != nil {
+		return err
+	}
+	return writeArtifactEvidence(stdout, "local-installer", canonical)
+}
+
+func packageReleaseArtifacts(ctx context.Context, version releaseVersion, identity buildIdentity, stdout, stderr io.Writer) (resultErr error) {
 	paths := releasePaths(".", version)
-	if err := buildWindowsReleasePackage(ctx, version, revision, paths, stdout, stderr); err != nil {
+	retained := map[string]bool{filepath.Base(paths.ZIP): true, filepath.Base(paths.Installer): true}
+	if err := cleanBuildOutputs(".", retained); err != nil {
+		return err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, cleanBuildOutputs(".", retained))
+	}()
+	if err := buildWindowsReleasePackage(ctx, version, identity, paths, stdout, stderr); err != nil {
 		return err
 	}
 	return writeReleaseArtifactEvidence(stdout, paths)
 }
 
-func buildWindowsReleasePackage(ctx context.Context, version releaseVersion, revision string, paths releasePackagePaths, stdout, stderr io.Writer) error {
-	revision, err := normalizeSourceRevision(revision)
+func buildWindowsReleasePackage(ctx context.Context, version releaseVersion, identity buildIdentity, paths releasePackagePaths, stdout, stderr io.Writer) error {
+	revision, err := normalizeSourceRevision(identity.Revision)
 	if err != nil {
 		return fmt.Errorf("validate release source revision: %w", err)
 	}
-	if err := buildWithIdentity(ctx, buildIdentity{Version: version.Display, Revision: revision}, stdout, stderr); err != nil {
+	identity.Version = version.Display
+	identity.Revision = revision
+	if err := buildWithIdentity(ctx, identity, stdout, stderr); err != nil {
 		return err
 	}
 	if err := stageReleasePackage(filepath.Join("build", "bin"), paths.Stage); err != nil {
@@ -110,7 +166,7 @@ func buildWindowsReleasePackage(ctx context.Context, version releaseVersion, rev
 	if err := writeReleaseZIP(generated.Stage, generated.ZIP); err != nil {
 		return err
 	}
-	if err := buildNSISInstaller(ctx, version, generated.Stage, generated.Installer, stdout, stderr); err != nil {
+	if err := buildNSISInstaller(ctx, version, identity, generated.Stage, generated.Installer, stdout, stderr); err != nil {
 		return err
 	}
 	if err := verifyReleaseArtifactSet(generated); err != nil {
@@ -158,25 +214,26 @@ func releaseOutputPaths(paths releasePackagePaths) []string {
 }
 
 func writeReleaseArtifactEvidence(stdout io.Writer, paths releasePackagePaths) error {
-	encoder := json.NewEncoder(stdout)
 	for _, path := range releaseOutputPaths(paths) {
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("inspect published release artifact: %w", err)
-		}
-		hash, err := fileSHA256(path)
-		if err != nil {
+		if err := writeArtifactEvidence(stdout, "release-artifact", path); err != nil {
 			return err
 		}
-		evidence := releaseArtifactEvidence{
-			Kind:   "candidate-artifact",
-			Path:   filepath.Clean(path),
-			Bytes:  info.Size(),
-			SHA256: fmt.Sprintf("%x", hash),
-		}
-		if err := encoder.Encode(evidence); err != nil {
-			return fmt.Errorf("write release artifact evidence: %w", err)
-		}
+	}
+	return nil
+}
+
+func writeArtifactEvidence(stdout io.Writer, kind, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect published artifact: %w", err)
+	}
+	hash, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	evidence := releaseArtifactEvidence{Kind: kind, Path: filepath.Clean(path), Bytes: info.Size(), SHA256: fmt.Sprintf("%x", hash)}
+	if err := json.NewEncoder(stdout).Encode(evidence); err != nil {
+		return fmt.Errorf("write artifact evidence: %w", err)
 	}
 	return nil
 }
@@ -257,6 +314,102 @@ func releasePaths(root string, version releaseVersion) releasePackagePaths {
 		ZIP:       zipPath,
 		Installer: installerPath,
 	}
+}
+
+func canonicalLocalInstallerPath(root string) string {
+	return filepath.Join(root, "build", "dist", canonicalLocalInstallerName)
+}
+
+func cleanBuildOutputs(root string, retainedDistFiles map[string]bool) error {
+	buildRoot := filepath.Join(root, "build")
+	info, err := os.Lstat(buildRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect build root before cleanup: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("build root is not a regular directory: %s", buildRoot)
+	}
+	entries, err := os.ReadDir(buildRoot)
+	if err != nil {
+		return fmt.Errorf("enumerate build root before cleanup: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "tools" && entry.Name() != "videos" && entry.Name() != "dist" && !knownGeneratedBuildEntry(entry.Name()) {
+			return fmt.Errorf("refusing unknown build-root entry during cleanup: %s", filepath.Join(buildRoot, entry.Name()))
+		}
+	}
+	for _, entry := range entries {
+		path := filepath.Join(buildRoot, entry.Name())
+		switch entry.Name() {
+		case "tools", "videos":
+			continue
+		case "dist":
+			if err := cleanDistributionOutputs(path, retainedDistFiles); err != nil {
+				return err
+			}
+		default:
+			if err := removeGeneratedPath(path); err != nil {
+				return fmt.Errorf("remove generated build output %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+func knownGeneratedBuildEntry(name string) bool {
+	switch name {
+	case "bin", "candidates", "installer-welcome-finish-preview.png", "native-all-stacks", "package", "verification", "verified":
+		return true
+	}
+	return strings.HasPrefix(name, "acceptance-all-") || strings.HasPrefix(name, "release-v") || strings.HasPrefix(name, ".local-package-")
+}
+
+func cleanDistributionOutputs(directory string, retained map[string]bool) error {
+	info, err := os.Lstat(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect distribution output root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("distribution output root is not a regular directory: %s", directory)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("enumerate distribution outputs: %w", err)
+	}
+	for _, entry := range entries {
+		path := filepath.Join(directory, entry.Name())
+		if retained[entry.Name()] {
+			info, err := os.Lstat(path)
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return fmt.Errorf("retained local artifact is not a regular file: %s", path)
+			}
+			continue
+		}
+		if err := removeGeneratedPath(path); err != nil {
+			return fmt.Errorf("remove stale distribution output %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func removeGeneratedPath(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing reparse-backed generated path: %s", path)
+	}
+	return os.RemoveAll(path)
 }
 
 func stageReleasePackage(sourceDirectory, stageDirectory string) error {
@@ -384,9 +537,6 @@ func fileSHA256(path string) ([]byte, error) {
 }
 
 func replaceGeneratedFile(source, destination string) error {
-	if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	return os.Rename(source, destination)
 }
 
@@ -483,13 +633,22 @@ func validateInstallerBuildInputs(version releaseVersion, outputPath string) err
 	return nil
 }
 
-func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirectory, outputPath string, stdout, stderr io.Writer) error {
+func buildNSISInstaller(ctx context.Context, version releaseVersion, identity buildIdentity, stageDirectory, outputPath string, stdout, stderr io.Writer) error {
 	if err := validateReleasePackage(stageDirectory); err != nil {
 		return err
 	}
 	if err := validateInstallerBuildInputs(version, outputPath); err != nil {
 		return err
 	}
+	if !productidentity.ValidBuildFreshness(identity.Freshness) {
+		return fmt.Errorf("installer build freshness must use %s UTC format: %q", productidentity.BuildFreshnessLayout, identity.Freshness)
+	}
+	revision, err := normalizeSourceRevision(identity.Revision)
+	if err != nil {
+		return fmt.Errorf("validate installer source revision: %w", err)
+	}
+	shortRevision := revision[:12]
+	buildDisplay := productidentity.IdentitySummary(version.Display, identity.Freshness, revision)
 	makensis, err := findMakeNSIS()
 	if err != nil {
 		return err
@@ -555,6 +714,9 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"-InstallerScript", script,
 		"-Version", version.Display,
 		"-FixedVersion", version.Fixed,
+		"-BuildFreshness", identity.Freshness,
+		"-BuildRevision", shortRevision,
+		"-BuildDisplay", buildDisplay,
 		"-AppName", productidentity.CommandName,
 		"-AppApplicationName", productidentity.ApplicationName,
 		"-AppDisplayName", productidentity.DisplayName,
@@ -589,6 +751,9 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, stageDirect
 		"/DRELEASE_TAG=" + version.Tag,
 		"/DVERSION=" + version.Display,
 		"/DFIXED_VERSION=" + version.Fixed,
+		"/DBUILD_FRESHNESS=" + identity.Freshness,
+		"/DBUILD_REVISION=" + shortRevision,
+		"/DBUILD_DISPLAY=" + buildDisplay,
 		"/DAPP_NAME=" + productidentity.CommandName,
 		"/DAPP_APPLICATION_NAME=" + productidentity.ApplicationName,
 		"/DAPP_DISPLAY_NAME=" + productidentity.DisplayName,
