@@ -263,7 +263,21 @@ if ([IO.Path]::GetFullPath($nu) -ine [IO.Path]::GetFullPath($expectedNu)) {
 }
 $nuVersion = Invoke-SmokeTool 'nushell-version' $nu @('--version')
 if ($nuVersion -notmatch '^\d+\.\d+\.\d+$') { throw "Nushell version is unexpected: $nuVersion" }
-[Console]::Out.WriteLine('[all-stacks] nushell: machine MSI command and version OK')
+$nuInitializationJSON = Invoke-SmokeTool 'nushell-initialization' $nu @(
+    '--no-config-file',
+    '--commands',
+    'source ($nu.data-dir | path join "vendor/autoload/herdr-sandbox.nu"); [$nu.data-dir, $env.config.show_banner, $env.STARSHIP_SHELL] | to json --raw'
+)
+try { $nuInitialization = @(($nuInitializationJSON | ConvertFrom-Json)) } catch {
+    throw "Nushell initialization returned invalid JSON: $($_.Exception.Message)"
+}
+$expectedNuDataDirectory = [IO.Path]::GetFullPath((Join-Path $env:APPDATA 'nushell'))
+if ($nuInitialization.Count -ne 3 -or
+    [IO.Path]::GetFullPath([string]$nuInitialization[0]) -ine $expectedNuDataDirectory -or
+    [bool]$nuInitialization[1] -ne $false -or [string]$nuInitialization[2] -cne 'nu') {
+    throw 'Nushell Starship and banner configuration is invalid.'
+}
+[Console]::Out.WriteLine('[all-stacks] nushell: machine MSI, clean banner, and Starship prompt OK')
 
 $pythonAliasRoot = 'C:\HerdrSandbox\tools\python\bin'
 if ([IO.Path]::GetFullPath($python) -ine (Join-Path $pythonAliasRoot 'python.exe') -or

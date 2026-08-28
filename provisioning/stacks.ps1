@@ -2671,6 +2671,78 @@ function Install-NushellStack {
     }
     Invoke-ProvisioningNative -Role 'Nushell command smoke' -FilePath $expectedCommand `
         -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
+
+    $nushellDataDirectory = [IO.Path]::GetFullPath((Join-Path $env:APPDATA 'nushell'))
+    $expectedAppDataRoot = [IO.Path]::GetFullPath($env:APPDATA).TrimEnd('\') + '\'
+    if (-not $nushellDataDirectory.StartsWith($expectedAppDataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Nushell data directory is outside the guest user profile: $nushellDataDirectory"
+    }
+    $nushellVendorDirectory = Join-Path $nushellDataDirectory 'vendor'
+    $nushellAutoloadDirectory = Join-Path $nushellVendorDirectory 'autoload'
+    foreach ($directory in @($nushellDataDirectory, $nushellVendorDirectory, $nushellAutoloadDirectory)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Nushell initialization directory is unsafe: $directory"
+        }
+    }
+
+    $nushellInitializationLines = New-Object 'Collections.Generic.List[string]'
+    $nushellInitializationLines.Add('$env.config.show_banner = false')
+    $expectedStarshipShell = ''
+    if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
+        $starshipCommand = Get-Command 'starship.exe' -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1
+        $starshipInitialization = @(Invoke-ProvisioningNative -Role 'Nushell Starship initialization generation' `
+            -FilePath $starshipCommand.Source -ArgumentList @('init', 'nu') -TimeoutSeconds 30)
+        if ($starshipInitialization.Count -eq 0) {
+            throw 'Starship returned empty Nushell initialization.'
+        }
+        foreach ($line in $starshipInitialization) { $nushellInitializationLines.Add([string]$line) }
+        $expectedStarshipShell = 'nu'
+    }
+    $nushellInitialization = [string]::Join(
+        [Environment]::NewLine,
+        [string[]]$nushellInitializationLines.ToArray()
+    ) + [Environment]::NewLine
+    $nushellInitializationPath = Join-Path $nushellAutoloadDirectory 'herdr-sandbox.nu'
+    if (Test-Path -LiteralPath $nushellInitializationPath) {
+        $initializationInfo = Get-Item -LiteralPath $nushellInitializationPath -Force
+        if ($initializationInfo.PSIsContainer -or
+            ($initializationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Nushell initialization file is unsafe: $nushellInitializationPath"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $nushellInitializationPath -PathType Leaf) -or
+        [IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
+        [IO.File]::WriteAllText(
+            $nushellInitializationPath,
+            $nushellInitialization,
+            (New-Object Text.UTF8Encoding($false))
+        )
+    }
+    if ([IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
+        throw 'Nushell initialization read-back failed.'
+    }
+    $nushellProbeOutput = @(Invoke-ProvisioningNative -Role 'Nushell initialization smoke' `
+        -FilePath $expectedCommand -ArgumentList @(
+            '--no-config-file',
+            '--commands',
+            'source ($nu.data-dir | path join "vendor/autoload/herdr-sandbox.nu"); [$nu.data-dir, $env.config.show_banner, ($env.STARSHIP_SHELL? | default "")] | to json --raw'
+        ) -TimeoutSeconds 30)
+    try {
+        $nushellProbe = @((($nushellProbeOutput -join [Environment]::NewLine) | ConvertFrom-Json))
+    } catch {
+        throw "Nushell initialization returned invalid JSON: $($_.Exception.Message)"
+    }
+    if ($nushellProbe.Count -ne 3 -or
+        [IO.Path]::GetFullPath([string]$nushellProbe[0]) -ine $nushellDataDirectory -or
+        [bool]$nushellProbe[1] -ne $false -or [string]$nushellProbe[2] -cne $expectedStarshipShell) {
+        throw 'Nushell Starship and banner configuration verification failed.'
+    }
     Write-Output "Nushell ready: $Version"
 }
 

@@ -28,6 +28,8 @@ represent failed tag attempts; this changelog does not recreate them.
   configuration and points to `sandbox plan` as the next validation step.
 - The C/C++ stack now includes current stable CMake alongside Visual Studio Build
   Tools and the Windows 11 SDK.
+- Nushell now starts without its welcome banner and uses the same selected
+  Starship prompt as PowerShell, while preserving user `config.nu`.
 
 ### Fixed
 
