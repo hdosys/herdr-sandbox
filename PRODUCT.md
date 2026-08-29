@@ -106,6 +106,9 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 
 ### Installer experience and artwork
 
+- Welcome and Finish headings show only the short release version. Build freshness
+  and source revision remain available in executable and installer metadata and
+  never appear in those user-facing headings.
 - Interactive setup follows Welcome/License/Files/Finish. Installation and uninstall both show their real progress details by default. The license page displays Apache License 2.0 before installation. Successful setup ends on a finish page that explains the terminal-first next steps and offers one optional link to the product's setup and usage guide. A fresh interactive install also shows a checked **Open Herdr Sandbox configuration** option. Selecting Finish while it remains checked runs the canonical configuration-open path so `%APPDATA%\herdr-sandbox\config.json` opens with the application registered for `.json` files. Repair, upgrade, and silent setup, including standard WinGet installation, do not show the option or open it. Setup launches no product GUI or browser.
 - A terminal interactive failure shows one actionable explanation before setup closes completely; it never leaves an aborted Files page open. Silent setup/uninstall shows no blocking dialog and reports the same terminal outcome through a stable exit code.
 - Welcome and Finish share artwork whose sole editable source is `packaging/windows/assets/installer-welcome-finish-source.png`. Five linear-light Lanczos3 renders cover 96/120/144/168/192 DPI at exactly 164x314, 205x393, 246x471, 287x550, and 328x628 pixels. Setup selects the nearest listed scale from its effective system DPI at GUI initialization and displays that bitmap at native size without NSIS stretching, cropping, or alignment scaling.

@@ -277,11 +277,11 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE_NAME}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_150}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_175}"
 !pragma verifyloadimage "${INSTALLER_WELCOME_BITMAP_200}"
-!define MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${BUILD_DISPLAY}"
+!define MUI_WELCOMEPAGE_TITLE "Install ${APP_DISPLAY_NAME} ${VERSION}"
 !define MUI_WELCOMEPAGE_TEXT "This setup installs ${APP_DISPLAY_NAME} for your Windows account and creates its default configuration when missing.$\r$\n$\r$\nNo administrator access is required. Open a new terminal after setup so it can find ${APP_NAME} on PATH."
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !define MUI_FINISHPAGE_TEXT_LARGE
-!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${BUILD_DISPLAY} is installed"
+!define MUI_FINISHPAGE_TITLE "${APP_DISPLAY_NAME} ${VERSION} is installed"
 !define MUI_FINISHPAGE_TEXT "Setup is complete. No app window opens. Open a new terminal:$\r$\n$\r$\n${APP_NAME} init: Create a project profile$\r$\n${APP_NAME} up: Start or reconnect$\r$\n${APP_NAME} config: Open the configuration file$\r$\n${APP_NAME} status: Inspect Sandbox state"
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open ${APP_DISPLAY_NAME} configuration"

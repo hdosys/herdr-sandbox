@@ -5,7 +5,7 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
-## v0.0.20
+## v0.0.21
 
 ### Added
 
@@ -34,6 +34,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Installer Welcome and Finish headings now show only the release version, while
+  build freshness and source revision remain in diagnostic metadata.
 - Release binaries now use Go 1.26.7, incorporating current standard-library
   security fixes.
 - Custom project provisioning failures now retain the original cause while naming
