@@ -294,7 +294,7 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 		}
 		plans = append(plans, plan)
 	}
-	if err := removeInstallerOwnedSampleConfiguration(paths.ConfigurationDirectory); err != nil {
+	if err := removeInstallerOwnedConfigurationReferences(paths.ConfigurationDirectory); err != nil {
 		return err
 	}
 	if err := applyInstallerSSHRemoval(sshPlan); err != nil {
@@ -323,53 +323,70 @@ func cleanInstallerDataAt(ctx context.Context, paths installerCleanPaths, delete
 	return nil
 }
 
-func removeInstallerOwnedSampleConfiguration(directory string) error {
+func removeInstallerOwnedConfigurationReferences(directory string) error {
 	if !filepath.IsAbs(directory) {
-		return fmt.Errorf("installer sample configuration directory is not absolute: %q", directory)
+		return fmt.Errorf("installer configuration reference directory is not absolute: %q", directory)
 	}
 	directory = filepath.Clean(directory)
-	path := filepath.Join(directory, sampleConfigurationName)
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
+	type configurationReference struct {
+		name string
+		info os.FileInfo
+	}
+	references := []configurationReference{}
+	for _, name := range []string{sampleConfigurationName, configurationSchemaName} {
+		path := filepath.Join(directory, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect installer-owned configuration reference %s: %w", name, err)
+		}
+		reparse, err := fileInfoIsReparsePoint(info)
+		if err != nil {
+			return fmt.Errorf("inspect installer-owned configuration reference %s reparse state: %w", name, err)
+		}
+		if reparse || !info.Mode().IsRegular() {
+			return fmt.Errorf("installer-owned configuration reference is not a regular non-reparse file: %s", name)
+		}
+		references = append(references, configurationReference{name: name, info: info})
+	}
+	if len(references) == 0 {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("inspect installer-owned sample configuration: %w", err)
-	}
 	if err := rejectMappedPathReparsePoints(directory); err != nil {
-		return fmt.Errorf("refusing unsafe installer-owned sample configuration cleanup: %w", err)
-	}
-	reparse, err := fileInfoIsReparsePoint(info)
-	if err != nil {
-		return fmt.Errorf("inspect installer-owned sample configuration reparse state: %w", err)
-	}
-	if reparse || !info.Mode().IsRegular() {
-		return errors.New("installer-owned sample configuration is not a regular non-reparse file")
+		return fmt.Errorf("refusing unsafe installer-owned configuration reference cleanup: %w", err)
 	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return fmt.Errorf("open installer configuration root: %w", err)
 	}
 	defer root.Close()
-	rootedInfo, err := root.Lstat(sampleConfigurationName)
-	if err != nil {
-		return fmt.Errorf("revalidate installer-owned sample configuration: %w", err)
-	}
-	rootedReparse, err := fileInfoIsReparsePoint(rootedInfo)
-	if err != nil {
-		return fmt.Errorf("revalidate installer-owned sample configuration reparse state: %w", err)
-	}
-	if rootedReparse || !rootedInfo.Mode().IsRegular() || !os.SameFile(info, rootedInfo) {
-		return errors.New("installer-owned sample configuration identity changed before removal")
-	}
-	if err := root.Remove(sampleConfigurationName); err != nil {
-		return fmt.Errorf("remove installer-owned sample configuration: %w", err)
-	}
-	if _, err := root.Lstat(sampleConfigurationName); !errors.Is(err, os.ErrNotExist) {
-		if err == nil {
-			return errors.New("remove installer-owned sample configuration: path still exists")
+	for _, reference := range references {
+		rootedInfo, err := root.Lstat(reference.name)
+		if err != nil {
+			return fmt.Errorf("revalidate installer-owned configuration reference %s: %w", reference.name, err)
 		}
-		return fmt.Errorf("verify installer-owned sample configuration removal: %w", err)
+		rootedReparse, err := fileInfoIsReparsePoint(rootedInfo)
+		if err != nil {
+			return fmt.Errorf("revalidate installer-owned configuration reference %s reparse state: %w", reference.name, err)
+		}
+		if rootedReparse || !rootedInfo.Mode().IsRegular() || !os.SameFile(reference.info, rootedInfo) {
+			return fmt.Errorf("installer-owned configuration reference identity changed before removal: %s", reference.name)
+		}
+	}
+	for _, reference := range references {
+		if err := root.Remove(reference.name); err != nil {
+			return fmt.Errorf("remove installer-owned configuration reference %s: %w", reference.name, err)
+		}
+	}
+	for _, reference := range references {
+		if _, err := root.Lstat(reference.name); !errors.Is(err, os.ErrNotExist) {
+			if err == nil {
+				return fmt.Errorf("remove installer-owned configuration reference: path still exists: %s", reference.name)
+			}
+			return fmt.Errorf("verify installer-owned configuration reference %s removal: %w", reference.name, err)
+		}
 	}
 	return nil
 }

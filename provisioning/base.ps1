@@ -542,6 +542,31 @@ function Invoke-ProvisioningNative {
     return $output
 }
 
+function Invoke-ProvisioningExtensionScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('User', 'Project')]
+        [string]$Kind,
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$WorkspaceName = '',
+        [string]$ProjectDirectory = ''
+    )
+
+    try {
+        if ($Kind -ceq 'Project') {
+            & $Path -ProjectDirectory $ProjectDirectory
+            return
+        }
+        & $Path
+    } catch {
+        if ($Kind -ceq 'Project') {
+            throw "Custom project provisioning profile for workspace `"$WorkspaceName`" (<workspace>\.herdr-sandbox\provision.ps1) failed: $($_.Exception.Message)"
+        }
+        throw "Custom global user provisioning profile (%APPDATA%\herdr-sandbox\user.ps1) failed: $($_.Exception.Message)"
+    }
+}
+
 function Start-ProvisioningNativeGroup {
     param(
         [Parameter(Mandatory = $true)]
@@ -3685,7 +3710,7 @@ if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -an
         throw "User provisioning contract is invalid: $UserProvisioningPath"
     }
     Write-Output 'Running global user provisioning'
-    & $userProvisioning.FullName
+    Invoke-ProvisioningExtensionScript -Kind 'User' -Path $userProvisioning.FullName
 } else {
     throw "User provisioning script identity is invalid: $UserProvisioningPath"
 }
@@ -3698,7 +3723,8 @@ foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     }
     $projectScript = Get-Item -LiteralPath $projectScriptPath
     Write-Output "Running project provisioning for $workspaceName"
-    & $projectScript.FullName -ProjectDirectory $projectDirectory
+    Invoke-ProvisioningExtensionScript -Kind 'Project' -Path $projectScript.FullName `
+        -WorkspaceName $workspaceName -ProjectDirectory $projectDirectory
 }
 
 $packageStageRoot = 'C:\HerdrSandbox\staging\packages'

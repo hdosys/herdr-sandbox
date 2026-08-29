@@ -201,29 +201,74 @@ Open the user-owned configuration:
 sandbox config
 ```
 
-The command creates `config.json` only when absent. Setup also refreshes a complete
-`config.sample.json` reference without replacing user configuration. Global
+The command creates `config.json` only when absent. Setup, portable first use, and
+`sandbox config` refresh the app-owned `config.sample.json` and
+`config.schema.json` references without replacing user configuration. Global
 PowerShell additions belong in `user.ps1`:
 
 ```text
 %APPDATA%\herdr-sandbox\config.json
+%APPDATA%\herdr-sandbox\config.sample.json
+%APPDATA%\herdr-sandbox\config.schema.json
 %APPDATA%\herdr-sandbox\user.ps1
 ```
 
-`config.json` is strict JSON. A practical example:
+New configurations include `"$schema": "./config.schema.json"`, so compatible
+editors discover the adjacent schema without a network request. Existing
+configurations are never rewritten. The schema checks JSON structure only;
+`sandbox plan` remains authoritative for paths, overlaps, package policy, and
+credentials.
+
+`config.json` is strict JSON. A complete practical example:
 
 ```json
 {
-  "memoryMB": 16384,
-  "modelsDirectory": "E:\\Models",
+  "$schema": "./config.schema.json",
+  "cacheDirectory": "D:\\HerdrSandboxCache",
+  "worktreeDirectory": "D:\\HerdrWorktrees",
+  "modelsDirectory": "D:\\Models",
+  "memoryMB": 32768,
+  "audio": false,
+  "audioInput": false,
+  "tailscale": false,
+  "mobileSSHAuthorizedKeys": [],
+  "configurationSync": {
+    "pullHostGitRepositoriesOnUp": true,
+    "pullHostGitRepositoriesOnDown": true
+  },
+  "codingAgentSync": {
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
+  },
+  "credentialSync": {
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCLI": false,
+    "pi": false,
+    "tradingView": false
+  },
   "workspaces": {
-    "client": "E:\\Clients\\client"
+    "project": "D:\\Projects\\project"
   },
   "mounts": {
     "docs": {
-      "path": "E:\\Shared\\docs",
+      "path": "D:\\Shared\\docs",
       "readOnly": true
+    },
+    "scratch": {
+      "path": "D:\\Shared\\scratch",
+      "readOnly": false
     }
+  },
+  "workspaceDiscovery": {
+    "root": "D:\\Projects",
+    "exclude": [
+      "^archive$"
+    ]
   },
   "wingetPackages": {
     "remove": [],
@@ -248,22 +293,41 @@ replacing it.
 <details>
 <summary><strong>Complete config.json field reference</strong></summary>
 
-| Field | Meaning |
+Workspace and mount names use letters, numbers, `.`, `_`, or `-`, start with a
+letter or number, and are at most 64 characters.
+
+| Field | Value and effect |
 | --- | --- |
-| `cacheDirectory` | Dedicated package/tool cache. Empty uses `<system-temp>\herdr-sandbox\cache`. Never point it at shared data. |
-| `worktreeDirectory` | Optional dedicated root for persistent Herdr worktrees, mapped at `C:\Worktrees`. |
-| `modelsDirectory` | Optional shared AI-model root, mapped read/write at `C:\Models`; the host also prepares verified VoxCPM2 models there. |
-| `memoryMB` | Default Sandbox memory; minimum 2048. `--memory-mb` overrides one run. |
-| `audio`, `audioInput` | Separate output and microphone opt-ins. Both default to `false`. |
-| `tailscale` | Opts into a stable tagged Tailscale identity. |
-| `mobileSSHAuthorizedKeys` | Up to eight device-owned Ed25519 public keys. Private keys never belong here. |
-| `configurationSync` | Controls automatic fast-forward pulls before `up` and after `down`; both default on. |
-| `codingAgentSync` | Selects configuration transfer for OpenCode, Claude Code, Codex, Copilot, and Pi. All default on. |
-| `credentialSync` | Independently opts into credential transfer for `opencode`, `claudeCode`, `codex`, `githubCLI`, `pi`, and `tradingView`. All default off. |
-| `workspaces` | Named project roots mapped to `C:\Workspaces\<name>`. |
-| `mounts` | Named additional folders mapped to `C:\Mounts\<name>` with explicit read-only choice. |
-| `workspaceDiscovery` | Optionally selects direct child projects below one root, with exclusion patterns. |
-| `wingetPackages` | Removes optional defaults, adds exact package IDs, and optionally pins versions. |
+| `$schema` | Optional editor hint. When present, it must be `./config.schema.json`. |
+| `cacheDirectory` | Absolute dedicated cache root, created when absent. `""` uses task-owned temporary cache state. Never point it at shared data. |
+| `worktreeDirectory` | Existing dedicated host directory mapped read-write to `C:\Worktrees`. `""` disables it. |
+| `modelsDirectory` | Existing dedicated host directory mapped read-write to `C:\Models`. `""` disables it. |
+| `memoryMB` | Integer Sandbox memory limit in MiB, minimum `2048`. `--memory-mb` overrides one run. |
+| `audio` | Boolean enabling guest audio output. |
+| `audioInput` | Boolean enabling guest microphone input. |
+| `tailscale` | Boolean enabling Herdr's stable tagged Tailscale identity. |
+| `mobileSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
+| `configurationSync.pullHostGitRepositoriesOnUp` | Boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. |
+| `configurationSync.pullHostGitRepositoriesOnDown` | Boolean allowing the same pull policy during `down`. |
+| `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. |
+| `codingAgentSync.claudeCode` | Boolean streaming Claude Code configuration into the guest. |
+| `codingAgentSync.codex` | Boolean streaming Codex configuration into the guest. |
+| `codingAgentSync.githubCopilot` | Boolean streaming GitHub Copilot configuration into the guest. |
+| `codingAgentSync.pi` | Boolean streaming Pi configuration into the guest. |
+| `credentialSync.opencode` | Boolean streaming an existing OpenCode API credential. |
+| `credentialSync.claudeCode` | Boolean streaming an existing Claude Code credential. |
+| `credentialSync.codex` | Boolean streaming an existing Codex credential. |
+| `credentialSync.githubCLI` | Boolean streaming an existing GitHub CLI credential. |
+| `credentialSync.pi` | Boolean streaming an existing Pi credential. |
+| `credentialSync.tradingView` | Boolean streaming existing TradingView session cookies. |
+| `workspaces.<name>` | Existing absolute project-directory string mapped read-write to `C:\Workspaces\<name>`. |
+| `mounts.<name>.path` | Existing absolute generic-directory string mapped to `C:\Mounts\<name>`. |
+| `mounts.<name>.readOnly` | Required boolean. `true` blocks guest writes through that mapping. |
+| `workspaceDiscovery.root` | Existing parent directory whose direct child directories become workspaces. `""` disables discovery. |
+| `workspaceDiscovery.exclude` | Array of at most 64 unique Go RE2 patterns matched against direct child names. |
+| `wingetPackages.remove` | Array of supported Base package IDs to remove from the default set. |
+| `wingetPackages.add` | Array of supported Base package IDs to add. It defaults to the four coding-agent packages shown above. |
+| `wingetPackages.versions.<packageID>` | Exact WinGet version string for a selected package. Omit it for newest-stable resolution. |
 
 </details>
 
@@ -431,6 +495,8 @@ These repository-specific shortcuts remain outside `all`:
 
 Dependencies and application commands remain project-owned. `sandbox plan`
 expands each composition without executing the profile.
+If custom project provisioning fails, the error names the workspace and its
+`.herdr-sandbox\provision.ps1` profile before preserving the original cause.
 
 </details>
 

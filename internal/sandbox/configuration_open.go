@@ -24,6 +24,9 @@ func openConfigurationAt(configurationRoot string, openFile func(string) error) 
 	if err := os.MkdirAll(globalRoot, 0o700); err != nil {
 		return "", false, fmt.Errorf("create global herdr-sandbox directory: %w", err)
 	}
+	if err := writeConfigurationReferences(globalRoot); err != nil {
+		return "", false, err
+	}
 	created, err := ensureGlobalWorkspaceConfigResult(globalRoot)
 	if err != nil {
 		return "", false, err

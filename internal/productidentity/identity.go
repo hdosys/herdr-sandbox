@@ -14,6 +14,7 @@ const (
 	LicenseSourceName        = "LICENSE"
 	ConfigurationName        = "config.json"
 	SampleConfigurationName  = "config.sample.json"
+	ConfigurationSchemaName  = "config.schema.json"
 	UserScriptName           = "user.ps1"
 	ProjectDirectoryName     = ".herdr-sandbox"
 	ProjectScriptName        = "provision.ps1"

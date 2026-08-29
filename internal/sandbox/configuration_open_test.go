@@ -29,6 +29,15 @@ func TestOpenConfigurationSeedsOnlyMissingConfigAndUsesRegisteredApplication(t *
 	if _, err := os.Stat(filepath.Join(configurationRoot, applicationName, userProvisioningName)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("config command seeded the user provisioning script: %v", err)
 	}
+	for name, expected := range map[string][]byte{
+		sampleConfigurationName: sampleGlobalConfiguration,
+		configurationSchemaName: globalConfigurationSchema,
+	} {
+		contents, err := os.ReadFile(filepath.Join(configurationRoot, applicationName, name))
+		if err != nil || !bytes.Equal(contents, expected) {
+			t.Fatalf("configuration reference %s = %q, %v", name, contents, err)
+		}
+	}
 
 	custom := []byte("{\n  \"memoryMB\": 8192\n}\n")
 	if err := os.WriteFile(expectedPath, custom, 0o600); err != nil {

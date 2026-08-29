@@ -2077,6 +2077,9 @@ func TestLoadGlobalConfigurationRejectsInvalidWorkspaceDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string]string{
+		"null schema":       `{"$schema":null}`,
+		"unknown schema":    `{"$schema":"./other.schema.json"}`,
+		"duplicate schema":  `{"$schema":"./config.schema.json","$schema":"./config.schema.json"}`,
 		"null object":       `{"workspaceDiscovery":null}`,
 		"nonobject":         `{"workspaceDiscovery":[]}`,
 		"unknown field":     `{"workspaceDiscovery":{"path":"C:\\Projects"}}`,
@@ -2452,7 +2455,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		}
 	}
 	remaining := seededContents
-	for _, field := range []string{`"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"codingAgentSync"`, `"credentialSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"$schema"`, `"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"configurationSync"`, `"codingAgentSync"`, `"credentialSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)
@@ -2539,7 +2542,7 @@ func TestInstallerSeedAlwaysReplacesOwnedSampleAndPreservesUserFiles(t *testing.
 		t.Fatalf("initial installer seed: %v", err)
 	}
 	samplePath := filepath.Join(global, sampleConfigurationName)
-	if sample, err := os.ReadFile(samplePath); err != nil || !bytes.Equal(sample, defaultGlobalConfiguration) {
+	if sample, err := os.ReadFile(samplePath); err != nil || !bytes.Equal(sample, sampleGlobalConfiguration) {
 		t.Fatalf("initial sample = %q, %v", sample, err)
 	}
 	if err := os.WriteFile(samplePath, []byte("obsolete installer sample"), 0o600); err != nil {
@@ -2551,7 +2554,8 @@ func TestInstallerSeedAlwaysReplacesOwnedSampleAndPreservesUserFiles(t *testing.
 	for path, expected := range map[string][]byte{
 		configurationPath: configuration,
 		userPath:          user,
-		samplePath:        defaultGlobalConfiguration,
+		samplePath:        sampleGlobalConfiguration,
+		filepath.Join(global, configurationSchemaName): globalConfigurationSchema,
 	} {
 		contents, err := os.ReadFile(path)
 		if err != nil || !bytes.Equal(contents, expected) {

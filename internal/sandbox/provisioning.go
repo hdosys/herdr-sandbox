@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,8 @@ const (
 	workspaceManifestName              = "workspaces.json"
 	globalConfigurationName            = productidentity.ConfigurationName
 	sampleConfigurationName            = productidentity.SampleConfigurationName
+	configurationSchemaName            = productidentity.ConfigurationSchemaName
+	configurationSchemaReference       = "./" + configurationSchemaName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
 	baseProvisioningContract           = "# herdr-sandbox-base-contract: 55"
@@ -52,7 +55,117 @@ Set-StrictMode -Version 2.0
 # Add idempotent global guest customization below. Prefer config.json for packages.
 `)
 
-var defaultGlobalConfiguration = []byte("{\n  \"cacheDirectory\": \"\",\n  \"worktreeDirectory\": \"\",\n  \"modelsDirectory\": \"\",\n  \"memoryMB\": 32768,\n  \"audio\": false,\n  \"audioInput\": false,\n  \"tailscale\": false,\n  \"mobileSSHAuthorizedKeys\": [],\n  \"configurationSync\": {\n    \"pullHostGitRepositoriesOnUp\": true,\n    \"pullHostGitRepositoriesOnDown\": true\n  },\n  \"codingAgentSync\": {\n    \"opencode\": true,\n    \"claudeCode\": true,\n    \"codex\": true,\n    \"githubCopilot\": true,\n    \"pi\": true\n  },\n  \"credentialSync\": {\n    \"opencode\": false,\n    \"claudeCode\": false,\n    \"codex\": false,\n    \"githubCLI\": false,\n    \"pi\": false,\n    \"tradingView\": false\n  },\n  \"workspaces\": {},\n  \"mounts\": {},\n  \"workspaceDiscovery\": {\n    \"root\": \"\",\n    \"exclude\": []\n  },\n  \"wingetPackages\": {\n    \"remove\": [],\n    \"add\": [\n      \"SST.opencode\",\n      \"Anthropic.ClaudeCode\",\n      \"OpenAI.Codex\",\n      \"GitHub.Copilot\"\n    ],\n    \"versions\": {}\n  }\n}\n")
+var defaultGlobalConfiguration = []byte(`{
+  "$schema": "./config.schema.json",
+  "cacheDirectory": "",
+  "worktreeDirectory": "",
+  "modelsDirectory": "",
+  "memoryMB": 32768,
+  "audio": false,
+  "audioInput": false,
+  "tailscale": false,
+  "mobileSSHAuthorizedKeys": [],
+  "configurationSync": {
+    "pullHostGitRepositoriesOnUp": true,
+    "pullHostGitRepositoriesOnDown": true
+  },
+  "codingAgentSync": {
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
+  },
+  "credentialSync": {
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCLI": false,
+    "pi": false,
+    "tradingView": false
+  },
+  "workspaces": {},
+  "mounts": {},
+  "workspaceDiscovery": {
+    "root": "",
+    "exclude": []
+  },
+  "wingetPackages": {
+    "remove": [],
+    "add": [
+      "SST.opencode",
+      "Anthropic.ClaudeCode",
+      "OpenAI.Codex",
+      "GitHub.Copilot"
+    ],
+    "versions": {}
+  }
+}
+`)
+
+var sampleGlobalConfiguration = []byte(`{
+  "$schema": "./config.schema.json",
+  "cacheDirectory": "D:\\HerdrSandboxCache",
+  "worktreeDirectory": "D:\\HerdrWorktrees",
+  "modelsDirectory": "D:\\Models",
+  "memoryMB": 32768,
+  "audio": false,
+  "audioInput": false,
+  "tailscale": false,
+  "mobileSSHAuthorizedKeys": [],
+  "configurationSync": {
+    "pullHostGitRepositoriesOnUp": true,
+    "pullHostGitRepositoriesOnDown": true
+  },
+  "codingAgentSync": {
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
+  },
+  "credentialSync": {
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCLI": false,
+    "pi": false,
+    "tradingView": false
+  },
+  "workspaces": {
+    "project": "D:\\Projects\\project"
+  },
+  "mounts": {
+    "docs": {
+      "path": "D:\\Shared\\docs",
+      "readOnly": true
+    },
+    "scratch": {
+      "path": "D:\\Shared\\scratch",
+      "readOnly": false
+    }
+  },
+  "workspaceDiscovery": {
+    "root": "D:\\Projects",
+    "exclude": [
+      "^archive$"
+    ]
+  },
+  "wingetPackages": {
+    "remove": [],
+    "add": [
+      "SST.opencode",
+      "Anthropic.ClaudeCode",
+      "OpenAI.Codex",
+      "GitHub.Copilot"
+    ],
+    "versions": {}
+  }
+}
+`)
+
+//go:embed assets/config.schema.json
+var globalConfigurationSchema []byte
 
 var (
 	workspaceNamePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -151,6 +264,7 @@ type provisioningPlan struct {
 }
 
 type globalConfiguration struct {
+	Schema                  string                           `json:"$schema,omitempty"`
 	CacheDirectory          string                           `json:"cacheDirectory"`
 	WorktreeDirectory       string                           `json:"worktreeDirectory"`
 	ModelsDirectory         string                           `json:"modelsDirectory"`
@@ -753,6 +867,17 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 		}
 		seen[key] = true
 		switch key {
+		case "$schema":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.Schema); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			if config.Schema != configurationSchemaReference {
+				return fmt.Errorf("field %q must equal %q", key, configurationSchemaReference)
+			}
 		case "cacheDirectory":
 			raw, err := decodeNonNullJSONValue(decoder, key)
 			if err != nil {
@@ -1655,7 +1780,7 @@ func ensureGlobalProvisioning(globalRoot string) error {
 }
 
 // SeedInstallerConfiguration creates the user-owned defaults when absent and
-// replaces the installer-owned sample with the current canonical defaults.
+// refreshes the app-owned configuration references.
 func SeedInstallerConfiguration() error {
 	configurationRoot, err := os.UserConfigDir()
 	if err != nil {
@@ -1730,42 +1855,57 @@ func seedInstallerConfigurationRoot(globalRoot string) (resultErr error) {
 	if configurationCreated {
 		created = append(created, seededFile{path: configurationPath, contents: defaultGlobalConfiguration})
 	}
-	if err := writeInstallerSampleConfiguration(globalRoot); err != nil {
+	if err := writeConfigurationReferences(globalRoot); err != nil {
 		return err
 	}
 	return nil
 }
 
-func writeInstallerSampleConfiguration(globalRoot string) error {
-	path := filepath.Join(globalRoot, sampleConfigurationName)
+func writeConfigurationReferences(globalRoot string) error {
+	for _, reference := range []struct {
+		name     string
+		contents []byte
+	}{
+		{name: sampleConfigurationName, contents: sampleGlobalConfiguration},
+		{name: configurationSchemaName, contents: globalConfigurationSchema},
+	} {
+		if err := writeConfigurationReference(globalRoot, reference.name, reference.contents); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeConfigurationReference(globalRoot, name string, expected []byte) error {
+	path := filepath.Join(globalRoot, name)
 	if info, err := os.Lstat(path); err == nil {
 		reparse, reparseErr := fileInfoIsReparsePoint(info)
 		if reparseErr != nil {
-			return fmt.Errorf("inspect installer-owned sample configuration reparse state: %w", reparseErr)
+			return fmt.Errorf("inspect app-owned configuration reference %s reparse state: %w", name, reparseErr)
 		}
 		if reparse || !info.Mode().IsRegular() {
-			return fmt.Errorf("installer-owned sample configuration is not a regular non-reparse file: %s", path)
+			return fmt.Errorf("app-owned configuration reference is not a regular non-reparse file: %s", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect installer-owned sample configuration: %w", err)
+		return fmt.Errorf("inspect app-owned configuration reference %s: %w", name, err)
 	}
 	if err := rejectMappedPathReparsePoints(globalRoot); err != nil {
-		return fmt.Errorf("validate installer-owned sample configuration root: %w", err)
+		return fmt.Errorf("validate app-owned configuration reference root: %w", err)
 	}
-	if err := writeFileAtomically(path, defaultGlobalConfiguration, 0o600); err != nil {
-		return fmt.Errorf("replace installer-owned sample configuration: %w", err)
+	if err := writeFileAtomically(path, expected, 0o600); err != nil {
+		return fmt.Errorf("replace app-owned configuration reference %s: %w", name, err)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("verify installer-owned sample configuration: %w", err)
+		return fmt.Errorf("verify app-owned configuration reference %s: %w", name, err)
 	}
 	reparse, err := fileInfoIsReparsePoint(info)
 	if err != nil {
-		return fmt.Errorf("verify installer-owned sample configuration reparse state: %w", err)
+		return fmt.Errorf("verify app-owned configuration reference %s reparse state: %w", name, err)
 	}
-	contents, readErr := os.ReadFile(path)
-	if reparse || !info.Mode().IsRegular() || readErr != nil || !bytes.Equal(contents, defaultGlobalConfiguration) {
-		return fmt.Errorf("installer-owned sample configuration verification failed: %s", path)
+	actual, readErr := os.ReadFile(path)
+	if reparse || !info.Mode().IsRegular() || readErr != nil || !bytes.Equal(actual, expected) {
+		return fmt.Errorf("app-owned configuration reference verification failed: %s", path)
 	}
 	return nil
 }
@@ -1809,7 +1949,10 @@ func seedGlobalProvisioning(globalRoot string) error {
 	if err := seedUserProvisioning(userPath); err != nil {
 		return err
 	}
-	return ensureGlobalWorkspaceConfig(globalRoot)
+	if err := ensureGlobalWorkspaceConfig(globalRoot); err != nil {
+		return err
+	}
+	return writeConfigurationReferences(globalRoot)
 }
 
 func rejectLegacyUserBase(globalRoot string) error {

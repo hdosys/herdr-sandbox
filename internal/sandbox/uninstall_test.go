@@ -142,6 +142,7 @@ func TestCleanInstallerDataDefaultPreservesConfigurationAndRemovesAllState(t *te
 		filepath.Join(paths.CacheDirectory, "unknown-cache", "cache.keep"),
 		filepath.Join(paths.ConfigurationDirectory, globalConfigurationName),
 		filepath.Join(paths.ConfigurationDirectory, sampleConfigurationName),
+		filepath.Join(paths.ConfigurationDirectory, configurationSchemaName),
 		filepath.Join(paths.ConfigurationDirectory, userProvisioningName),
 	} {
 		writeUninstallFixture(t, path, "keep")
@@ -162,8 +163,10 @@ func TestCleanInstallerDataDefaultPreservesConfigurationAndRemovesAllState(t *te
 			t.Fatalf("default uninstall removed user configuration %s: %v", path, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(paths.ConfigurationDirectory, sampleConfigurationName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("default uninstall preserved installer-owned sample configuration: %v", err)
+	for _, name := range []string{sampleConfigurationName, configurationSchemaName} {
+		if _, err := os.Lstat(filepath.Join(paths.ConfigurationDirectory, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("default uninstall preserved installer-owned configuration reference %s: %v", name, err)
+		}
 	}
 }
 
@@ -183,7 +186,7 @@ func TestCleanInstallerDataRejectsUnsafeOwnedSampleBeforeDeletion(t *testing.T) 
 		t.Fatal(err)
 	}
 	err := cleanInstallerDataAt(context.Background(), paths, false)
-	if err == nil || !strings.Contains(err.Error(), "sample configuration") {
+	if err == nil || !strings.Contains(err.Error(), sampleConfigurationName) {
 		t.Fatalf("unsafe sample cleanup error = %v", err)
 	}
 	for _, path := range []string{paths.DataDirectory, paths.CacheDirectory} {

@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Herdr Sandbox configuration",
+  "description": "Editor validation for %APPDATA%\\herdr-sandbox\\config.json. sandbox plan remains authoritative for paths, overlaps, package ownership, and credentials.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "const": "./config.schema.json",
+      "description": "Loads this adjacent schema in editors. Herdr Sandbox never fetches it."
+    },
+    "cacheDirectory": {
+      "type": "string",
+      "default": "",
+      "description": "Absolute dedicated disposable package and tool cache. It may be created when absent. Empty uses the system temporary directory."
+    },
+    "worktreeDirectory": {
+      "type": "string",
+      "default": "",
+      "description": "Existing dedicated host directory mapped read-write to C:\\Worktrees. Empty disables persistent worktrees."
+    },
+    "modelsDirectory": {
+      "type": "string",
+      "default": "",
+      "description": "Existing dedicated host model directory mapped read-write to C:\\Models. Empty disables it."
+    },
+    "memoryMB": {
+      "type": "integer",
+      "minimum": 2048,
+      "default": 32768,
+      "description": "Sandbox memory in MiB."
+    },
+    "audio": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enables guest audio output."
+    },
+    "audioInput": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enables guest microphone input."
+    },
+    "tailscale": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enables the stable tagged Tailscale identity."
+    },
+    "mobileSSHAuthorizedKeys": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "default": [],
+      "description": "Device-owned Ed25519 public keys. Nonempty requires tailscale.",
+      "items": {
+        "type": "string",
+        "maxLength": 1024,
+        "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\\s]+)?$"
+      }
+    },
+    "configurationSync": {
+      "$ref": "#/$defs/configurationSync"
+    },
+    "codingAgentSync": {
+      "$ref": "#/$defs/codingAgentSync"
+    },
+    "credentialSync": {
+      "$ref": "#/$defs/credentialSync"
+    },
+    "workspaces": {
+      "type": "object",
+      "maxProperties": 16,
+      "default": {},
+      "description": "Named existing project directories mapped read-write to C:\\Workspaces\\<name>.",
+      "propertyNames": {
+        "$ref": "#/$defs/mappingName"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "mounts": {
+      "type": "object",
+      "maxProperties": 16,
+      "default": {},
+      "description": "Named existing additional directories mapped to C:\\Mounts\\<name>.",
+      "propertyNames": {
+        "$ref": "#/$defs/mappingName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/mount"
+      }
+    },
+    "workspaceDiscovery": {
+      "$ref": "#/$defs/workspaceDiscovery"
+    },
+    "wingetPackages": {
+      "$ref": "#/$defs/wingetPackages"
+    }
+  },
+  "$defs": {
+    "mappingName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "readOnly"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Existing absolute host directory."
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "True prevents guest writes through this mapping."
+        }
+      }
+    },
+    "workspaceDiscovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {
+        "root": "",
+        "exclude": []
+      },
+      "properties": {
+        "root": {
+          "type": "string",
+          "default": "",
+          "description": "Existing parent directory whose direct children become workspaces. Empty disables discovery."
+        },
+        "exclude": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "default": [],
+          "description": "Go RE2 patterns matched against each direct child name.",
+          "items": {
+            "type": "string",
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "configurationSync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pullHostGitRepositoriesOnUp": {
+          "type": "boolean",
+          "default": true
+        },
+        "pullHostGitRepositoriesOnDown": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "codingAgentSync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "opencode": {
+          "type": "boolean",
+          "default": true
+        },
+        "claudeCode": {
+          "type": "boolean",
+          "default": true
+        },
+        "codex": {
+          "type": "boolean",
+          "default": true
+        },
+        "githubCopilot": {
+          "type": "boolean",
+          "default": true
+        },
+        "pi": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "credentialSync": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "opencode": {
+          "type": "boolean",
+          "default": false
+        },
+        "claudeCode": {
+          "type": "boolean",
+          "default": false
+        },
+        "codex": {
+          "type": "boolean",
+          "default": false
+        },
+        "githubCLI": {
+          "type": "boolean",
+          "default": false
+        },
+        "pi": {
+          "type": "boolean",
+          "default": false
+        },
+        "tradingView": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "packageID": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "packageVersion": {
+      "type": "string",
+      "pattern": "^(?:|[A-Za-z0-9][A-Za-z0-9._+-]{0,127})$"
+    },
+    "wingetPackages": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remove": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/packageID"
+          }
+        },
+        "add": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "default": [
+            "SST.opencode",
+            "Anthropic.ClaudeCode",
+            "OpenAI.Codex",
+            "GitHub.Copilot"
+          ],
+          "items": {
+            "$ref": "#/$defs/packageID"
+          }
+        },
+        "versions": {
+          "type": "object",
+          "maxProperties": 64,
+          "default": {},
+          "propertyNames": {
+            "$ref": "#/$defs/packageID"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/packageVersion"
+          }
+        }
+      }
+    }
+  }
+}

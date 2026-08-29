@@ -25,7 +25,8 @@ represent failed tag attempts; this changelog does not recreate them.
 - `sandbox plan` now explains that disabled credential transfer is the secure
   default and points to the explicit `credentialSync` opt-in.
 - `sandbox config` now distinguishes a newly created default from an existing
-  configuration and points to `sandbox plan` as the next validation step.
+  configuration, refreshes a complete sample and adjacent editor JSON Schema,
+  and points to `sandbox plan` as the next validation step.
 - The C/C++ stack now includes current stable CMake alongside Visual Studio Build
   Tools and the Windows 11 SDK.
 - Nushell now starts without its welcome banner and uses the same selected
@@ -33,6 +34,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Custom project provisioning failures now retain the original cause while naming
+  the affected workspace and its `.herdr-sandbox\provision.ps1` profile.
 - Enabling credential transfer for an existing ready Sandbox now applies selected
   OpenCode, Claude Code, Codex, GitHub CLI, Pi, and TradingView credentials before
   unchanged-package retained provisioning performs its longer idempotent refresh.
