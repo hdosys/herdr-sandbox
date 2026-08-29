@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -173,55 +174,75 @@ func validateInstallerRemovalSafety(paths installerCleanPaths, deleteConfigurati
 			return fmt.Errorf("configured cache directory overlaps the %s and cannot be removed safely: %s", role, paths.CacheDirectory)
 		}
 	}
-	for name, workspace := range paths.Configuration.Workspaces {
-		workspace = strings.TrimSpace(workspace)
-		if workspace == "" || !filepath.IsAbs(workspace) {
-			return fmt.Errorf("configured workspace %q is not an absolute path; refusing clean uninstall", name)
-		}
-		if hostPathsOverlap(paths.CacheDirectory, filepath.Clean(workspace)) {
-			return fmt.Errorf("configured cache directory overlaps workspace %q and cannot be removed safely: %s", name, paths.CacheDirectory)
-		}
-	}
-	if discovery := paths.Configuration.WorkspaceDiscovery; discovery != nil {
-		root := strings.TrimSpace(discovery.Root)
-		if root != "" {
-			if !filepath.IsAbs(root) {
-				return errors.New("workspaceDiscovery.root is not absolute; refusing clean uninstall")
-			}
-			if hostPathsOverlap(paths.CacheDirectory, filepath.Clean(root)) {
-				return fmt.Errorf("configured cache directory overlaps workspaceDiscovery.root and cannot be removed safely: %s", paths.CacheDirectory)
-			}
-		}
-	}
 	removalRoots := installerRemovalRoots(paths, deleteConfiguration)
-	if paths.WorktreeDirectory != "" {
-		for _, root := range removalRoots {
-			overlap, err := installerPathsOverlap(paths.WorktreeDirectory, root.path)
-			if err != nil {
-				return fmt.Errorf("validate worktreeDirectory against %s removal: %w", root.role, err)
-			}
-			if overlap {
-				return fmt.Errorf("worktreeDirectory overlaps the %s and cannot be preserved during uninstall: %s", root.role, paths.WorktreeDirectory)
-			}
-		}
+	preserved, err := installerPreservedDirectories(paths)
+	if err != nil {
+		return err
 	}
-	for name, mount := range paths.Configuration.Mounts {
-		directory := strings.TrimSpace(mount.Path)
-		if directory == "" || !filepath.IsAbs(directory) {
-			return fmt.Errorf("configured folder mount %q is not an absolute path; refusing clean uninstall", name)
-		}
-		directory = filepath.Clean(directory)
+	for _, directory := range preserved {
 		for _, root := range removalRoots {
-			overlap, err := installerPathsOverlap(directory, root.path)
+			overlap, err := installerPathsOverlap(directory.path, root.path)
 			if err != nil {
-				return fmt.Errorf("validate folder mount %q against %s removal: %w", name, root.role, err)
+				return fmt.Errorf("validate %s against %s removal: %w", directory.role, root.role, err)
 			}
 			if overlap {
-				return fmt.Errorf("configured folder mount %q overlaps the %s and cannot be preserved during uninstall: %s", name, root.role, directory)
+				return fmt.Errorf("%s overlaps the %s and cannot be preserved during uninstall: %s", directory.role, root.role, directory.path)
 			}
 		}
 	}
 	return nil
+}
+
+type installerPreservedDirectory struct {
+	role string
+	path string
+}
+
+func installerPreservedDirectories(paths installerCleanPaths) ([]installerPreservedDirectory, error) {
+	directories := make([]installerPreservedDirectory, 0, len(paths.Configuration.Workspaces)+len(paths.Configuration.Mounts)+3)
+	add := func(role, path string, optional bool) error {
+		path = strings.TrimSpace(path)
+		if path == "" && optional {
+			return nil
+		}
+		if path == "" || !filepath.IsAbs(path) {
+			return fmt.Errorf("%s is not an absolute path; refusing clean uninstall", role)
+		}
+		directories = append(directories, installerPreservedDirectory{role: role, path: filepath.Clean(path)})
+		return nil
+	}
+	if err := add("worktreeDirectory", paths.WorktreeDirectory, true); err != nil {
+		return nil, err
+	}
+	if err := add("modelsDirectory", paths.Configuration.ModelsDirectory, true); err != nil {
+		return nil, err
+	}
+	if discovery := paths.Configuration.WorkspaceDiscovery; discovery != nil {
+		if err := add("workspaceDiscovery.root", discovery.Root, true); err != nil {
+			return nil, err
+		}
+	}
+	workspaceNames := make([]string, 0, len(paths.Configuration.Workspaces))
+	for name := range paths.Configuration.Workspaces {
+		workspaceNames = append(workspaceNames, name)
+	}
+	sort.Strings(workspaceNames)
+	for _, name := range workspaceNames {
+		if err := add(fmt.Sprintf("configured workspace %q", name), paths.Configuration.Workspaces[name], false); err != nil {
+			return nil, err
+		}
+	}
+	mountNames := make([]string, 0, len(paths.Configuration.Mounts))
+	for name := range paths.Configuration.Mounts {
+		mountNames = append(mountNames, name)
+	}
+	sort.Strings(mountNames)
+	for _, name := range mountNames {
+		if err := add(fmt.Sprintf("configured folder mount %q", name), paths.Configuration.Mounts[name].Path, false); err != nil {
+			return nil, err
+		}
+	}
+	return directories, nil
 }
 
 func installerPathsOverlap(left, right string) (bool, error) {
@@ -616,9 +637,12 @@ func planInstallerSSHRemoval(userHome, dataDirectory string) (installerSSHRemova
 	if reparse || !info.Mode().IsRegular() {
 		return installerSSHRemovalPlan{}, errors.New("user SSH config is not a regular non-reparse file")
 	}
-	existing, err := os.ReadFile(path)
+	existing, found, err := readBoundedRegularFile(path, maximumUserSSHConfigurationBytes)
 	if err != nil {
 		return installerSSHRemovalPlan{}, fmt.Errorf("read user SSH config for uninstall: %w", err)
+	}
+	if !found {
+		return installerSSHRemovalPlan{}, errors.New("user SSH config disappeared during uninstall preflight")
 	}
 	managedPath := filepath.Join(filepath.Clean(dataDirectory), "ssh", "config")
 	updated, changed, err := removeManagedSSHInclude(string(existing), managedPath)
@@ -644,9 +668,12 @@ func applyInstallerSSHRemoval(plan installerSSHRemovalPlan) error {
 	if err := rejectMappedPathReparsePoints(plan.Path); err != nil {
 		return fmt.Errorf("user SSH config changed before uninstall cleanup: %w", err)
 	}
-	current, err := os.ReadFile(plan.Path)
+	current, found, err := readBoundedRegularFile(plan.Path, maximumUserSSHConfigurationBytes)
 	if err != nil {
 		return fmt.Errorf("reread user SSH config for uninstall: %w", err)
+	}
+	if !found {
+		return errors.New("user SSH config disappeared before uninstall cleanup")
 	}
 	if !bytes.Equal(current, plan.Existing) {
 		return errors.New("user SSH config contents changed before uninstall cleanup")
@@ -654,9 +681,12 @@ func applyInstallerSSHRemoval(plan installerSSHRemovalPlan) error {
 	if err := writeFileAtomicallyIfUnchanged(plan.Path, plan.Existing, plan.Updated, plan.Mode); err != nil {
 		return fmt.Errorf("write user SSH config without managed block: %w", err)
 	}
-	written, err := os.ReadFile(plan.Path)
+	written, found, err := readBoundedRegularFile(plan.Path, maximumUserSSHConfigurationBytes)
 	if err != nil {
 		return fmt.Errorf("verify user SSH config after uninstall cleanup: %w", err)
+	}
+	if !found {
+		return errors.New("user SSH config disappeared after uninstall cleanup")
 	}
 	if !bytes.Equal(written, plan.Updated) {
 		return errors.New("user SSH config verification failed after uninstall cleanup")

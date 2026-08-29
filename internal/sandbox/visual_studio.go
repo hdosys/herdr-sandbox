@@ -36,8 +36,8 @@ func prepareVisualStudioLayout(ctx context.Context, plan runPlan, output io.Writ
 	if !plan.RequiresVisualStudioLayout {
 		return nil
 	}
-	if !filepath.IsAbs(plan.CacheDirectory) || !filepath.IsAbs(plan.RunDirectory) {
-		return fmt.Errorf("layout preparation for Visual Studio requires absolute run and cache directories")
+	if !filepath.IsAbs(plan.VisualStudioCacheDirectory) || !filepath.IsAbs(plan.RunDirectory) {
+		return fmt.Errorf("layout preparation for Visual Studio requires absolute run and host-only cache directories")
 	}
 	powerShell, err := windowsPowerShellExecutable()
 	if err != nil {
@@ -52,7 +52,7 @@ func prepareVisualStudioLayout(ctx context.Context, plan runPlan, output io.Writ
 	defer cancel()
 	command := hiddenCommandContext(layoutContext, powerShell,
 		"-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath,
-		"-CacheDirectory", plan.CacheDirectory,
+		"-VisualStudioDirectory", plan.VisualStudioCacheDirectory,
 		"-TimeoutSeconds", strconv.Itoa(int(visualStudioLayoutTimeout/time.Second)),
 	)
 	capture := &boundedOutputCapture{}

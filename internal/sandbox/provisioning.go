@@ -67,15 +67,15 @@ var defaultGlobalConfiguration = []byte(`{
   "tailscale": false,
   "mobileSSHAuthorizedKeys": [],
   "configurationSync": {
-    "pullHostGitRepositoriesOnUp": true,
-    "pullHostGitRepositoriesOnDown": true
+    "pullHostGitRepositoriesOnUp": false,
+    "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": true,
-    "claudeCode": true,
-    "codex": true,
-    "githubCopilot": true,
-    "pi": true
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCopilot": false,
+    "pi": false
   },
   "credentialSync": {
     "opencode": false,
@@ -115,15 +115,15 @@ var sampleGlobalConfiguration = []byte(`{
   "tailscale": false,
   "mobileSSHAuthorizedKeys": [],
   "configurationSync": {
-    "pullHostGitRepositoriesOnUp": true,
-    "pullHostGitRepositoriesOnDown": true
+    "pullHostGitRepositoriesOnUp": false,
+    "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": true,
-    "claudeCode": true,
-    "codex": true,
-    "githubCopilot": true,
-    "pi": true
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCopilot": false,
+    "pi": false
   },
   "credentialSync": {
     "opencode": false,
@@ -316,20 +316,11 @@ type configurationSyncConfiguration struct {
 }
 
 func defaultCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
-	return codingAgentSyncConfiguration{
-		OpenCode:      true,
-		ClaudeCode:    true,
-		Codex:         true,
-		GitHubCopilot: true,
-		Pi:            true,
-	}
+	return codingAgentSyncConfiguration{}
 }
 
 func defaultConfigurationSyncConfiguration() configurationSyncConfiguration {
-	return configurationSyncConfiguration{
-		PullHostGitRepositoriesOnUp:   true,
-		PullHostGitRepositoriesOnDown: true,
-	}
+	return configurationSyncConfiguration{}
 }
 
 func resolveProvisioning(startDirectory string) (provisioningPlan, error) {

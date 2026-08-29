@@ -12,7 +12,7 @@ jobs:
   release:
     name: Windows release
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -28,9 +28,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if ($env:RELEASE_TAG -cnotmatch '^v0\.0\.(0|[1-9][0-9]*)$') {
-              throw "Release tag must match v0.0.RELEASE_ID without leading zeroes: $env:RELEASE_TAG"
-          }
+          go run ./cmd/task validate-release-tag $env:RELEASE_TAG
       - name: Run checked build
         shell: powershell
         run: go run ./cmd/task verify-integration
@@ -106,6 +104,7 @@ jobs:
               throw 'Tagged changelog link generation failed.'
           }
           $arguments = @('release', 'create', $env:RELEASE_TAG) + @($assets.FullName) + @(
+              '--draft',
               '--verify-tag',
               '--notes', $releaseNotes,
               '--title', "$productName $env:RELEASE_TAG"
@@ -114,14 +113,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
               throw "GitHub release creation failed with exit code $LASTEXITCODE."
           }
-          $published = (& gh.exe release view $env:RELEASE_TAG --json assets) | ConvertFrom-Json
+          $draft = (& gh.exe release view $env:RELEASE_TAG --json assets,isDraft,tagName) | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
-              throw "GitHub release asset lookup failed with exit code $LASTEXITCODE."
+              throw "GitHub draft release asset lookup failed with exit code $LASTEXITCODE."
+          }
+          if (-not [bool]$draft.isDraft -or [string]$draft.tagName -cne $env:RELEASE_TAG) {
+              throw 'GitHub release was published before asset digest verification.'
           }
           foreach ($asset in $assets) {
-              $matches = @($published.assets | Where-Object { $_.name -ceq $asset.Name })
+              $matches = @($draft.assets | Where-Object { $_.name -ceq $asset.Name })
               $expectedDigest = 'sha256:' + (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
               if ($matches.Count -ne 1 -or [string]$matches[0].digest -cne $expectedDigest) {
                   throw "GitHub release asset digest did not match $($asset.Name)."
               }
+          }
+          & gh.exe release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub release publication failed with exit code $LASTEXITCODE."
+          }
+          $published = (& gh.exe release view $env:RELEASE_TAG --json isDraft,tagName,url) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or [bool]$published.isDraft -or [string]$published.tagName -cne $env:RELEASE_TAG -or [string]::IsNullOrWhiteSpace([string]$published.url)) {
+              throw 'GitHub release did not reach the expected published state.'
           }

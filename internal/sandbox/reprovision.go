@@ -254,14 +254,15 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err != nil {
 		return runPlan{}, nil, err
 	}
-	cacheDirectory, err := effectiveCacheDirectory(provisioning.CacheDirectory)
+	cacheRoot, err := effectiveCacheDirectory(provisioning.CacheDirectory)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
-	cacheDirectory, err = canonicalMappedDirectory(cacheDirectory)
+	cacheRoot, err = canonicalMappedDirectory(cacheRoot)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
+	cacheDirectory, visualStudioCacheDirectory := cacheMappingDirectories(cacheRoot)
 	worktreeDirectory := provisioning.WorktreeDirectory
 	if worktreeDirectory != "" {
 		worktreeDirectory, err = canonicalMappedDirectory(worktreeDirectory)
@@ -291,10 +292,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if !sameMobileSSHAuthorizedKeys(runningMobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
 		differences = append(differences, "mobile SSH authorized keys")
 	}
-	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory, mounts, workspaces); err != nil {
-		return runPlan{}, nil, err
-	}
-	expectedConfig, err := renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	expectedConfig, err := renderConfigWithHostCacheMappings(inputDirectory, statusDirectory, cacheDirectory, visualStudioCacheDirectory, worktreeDirectory, modelsDirectory, mounts, workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
@@ -309,27 +307,41 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		}
 		differences = append(differences, launchDifferences...)
 	}
+	if len(differences) == 0 {
+		cacheDirectory, err = canonicalMappedDirectory(cacheDirectory)
+		if err != nil {
+			return runPlan{}, nil, fmt.Errorf("guest cache directory: %w", err)
+		}
+		visualStudioCacheDirectory, err = canonicalMappedDirectory(visualStudioCacheDirectory)
+		if err != nil {
+			return runPlan{}, nil, fmt.Errorf("host Visual Studio cache directory: %w", err)
+		}
+		if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, visualStudioCacheDirectory, worktreeDirectory, modelsDirectory, mounts, workspaces); err != nil {
+			return runPlan{}, nil, err
+		}
+	}
 	return runPlan{
-		ID:                      active.RunID,
-		DataDirectory:           dataDirectory,
-		RunDirectory:            runDirectory,
-		InputDirectory:          inputDirectory,
-		StatusDirectory:         statusDirectory,
-		CacheDirectory:          cacheDirectory,
-		WorktreeDirectory:       worktreeDirectory,
-		ModelsDirectory:         modelsDirectory,
-		Tailscale:               active.Tailscale,
-		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
-		Packages:                provisioning.Packages,
-		CodingAgentSync:         provisioning.CodingAgentSync,
-		CredentialSync:          provisioning.CredentialSync,
-		WindowsTerminal:         provisioning.WindowsTerminal,
-		Mounts:                  mounts,
-		ConfigPath:              active.ConfigPath,
-		PrivateKeyPath:          filepath.Join(dataDirectory, "identity", "id_ed25519"),
-		PublicKeyPath:           filepath.Join(dataDirectory, "identity", "id_ed25519.pub"),
-		Workspaces:              workspaces,
-		SandboxExecutable:       active.ExecutablePath,
+		ID:                         active.RunID,
+		DataDirectory:              dataDirectory,
+		RunDirectory:               runDirectory,
+		InputDirectory:             inputDirectory,
+		StatusDirectory:            statusDirectory,
+		CacheDirectory:             cacheDirectory,
+		VisualStudioCacheDirectory: visualStudioCacheDirectory,
+		WorktreeDirectory:          worktreeDirectory,
+		ModelsDirectory:            modelsDirectory,
+		Tailscale:                  active.Tailscale,
+		MobileSSHAuthorizedKeys:    runningMobileSSHAuthorizedKeys,
+		Packages:                   provisioning.Packages,
+		CodingAgentSync:            provisioning.CodingAgentSync,
+		CredentialSync:             provisioning.CredentialSync,
+		WindowsTerminal:            provisioning.WindowsTerminal,
+		Mounts:                     mounts,
+		ConfigPath:                 active.ConfigPath,
+		PrivateKeyPath:             filepath.Join(dataDirectory, "identity", "id_ed25519"),
+		PublicKeyPath:              filepath.Join(dataDirectory, "identity", "id_ed25519.pub"),
+		Workspaces:                 workspaces,
+		SandboxExecutable:          active.ExecutablePath,
 	}, differences, nil
 }
 

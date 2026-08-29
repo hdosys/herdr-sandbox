@@ -15,6 +15,7 @@ const (
 	guestStatusDirectory   = `C:\SandboxStatus`
 	guestRootDirectory     = `C:\HerdrSandbox`
 	guestCacheDirectory    = guestRootDirectory + `\cache`
+	guestVisualStudioCache = guestRootDirectory + `\visual-studio-cache`
 	guestModelsDirectory   = `C:\Models`
 	guestWorktreeDirectory = `C:\Worktrees`
 	guestBootstrapScript   = guestInputDirectory + `\bootstrap.ps1`
@@ -79,6 +80,10 @@ func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDir
 }
 
 func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+	return renderConfigWithHostCacheMappings(inputDirectory, statusDirectory, cacheDirectory, "", worktreeDirectory, modelsDirectory, mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+}
+
+func renderConfigWithHostCacheMappings(inputDirectory, statusDirectory, cacheDirectory, visualStudioCacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
 	if len(mounts) > maximumMounts {
 		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
 	}
@@ -95,6 +100,14 @@ func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDir
 	cleanStatus := filepath.Clean(statusDirectory)
 	cleanCache := filepath.Clean(cacheDirectory)
 	hostMappings := []string{cleanInput, cleanStatus, cleanCache}
+	cleanVisualStudioCache := ""
+	if visualStudioCacheDirectory != "" {
+		if !filepath.IsAbs(visualStudioCacheDirectory) {
+			return nil, errors.New("host Visual Studio cache directory must be absolute")
+		}
+		cleanVisualStudioCache = filepath.Clean(visualStudioCacheDirectory)
+		hostMappings = append(hostMappings, cleanVisualStudioCache)
+	}
 	cleanWorktrees := ""
 	if worktreeDirectory != "" {
 		if !filepath.IsAbs(worktreeDirectory) {
@@ -114,7 +127,7 @@ func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDir
 	for left := range hostMappings {
 		for right := left + 1; right < len(hostMappings); right++ {
 			if hostPathsOverlap(hostMappings[left], hostMappings[right]) {
-				return nil, errors.New("input, status, cache, worktree, and models directories for Sandbox must not overlap")
+				return nil, errors.New("input, status, cache, Visual Studio cache, worktree, and models directories for Sandbox must not overlap")
 			}
 		}
 	}
@@ -123,7 +136,7 @@ func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDir
 	}
 
 	mappings := []wsbMappedFolder{{HostFolder: cleanInput, SandboxFolder: guestInputDirectory, ReadOnly: true}}
-	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}, strings.ToLower(guestModelsDirectory): {}, strings.ToLower(guestWorktreeDirectory): {}}
+	seenGuests := map[string]struct{}{strings.ToLower(guestInputDirectory): {}, strings.ToLower(guestStatusDirectory): {}, strings.ToLower(guestCacheDirectory): {}, strings.ToLower(guestVisualStudioCache): {}, strings.ToLower(guestModelsDirectory): {}, strings.ToLower(guestWorktreeDirectory): {}}
 	if cleanWorktrees != "" {
 		mappings = append(mappings, wsbMappedFolder{HostFolder: cleanWorktrees, SandboxFolder: guestWorktreeDirectory, ReadOnly: false})
 	}
@@ -174,6 +187,9 @@ func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDir
 	}
 	mappings = append(mappings, wsbMappedFolder{HostFolder: cleanStatus, SandboxFolder: guestStatusDirectory, ReadOnly: false})
 	mappings = append(mappings, wsbMappedFolder{HostFolder: cleanCache, SandboxFolder: guestCacheDirectory, ReadOnly: false})
+	if cleanVisualStudioCache != "" {
+		mappings = append(mappings, wsbMappedFolder{HostFolder: cleanVisualStudioCache, SandboxFolder: guestVisualStudioCache, ReadOnly: true})
+	}
 
 	audioInput := "Disable"
 	if audioInputEnabled {

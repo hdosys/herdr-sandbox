@@ -15,14 +15,18 @@ import (
 	"testing"
 )
 
+func allCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
+	return codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCopilot: true, Pi: true}
+}
+
 func TestLoadGlobalConfigurationDefaultsAndOverridesCodingAgentSync(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestFile(t, path, `{"codingAgentSync":{"codex":false}}`)
+	writeTestFile(t, path, `{"codingAgentSync":{"codex":true}}`)
 	configuration, err := loadGlobalConfiguration(path)
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	want := codingAgentSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: false, GitHubCopilot: true, Pi: true}
+	want := codingAgentSyncConfiguration{Codex: true}
 	if configuration.CodingAgentSync != want {
 		t.Fatalf("codingAgentSync = %#v, want %#v", configuration.CodingAgentSync, want)
 	}
@@ -93,12 +97,12 @@ func TestLoadGlobalConfigurationRejectsInvalidCredentialSync(t *testing.T) {
 
 func TestLoadGlobalConfigurationDefaultsAndOverridesConfigurationSync(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestFile(t, path, `{"configurationSync":{"pullHostGitRepositoriesOnDown":false}}`)
+	writeTestFile(t, path, `{"configurationSync":{"pullHostGitRepositoriesOnDown":true}}`)
 	configuration, err := loadGlobalConfiguration(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := configurationSyncConfiguration{PullHostGitRepositoriesOnUp: true, PullHostGitRepositoriesOnDown: false}
+	want := configurationSyncConfiguration{PullHostGitRepositoriesOnDown: true}
 	if configuration.ConfigurationSync != want {
 		t.Fatalf("configurationSync = %#v, want %#v", configuration.ConfigurationSync, want)
 	}
@@ -143,7 +147,7 @@ func TestDefaultCodingAgentConfigurationSourcesHonorAbsoluteOverrides(t *testing
 	t.Setenv("CODEX_HOME", codex)
 	t.Setenv("COPILOT_HOME", copilot)
 	t.Setenv("PI_CODING_AGENT_DIR", pi)
-	sources, err := defaultCodingAgentConfigurationSources(home, defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{
+	sources, err := defaultCodingAgentConfigurationSources(home, allCodingAgentSyncConfiguration(), credentialSyncConfiguration{
 		OpenCode: true, ClaudeCode: true, Codex: true, Pi: true,
 	})
 	if err != nil {
@@ -182,7 +186,7 @@ func TestDefaultCodingAgentConfigurationSourcesRejectRelativeOverrides(t *testin
 				t.Setenv(other, "")
 			}
 			t.Setenv(name, "relative")
-			if _, err := defaultCodingAgentConfigurationSources(t.TempDir(), defaultCodingAgentSyncConfiguration(), credentialSyncConfiguration{}); err == nil || !strings.Contains(err.Error(), name) {
+			if _, err := defaultCodingAgentConfigurationSources(t.TempDir(), allCodingAgentSyncConfiguration(), credentialSyncConfiguration{}); err == nil || !strings.Contains(err.Error(), name) {
 				t.Fatalf("relative %s error = %v", name, err)
 			}
 		})
@@ -284,7 +288,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		CodingAgents: codingAgentConfigurationSources{
-			Selection:                defaultCodingAgentSyncConfiguration(),
+			Selection:                allCodingAgentSyncConfiguration(),
 			CredentialSync:           credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true},
 			OpenCodeDirectory:        openCode,
 			OpenCodeAuthentication:   openCodeAuth,

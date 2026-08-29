@@ -41,6 +41,9 @@ func describeWSBLaunchDifferences(actualData, expectedData []byte) ([]string, er
 	if !sameWSBMapping(actualMappings[strings.ToLower(guestCacheDirectory)], expectedMappings[strings.ToLower(guestCacheDirectory)]) {
 		differences = append(differences, "cache")
 	}
+	if !sameWSBMapping(actualMappings[strings.ToLower(guestVisualStudioCache)], expectedMappings[strings.ToLower(guestVisualStudioCache)]) {
+		differences = append(differences, "Visual Studio cache")
+	}
 	if !sameWSBMapping(actualMappings[strings.ToLower(guestWorktreeDirectory)], expectedMappings[strings.ToLower(guestWorktreeDirectory)]) {
 		differences = append(differences, "worktree directory")
 	}
@@ -189,7 +192,7 @@ func hasUnexpectedWSBMappings(actual, expected map[string]wsbMappedFolder) bool 
 }
 
 func isKnownWSBMapping(identity string) bool {
-	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory, guestModelsDirectory, guestWorktreeDirectory} {
+	for _, exact := range []string{guestInputDirectory, guestStatusDirectory, guestCacheDirectory, guestVisualStudioCache, guestModelsDirectory, guestWorktreeDirectory} {
 		if identity == strings.ToLower(exact) {
 			return true
 		}

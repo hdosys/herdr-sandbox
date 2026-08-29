@@ -80,9 +80,18 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-### Install with WinGet (recommended)
+### Install from GitHub Releases (recommended)
 
-Herdr Sandbox requires Herdr Win. Install both:
+Herdr Sandbox requires Herdr Win. Download and verify the latest
+[Herdr Win](https://github.com/hdosys/herdr-win/releases/latest) and
+[Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
+setups, then install Herdr Win first. GitHub publishes the current installer
+immediately and exposes its SHA-256 asset digest.
+
+### WinGet alternative
+
+The WinGet community mirror can lag behind GitHub Releases. When its published
+versions are current, install both packages with:
 
 ```powershell
 winget install hdosys.herdr-win hdosys.herdr-sandbox
@@ -96,12 +105,6 @@ winget upgrade hdosys.herdr-win hdosys.herdr-sandbox
 
 Herdr Win provides the Windows server and remote provisioning used by Herdr
 Sandbox. It remains a separate package.
-
-### Direct installer alternative
-
-If WinGet is unavailable, download and verify the latest [Herdr Win](https://github.com/hdosys/herdr-win/releases/latest)
-and [Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
-setups. Install Herdr Win first.
 
 ### Verify installation
 
@@ -233,15 +236,15 @@ credentials.
   "tailscale": false,
   "mobileSSHAuthorizedKeys": [],
   "configurationSync": {
-    "pullHostGitRepositoriesOnUp": true,
-    "pullHostGitRepositoriesOnDown": true
+    "pullHostGitRepositoriesOnUp": false,
+    "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": true,
-    "claudeCode": true,
-    "codex": true,
-    "githubCopilot": true,
-    "pi": true
+    "opencode": false,
+    "claudeCode": false,
+    "codex": false,
+    "githubCopilot": false,
+    "pi": false
   },
   "credentialSync": {
     "opencode": false,
@@ -307,13 +310,13 @@ letter or number, and are at most 64 characters.
 | `audioInput` | Boolean enabling guest microphone input. |
 | `tailscale` | Boolean enabling Herdr's stable tagged Tailscale identity. |
 | `mobileSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
-| `configurationSync.pullHostGitRepositoriesOnUp` | Boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. |
-| `configurationSync.pullHostGitRepositoriesOnDown` | Boolean allowing the same pull policy during `down`. |
-| `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. |
-| `codingAgentSync.claudeCode` | Boolean streaming Claude Code configuration into the guest. |
-| `codingAgentSync.codex` | Boolean streaming Codex configuration into the guest. |
-| `codingAgentSync.githubCopilot` | Boolean streaming GitHub Copilot configuration into the guest. |
-| `codingAgentSync.pi` | Boolean streaming Pi configuration into the guest. |
+| `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
+| `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
+| `codingAgentSync.opencode` | Opt-in boolean streaming OpenCode configuration into the guest. Defaults to `false`. |
+| `codingAgentSync.claudeCode` | Opt-in boolean streaming Claude Code configuration into the guest. Defaults to `false`. |
+| `codingAgentSync.codex` | Opt-in boolean streaming Codex configuration into the guest. Defaults to `false`. |
+| `codingAgentSync.githubCopilot` | Opt-in boolean streaming GitHub Copilot configuration into the guest. Defaults to `false`. |
+| `codingAgentSync.pi` | Opt-in boolean streaming Pi configuration into the guest. Defaults to `false`. |
 | `credentialSync.opencode` | Boolean streaming an existing OpenCode API credential. |
 | `credentialSync.claudeCode` | Boolean streaming an existing Claude Code credential. |
 | `credentialSync.codex` | Boolean streaming an existing Codex credential. |
@@ -348,12 +351,13 @@ Nothing is installed into the host development environment.
 <summary><strong>Agent configuration sync</strong></summary>
 
 Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
-Copilot CLI, and Pi, with every selection enabled by default. Credential transfer
-is a separate opt-in through `credentialSync`. Missing host credentials leave the
-guest unchanged. Turning an entry off stops later transfers but does not revoke a
-credential already present in a retained guest; closing the Sandbox remains the
-cleanup boundary. GitHub CLI `config.yml` and TradingView stack/privacy settings
-remain usable without transferring accounts or session cookies. Review these
+Copilot CLI, and Pi, with every selection disabled until explicitly enabled.
+Credential transfer is a separate opt-in through `credentialSync`. Missing host
+credentials leave the guest unchanged. Turning an entry off stops later
+transfers but does not revoke a credential already present in a retained guest;
+closing the Sandbox remains the cleanup boundary. GitHub CLI `config.yml` and
+TradingView stack/privacy settings remain usable without transferring accounts
+or session cookies. Review these
 choices before the first `up`. Approved files travel over verified SSH; a
 Git-backed configuration root also transfers repository metadata and object
 history, which may contain old secrets. Disable any root whose complete history is
@@ -433,7 +437,7 @@ and errors go to stderr.
 | `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
-| `sandbox status` | Reports health, progress, diagnostics, and the next action. |
+| `sandbox status` | Reports health, progress, diagnostics, and the next action. Returns zero only when the state is `ready`. |
 | `sandbox mobile` | Prints the mobile SSH profile and secret-free QR code. |
 | `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
 | `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
@@ -705,7 +709,7 @@ architecture.
 ```powershell
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
-go run ./cmd/task release-precheck VERSION
+go run ./cmd/task release VERSION
 go run ./cmd/task provisioning-preflight
 go run ./cmd/task native-current-sandbox
 go run ./cmd/task package-current-sandbox v0.0.RELEASE_ID
@@ -717,11 +721,11 @@ go run ./cmd/task native-all-stacks
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   release use.
-- `release-precheck VERSION` is required before creating a release tag. From a
-  clean committed checkout contained in its configured upstream, it validates the
-  matching changelog section, runs integration verification and installed-candidate
-  acceptance once, and confirms the source commit stays unchanged. It adds no
-  push-triggered CI.
+- `release VERSION` accepts only a clean committed checkout contained in its
+  configured upstream. It validates the matching changelog section, runs
+  integration verification and installed-candidate acceptance once, confirms the
+  source commit stays unchanged, then creates and pushes the exact annotated tag
+  consumed by release automation.
 - `provisioning-preflight` checks production provisioning parsers plus available
   Java, Android, and Visual Studio inputs in the active Sandbox before a slower
   native or installed-candidate run. It does not install or update tools.

@@ -152,11 +152,11 @@
       "properties": {
         "pullHostGitRepositoriesOnUp": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "pullHostGitRepositoriesOnDown": {
           "type": "boolean",
-          "default": true
+          "default": false
         }
       }
     },
@@ -166,23 +166,23 @@
       "properties": {
         "opencode": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "claudeCode": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "codex": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "githubCopilot": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "pi": {
           "type": "boolean",
-          "default": true
+          "default": false
         }
       }
     },

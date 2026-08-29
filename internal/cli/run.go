@@ -51,8 +51,8 @@ Configuration:
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
   - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
-  - configurationSync host Git pull choices for up and down
-  - codingAgentSync choices
+  - configurationSync host Git pull choices for up and down (all disabled by default)
+  - codingAgentSync choices (all disabled by default)
   - credentialSync choices (all disabled by default)
   - wingetPackages additions, removals, and version pins
 
@@ -131,6 +131,10 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
+	if commandHelpRequested(args) && directHelpCommand(args[0]) {
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
 	switch args[0] {
 	case "version", "--version":
 		if len(args) != 1 {
@@ -140,10 +144,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprintf(stdout, "%s %s\n", productidentity.CommandName, productidentity.VersionSummary())
 		return 0
 	case "config":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: config does not accept arguments\n\n%s", usage)
 			return 2
@@ -161,10 +161,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprintln(stdout, "Next: save your changes, then run `sandbox plan`.")
 		return 0
 	case "pull-host-config":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: pull-host-config does not accept arguments\n\n%s", usage)
 			return 2
@@ -232,10 +228,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return 0
 	case "plan":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: plan does not accept arguments\n\n%s", usage)
 			return 2
@@ -250,10 +242,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	case "init":
 		return runInit(args[1:], stdin, stdout, stderr, dependencies.initialize)
 	case "attach":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: attach does not accept arguments\n\n%s", usage)
 			return 2
@@ -274,10 +262,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
 	case "status":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: status does not accept arguments\n\n%s", usage)
 			return 2
@@ -288,12 +272,11 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		printSessionStatus(stdout, status)
+		if status.State != sandbox.SessionReady {
+			return 1
+		}
 		return 0
 	case "mobile":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: mobile does not accept arguments\n\n%s", usage)
 			return 2
@@ -313,10 +296,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return 0
 	case "down":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: down does not accept arguments\n\n%s", usage)
 			return 2
@@ -338,10 +317,6 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return 0
 	case "clean":
-		if commandHelpRequested(args) {
-			fmt.Fprint(stdout, usage)
-			return 0
-		}
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: clean does not accept arguments\n\n%s", usage)
 			return 2
@@ -449,6 +424,15 @@ func commandHelpRequested(args []string) bool {
 	return len(args) == 2 && (args[1] == "-h" || args[1] == "--help")
 }
 
+func directHelpCommand(command string) bool {
+	switch command {
+	case "config", "pull-host-config", "version", "plan", "attach", "status", "mobile", "down", "clean":
+		return true
+	default:
+		return false
+	}
+}
+
 func runAttach(ctx context.Context, connection sandbox.Connection, stdin io.Reader, stdout, stderr io.Writer,
 	attach func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error,
 ) int {
@@ -512,7 +496,17 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 }
 
 func promptForStacks(input io.Reader, output io.Writer) ([]string, error) {
-	fmt.Fprintln(output, "Available stacks: "+stackSelectionHelp)
+	fmt.Fprintln(output, "Available stacks:")
+	for stack := range strings.SplitSeq(stackSelectionHelp, ", ") {
+		description := ""
+		switch stack {
+		case "all":
+			description = " (exclusive: every generic stack)"
+		case "handy", "herdr":
+			description = " (checkout-specific)"
+		}
+		fmt.Fprintf(output, "  %s%s\n", stack, description)
+	}
 	fmt.Fprint(output, "Select one or more stacks (comma or space separated): ")
 	reader := bufio.NewReader(io.LimitReader(input, 4097))
 	line, err := reader.ReadString('\n')

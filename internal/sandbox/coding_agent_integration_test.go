@@ -22,7 +22,9 @@ func TestSelectedGuestHerdrIntegrationsFollowCodingAgentSync(t *testing.T) {
 }
 
 func TestMissingGuestHerdrIntegrationsPreserveEveryExistingState(t *testing.T) {
-	specs := selectedGuestHerdrIntegrations(defaultCodingAgentSyncConfiguration())
+	specs := selectedGuestHerdrIntegrations(codingAgentSyncConfiguration{
+		OpenCode: true, ClaudeCode: true, Codex: true, GitHubCopilot: true, Pi: true,
+	})
 	statuses, err := parseGuestHerdrIntegrationStatuses([]byte(
 		"pi: not installed (C:\\Users\\fixture\\.pi\\agent\\extensions\\herdr-agent-state.ts)\r\n"+
 			"claude: current (v8) (C:\\Users\\fixture\\.claude\\hooks\\herdr-agent-state.ps1)\r\n"+

@@ -103,11 +103,11 @@ These are deliberate non-guarantees:
   and known credential/runtime paths are excluded or rejected, but remote URLs or
   historical objects may still contain secrets. Disable that agent's sync unless
   its complete configuration-repository history is safe for guest processes.
-- Default-on host configuration Git updates contact each explicitly registered
+- Opt-in host configuration Git updates contact each explicitly registered
   configuration root's upstream before transfer and after a terminal `down`. They
   use existing host Git credential configuration without opening an interactive
   prompt. Treat each configured remote as trusted host configuration input, or
-  independently disable `configurationSync.pullHostGitRepositoriesOnUp` and
+  explicitly enable `configurationSync.pullHostGitRepositoriesOnUp` or
   `configurationSync.pullHostGitRepositoriesOnDown`. The explicit
   `pull-host-config` command remains available regardless of those flags.
 - OpenCode's guest-managed policy grants all permissions. Defender cloud/security
@@ -154,9 +154,9 @@ These are deliberate non-guarantees:
   intentionally unsupported.
 
 If the threat model forbids credential exfiltration, leave every `credentialSync`
-choice false. Also disable any `codingAgentSync` root whose tracked files or Git
-history are not safe for guest administrators, use read-only mounts wherever
-possible, do not authenticate inside the guest, and enforce outbound-network
+and `codingAgentSync` choice false. Enable only configuration roots whose tracked
+files and Git history are safe for guest administrators. Use read-only mounts
+wherever possible, do not authenticate inside the guest, and enforce outbound-network
 restrictions outside this product. Provisioning still needs network access for
 uncached packages.
 

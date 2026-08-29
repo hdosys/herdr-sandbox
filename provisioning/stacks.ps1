@@ -583,20 +583,12 @@ function Install-StackVisualStudioBuildTools {
     )
 
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $cacheRoot = 'C:\HerdrSandbox\cache\vsbt'
+    $cacheRoot = 'C:\HerdrSandbox\visual-studio-cache\vsbt'
     $guestLayout = 'C:\HerdrSandbox\visual-studio\layout'
     if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) {
         throw 'The host-prepared Visual Studio Build Tools cache is missing.'
     }
-    Assert-ProvisioningCachePath -Path $cacheRoot
-    $lockPath = Join-Path $cacheRoot '.lock'
-    Assert-ProvisioningCachePath -Path $lockPath
-    $lock = $null
-    $primaryFailure = $null
-    $cleanupFailure = $null
     try {
-        $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
-            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $slotA = Join-Path $cacheRoot 'a'
         $slotB = Join-Path $cacheRoot 'b'
         $matchingSlots = @(@($slotA, $slotB) | ForEach-Object {
@@ -702,29 +694,11 @@ function Install-StackVisualStudioBuildTools {
             }
             Wait-StackVisualStudioInstalled -Target $target
         }
-        foreach ($slot in @($slotA, $slotB)) {
-            if ($slot -ine $selectedSlot -and (Test-Path -LiteralPath $slot)) {
-                Assert-ProvisioningCacheTree -Path $slot
-                Remove-Item -LiteralPath $slot -Recurse -Force
-            }
-        }
-    } catch {
-        $primaryFailure = $_
     } finally {
-        if ($null -ne $lock) {
-            try { $lock.Dispose() } catch { $cleanupFailure = $_ }
-        }
         $visualStudioStopwatch.Stop()
         Write-ProvisioningTiming -Role 'Visual Studio Build Tools total' `
             -Seconds $visualStudioStopwatch.Elapsed.TotalSeconds
     }
-    if ($null -ne $primaryFailure) {
-        if ($null -ne $cleanupFailure) {
-            Write-Warning "Visual Studio cache cleanup also failed: $($cleanupFailure.Exception.Message)"
-        }
-        throw $primaryFailure
-    }
-    if ($null -ne $cleanupFailure) { throw $cleanupFailure }
 }
 
 function Enable-StackVisualStudioDeveloperEnvironment {

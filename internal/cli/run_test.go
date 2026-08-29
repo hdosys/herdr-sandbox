@@ -408,7 +408,7 @@ func TestRunStatusReportsPreservedStateWhenCleanupIsIncomplete(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithDependencies(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr, cleanup, inspect)
-	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Warnings\n  - Stale-state cleanup incomplete: ownership is uncertain") ||
+	if code != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Warnings\n  - Stale-state cleanup incomplete: ownership is uncertain") ||
 		!strings.Contains(stdout.String(), "State: stale") || !strings.Contains(stdout.String(), "recorded Windows Sandbox process identity changed") {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}

@@ -181,7 +181,7 @@ behavior depends on that boundary.
 `go run ./cmd/task provisioning-preflight` must finish within 45 seconds and runs
 automatically before both current-Sandbox gates. It checks only already available
 current-guest inputs, production parsers, and the task-owned minimum free capacity
-on the installation volume. `release-precheck` runs it before integration, and the
+on the installation volume. `release` runs it before integration, and the
 installed-candidate path revalidates it immediately before that boundary. It never
 installs, updates, or replaces a tool and does not replace installed or native
 acceptance.

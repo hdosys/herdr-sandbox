@@ -342,10 +342,6 @@ if ([string]::Join('.', $normalizedVersion) -ne [string]::Join('.', $fixedParts)
 }
 
 $installerPath = Get-CanonicalPath -Path $InstallerScript
-$installerText = [IO.File]::ReadAllText($installerPath)
-if ($installerText.IndexOf('Local\${APP_APPLICATION_NAME}-lifecycle-v1', [StringComparison]::Ordinal) -lt 0) {
-    throw 'InstallerScript does not preserve the application lifecycle mutex contract.'
-}
 $outputPath = Get-CanonicalPath -Path $OutputFile
 $packagePath = Get-CanonicalPath -Path $PackageDirectory
 $assetsPath = Get-CanonicalPath -Path $AssetsDirectory

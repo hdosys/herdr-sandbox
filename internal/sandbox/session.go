@@ -65,6 +65,7 @@ type runPlan struct {
 	InputDirectory             string
 	StatusDirectory            string
 	CacheDirectory             string
+	VisualStudioCacheDirectory string
 	WorktreeDirectory          string
 	ModelsDirectory            string
 	Tailscale                  bool
@@ -521,6 +522,10 @@ func effectiveCacheDirectory(configured string) (string, error) {
 	return filepath.Join(temporaryDirectory, applicationName, "cache"), nil
 }
 
+func cacheMappingDirectories(cacheRoot string) (string, string) {
+	return filepath.Join(cacheRoot, "guest"), filepath.Join(cacheRoot, "visual-studio")
+}
+
 func prepareHostStateDirectories(dataDirectory string) (string, error) {
 	physicalDataDirectory, err := ensurePhysicalDirectory(dataDirectory, "app data")
 	if err != nil {
@@ -549,12 +554,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err := provisioning.Packages.validate(provisioning.WindowsTerminal); err != nil {
 		return runPlan{}, err
 	}
-	cacheDirectory, err := effectiveCacheDirectory(provisioning.CacheDirectory)
+	cacheRoot, err := effectiveCacheDirectory(provisioning.CacheDirectory)
 	if err != nil {
 		return runPlan{}, err
 	}
 	for _, protected := range []string{filepath.Join(dataDirectory, "identity"), filepath.Join(dataDirectory, "runs")} {
-		if hostPathsOverlap(cacheDirectory, protected) {
+		if hostPathsOverlap(cacheRoot, protected) {
 			return runPlan{}, fmt.Errorf("cache directory overlaps private run state: %s", protected)
 		}
 	}
@@ -589,7 +594,19 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		WindowsTerminal:         provisioning.WindowsTerminal,
 		SandboxExecutable:       sandboxExecutable,
 	}
-	plan.CacheDirectory = cacheDirectory
+	cacheRoot, err = ensurePhysicalDirectory(cacheRoot, "cache root")
+	if err != nil {
+		return runPlan{}, err
+	}
+	guestCacheDirectory, visualStudioCacheDirectory := cacheMappingDirectories(cacheRoot)
+	plan.CacheDirectory, err = ensurePhysicalDirectory(guestCacheDirectory, "guest cache")
+	if err != nil {
+		return runPlan{}, err
+	}
+	plan.VisualStudioCacheDirectory, err = ensurePhysicalDirectory(visualStudioCacheDirectory, "Visual Studio cache")
+	if err != nil {
+		return runPlan{}, err
+	}
 	plan.InputDirectory = filepath.Join(plan.RunDirectory, "input")
 	plan.StatusDirectory = filepath.Join(plan.RunDirectory, "status")
 	plan.ConfigPath = filepath.Join(plan.RunDirectory, "herdr-sandbox.wsb")
@@ -603,10 +620,6 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		return runPlan{}, err
 	}
 	plan.StatusDirectory, err = canonicalMappedDirectory(plan.StatusDirectory)
-	if err != nil {
-		return runPlan{}, err
-	}
-	plan.CacheDirectory, err = ensurePhysicalDirectory(plan.CacheDirectory, "cache")
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -630,12 +643,12 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err != nil {
 		return runPlan{}, err
 	}
-	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces); err != nil {
+	if err := validatePhysicalMappings(dataDirectory, plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.VisualStudioCacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces); err != nil {
 		return runPlan{}, err
 	}
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfigWithMappedDirectories(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithHostCacheMappings(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.VisualStudioCacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -680,12 +693,12 @@ type physicalMapping struct {
 	identity string
 }
 
-func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
-	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+5)
+func validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, visualStudioCacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan) error {
+	mappings := make([]physicalMapping, 0, len(mounts)+len(workspaces)+6)
 	for _, mapped := range []struct {
 		role string
 		path string
-	}{{"bootstrap input", inputDirectory}, {"status", statusDirectory}, {"cache", cacheDirectory}} {
+	}{{"bootstrap input", inputDirectory}, {"status", statusDirectory}, {"cache", cacheDirectory}, {"Visual Studio cache", visualStudioCacheDirectory}} {
 		identity, err := physicalMappedDirectory(mapped.path)
 		if err != nil {
 			return err

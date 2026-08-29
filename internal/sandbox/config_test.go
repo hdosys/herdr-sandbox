@@ -11,7 +11,7 @@ import (
 
 func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	workspaces := []workspacePlan{{Name: "one", HostDirectory: `D:\Projects\one`, GuestDirectory: `C:\Workspaces\one`}}
-	encoded, err := renderConfig(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache`, nil, workspaces, 8192, false, false)
+	encoded, err := renderConfigWithHostCacheMappings(`C:\Runs\one\input`, `C:\Runs\one\status`, `E:\herdr-sandbox-cache\guest`, `E:\herdr-sandbox-cache\visual-studio`, "", "", nil, workspaces, 8192, false, false)
 	if err != nil {
 		t.Fatalf("renderConfig: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	if config.VGPU != "Enable" || config.ClipboardRedirection != "Enable" || config.AudioInput != "Disable" {
 		t.Fatalf("isolation config = vGPU %q, clipboard %q, audio input %q", config.VGPU, config.ClipboardRedirection, config.AudioInput)
 	}
-	if len(config.MappedFolders.Folders) != 4 {
+	if len(config.MappedFolders.Folders) != 5 {
 		t.Fatalf("mapped folders = %#v", config.MappedFolders.Folders)
 	}
 	if !config.MappedFolders.Folders[0].ReadOnly {
@@ -38,8 +38,11 @@ func TestRenderConfigUsesNarrowMappingsAndPowerShell(t *testing.T) {
 	if config.MappedFolders.Folders[2].ReadOnly {
 		t.Fatal("status mapping is read-only")
 	}
-	if cache := config.MappedFolders.Folders[3]; cache.ReadOnly || cache.HostFolder != `E:\herdr-sandbox-cache` || cache.SandboxFolder != guestCacheDirectory {
+	if cache := config.MappedFolders.Folders[3]; cache.ReadOnly || cache.HostFolder != `E:\herdr-sandbox-cache\guest` || cache.SandboxFolder != guestCacheDirectory {
 		t.Fatalf("cache mapping = %#v", cache)
+	}
+	if cache := config.MappedFolders.Folders[4]; !cache.ReadOnly || cache.HostFolder != `E:\herdr-sandbox-cache\visual-studio` || cache.SandboxFolder != guestVisualStudioCache {
+		t.Fatalf("Visual Studio cache mapping = %#v", cache)
 	}
 	if !strings.HasPrefix(config.LogonCommand.Command, "powershell.exe ") {
 		t.Fatalf("logon command = %q", config.LogonCommand.Command)

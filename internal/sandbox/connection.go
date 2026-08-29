@@ -18,8 +18,9 @@ import (
 var errAtomicWriteTargetChanged = errors.New("atomic write target changed")
 
 const (
-	managedSSHIncludeStart = "# BEGIN herdr-sandbox managed SSH include"
-	managedSSHIncludeEnd   = "# END herdr-sandbox managed SSH include"
+	managedSSHIncludeStart           = "# BEGIN herdr-sandbox managed SSH include"
+	managedSSHIncludeEnd             = "# END herdr-sandbox managed SSH include"
+	maximumUserSSHConfigurationBytes = 1024 * 1024
 )
 
 func writeRunConnection(plan runPlan, connectable connectableStatus, herdrExecutable string) (Connection, error) {
@@ -57,9 +58,12 @@ func writeRunConnection(plan runPlan, connectable connectableStatus, herdrExecut
 }
 
 func installRunConnectionAlias(dataDirectory string, connection Connection) error {
-	config, err := os.ReadFile(connection.SSHConfigPath)
+	config, found, err := readBoundedRegularFile(connection.SSHConfigPath, maximumUserSSHConfigurationBytes)
 	if err != nil {
 		return fmt.Errorf("read verified run SSH config: %w", err)
+	}
+	if !found {
+		return errors.New("verified run SSH config is missing")
 	}
 	if err := installSSHHostAlias(dataDirectory, string(config)); err != nil {
 		return err
@@ -99,11 +103,11 @@ func installSSHHostAliasAt(dataDirectory, userHome, config string) error {
 	}
 	userConfigPath := filepath.Join(userSSHDirectory, "config")
 	for attempt := 1; attempt <= 3; attempt++ {
-		existing, err := os.ReadFile(userConfigPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		existing, found, err := readBoundedRegularFile(userConfigPath, maximumUserSSHConfigurationBytes)
+		if err != nil {
 			return fmt.Errorf("read user SSH config: %w", err)
 		}
-		if errors.Is(err, os.ErrNotExist) {
+		if !found {
 			existing = nil
 		}
 		updated, err := updateManagedSSHInclude(string(existing), managedPath)
@@ -246,9 +250,9 @@ func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
 
 func writeFileAtomicallyIfUnchanged(path string, expected, data []byte, mode os.FileMode) error {
 	return writeFileAtomicallyBeforeReplace(path, data, mode, func() error {
-		current, err := os.ReadFile(path)
+		current, found, err := readBoundedRegularFile(path, maximumUserSSHConfigurationBytes)
 		if expected == nil {
-			if errors.Is(err, os.ErrNotExist) {
+			if err == nil && !found {
 				return nil
 			}
 			if err != nil {
@@ -257,10 +261,10 @@ func writeFileAtomicallyIfUnchanged(path string, expected, data []byte, mode os.
 			return errAtomicWriteTargetChanged
 		}
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return errAtomicWriteTargetChanged
-			}
 			return err
+		}
+		if !found {
+			return errAtomicWriteTargetChanged
 		}
 		if !bytes.Equal(current, expected) {
 			return errAtomicWriteTargetChanged

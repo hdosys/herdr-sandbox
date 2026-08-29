@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-func TestReleasePrecheckRunsEachGateOnceInPreTagOrder(t *testing.T) {
+func TestReleaseRunsEachGateOnceInPreTagOrder(t *testing.T) {
 	var events []string
 	verifyCalls := 0
 	installedCalls := 0
-	err := runReleasePrecheckGates(
+	err := runReleaseGates(
 		t.Context(),
 		"v0.0.42",
 		&bytes.Buffer{},
@@ -45,13 +45,13 @@ func TestReleasePrecheckRunsEachGateOnceInPreTagOrder(t *testing.T) {
 	}
 	want := "resource-preflight,verify-integration,frozen-source,installed-candidate:v0.0.42"
 	if strings.Join(events, ",") != want {
-		t.Fatalf("release-precheck events = %q, want %q", events, want)
+		t.Fatalf("release events = %q, want %q", events, want)
 	}
 }
 
-func TestReleasePrecheckStopsBeforeInstalledAcceptanceOnEarlierFailure(t *testing.T) {
+func TestReleaseStopsBeforeInstalledAcceptanceOnEarlierFailure(t *testing.T) {
 	installedCalled := false
-	err := runReleasePrecheckGates(
+	err := runReleaseGates(
 		t.Context(),
 		"v0.0.42",
 		&bytes.Buffer{},
@@ -65,13 +65,13 @@ func TestReleasePrecheckStopsBeforeInstalledAcceptanceOnEarlierFailure(t *testin
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "integration verification") || installedCalled {
-		t.Fatalf("release-precheck failure = %v, installed called = %t", err, installedCalled)
+		t.Fatalf("release failure = %v, installed called = %t", err, installedCalled)
 	}
 }
 
-func TestReleasePrecheckStopsBeforeIntegrationOnResourceFailure(t *testing.T) {
+func TestReleaseStopsBeforeIntegrationOnResourceFailure(t *testing.T) {
 	verifyCalled := false
-	err := runReleasePrecheckGates(
+	err := runReleaseGates(
 		t.Context(),
 		"v0.0.42",
 		&bytes.Buffer{},
@@ -85,13 +85,13 @@ func TestReleasePrecheckStopsBeforeIntegrationOnResourceFailure(t *testing.T) {
 		func(context.Context, string, io.Writer, io.Writer) error { return nil },
 	)
 	if err == nil || !strings.Contains(err.Error(), "resource preflight") || verifyCalled {
-		t.Fatalf("release-precheck failure = %v, integration called = %t", err, verifyCalled)
+		t.Fatalf("release failure = %v, integration called = %t", err, verifyCalled)
 	}
 }
 
-func TestValidateReleasePrecheckSourceRequiresCleanFrozenUpstreamCommit(t *testing.T) {
+func TestValidateReleaseSourceRequiresCleanFrozenUpstreamCommit(t *testing.T) {
 	commit := "0123456789abcdef0123456789abcdef01234567"
-	source, err := validateReleasePrecheckSource(commit, commit, "", " origin/main\r\n", true)
+	source, err := validateReleaseSource(commit, commit, "", " origin/main\r\n", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,10 +111,25 @@ func TestValidateReleasePrecheckSourceRequiresCleanFrozenUpstreamCommit(t *testi
 		"not contained": {expected: commit, upstream: "origin/main", want: "not contained"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := validateReleasePrecheckSource(commit, test.expected, test.status, test.upstream, test.contained)
+			_, err := validateReleaseSource(commit, test.expected, test.status, test.upstream, test.contained)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestAcceptedReleaseTagAnnotationBindsTagAndCommit(t *testing.T) {
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	if got, want := acceptedReleaseTagAnnotation("v0.0.42", commit), "Herdr Sandbox installed candidate accepted: v0.0.42 "+commit; got != want {
+		t.Fatalf("release tag annotation = %q, want %q", got, want)
+	}
+	if remote, err := releaseRemoteForUpstream("origin/main"); err != nil || remote != "origin" {
+		t.Fatalf("release remote = %q, %v", remote, err)
+	}
+	for _, upstream := range []string{"", "main", "origin /main", "origin\t/main"} {
+		if _, err := releaseRemoteForUpstream(upstream); err == nil {
+			t.Fatalf("unsafe release upstream %q unexpectedly validated", upstream)
+		}
 	}
 }

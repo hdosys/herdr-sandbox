@@ -25,4 +25,5 @@ const (
 	UninstallKeyName         = "{BF6EF455-61AF-43BD-8A25-521C6C7E13F9}"
 	QuietUninstallHelperName = "uninstall.ps1"
 	Copyright                = "Copyright (c) 2026 hdosys"
+	LifecycleMutexName       = `Global\` + ApplicationName + `-lifecycle-v1`
 )

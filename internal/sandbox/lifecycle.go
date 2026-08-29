@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"herdr-sandbox/internal/productidentity"
 )
 
 const (
@@ -35,7 +37,7 @@ const (
 
 var (
 	runIDPattern       = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{8}$`)
-	lifecycleMutexName = `Local\` + applicationName + `-lifecycle-v1`
+	lifecycleMutexName = productidentity.LifecycleMutexName
 )
 
 type SessionStatus struct {
