@@ -1194,8 +1194,7 @@ Write-Output 'HERDR_SANDBOX_STOPPED'`
 	)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
+		if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 			switch exitError.ExitCode() {
 			case 3:
 				return false, nil

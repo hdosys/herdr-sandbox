@@ -104,8 +104,7 @@ func TestCommandContextCancelsDescendantProcessTree(t *testing.T) {
 	if !errors.Is(waitErr, context.Canceled) {
 		t.Fatalf("Wait error = %v, want context.Canceled", waitErr)
 	}
-	var exitErr *exec.ExitError
-	if !errors.As(waitErr, &exitErr) {
+	if _, ok := errors.AsType[*exec.ExitError](waitErr); !ok {
 		t.Fatalf("Wait error = %v, want preserved process exit error", waitErr)
 	}
 	assertHandleSignaled(t, "parent", fixture.parentHandle)

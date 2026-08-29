@@ -233,8 +233,7 @@ func (c *Command) rollbackStart(job, process syscall.Handle, assigned bool, caus
 	}
 	errs = append(errs, closeNativeHandle("hidden process job", job))
 	if waitErr := c.Cmd.Wait(); waitErr != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(waitErr, &exitErr) {
+		if _, ok := errors.AsType[*exec.ExitError](waitErr); !ok {
 			errs = append(errs, fmt.Errorf("reap process during start rollback: %w", waitErr))
 		}
 	}

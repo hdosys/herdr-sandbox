@@ -34,6 +34,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Release binaries now use Go 1.26.7, incorporating current standard-library
+  security fixes.
 - Custom project provisioning failures now retain the original cause while naming
   the affected workspace and its `.herdr-sandbox\provision.ps1` profile.
 - Enabling credential transfer for an existing ready Sandbox now applies selected

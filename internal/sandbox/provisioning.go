@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1824,8 +1825,8 @@ func seedInstallerConfigurationRoot(globalRoot string) (resultErr error) {
 			return
 		}
 		var rollbackErr error
-		for index := len(created) - 1; index >= 0; index-- {
-			if err := removeSeededFileIfUnchanged(created[index].path, created[index].contents); err != nil {
+		for _, c := range slices.Backward(created) {
+			if err := removeSeededFileIfUnchanged(c.path, c.contents); err != nil {
 				rollbackErr = errors.Join(rollbackErr, err)
 			}
 		}
