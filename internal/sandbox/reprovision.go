@@ -93,6 +93,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace
 	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
 	plan.TradingViewEnabled = snapshot.TradingViewEnabled
+	plan.NushellEnabled = snapshot.NushellEnabled
 	if plan.RequiresVisualStudioLayout {
 		if err := updateOperation("visual-studio-layout", "Preparing the required Visual Studio Build Tools layout on the host."); err != nil {
 			return Connection{}, err
@@ -124,7 +125,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 		}
 		fmt.Fprintln(options.Output, "Applying and verifying selected credentials before retained provisioning...")
 		syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
-		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, options.Output)
+		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.NushellEnabled, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, options.Output)
 		cancelSync()
 		if err != nil {
 			return Connection{}, err
@@ -161,7 +162,7 @@ func reprovisionReadySession(ctx context.Context, options Options, plan runPlan,
 	if credentialsSyncedEarly {
 		credentialReportOutput = nil
 	}
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.NushellEnabled, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
 	cancelSync()
 	if err != nil {
 		return Connection{}, err

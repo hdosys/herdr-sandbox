@@ -73,6 +73,7 @@ type runPlan struct {
 	CodingAgentSync            codingAgentSyncConfiguration
 	CredentialSync             credentialSyncConfiguration
 	TradingViewEnabled         bool
+	NushellEnabled             bool
 	WindowsTerminal            windowsTerminalConfiguration
 	ConfigPath                 string
 	PrivateKeyPath             string
@@ -95,6 +96,7 @@ type provisioningSnapshot struct {
 	ActiveWorkspace            string
 	RequiresVisualStudioLayout bool
 	TradingViewEnabled         bool
+	NushellEnabled             bool
 }
 
 func DefaultOptions() Options {
@@ -343,7 +345,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"), options.Output)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.NushellEnabled, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"), options.Output)
 	cancelSync()
 	if err != nil {
 		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
@@ -666,6 +668,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace
 	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
 	plan.TradingViewEnabled = snapshot.TradingViewEnabled
+	plan.NushellEnabled = snapshot.NushellEnabled
 	if err := os.WriteFile(plan.ConfigPath, config, 0o600); err != nil {
 		return runPlan{}, fmt.Errorf("write Windows Sandbox configuration: %w", err)
 	}
@@ -853,6 +856,7 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		ActiveWorkspace:            requirements.ActiveWorkspace,
 		RequiresVisualStudioLayout: requirements.RequiresVisualStudioLayout,
 		TradingViewEnabled:         provisioningStacksContain(userStacks, workspaces, stackTradingView),
+		NushellEnabled:             provisioningStacksContain(userStacks, workspaces, stackNushell),
 	}, nil
 }
 

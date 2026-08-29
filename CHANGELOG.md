@@ -34,6 +34,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Herdr now preserves a host Nushell default inside the Sandbox when the selected
+  guest provisioning plan includes Nushell, instead of always forcing PowerShell 7.
 - Installer Welcome and Finish headings now show only the release version, while
   build freshness and source revision remain in diagnostic metadata.
 - Release binaries now use Go 1.26.7, incorporating current standard-library
