@@ -725,35 +725,52 @@ function Add-ProvisioningMachinePath {
     Update-ProvisioningPath
 }
 
-function Assert-ProvisioningCachePath {
+function Assert-ProvisioningPathWithinRoot {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Path
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+        [Parameter(Mandatory = $true)]
+        [string]$Role
     )
 
-    $cacheRoot = [IO.Path]::GetFullPath('C:\HerdrSandbox\cache').TrimEnd('\')
+    $allowedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    if ($fullPath -ine $cacheRoot -and
-        -not $fullPath.StartsWith($cacheRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Cache path escapes C:\HerdrSandbox\cache: $fullPath"
+    if ($fullPath -ine $allowedRoot -and
+        -not $fullPath.StartsWith($allowedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Role path escapes ${allowedRoot}: $fullPath"
     }
     $current = $fullPath
-    while ($current.Length -ge $cacheRoot.Length) {
+    while ($current.Length -ge $allowedRoot.Length) {
         if (Test-Path -LiteralPath $current) {
             $item = Get-Item -LiteralPath $current -Force
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Cache path contains a reparse point: $current"
+                throw "$Role path contains a reparse point: $current"
             }
         }
-        if ($current -ieq $cacheRoot) {
+        if ($current -ieq $allowedRoot) {
             break
         }
         $parent = Split-Path -Parent $current
         if ([string]::IsNullOrWhiteSpace($parent) -or $parent -ieq $current) {
-            throw "Cache path parent resolution failed: $fullPath"
+            throw "$Role path parent resolution failed: $fullPath"
         }
         $current = $parent.TrimEnd('\')
     }
+}
+
+function Assert-ProvisioningCachePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    Assert-ProvisioningPathWithinRoot -Path $Path -Root 'C:\HerdrSandbox\cache' -Role 'Cache'
+}
+
+function Assert-ProvisioningVisualStudioCachePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    Assert-ProvisioningPathWithinRoot -Path $Path `
+        -Root 'C:\HerdrSandbox\visual-studio-cache' -Role 'Visual Studio cache'
 }
 
 function Assert-ProvisioningCacheTree {

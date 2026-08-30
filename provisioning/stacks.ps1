@@ -281,7 +281,7 @@ function Assert-StackVisualStudioLayoutIdentity {
         throw "Visual Studio layout directory is missing: $Layout"
     }
     if (-not $GuestLocal) {
-        Assert-ProvisioningCachePath -Path $Layout
+        Assert-ProvisioningVisualStudioCachePath -Path $Layout
     }
     $catalogPath = Join-Path $Layout 'Catalog.json'
     $channelManifestPath = Join-Path $Layout 'ChannelManifest.json'
@@ -291,7 +291,7 @@ function Assert-StackVisualStudioLayoutIdentity {
             throw "Visual Studio layout identity file is missing: $path"
         }
         if (-not $GuestLocal) {
-            Assert-ProvisioningCachePath -Path $path
+            Assert-ProvisioningVisualStudioCachePath -Path $path
         }
     }
 
@@ -339,7 +339,7 @@ function Copy-StackVisualStudioLayoutToGuest {
 
     $copyStopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        Assert-ProvisioningCachePath -Path $Source
+        Assert-ProvisioningVisualStudioCachePath -Path $Source
         foreach ($item in @(Get-ChildItem -LiteralPath $Source -Recurse -Force)) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw "Visual Studio layout contains a reparse point: $($item.FullName)"
@@ -381,13 +381,13 @@ function Test-StackVisualStudioLayoutSlot {
 
     try {
         if (-not (Test-Path -LiteralPath $Slot -PathType Container)) { return $false }
-        Assert-ProvisioningCachePath -Path $Slot
+        Assert-ProvisioningVisualStudioCachePath -Path $Slot
         $layout = Join-Path $Slot 'layout'
         $descriptorPath = Join-Path $Slot 'complete.json'
         if (-not (Test-Path -LiteralPath $layout -PathType Container) -or
             -not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $false }
-        Assert-ProvisioningCachePath -Path $layout
-        Assert-ProvisioningCachePath -Path $descriptorPath
+        Assert-ProvisioningVisualStudioCachePath -Path $layout
+        Assert-ProvisioningVisualStudioCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
         $descriptorTarget = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $Slot
         $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
@@ -402,7 +402,7 @@ function Test-StackVisualStudioLayoutSlot {
         foreach ($relativePath in $required) {
             $path = Join-Path $layout $relativePath
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
-            Assert-ProvisioningCachePath -Path $path
+            Assert-ProvisioningVisualStudioCachePath -Path $path
             $expectedHashProperty = $descriptor.artifacts.PSObject.Properties[$relativePath]
             if ($null -eq $expectedHashProperty) { return $false }
             $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()

@@ -30,16 +30,23 @@ func TestCurrentSandboxProvisioningPreflight(t *testing.T) {
 		t.Fatalf("current-Sandbox preflight user = %q", os.Getenv("USERNAME"))
 	}
 	stackPath := defaultProvisioningPath(t, stackProvisioningName)
-	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
-		path: stackPath,
-		names: []string{
+	basePath := defaultProvisioningPath(t, baseProvisioningName)
+	functionSetup := provisioningPowerShellFunctionSetup(t,
+		provisioningPowerShellFunctionSource{
+			path: basePath,
+			names: []string{
+				"Assert-ProvisioningPathWithinRoot",
+				"Assert-ProvisioningVisualStudioCachePath",
+			},
+		},
+		provisioningPowerShellFunctionSource{path: stackPath, names: []string{
 			"Get-StackVisualStudioTargetFromChannel",
 			"ConvertFrom-StackVisualStudioLayoutDescriptor",
 			"ConvertFrom-StackJavaReleaseVersion",
 			"ConvertFrom-StackAndroidCLIVersion",
 			"Get-StackVisualStudioRequiredArtifacts",
-		},
-	})
+		}},
+	)
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 trap { Write-Output ($_ | Out-String); exit 1 }
 %s
@@ -84,10 +91,12 @@ if (Test-Path -LiteralPath $androidCLI -PathType Leaf) {
 $validSlots = @()
 $invalidSlots = @()
 $invalidDetails = @()
-foreach ($slot in @('C:\HerdrSandbox\cache\vsbt\a', 'C:\HerdrSandbox\cache\vsbt\b')) {
+foreach ($slot in @('C:\HerdrSandbox\visual-studio-cache\vsbt\a', 'C:\HerdrSandbox\visual-studio-cache\vsbt\b')) {
     $descriptorPath = Join-Path $slot 'complete.json'
     if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { continue }
     try {
+        Assert-ProvisioningVisualStudioCachePath -Path $slot
+        Assert-ProvisioningVisualStudioCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
         $target = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $slot
         if (-not [bool]$target.CurrentMetadata) {
@@ -95,9 +104,11 @@ foreach ($slot in @('C:\HerdrSandbox\cache\vsbt\a', 'C:\HerdrSandbox\cache\vsbt\
         }
         $layout = Join-Path $slot 'layout'
         foreach ($relativePath in @(Get-StackVisualStudioRequiredArtifacts)) {
-            if (-not (Test-Path -LiteralPath (Join-Path $layout $relativePath) -PathType Leaf)) {
+            $artifactPath = Join-Path $layout $relativePath
+            if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
                 throw "Visual Studio layout artifact is missing: $relativePath"
             }
+            Assert-ProvisioningVisualStudioCachePath -Path $artifactPath
         }
         $validSlots += $slot
     } catch {

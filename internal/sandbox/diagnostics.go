@@ -177,25 +177,17 @@ func decodeProvisioningTiming(data []byte) (provisioningTimingRecord, error) {
 }
 
 func readBoundedRegularFile(path string, maximum int64) ([]byte, bool, error) {
-	info, err := os.Lstat(path)
+	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	reparse, err := fileInfoIsReparsePoint(info)
-	if err != nil {
-		return nil, false, err
-	}
-	if reparse || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maximum {
-		return nil, false, fmt.Errorf("%s is not one bounded regular non-reparse file", path)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, false, err
-	}
 	defer file.Close()
+	if err := validateOpenedBoundedRegularFile(path, file, maximum); err != nil {
+		return nil, false, err
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil {
 		return nil, false, err
@@ -203,5 +195,32 @@ func readBoundedRegularFile(path string, maximum int64) ([]byte, bool, error) {
 	if int64(len(data)) > maximum {
 		return nil, false, fmt.Errorf("%s exceeds %d bytes", path, maximum)
 	}
+	if err := validateOpenedBoundedRegularFile(path, file, maximum); err != nil {
+		return nil, false, err
+	}
 	return data, true, nil
+}
+
+func validateOpenedBoundedRegularFile(path string, file *os.File, maximum int64) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect opened file path %s: %w", path, err)
+	}
+	for _, info := range []os.FileInfo{opened, current} {
+		reparse, err := fileInfoIsReparsePoint(info)
+		if err != nil {
+			return err
+		}
+		if reparse || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maximum {
+			return fmt.Errorf("%s is not one bounded regular non-reparse file", path)
+		}
+	}
+	if !os.SameFile(opened, current) {
+		return fmt.Errorf("%s changed while opening the bounded regular file", path)
+	}
+	return nil
 }
