@@ -109,9 +109,8 @@ function Read-TailscaleIdentity {
 }
 
 function Wait-TailscaleIdentity {
-    param([string]$ExpectedSID, [int]$TimeoutSeconds = 120)
-    if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 600) { throw 'Tailscale identity timeout is invalid.' }
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    param([string]$ExpectedSID)
+    $deadline = [DateTime]::UtcNow.AddMinutes(2)
     do {
         $identity = Read-TailscaleIdentity -ExpectedSID $ExpectedSID
         if ($null -ne $identity) { return $identity }
@@ -142,13 +141,12 @@ function Capture-TailscaleStateBytes {
 }
 
 function Capture-TailscaleState {
-    param([Collections.IDictionary]$Identity, [switch]$LeaveServiceStopped, [int]$IdentityTimeoutSeconds = 120)
+    param([Collections.IDictionary]$Identity)
     $captured = Capture-TailscaleStateBytes -ExpectedSID ([string]$Identity.windowsUserSID)
-    $verified = Wait-TailscaleIdentity -ExpectedSID ([string]$Identity.windowsUserSID) -TimeoutSeconds $IdentityTimeoutSeconds
+    $verified = Wait-TailscaleIdentity -ExpectedSID ([string]$Identity.windowsUserSID)
     foreach ($name in @('nodeID', 'nodeKey', 'ipv4', 'dnsName', 'hostName')) {
         if ([string]$verified[$name] -cne [string]$Identity[$name]) { throw 'Tailscale identity changed while capturing state.' }
     }
     $verified['state'] = [string]$captured.state
-    if ($LeaveServiceStopped) { Stop-TailscaleService }
     return $verified
 }

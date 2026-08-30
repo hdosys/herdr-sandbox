@@ -24,7 +24,6 @@ const (
 	integrationTaskTimeout     = 30 * time.Minute
 	currentSandboxTaskTimeout  = 45 * time.Minute
 	currentPackageTaskTimeout  = 60 * time.Minute
-	releaseTaskTimeout         = integrationTaskTimeout + currentPackageTaskTimeout + 2*time.Minute
 	nativeAllStacksTaskTimeout = 2 * time.Hour
 	fastTestsEnvironment       = "HERDR_SANDBOX_FAST_TESTS"
 )
@@ -40,12 +39,11 @@ Tasks:
   native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
   package-current-sandbox VERSION  package and exercise fresh install, repair, upgrade, provisioning, and uninstall in this Sandbox
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
-  release VERSION    accept the frozen installed candidate, create its annotated tag, and push it
-  validate-release-tag VERSION  validate the accepted annotated tag in release automation
+  release VERSION    validate and tag one clean pushed release commit
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION [--release]  build one canonical local installer or the versioned release pair
   verify           verify format, modernization, analysis, tests, and the stable build
-  verify-integration run the full nightly/release verification
+  verify-integration run the full external-boundary verification
 `, productidentity.ExecutableName)
 
 func main() {
@@ -118,11 +116,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("release requires one v0.0.RELEASE_ID version")
 		}
 		return release(ctx, args[1], stdout, stderr)
-	case "validate-release-tag":
-		if len(args) != 2 {
-			return errors.New("validate-release-tag requires one v0.0.RELEASE_ID version")
-		}
-		return validateAcceptedReleaseTag(ctx, args[1])
 	case "package":
 		if len(args) != 2 && !(len(args) == 3 && args[2] == "--release") {
 			return errors.New("package requires one v0.0.RELEASE_ID version and optional --release")
@@ -157,9 +150,6 @@ func taskTimeoutFor(args []string) time.Duration {
 	}
 	if len(args) > 0 && args[0] == "package-current-sandbox" {
 		return currentPackageTaskTimeout
-	}
-	if len(args) > 0 && args[0] == "release" {
-		return releaseTaskTimeout
 	}
 	if len(args) > 0 && (args[0] == "test-integration" || args[0] == "verify-integration") {
 		return integrationTaskTimeout

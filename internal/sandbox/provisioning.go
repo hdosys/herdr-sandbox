@@ -71,11 +71,11 @@ var defaultGlobalConfiguration = []byte(`{
     "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": false,
-    "claudeCode": false,
-    "codex": false,
-    "githubCopilot": false,
-    "pi": false
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
   },
   "credentialSync": {
     "opencode": false,
@@ -119,11 +119,11 @@ var sampleGlobalConfiguration = []byte(`{
     "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": false,
-    "claudeCode": false,
-    "codex": false,
-    "githubCopilot": false,
-    "pi": false
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
   },
   "credentialSync": {
     "opencode": false,
@@ -316,7 +316,13 @@ type configurationSyncConfiguration struct {
 }
 
 func defaultCodingAgentSyncConfiguration() codingAgentSyncConfiguration {
-	return codingAgentSyncConfiguration{}
+	return codingAgentSyncConfiguration{
+		OpenCode:      true,
+		ClaudeCode:    true,
+		Codex:         true,
+		GitHubCopilot: true,
+		Pi:            true,
+	}
 }
 
 func defaultConfigurationSyncConfiguration() configurationSyncConfiguration {

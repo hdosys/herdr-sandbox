@@ -238,26 +238,6 @@ func TestAtomicSSHConfigWriteRejectsConcurrentContentChange(t *testing.T) {
 	}
 }
 
-func TestValidateOpenedBoundedRegularFileRejectsDifferentPathIdentity(t *testing.T) {
-	directory := t.TempDir()
-	openedPath := filepath.Join(directory, "opened-config")
-	currentPath := filepath.Join(directory, "current-config")
-	if err := os.WriteFile(openedPath, []byte("original\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(currentPath, []byte("replacement\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.Open(openedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if err := validateOpenedBoundedRegularFile(currentPath, file, maximumUserSSHConfigurationBytes); err == nil || !strings.Contains(err.Error(), "changed while opening") {
-		t.Fatalf("changed opened path error = %v", err)
-	}
-}
-
 func TestDefaultDataDirectoryRequiresLocalAppData(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", "")
 	if _, err := defaultDataDirectory(); err == nil {

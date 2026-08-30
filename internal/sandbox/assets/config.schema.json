@@ -166,23 +166,23 @@
       "properties": {
         "opencode": {
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "claudeCode": {
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "codex": {
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "githubCopilot": {
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "pi": {
           "type": "boolean",
-          "default": false
+          "default": true
         }
       }
     },

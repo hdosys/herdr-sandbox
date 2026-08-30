@@ -603,13 +603,11 @@ trap { Write-Output ($_ | Out-String); exit 1 }
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-foreach ($name in @('Assert-ProvisioningPathWithinRoot', 'Assert-ProvisioningCachePath', 'Assert-ProvisioningVisualStudioCachePath', 'Assert-ProvisioningCacheTree')) {
+foreach ($name in @('Assert-ProvisioningCachePath', 'Assert-ProvisioningCacheTree')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
-    $definitionText = $definition.Extent.Text.Replace('C:\HerdrSandbox\visual-studio-cache', '%s').Replace('C:\HerdrSandbox\cache', '%s')
-    Invoke-Expression $definitionText
+    Invoke-Expression $definition.Extent.Text.Replace('C:\HerdrSandbox\cache', '%s')
 }
-Assert-ProvisioningVisualStudioCachePath -Path '%s'
 $accepted = $false
 try {
     Assert-ProvisioningCacheTree -Path '%s'
@@ -619,7 +617,7 @@ try {
 }
 if ($accepted) { throw 'Nested cache alias was accepted.' }
 exit 0
-`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(cacheRoot), quote(cacheRoot), quote(candidate), quote(candidate))
+`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(cacheRoot), quote(candidate))
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("cache-tree regression: %v: %s", err, output)

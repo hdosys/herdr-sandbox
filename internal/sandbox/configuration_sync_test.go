@@ -82,7 +82,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		GitHubCLIConfiguration:  githubCLI,
 		GitHubCLIAuthentication: githubAuthentication,
 		CodingAgents: codingAgentConfigurationSources{
-			Selection:              codingAgentSyncConfiguration{OpenCode: true},
+			Selection:              defaultCodingAgentSyncConfiguration(),
 			CredentialSync:         credentialSyncConfiguration{OpenCode: true, GitHubCLI: true},
 			OpenCodeDirectory:      openCode,
 			OpenCodeAuthentication: authentication,

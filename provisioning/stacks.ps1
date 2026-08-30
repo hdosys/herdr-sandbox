@@ -281,7 +281,7 @@ function Assert-StackVisualStudioLayoutIdentity {
         throw "Visual Studio layout directory is missing: $Layout"
     }
     if (-not $GuestLocal) {
-        Assert-ProvisioningVisualStudioCachePath -Path $Layout
+        Assert-ProvisioningCachePath -Path $Layout
     }
     $catalogPath = Join-Path $Layout 'Catalog.json'
     $channelManifestPath = Join-Path $Layout 'ChannelManifest.json'
@@ -291,7 +291,7 @@ function Assert-StackVisualStudioLayoutIdentity {
             throw "Visual Studio layout identity file is missing: $path"
         }
         if (-not $GuestLocal) {
-            Assert-ProvisioningVisualStudioCachePath -Path $path
+            Assert-ProvisioningCachePath -Path $path
         }
     }
 
@@ -339,7 +339,7 @@ function Copy-StackVisualStudioLayoutToGuest {
 
     $copyStopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
-        Assert-ProvisioningVisualStudioCachePath -Path $Source
+        Assert-ProvisioningCachePath -Path $Source
         foreach ($item in @(Get-ChildItem -LiteralPath $Source -Recurse -Force)) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw "Visual Studio layout contains a reparse point: $($item.FullName)"
@@ -381,13 +381,13 @@ function Test-StackVisualStudioLayoutSlot {
 
     try {
         if (-not (Test-Path -LiteralPath $Slot -PathType Container)) { return $false }
-        Assert-ProvisioningVisualStudioCachePath -Path $Slot
+        Assert-ProvisioningCachePath -Path $Slot
         $layout = Join-Path $Slot 'layout'
         $descriptorPath = Join-Path $Slot 'complete.json'
         if (-not (Test-Path -LiteralPath $layout -PathType Container) -or
             -not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $false }
-        Assert-ProvisioningVisualStudioCachePath -Path $layout
-        Assert-ProvisioningVisualStudioCachePath -Path $descriptorPath
+        Assert-ProvisioningCachePath -Path $layout
+        Assert-ProvisioningCachePath -Path $descriptorPath
         $descriptor = [IO.File]::ReadAllText($descriptorPath) | ConvertFrom-Json
         $descriptorTarget = ConvertFrom-StackVisualStudioLayoutDescriptor -Descriptor $descriptor -Slot $Slot
         $expectedComponents = @(Get-StackVisualStudioComponentIDs -CatalogPath (Join-Path $layout 'Catalog.json') | Sort-Object)
@@ -402,7 +402,7 @@ function Test-StackVisualStudioLayoutSlot {
         foreach ($relativePath in $required) {
             $path = Join-Path $layout $relativePath
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
-            Assert-ProvisioningVisualStudioCachePath -Path $path
+            Assert-ProvisioningCachePath -Path $path
             $expectedHashProperty = $descriptor.artifacts.PSObject.Properties[$relativePath]
             if ($null -eq $expectedHashProperty) { return $false }
             $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -583,12 +583,20 @@ function Install-StackVisualStudioBuildTools {
     )
 
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $cacheRoot = 'C:\HerdrSandbox\visual-studio-cache\vsbt'
+    $cacheRoot = 'C:\HerdrSandbox\cache\vsbt'
     $guestLayout = 'C:\HerdrSandbox\visual-studio\layout'
     if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) {
         throw 'The host-prepared Visual Studio Build Tools cache is missing.'
     }
+    Assert-ProvisioningCachePath -Path $cacheRoot
+    $lockPath = Join-Path $cacheRoot '.lock'
+    Assert-ProvisioningCachePath -Path $lockPath
+    $lock = $null
+    $primaryFailure = $null
+    $cleanupFailure = $null
     try {
+        $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $slotA = Join-Path $cacheRoot 'a'
         $slotB = Join-Path $cacheRoot 'b'
         $matchingSlots = @(@($slotA, $slotB) | ForEach-Object {
@@ -694,11 +702,29 @@ function Install-StackVisualStudioBuildTools {
             }
             Wait-StackVisualStudioInstalled -Target $target
         }
+        foreach ($slot in @($slotA, $slotB)) {
+            if ($slot -ine $selectedSlot -and (Test-Path -LiteralPath $slot)) {
+                Assert-ProvisioningCacheTree -Path $slot
+                Remove-Item -LiteralPath $slot -Recurse -Force
+            }
+        }
+    } catch {
+        $primaryFailure = $_
     } finally {
+        if ($null -ne $lock) {
+            try { $lock.Dispose() } catch { $cleanupFailure = $_ }
+        }
         $visualStudioStopwatch.Stop()
         Write-ProvisioningTiming -Role 'Visual Studio Build Tools total' `
             -Seconds $visualStudioStopwatch.Elapsed.TotalSeconds
     }
+    if ($null -ne $primaryFailure) {
+        if ($null -ne $cleanupFailure) {
+            Write-Warning "Visual Studio cache cleanup also failed: $($cleanupFailure.Exception.Message)"
+        }
+        throw $primaryFailure
+    }
+    if ($null -ne $cleanupFailure) { throw $cleanupFailure }
 }
 
 function Enable-StackVisualStudioDeveloperEnvironment {

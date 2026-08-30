@@ -52,7 +52,7 @@ Configuration:
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
   - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
   - configurationSync host Git pull choices for up and down (all disabled by default)
-  - codingAgentSync choices (all disabled by default)
+  - codingAgentSync choices (all enabled by default)
   - credentialSync choices (all disabled by default)
   - wingetPackages additions, removals, and version pins
 

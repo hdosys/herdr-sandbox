@@ -89,6 +89,13 @@ in the global OpenCode configuration, not this repository.
 - Use the standard `flag` package until real CLI complexity justifies a framework.
 - Native/external process invocation must be explicit, bounded, and diagnosable;
   never silently switch executable, endpoint, credential, or compatibility path.
+- Installer behavior is frozen at the app-local lifecycle contract. Continue
+  rebuilding the unchanged canonical installer for production changes, but do not
+  modify `packaging/windows/installer.nsi` or its lifecycle behavior unless the
+  current user explicitly requests an installer change.
+- Runtime lifecycle coordination remains app-local. Never broaden it into one
+  machine-global product mutex; independently owned future Sandbox instances must
+  remain able to run concurrently.
 
 ## Host/guest tool boundaries
 
@@ -172,7 +179,7 @@ pinned Go nilness analyzer, one batched PowerShell parse, fast product tests,
 `go vet`, and the stable build artifact. It must remain within a five-minute hard
 deadline and should normally finish within three minutes. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
-the full nightly/release matrix. `native-current-sandbox` and
+the full nightly or explicitly requested assurance matrix. `native-current-sandbox` and
 `package-current-sandbox` are also explicit and never part of normal iteration.
 Do not run these slower gates while a user waits for an ordinary build or
 installer. Unit tests do not replace the applicable native gate when changed
@@ -181,9 +188,9 @@ behavior depends on that boundary.
 `go run ./cmd/task provisioning-preflight` must finish within 45 seconds and runs
 automatically before both current-Sandbox gates. It checks only already available
 current-guest inputs, production parsers, and the task-owned minimum free capacity
-on the installation volume. `release` runs it before integration, and the
-installed-candidate path revalidates it immediately before that boundary. It never
-installs, updates, or replaces a tool and does not replace installed or native
+on the installation volume. The installed-candidate path revalidates it
+immediately before that boundary. It never installs, updates, or replaces a tool
+and does not replace installed or native
 acceptance.
 
 For installer work, `go run ./cmd/task package VERSION` owns the early
@@ -192,15 +199,25 @@ routine local installable artifact. `go run ./cmd/task package VERSION --release
 is reserved for the exact versioned ZIP and installer release pair. Run the local
 package task before `package-current-sandbox` and immediately report the canonical
 installer path, content hash, build time, and status `candidate;
-installed acceptance pending`. Do not delay that handoff for documentation,
+user acceptance pending`. Do not delay that handoff for documentation,
 repository administration, private queue routing, or cleanup, and do not describe
 the candidate as accepted. Never run `package-current-sandbox` from a dirty or
 pre-commit checkout. Freeze production source, complete the focused gates, commit
 and push, then rebuild once from that immutable commit. Run exactly one
-`package-current-sandbox VERSION` acceptance only for an explicitly requested
-installed-candidate or release gate, or through its deferred-verification
-assignment. A later production-relevant edit requires a new commit and candidate;
+`package-current-sandbox VERSION` acceptance only when the current user explicitly
+requests that installed-candidate gate. Release never invokes it. A later
+production-relevant edit requires a new commit and candidate;
 unchanged inputs never justify repeating the installed-candidate gate.
+
+`go run ./cmd/task release VERSION` is intentionally mechanical. The current
+user's release request confirms that the rebuilt installer and a freshly
+provisioned Sandbox were already accepted. The command checks only the version,
+matching changelog, clean pushed commit, unchanged source, and absent tag before
+creating and pushing that tag. It never runs tests, provisioning, installation,
+or a native gate. GitHub release automation packages and publishes the tag without
+repeating those checks. Keep `native-current-sandbox` available as the explicit
+in-place reprovisioning path when the user requests deployment evidence before
+discarding a working guest.
 
 For long-running GitHub Actions, check status no more than once every two minutes
 and fetch detailed logs only after terminal failure. GitHub release artifacts do

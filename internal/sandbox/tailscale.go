@@ -47,6 +47,11 @@ type tailscaleApplyRequest struct {
 	WindowsUserSID string `json:"windowsUserSID"`
 }
 
+type tailscaleStateCapture struct {
+	WindowsUserSID string `json:"windowsUserSID"`
+	State          []byte `json:"state"`
+}
+
 func prepareTailscaleBootstrap(dataDirectory string, enabled bool, authKey []byte, authKeyFound bool) (tailscaleBootstrap, error) {
 	bootstrap := tailscaleBootstrap{Enabled: enabled}
 	if !enabled {
@@ -137,15 +142,17 @@ func recoverAndStoreTailscaleForDown(ctx context.Context, connection Connection,
 		return false, recoverAndStoreTailscale(ctx, connection, dataDirectory)
 	}
 	defer func() { clear(expected.State) }()
-	captured, err := captureTailscaleIdentityForDown(ctx, connection)
+	captured, err := captureTailscaleStateForDown(ctx, connection)
 	if err != nil {
 		return false, restartTailscaleAfterDownCaptureFailure(connection, err)
 	}
 	defer clear(captured.State)
-	if err := verifyStableTailscaleIdentity(expected, captured); err != nil {
-		return false, restartTailscaleAfterDownCaptureFailure(connection, err)
+	if captured.WindowsUserSID != expected.WindowsUserSID {
+		return false, restartTailscaleAfterDownCaptureFailure(connection, errors.New("captured Tailscale state belongs to a different Windows Sandbox user SID"))
 	}
-	if err := storeTailscaleIdentity(dataDirectory, captured); err != nil {
+	clear(expected.State)
+	expected.State = append([]byte(nil), captured.State...)
+	if err := storeTailscaleIdentity(dataDirectory, expected); err != nil {
 		return false, restartTailscaleAfterDownCaptureFailure(connection, err)
 	}
 	return true, nil
@@ -208,13 +215,13 @@ func captureTailscaleIdentity(ctx context.Context, connection Connection) (tails
 	return decodeTailscaleIdentityResult(output)
 }
 
-func captureTailscaleIdentityForDown(ctx context.Context, connection Connection) (tailscaleIdentity, error) {
+func captureTailscaleStateForDown(ctx context.Context, connection Connection) (tailscaleStateCapture, error) {
 	output, err := runSecretSSHPowerShell(ctx, connection, nil, buildTailscaleDownCaptureLauncher(), "capture stable Tailscale identity before down", maximumTailscaleCaptureResultBytes)
 	if err != nil {
-		return tailscaleIdentity{}, err
+		return tailscaleStateCapture{}, err
 	}
 	defer clear(output)
-	return decodeTailscaleIdentityResult(output)
+	return decodeTailscaleStateCaptureResult(output)
 }
 
 func restartTailscaleAfterDownCaptureFailure(connection Connection, cause error) error {
@@ -230,6 +237,26 @@ func restartTailscaleAfterFailedDown(connection Connection) error {
 	output, err := runSecretSSHPowerShell(restartContext, connection, nil, buildTailscaleRestartLauncher(), "restart Tailscale after failed down", 4096)
 	clear(output)
 	return err
+}
+
+func decodeTailscaleStateCaptureResult(data []byte) (tailscaleStateCapture, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || len(trimmed) > maximumTailscaleCaptureResultBytes {
+		return tailscaleStateCapture{}, errors.New("state capture result from Tailscale has invalid size")
+	}
+	if err := validateExactJSONObjectShape(trimmed, "Tailscale state capture result", []string{"windowsUserSID", "state"}); err != nil {
+		return tailscaleStateCapture{}, fmt.Errorf("decode Tailscale state capture result: %w", err)
+	}
+	var captured tailscaleStateCapture
+	if err := decodeStrictJSON(trimmed, &captured); err != nil {
+		clear(captured.State)
+		return tailscaleStateCapture{}, fmt.Errorf("decode Tailscale state capture result: %w", err)
+	}
+	if len(captured.WindowsUserSID) > 184 || !windowsSIDPattern.MatchString(captured.WindowsUserSID) || len(captured.State) == 0 || len(captured.State) > maximumTailscaleStateBytes {
+		clear(captured.State)
+		return tailscaleStateCapture{}, errors.New("validate Tailscale state capture result: SID or state size is invalid")
+	}
+	return captured, nil
 }
 
 func decodeTailscaleIdentityResult(data []byte) (tailscaleIdentity, error) {
@@ -317,9 +344,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 Set-TailscalePortablePolicy
-$identity = Read-TailscaleIdentity -ExpectedSID $currentSID
-if ($null -eq $identity) { throw 'Tailscale running identity is unavailable before state capture.' }
-$result = Capture-TailscaleState -Identity $identity -LeaveServiceStopped -IdentityTimeoutSeconds 60
+$result = Capture-TailscaleStateBytes -ExpectedSID $currentSID -LeaveServiceStopped
 [Console]::Out.Write(($result | ConvertTo-Json -Compress))
 exit 0`, tailscalePowerShellFunctions())
 }

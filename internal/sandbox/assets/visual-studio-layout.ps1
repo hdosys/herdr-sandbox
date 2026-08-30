@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$VisualStudioDirectory,
+    [string]$CacheDirectory,
     [int]$TimeoutSeconds = 5400
 )
 
@@ -8,13 +8,13 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 2.0
 
-if (-not [IO.Path]::IsPathRooted($VisualStudioDirectory)) {
-    throw "Visual Studio host-only cache directory is not absolute: $VisualStudioDirectory"
+if (-not [IO.Path]::IsPathRooted($CacheDirectory)) {
+    throw "Visual Studio cache directory is not absolute: $CacheDirectory"
 }
 if ($TimeoutSeconds -lt 60 -or $TimeoutSeconds -gt 21600) {
     throw "Visual Studio layout timeout is outside 60..21600 seconds: $TimeoutSeconds"
 }
-$script:CacheRoot = [IO.Path]::GetFullPath($VisualStudioDirectory).TrimEnd('\')
+$script:CacheRoot = [IO.Path]::GetFullPath($CacheDirectory).TrimEnd('\')
 
 Add-Type -TypeDefinition @'
 using System;

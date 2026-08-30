@@ -138,7 +138,8 @@ Unicode true
     !define APP_INSTALLER_MUTEX_NAME "Global\${APP_PRODUCT_GUID}.InstallerExclusive"
 !endif
 !ifndef APP_LIFECYCLE_MUTEX_NAME
-    !error "APP_LIFECYCLE_MUTEX_NAME is required"
+    ; Must match the stable name used by application lifecycle commands.
+    !define APP_LIFECYCLE_MUTEX_NAME "Local\${APP_APPLICATION_NAME}-lifecycle-v1"
 !endif
 !define APP_ENVIRONMENT_BROADCAST_TIMEOUT_MS 250
 !define APP_ERROR_FILE_NOT_FOUND 2

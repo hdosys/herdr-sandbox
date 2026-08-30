@@ -17,11 +17,9 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	inputDirectory := filepath.Join(runDirectory, "input")
 	statusDirectory := filepath.Join(runDirectory, "status")
 	cacheDirectory := filepath.Join(root, "cache")
-	guestCacheDirectory := filepath.Join(cacheDirectory, "guest")
-	visualStudioCacheDirectory := filepath.Join(cacheDirectory, "visual-studio")
 	worktreeDirectory := filepath.Join(root, "worktrees")
 	workspaceDirectory := filepath.Join(root, "workspace")
-	for _, directory := range []string{inputDirectory, statusDirectory, filepath.Join(dataDirectory, "identity"), guestCacheDirectory, visualStudioCacheDirectory, worktreeDirectory, workspaceDirectory} {
+	for _, directory := range []string{inputDirectory, statusDirectory, filepath.Join(dataDirectory, "identity"), cacheDirectory, worktreeDirectory, workspaceDirectory} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +70,7 @@ func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 			Active:           true,
 		}},
 	}
-	config, err := renderConfigWithHostCacheMappings(inputDirectory, statusDirectory, guestCacheDirectory, visualStudioCacheDirectory, worktreeDirectory, "", provisioning.Mounts, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, provisioning.Mounts, provisioning.Workspaces, 4096, provisioning.AudioOutput, provisioning.AudioInput)
 	if err != nil {
 		t.Fatal(err)
 	}

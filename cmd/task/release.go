@@ -8,7 +8,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 type releaseSource struct {
@@ -16,12 +15,9 @@ type releaseSource struct {
 	Upstream string
 }
 
-func release(ctx context.Context, tag string, stdout, stderr io.Writer) error {
+func release(ctx context.Context, tag string, stdout, _ io.Writer) error {
 	version, err := parseReleaseVersion(tag)
 	if err != nil {
-		return err
-	}
-	if _, err := immediatePredecessorVersion(version); err != nil {
 		return err
 	}
 	if err := writeReleaseNotes(version.Tag, io.Discard); err != nil {
@@ -38,37 +34,16 @@ func release(ctx context.Context, tag string, stdout, stderr io.Writer) error {
 	if err := ensureReleaseTagAbsent(ctx, version.Tag, remote); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(stdout, "Release acceptance for %s at %s, contained in %s.\n", version.Tag, source.Commit, source.Upstream); err != nil {
+	if _, err := inspectReleaseSource(ctx, source.Commit); err != nil {
 		return err
 	}
-
-	requireFrozen := func(checkContext context.Context) error {
-		_, err := inspectReleaseSource(checkContext, source.Commit)
+	if _, err := fmt.Fprintf(stdout, "Release %s at %s, contained in %s.\n", version.Tag, source.Commit, source.Upstream); err != nil {
 		return err
 	}
-	gateErr := runReleaseGates(
-		ctx,
-		version.Tag,
-		stdout,
-		stderr,
-		currentSandboxProvisioningPreflight,
-		func(ctx context.Context, stdout, stderr io.Writer) error { return verify(ctx, stdout, stderr, false) },
-		requireFrozen,
-		packageCurrentSandbox,
-	)
-	finalContext, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	freezeErr := requireFrozen(finalContext)
-	if err := errors.Join(gateErr, freezeErr); err != nil {
+	if err := publishReleaseTag(ctx, version.Tag, source.Commit, remote); err != nil {
 		return err
 	}
-	if err := ensureReleaseTagAbsent(finalContext, version.Tag, remote); err != nil {
-		return err
-	}
-	if err := publishAcceptedReleaseTag(finalContext, version.Tag, source.Commit, remote); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(stdout, "Accepted release tag %s for %s was pushed to %s.\n", version.Tag, source.Commit, remote)
+	_, err = fmt.Fprintf(stdout, "Release tag %s for %s was pushed to %s.\n", version.Tag, source.Commit, remote)
 	return err
 }
 
@@ -79,48 +54,6 @@ func releaseRemoteForUpstream(upstream string) (string, error) {
 		return "", fmt.Errorf("release requires a named remote branch upstream, got %q", upstream)
 	}
 	return remote, nil
-}
-
-func acceptedReleaseTagAnnotation(tag, commit string) string {
-	return fmt.Sprintf("Herdr Sandbox installed candidate accepted: %s %s", tag, commit)
-}
-
-func validateAcceptedReleaseTag(ctx context.Context, tag string) error {
-	version, err := parseReleaseVersion(tag)
-	if err != nil {
-		return err
-	}
-	ref := "refs/tags/" + version.Tag
-	tagType, err := hiddenCommandContext(ctx, "git", "cat-file", "-t", ref).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("inspect release tag object %s: %w: %s", version.Tag, err, strings.TrimSpace(string(tagType)))
-	}
-	if strings.TrimSpace(string(tagType)) != "tag" {
-		return fmt.Errorf("release tag %s is not annotated", version.Tag)
-	}
-	commitOutput, err := hiddenCommandContext(ctx, "git", "rev-parse", version.Tag+"^{commit}").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("resolve release tag commit %s: %w: %s", version.Tag, err, strings.TrimSpace(string(commitOutput)))
-	}
-	commit, err := normalizeSourceRevision(strings.TrimSpace(string(commitOutput)))
-	if err != nil {
-		return fmt.Errorf("validate release tag commit %s: %w", version.Tag, err)
-	}
-	head, err := sourceRevision(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve release workflow source commit: %w", err)
-	}
-	if commit != head {
-		return fmt.Errorf("release tag %s targets %s, not checked-out commit %s", version.Tag, commit, head)
-	}
-	annotationOutput, err := hiddenCommandContext(ctx, "git", "for-each-ref", "--format=%(contents)", ref).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("read release tag annotation %s: %w: %s", version.Tag, err, strings.TrimSpace(string(annotationOutput)))
-	}
-	if annotation := strings.TrimSpace(string(annotationOutput)); annotation != acceptedReleaseTagAnnotation(version.Tag, commit) {
-		return fmt.Errorf("release tag %s is not the exact installed-candidate acceptance output", version.Tag)
-	}
-	return nil
 }
 
 func ensureReleaseTagAbsent(ctx context.Context, tag, remote string) error {
@@ -143,27 +76,27 @@ func ensureReleaseTagAbsent(ctx context.Context, tag, remote string) error {
 	return nil
 }
 
-func publishAcceptedReleaseTag(ctx context.Context, tag, commit, remote string) error {
-	annotation := acceptedReleaseTagAnnotation(tag, commit)
+func publishReleaseTag(ctx context.Context, tag, commit, remote string) error {
+	annotation := "Herdr Sandbox " + tag
 	output, err := hiddenCommandContext(ctx, "git", "tag", "--annotate", tag, commit, "--message", annotation).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("create accepted release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("create release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
 	}
 	ref := "refs/tags/" + tag
 	output, err = hiddenCommandContext(ctx, "git", "push", remote, ref+":"+ref).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("push accepted release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("push release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
 	}
 	output, err = hiddenCommandContext(ctx, "git", "ls-remote", "--tags", remote, ref, ref+"^{}").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("verify accepted release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("verify release tag %s: %w: %s", tag, err, strings.TrimSpace(string(output)))
 	}
 	foundTag := false
 	foundCommit := false
 	for line := range strings.SplitSeq(strings.TrimSpace(string(output)), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
-			return fmt.Errorf("verify accepted release tag %s: malformed remote response", tag)
+			return fmt.Errorf("verify release tag %s: malformed remote response", tag)
 		}
 		switch fields[1] {
 		case ref:
@@ -173,31 +106,7 @@ func publishAcceptedReleaseTag(ctx context.Context, tag, commit, remote string) 
 		}
 	}
 	if !foundTag || !foundCommit {
-		return fmt.Errorf("accepted release tag %s did not resolve to commit %s on %s", tag, commit, remote)
-	}
-	return nil
-}
-
-func runReleaseGates(
-	ctx context.Context,
-	tag string,
-	stdout, stderr io.Writer,
-	resourcePreflight func(context.Context, io.Writer, io.Writer) error,
-	verifyIntegration func(context.Context, io.Writer, io.Writer) error,
-	requireFrozen func(context.Context) error,
-	installedAcceptance func(context.Context, string, io.Writer, io.Writer) error,
-) error {
-	if err := resourcePreflight(ctx, stdout, stderr); err != nil {
-		return fmt.Errorf("release resource preflight: %w", err)
-	}
-	if err := verifyIntegration(ctx, stdout, stderr); err != nil {
-		return fmt.Errorf("release integration verification: %w", err)
-	}
-	if err := requireFrozen(ctx); err != nil {
-		return fmt.Errorf("release source changed after integration verification: %w", err)
-	}
-	if err := installedAcceptance(ctx, tag, stdout, stderr); err != nil {
-		return fmt.Errorf("release installed-candidate acceptance: %w", err)
+		return fmt.Errorf("release tag %s did not resolve to commit %s on %s", tag, commit, remote)
 	}
 	return nil
 }

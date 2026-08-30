@@ -770,7 +770,6 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, identity bu
 		"/DAPP_PRODUCT_GUID=" + productidentity.ProductGUID,
 		"/DAPP_UNINSTALL_KEY=" + productidentity.UninstallKeyName,
 		"/DAPP_QUIET_UNINSTALL_HELPER=" + productidentity.QuietUninstallHelperName,
-		"/DAPP_LIFECYCLE_MUTEX_NAME=" + productidentity.LifecycleMutexName,
 		"/DAPP_COPYRIGHT=" + productidentity.Copyright,
 		"/DPACKAGE_DIR=" + stageDirectory,
 		"/DPATH_HELPER=" + pathHelper,

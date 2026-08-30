@@ -80,18 +80,9 @@ If Windows Sandbox is not enabled, run the following from elevated Windows Power
 Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All
 ```
 
-### Install from GitHub Releases (recommended)
+### Install with WinGet (recommended)
 
-Herdr Sandbox requires Herdr Win. Download and verify the latest
-[Herdr Win](https://github.com/hdosys/herdr-win/releases/latest) and
-[Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
-setups, then install Herdr Win first. GitHub publishes the current installer
-immediately and exposes its SHA-256 asset digest.
-
-### WinGet alternative
-
-The WinGet community mirror can lag behind GitHub Releases. When its published
-versions are current, install both packages with:
+Herdr Sandbox requires Herdr Win. Install both packages with:
 
 ```powershell
 winget install hdosys.herdr-win hdosys.herdr-sandbox
@@ -105,6 +96,13 @@ winget upgrade hdosys.herdr-win hdosys.herdr-sandbox
 
 Herdr Win provides the Windows server and remote provisioning used by Herdr
 Sandbox. It remains a separate package.
+
+### Direct installer alternative
+
+Download and verify the latest [Herdr Win](https://github.com/hdosys/herdr-win/releases/latest)
+and [Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
+setups, then install Herdr Win first. GitHub displays the SHA-256 digest for each
+release asset.
 
 ### Verify installation
 
@@ -240,11 +238,11 @@ credentials.
     "pullHostGitRepositoriesOnDown": false
   },
   "codingAgentSync": {
-    "opencode": false,
-    "claudeCode": false,
-    "codex": false,
-    "githubCopilot": false,
-    "pi": false
+    "opencode": true,
+    "claudeCode": true,
+    "codex": true,
+    "githubCopilot": true,
+    "pi": true
   },
   "credentialSync": {
     "opencode": false,
@@ -312,11 +310,11 @@ letter or number, and are at most 64 characters.
 | `mobileSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
 | `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
 | `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
-| `codingAgentSync.opencode` | Opt-in boolean streaming OpenCode configuration into the guest. Defaults to `false`. |
-| `codingAgentSync.claudeCode` | Opt-in boolean streaming Claude Code configuration into the guest. Defaults to `false`. |
-| `codingAgentSync.codex` | Opt-in boolean streaming Codex configuration into the guest. Defaults to `false`. |
-| `codingAgentSync.githubCopilot` | Opt-in boolean streaming GitHub Copilot configuration into the guest. Defaults to `false`. |
-| `codingAgentSync.pi` | Opt-in boolean streaming Pi configuration into the guest. Defaults to `false`. |
+| `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. Defaults to `true`. |
+| `codingAgentSync.claudeCode` | Boolean streaming Claude Code configuration into the guest. Defaults to `true`. |
+| `codingAgentSync.codex` | Boolean streaming Codex configuration into the guest. Defaults to `true`. |
+| `codingAgentSync.githubCopilot` | Boolean streaming GitHub Copilot configuration into the guest. Defaults to `true`. |
+| `codingAgentSync.pi` | Boolean streaming Pi configuration into the guest. Defaults to `true`. |
 | `credentialSync.opencode` | Boolean streaming an existing OpenCode API credential. |
 | `credentialSync.claudeCode` | Boolean streaming an existing Claude Code credential. |
 | `credentialSync.codex` | Boolean streaming an existing Codex credential. |
@@ -350,9 +348,10 @@ Nothing is installed into the host development environment.
 <details>
 <summary><strong>Agent configuration sync</strong></summary>
 
-Configuration transfer is available for OpenCode, Claude Code, Codex, GitHub
-Copilot CLI, and Pi, with every selection disabled until explicitly enabled.
-Credential transfer is a separate opt-in through `credentialSync`. Missing host
+Configuration transfer is enabled by default for OpenCode, Claude Code, Codex,
+GitHub Copilot CLI, and Pi. Set an individual `codingAgentSync` field to `false`
+to disable that source. Credential transfer is a separate opt-in through
+`credentialSync`. Missing host
 credentials leave the guest unchanged. Turning an entry off stops later
 transfers but does not revoke a credential already present in a retained guest;
 closing the Sandbox remains the cleanup boundary. GitHub CLI `config.yml` and
@@ -720,19 +719,20 @@ go run ./cmd/task native-all-stacks
   nilness analysis, PowerShell parsing, focused tests, `go vet`, and the stable
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
-  release use.
+  explicitly requested assurance.
 - `release VERSION` accepts only a clean committed checkout contained in its
-  configured upstream. It validates the matching changelog section, runs
-  integration verification and installed-candidate acceptance once, confirms the
-  source commit stays unchanged, then creates and pushes the exact annotated tag
-  consumed by release automation.
+  configured upstream. It validates the matching changelog section, confirms the
+  source commit stays unchanged and the tag is unused, then creates and pushes
+  the annotated tag consumed by release automation. It does not rerun tests,
+  installation, or provisioning.
 - `provisioning-preflight` checks production provisioning parsers plus available
   Java, Android, and Visual Studio inputs in the active Sandbox before a slower
   native or installed-candidate run. It does not install or update tools.
 - `native-current-sandbox` replays real Base and every project stack inside the
   active development Sandbox, then proves a task-owned REAPER client connection
   to AudioGridder server 0 without launching a nested Sandbox or restarting its
-  existing SSH and Herdr processes.
+  existing SSH and Herdr processes. Run it explicitly when deployment evidence is
+  useful before discarding a working guest; release does not invoke it.
 - `package-current-sandbox` covers fresh install, same-version repair, a
   current-layout immediate-predecessor upgrade, installed-payload provisioning,
   configuration and development-environment preservation, and quiet uninstall

@@ -9,24 +9,20 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
-- Coding-agent configuration transfer and automatic host Git pulls now default
-  off. Each provider or pull direction requires an explicit opt-in.
+- Automatic host Git pulls now default off and require an explicit opt-in for each
+  direction. Coding-agent configuration transfer remains enabled by default.
 - `sandbox status` now returns success only for a ready guest, while still
   printing complete diagnostics and next actions for every non-ready state.
 - Interactive stack selection now presents one readable entry per line.
-- The release task now binds installed-candidate acceptance to the exact annotated
-  tag, and GitHub publishes only after draft asset digests pass.
+- The release task now creates and pushes the tag from a clean pushed commit
+  without rerunning tests, installation, or provisioning. GitHub packages and
+  publishes that tag directly.
 
 ### Fixed
 
-- Visual Studio layout slots now remain in a host-owned read-only mapping, so
-  guest provisioning can no longer lock, delete, or replace the shared host cache.
 - Uninstall now rejects lexical and physical overlap between every recursive
   removal root and preserved workspaces, discovery, mounts, worktrees, or models.
-- Tailscale shutdown capture now verifies the same live control-plane identity
-  before and after reading persisted state.
-- Installer and CLI lifecycle exclusion now spans Windows sessions, and SSH
-  configuration reads are bounded before atomic updates or uninstall cleanup.
+- SSH configuration reads are bounded before atomic updates or uninstall cleanup.
 
 ## v0.0.21
 

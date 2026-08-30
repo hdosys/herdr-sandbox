@@ -120,6 +120,22 @@ func TestDecodeTailscaleIdentityResultIsStrict(t *testing.T) {
 	}
 }
 
+func TestDecodeTailscaleStateCaptureResultIsStrict(t *testing.T) {
+	identity := testTailscaleIdentity(t, "100.64.0.10")
+	encoded, err := json.Marshal(tailscaleStateCapture{WindowsUserSID: identity.WindowsUserSID, State: identity.State})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := decodeTailscaleStateCaptureResult(encoded)
+	if err != nil || captured.WindowsUserSID != identity.WindowsUserSID || !bytes.Equal(captured.State, identity.State) {
+		t.Fatalf("decoded state capture = %#v, error = %v", captured, err)
+	}
+	clear(captured.State)
+	if _, err := decodeTailscaleStateCaptureResult(bytes.Replace(encoded, []byte(`"state":`), []byte(`"extra":true,"state":`), 1)); err == nil {
+		t.Fatal("state capture with an extra field unexpectedly decoded")
+	}
+}
+
 func TestVerifyStableTailscaleIdentityRejectsDrift(t *testing.T) {
 	expected := testTailscaleIdentity(t, "100.64.0.10")
 	actual := expected
@@ -184,9 +200,8 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 		t.Fatal("down Tailscale capture body is missing")
 	}
 	downBody := downCapture[downBodyIndex:]
-	if !strings.Contains(downBody, "Read-TailscaleIdentity -ExpectedSID $currentSID") ||
-		!strings.Contains(downBody, "Capture-TailscaleState -Identity $identity -LeaveServiceStopped -IdentityTimeoutSeconds 60") {
-		t.Fatalf("down Tailscale capture does not bind persisted state to the running identity: %s", downBody)
+	if !strings.Contains(downBody, "Capture-TailscaleStateBytes -ExpectedSID $currentSID -LeaveServiceStopped") || strings.Contains(downBody, "Wait-TailscaleIdentity") {
+		t.Fatalf("down Tailscale capture still waits for control-plane readiness: %s", downBody)
 	}
 	restartBodyIndex := strings.LastIndex(restart, "$ErrorActionPreference = 'Stop'")
 	if restartBodyIndex < 0 || !strings.Contains(restart[restartBodyIndex:], "Start-TailscaleService") {

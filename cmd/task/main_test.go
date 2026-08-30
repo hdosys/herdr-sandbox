@@ -28,7 +28,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		!strings.Contains(stdout.String(), "build intermediate CLI output") ||
 		!strings.Contains(stdout.String(), "one canonical local installer or the versioned release pair") ||
 		!strings.Contains(stdout.String(), "release VERSION") ||
-		!strings.Contains(stdout.String(), "annotated tag") {
+		!strings.Contains(stdout.String(), "clean pushed release commit") {
 		t.Fatalf("help output = %q", stdout.String())
 	}
 }
@@ -68,7 +68,7 @@ func TestNativeAllStacksUsesExtendedTimeout(t *testing.T) {
 	if got := taskTimeoutFor([]string{"package-current-sandbox", "v0.0.1"}); got != currentPackageTaskTimeout {
 		t.Fatalf("current-Sandbox package timeout = %s", got)
 	}
-	if got := taskTimeoutFor([]string{"release", "v0.0.1"}); got != releaseTaskTimeout {
+	if got := taskTimeoutFor([]string{"release", "v0.0.1"}); got != taskTimeout {
 		t.Fatalf("release timeout = %s", got)
 	}
 	if got := taskTimeoutFor([]string{"verify"}); got != taskTimeout {
