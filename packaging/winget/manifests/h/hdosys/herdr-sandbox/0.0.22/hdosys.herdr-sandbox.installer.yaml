@@ -2,7 +2,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: hdosys.herdr-sandbox
-PackageVersion: 0.0.18
+PackageVersion: 0.0.22
 MinimumOSVersion: 10.0.18362.0
 InstallerType: nullsoft
 Scope: user
@@ -15,8 +15,8 @@ UnsupportedArguments:
 - location
 Installers:
 - Architecture: x64
-  InstallerUrl: https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.18/herdr-sandbox_v0.0.18_windows_amd64_setup.exe
-  InstallerSha256: 64480AC608A802D9BF905079FF3A95DF5363C3C89A2F4A7AFC0235BF362EFDC6
+  InstallerUrl: https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.22/herdr-sandbox_v0.0.22_windows_amd64_setup.exe
+  InstallerSha256: D141148E397E1D09BC06ADF337BBD2831BDDE3499ACDEB2E4BF75DC66383E2BB
 ManifestType: installer
 ManifestVersion: 1.12.0
-ReleaseDate: 2026-08-21
+ReleaseDate: 2026-08-31
