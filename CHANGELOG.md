@@ -20,6 +20,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Android Platform Tools provisioning now uses the verified direct archive path,
+  avoiding a native Android CLI crash after package extraction.
 - Uninstall now rejects lexical and physical overlap between every recursive
   removal root and preserved workspaces, discovery, mounts, worktrees, or models.
 - SSH configuration reads are bounded before atomic updates or uninstall cleanup.

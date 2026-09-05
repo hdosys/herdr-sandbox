@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 24
+# herdr-sandbox-stacks-contract: 25
 
 function Get-StackWebResponseText {
     param(
@@ -1568,6 +1568,14 @@ function Install-AndroidStack {
         [string]$androidCLIMetadata.Sha256 -cnotmatch '^[A-F0-9]{64}$') {
         throw 'Android stack package metadata is invalid.'
     }
+    $platformToolsMetadata = Get-ProvisioningWinGetMetadata -Role 'Android Platform Tools' `
+        -Id 'Google.PlatformTools' -InstallerType 'zip' -PayloadExtension '.zip'
+    $platformToolsURI = [Uri][string]$platformToolsMetadata.Url
+    $expectedPlatformToolsName = 'platform-tools_r' + [string]$platformToolsMetadata.Version + '-win.zip'
+    if ($platformToolsURI.Scheme -cne 'https' -or $platformToolsURI.Host -cne 'dl.google.com' -or
+        [IO.Path]::GetFileName($platformToolsURI.AbsolutePath) -cne $expectedPlatformToolsName) {
+        throw 'Android Platform Tools package metadata is invalid.'
+    }
 
     Install-JavaStack
     $jdkRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
@@ -1595,6 +1603,10 @@ function Install-AndroidStack {
         -Destination $androidCLIRoot -ArchiveRoot 'cmdline-tools' `
         -RequiredRelativePaths @('source.properties', 'bin\android.exe', 'bin\sdkmanager.bat',
             'lib\sdk-common\tools.sdk-common.jar') -SignedRelativePath 'bin\android.exe'
+    Install-StackAndroidDirectArchive -Role 'Android Platform Tools' -Metadata $platformToolsMetadata `
+        -Destination $platformTools -ArchiveRoot 'platform-tools' `
+        -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties') `
+        -SignedRelativePath 'adb.exe'
 
     $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
     if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
@@ -1627,18 +1639,9 @@ function Install-AndroidStack {
     }
 
     $previousJavaHome = [string]$env:JAVA_HOME
-    $platformToolsVersion = ''
     try {
         $env:JAVA_HOME = $jdkRoot
         $androidJVMWarning = 'OpenJDK 64-Bit Server VM warning: The UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.'
-        if (Test-Path -LiteralPath $platformTools -PathType Container) {
-            $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
-            Write-Output "Android Platform Tools already verified: $platformToolsVersion"
-        } else {
-            Invoke-ProvisioningNative -Role 'Android Platform Tools installation' -FilePath $androidCLI `
-                -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'sdk', 'install', 'platform-tools') `
-                -TimeoutSeconds 600 | Out-Null
-        }
         $androidCLIOutput = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
                 -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30)
         $androidCLIVersion = ConvertFrom-StackAndroidCLIVersion -Output $androidCLIOutput
@@ -1656,9 +1659,7 @@ function Install-AndroidStack {
     if ([IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
         throw "Android SDK location verification failed: $reportedSDK"
     }
-    if ([string]::IsNullOrWhiteSpace($platformToolsVersion)) {
-        $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
-    }
+    $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
     Add-ProvisioningMachinePath -Directory $androidCLIBin
     Add-ProvisioningMachinePath -Directory $platformTools
     $androidCommands = [ordered]@{'android.exe' = $androidCLI; 'adb.exe' = $adb}
