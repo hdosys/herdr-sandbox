@@ -5,6 +5,13 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
+## v0.0.23
+
+### Fixed
+
+- Android provisioning now uses the verified Platform Tools archive directly and
+  no longer executes the Android launcher that crashes inside Windows Sandbox.
+
 ## v0.0.22
 
 ### Changed
@@ -20,8 +27,6 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
-- Android provisioning now uses the verified Platform Tools archive directly and
-  no longer executes the Android launcher that crashes inside Windows Sandbox.
 - Uninstall now rejects lexical and physical overlap between every recursive
   removal root and preserved workspaces, discovery, mounts, worktrees, or models.
 - SSH configuration reads are bounded before atomic updates or uninstall cleanup.
