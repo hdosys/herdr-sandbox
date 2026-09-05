@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 25
+# herdr-sandbox-stacks-contract: 26
 
 function Get-StackWebResponseText {
     param(
@@ -1513,19 +1513,6 @@ function ConvertFrom-StackJavaReleaseVersion {
     return [string]$matches[0].Groups['version'].Value
 }
 
-function ConvertFrom-StackAndroidCLIVersion {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]$Output
-    )
-
-    $versions = @($Output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^1\.0\.\d+$' })
-    if ($versions.Count -ne 1) {
-        return ''
-    }
-    return [string]$versions[0]
-}
-
 function Install-AndroidStack {
     [CmdletBinding()]
     param()
@@ -1594,7 +1581,7 @@ function Install-AndroidStack {
     $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
     $androidCLIBin = Join-Path $androidCLIRoot 'bin'
-    $androidCLI = Join-Path $androidCLIBin 'android.exe'
+    $androidSDKManager = Join-Path $androidCLIBin 'sdkmanager.bat'
     $platformTools = Join-Path $androidSDK 'platform-tools'
     $adb = Join-Path $platformTools 'adb.exe'
     $androidUserHome = 'C:\HerdrSandbox\build\android-user'
@@ -1611,7 +1598,7 @@ function Install-AndroidStack {
     $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
     if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
         $sourceProperties -notmatch ('(?m)^Pkg\.Path=cmdline-tools;' + [regex]::Escape($androidCLIRevision) + '\r?$')) {
-        Write-Warning "Android SDK Command-line Tools installed successfully, but source.properties does not report revision $androidCLIRevision. Provisioning will continue to executable checks."
+        Write-Warning "Android SDK Command-line Tools installed successfully, but source.properties does not report revision $androidCLIRevision. Provisioning will continue to command availability checks."
     }
     $androidJava = Join-Path $jdkRoot 'bin\java.exe'
     $androidJavac = Join-Path $jdkRoot 'bin\javac.exe'
@@ -1638,38 +1625,17 @@ function Install-AndroidStack {
         }
     }
 
-    $previousJavaHome = [string]$env:JAVA_HOME
-    try {
-        $env:JAVA_HOME = $jdkRoot
-        $androidJVMWarning = 'OpenJDK 64-Bit Server VM warning: The UseAllWindowsProcessorGroups flag is not supported on this Windows version and will be ignored.'
-        $androidCLIOutput = @(Invoke-ProvisioningNative -Role 'Android CLI smoke' -FilePath $androidCLI `
-                -ArgumentList @('--no-metrics', '--version') -TimeoutSeconds 30)
-        $androidCLIVersion = ConvertFrom-StackAndroidCLIVersion -Output $androidCLIOutput
-        if ([string]::IsNullOrWhiteSpace($androidCLIVersion)) {
-            $androidCLIVersion = 'unverified'
-            Write-Warning 'Android CLI did not report a recognized version; provisioning will continue after its successful command and SDK-location checks.'
-        }
-        $reportedSDK = (@(Invoke-ProvisioningNative -Role 'Android SDK location verification' `
-                    -FilePath $androidCLI -ArgumentList @('--no-metrics', "--sdk=$androidSDK", 'info', 'sdk') `
-                    -TimeoutSeconds 30 | Where-Object { ([string]$_).Trim() -cne $androidJVMWarning }) `
-            -join [Environment]::NewLine).Trim()
-    } finally {
-        $env:JAVA_HOME = $previousJavaHome
-    }
-    if ([IO.Path]::GetFullPath($reportedSDK).TrimEnd('\') -ine [IO.Path]::GetFullPath($androidSDK).TrimEnd('\')) {
-        throw "Android SDK location verification failed: $reportedSDK"
-    }
     $platformToolsVersion = Assert-StackAndroidPlatformTools -Root $platformTools
     Add-ProvisioningMachinePath -Directory $androidCLIBin
     Add-ProvisioningMachinePath -Directory $platformTools
-    $androidCommands = [ordered]@{'android.exe' = $androidCLI; 'adb.exe' = $adb}
+    $androidCommands = [ordered]@{'sdkmanager.bat' = $androidSDKManager; 'adb.exe' = $adb}
     foreach ($entry in $androidCommands.GetEnumerator()) {
         $resolved = Get-Command $entry.Key -CommandType Application -ErrorAction Stop | Select-Object -First 1
         if ([IO.Path]::GetFullPath([string]$resolved.Source) -ine [IO.Path]::GetFullPath([string]$entry.Value)) {
             throw "Android command PATH read-back failed: $($entry.Key)"
         }
     }
-    Write-Output "Android ready: CLI $androidCLIVersion, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
+    Write-Output "Android ready: Command-line Tools $androidCLIRevision, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
 }
 
 function Get-StackAudioGridderFiles {

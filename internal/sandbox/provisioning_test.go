@@ -756,7 +756,6 @@ func TestCurrentProvisioningInputParsersInWindowsPowerShell51(t *testing.T) {
 		names: []string{
 			"ConvertFrom-StackVisualStudioLayoutDescriptor",
 			"ConvertFrom-StackJavaReleaseVersion",
-			"ConvertFrom-StackAndroidCLIVersion",
 		},
 	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
@@ -795,15 +794,6 @@ $javaVersion = ConvertFrom-StackJavaReleaseVersion -ReleaseText ('JAVA_VERSION="
 if ($javaVersion -cne '25.0.4.1') { throw "Current Java release version was not parsed: $javaVersion" }
 if (-not [string]::IsNullOrEmpty((ConvertFrom-StackJavaReleaseVersion -ReleaseText 'JAVA_VERSION="25.0.4.1.2"'))) {
     throw 'Java release version with five components was accepted.'
-}
-
-$androidVersion = ConvertFrom-StackAndroidCLIVersion -Output @(
-    'OpenJDK 64-Bit Server VM warning: fixture',
-    '1.0.15985488'
-)
-if ($androidVersion -cne '1.0.15985488') { throw "Current Android CLI version was not parsed: $androidVersion" }
-if (-not [string]::IsNullOrEmpty((ConvertFrom-StackAndroidCLIVersion -Output @('1.0.2.3')))) {
-    throw 'Unexpected Android CLI version shape was accepted.'
 }
 `, functionSetup)
 	scriptPath := filepath.Join(t.TempDir(), "current-provisioning-inputs.ps1")

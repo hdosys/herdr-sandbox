@@ -36,7 +36,6 @@ func TestCurrentSandboxProvisioningPreflight(t *testing.T) {
 			"Get-StackVisualStudioTargetFromChannel",
 			"ConvertFrom-StackVisualStudioLayoutDescriptor",
 			"ConvertFrom-StackJavaReleaseVersion",
-			"ConvertFrom-StackAndroidCLIVersion",
 			"Get-StackVisualStudioRequiredArtifacts",
 		},
 	})
@@ -55,29 +54,15 @@ if (-not [string]::IsNullOrWhiteSpace($javaRoot)) {
     }
 }
 
-$androidCLI = 'C:\HerdrSandbox\tools\android-sdk\cmdline-tools\latest\bin\android.exe'
+$androidSource = 'C:\HerdrSandbox\tools\android-sdk\cmdline-tools\latest\source.properties'
 $androidVersion = 'not installed'
-if (Test-Path -LiteralPath $androidCLI -PathType Leaf) {
-    if ([string]::IsNullOrWhiteSpace($javaRoot)) {
-        $androidVersion = 'deferred until Java installation'
+if (Test-Path -LiteralPath $androidSource -PathType Leaf) {
+    $androidProperties = [IO.File]::ReadAllText($androidSource)
+    if ($androidProperties -match '(?m)^Pkg\.Revision=(?<version>\d+\.\d+)\r?$') {
+        $androidVersion = [string]$Matches['version']
     } else {
-        $previousJavaHome = [string]$env:JAVA_HOME
-        $previousErrorActionPreference = $ErrorActionPreference
-        try {
-            $env:JAVA_HOME = $javaRoot
-            $ErrorActionPreference = 'Continue'
-            $androidOutput = @(& $androidCLI --no-metrics --version 2>&1 | ForEach-Object { [string]$_ })
-            $androidExitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $previousErrorActionPreference
-            $env:JAVA_HOME = $previousJavaHome
-        }
-        if ($androidExitCode -ne 0) { throw "Current-Sandbox Android CLI exited with code $androidExitCode." }
-        $androidVersion = ConvertFrom-StackAndroidCLIVersion -Output $androidOutput
-        if ([string]::IsNullOrWhiteSpace($androidVersion)) {
-            $androidVersion = 'unverified'
-            Write-Warning 'Current-Sandbox Android CLI version output was not recognized; preflight will continue.'
-        }
+        $androidVersion = 'unverified'
+        Write-Warning 'Current-Sandbox Android Command-line Tools version was not recognized; preflight will continue.'
     }
 }
 
