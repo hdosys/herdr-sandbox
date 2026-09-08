@@ -194,7 +194,7 @@ function Get-CommandToolRequirements {
             $ffmpeg = Get-LiteralCommandParameter $Command @('NodeVersion', 'FFmpegVersion', 'Version') 'FFmpegVersion' $Role
             $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'FFmpegVersion', 'Version') 'Version' $Role
             return @(
-                (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'hyperframes'),
+                (New-ToolRequirement 'OpenJS.NodeJS' $node '' 'hyperframes'),
                 (New-ToolRequirement 'Gyan.FFmpeg' $ffmpeg '' 'hyperframes'),
                 (New-ToolRequirement 'hyperframes' $version '' 'hyperframes')
             )
@@ -216,7 +216,7 @@ function Get-CommandToolRequirements {
                 $playwrightSource = 'node-project-lock'
             }
             return @(
-                (New-ToolRequirement 'OpenJS.NodeJS.LTS' $version '' 'node'),
+                (New-ToolRequirement 'OpenJS.NodeJS' $version '' 'node'),
                 (New-ToolRequirement 'playwright' $playwright '' $playwrightSource)
             )
         }
@@ -232,7 +232,7 @@ function Get-CommandToolRequirements {
             $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'NodeVersion' $Role
             $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'Version' $Role
             return @(
-                (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'playwright-cli'),
+                (New-ToolRequirement 'OpenJS.NodeJS' $node '' 'playwright-cli'),
                 (New-ToolRequirement '@playwright/cli' $version '' 'playwright-cli')
             )
         }
@@ -259,7 +259,7 @@ function Get-CommandToolRequirements {
             $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion') 'NodeVersion' $Role
             $control = Get-LiteralCommandParameter $Command @('NodeVersion', 'TVControlVersion') 'TVControlVersion' $Role
             return @(
-                (New-ToolRequirement 'OpenJS.NodeJS.LTS' $node '' 'tradingview'),
+                (New-ToolRequirement 'OpenJS.NodeJS' $node '' 'tradingview'),
                 (New-ToolRequirement '@ferroxlabs/tvcontrol' $control '' 'tradingview')
             )
         }

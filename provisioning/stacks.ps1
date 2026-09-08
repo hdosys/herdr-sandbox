@@ -2741,9 +2741,9 @@ function Install-NodeRuntime {
         [string]$Version = ''
     )
 
-    $Version = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $Version
-    Write-Output 'Installing Node.js LTS...'
-    Install-ProvisioningWinGetPackage -Role 'Node.js LTS' -Id 'OpenJS.NodeJS.LTS' -Version $Version `
+    $Version = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $Version
+    Write-Output 'Installing Node.js...'
+    Install-ProvisioningWinGetPackage -Role 'Node.js' -Id 'OpenJS.NodeJS' -Version $Version `
         -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
         -RequireAuthenticodeSignature
     $nodePattern = if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -3579,7 +3579,7 @@ function Install-HyperFramesStack {
         [string]$Version = ''
     )
 
-    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $NodeVersion
+    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
     $FFmpegVersion = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion
     $Version = Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version
 
@@ -4006,7 +4006,7 @@ function Install-TradingViewStack {
         [string]$TVControlVersion = ''
     )
 
-    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS.LTS' -Requested $NodeVersion
+    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
     $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
     $desktopPackageID = 'TradingView.TradingViewDesktop'
     $desktopPackage = Get-TradingViewDesktopPortablePackage

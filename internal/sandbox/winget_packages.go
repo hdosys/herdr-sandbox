@@ -61,7 +61,7 @@ var basePackageIDs = []string{
 
 var projectStackPackageIDs = []string{
 	"GoLang.Go",
-	"OpenJS.NodeJS.LTS",
+	"OpenJS.NodeJS",
 	packageFFmpeg,
 	packageNSIS,
 	packageNushell,

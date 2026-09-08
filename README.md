@@ -468,7 +468,7 @@ and is intended for exhaustive environments rather than the usual first run.
 | `go` | Go |
 | `hyperframes` | Node.js 22+, full FFmpeg/FFprobe, managed Chrome Headless Shell, and manually activated HyperFrames skills for OpenCode |
 | `java` | Current stable Microsoft OpenJDK family |
-| `node` | Node.js LTS, Playwright, and Chromium |
+| `node` | Latest stable Node.js, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
 | `nushell` | Latest stable Nushell command-line shell |
 | `playwright-cli` | Playwright CLI without a bundled browser |

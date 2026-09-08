@@ -332,7 +332,7 @@ function Read-ProvisioningPackagePlan {
         $known[$id] = $true
     }
     $projectStackPackages = @{}
-    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS.LTS', 'Gyan.FFmpeg', 'NSIS.NSIS', 'Nushell.Nushell',
+    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS', 'Gyan.FFmpeg', 'NSIS.NSIS', 'Nushell.Nushell',
         'Oven-sh.Bun', 'zig.zig', 'Rustlang.Rustup', 'nextest.cargo-nextest', 'Casey.Just',
         'TradingView.TradingViewDesktop', 'astral-sh.uv', 'Kitware.CMake', 'KhronosGroup.VulkanSDK',
         'Microsoft.EdgeWebView2Runtime', 'Cockos.REAPER')) {
@@ -1372,7 +1372,7 @@ function Test-ProvisioningWinGetListOutput {
         @($installedVersions | Where-Object {
                 Test-ProvisioningWinGetVersionEquivalent -Actual $_ -Expected $expectedVersion
             }).Count -eq 0) {
-        Write-Warning "Package $($Metadata.Id) is installed, but WinGet reports $($installedVersions -join ', ') instead of $expectedVersion. Provisioning will continue with the installed package."
+        return $false
     }
     return $true
 }
@@ -1446,7 +1446,7 @@ function Test-ProvisioningPortablePackageInstalled {
         }
         if ($VersionSource -eq 'File') {
             if ([string]$commands[0].VersionInfo.FileVersion -cne [string]$Metadata.Version) {
-                Write-Warning "$($Metadata.Id) is installed, but its file version does not match $($Metadata.Version). Provisioning will continue with the installed executable."
+                return $false
             }
         } else {
             $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) portable version inspection" `
@@ -1458,7 +1458,7 @@ function Test-ProvisioningPortablePackageInstalled {
                 return $false
             }
             if (($versionOutput -join [Environment]::NewLine) -notmatch $versionPattern) {
-                Write-Warning "$($Metadata.Id) command succeeded, but its version output does not match $($Metadata.Version). Provisioning will continue with the installed executable."
+                return $false
             }
         }
         Add-ProvisioningMachinePath -Directory $commands[0].Directory.FullName
@@ -1497,7 +1497,7 @@ function Test-ProvisioningRustupInstalled {
             return $false
         }
         if (@($versionOutput | Where-Object { $_ -match $versionPattern }).Count -ne 1) {
-            Write-Warning "Rustup is installed, but its version output does not match $($Metadata.Version). Provisioning will continue with the installed command."
+            return $false
         }
         return $true
     } catch {
@@ -2126,25 +2126,25 @@ function Install-ProvisioningOnlineWinGetPackage {
         [string]$Override = ''
     )
 
-    $metadata = [pscustomobject]@{ Id = $Id; Version = $Version }
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $null = Get-ProvisioningToolVersion -Tool $Id -Requested $Version
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $lines = @(Invoke-ProvisioningNative -Role "$Role metadata resolution" -FilePath 'winget.exe' -ArgumentList @(
+                'show', '--id', $Id, '--exact', '--source', 'winget',
+                '--accept-source-agreements', '--disable-interactivity'
+            ) | ForEach-Object { [string]$_ })
+        $Version = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
+            -Pattern '^Version:\s*(\S(?:.*\S)?)\s*$'
     }
+    $null = Get-ProvisioningToolVersion -Tool $Id -Requested $Version
+    $metadata = [pscustomobject]@{ Id = $Id; Version = $Version }
     if (Test-ProvisioningWinGetPackageInstalled -Metadata $metadata) {
-        if ([string]::IsNullOrWhiteSpace($Version)) {
-            Write-Host "$Role online package is already installed."
-        } else {
-            Write-Host "$Role online package already matches requested version: $Version"
-        }
+        Write-Host "$Role online package already matches resolved version: $Version"
         return
     }
     $arguments = @(
         'install', '--id', $Id, '--exact', '--source', 'winget', '--silent',
         '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity'
     )
-    if (-not [string]::IsNullOrWhiteSpace($Version)) {
-        $arguments += @('--version', $Version)
-    }
+    $arguments += @('--version', $Version)
     if (-not [string]::IsNullOrWhiteSpace($Override)) {
         $arguments += @('--override', $Override)
     }

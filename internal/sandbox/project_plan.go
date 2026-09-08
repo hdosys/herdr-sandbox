@@ -123,7 +123,7 @@ var (
 		"nextest.cargo-nextest":          "nextest.cargo-nextest",
 		"nsis.nsis":                      "NSIS.NSIS",
 		"nushell.nushell":                "Nushell.Nushell",
-		"openjs.nodejs.lts":              "OpenJS.NodeJS.LTS",
+		"openjs.nodejs":                  "OpenJS.NodeJS",
 		"oven-sh.bun":                    "Oven-sh.Bun",
 		"playwright":                     "playwright",
 		"python":                         "Python",

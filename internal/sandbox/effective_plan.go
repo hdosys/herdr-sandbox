@@ -241,25 +241,25 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackHandy:
 		return packageCMake + " + " + packageVulkanSDK + " + " + packageWebView2
 	case stackHyperFrames:
-		return "OpenJS.NodeJS.LTS + Gyan.FFmpeg full + hyperframes@latest + manual HyperFrames OpenCode activation"
+		return "OpenJS.NodeJS + Gyan.FFmpeg full + hyperframes@latest + manual HyperFrames OpenCode activation"
 	case stackJava:
 		return "current stable Microsoft.OpenJDK family"
 	case stackJust:
 		return "Casey.Just"
 	case stackNode:
-		return "OpenJS.NodeJS.LTS"
+		return "OpenJS.NodeJS"
 	case stackNSIS:
 		return packageNSIS
 	case stackNushell:
 		return packageNushell
 	case stackPlaywrightCLI:
-		return "OpenJS.NodeJS.LTS + @playwright/cli@latest"
+		return "OpenJS.NodeJS + @playwright/cli@latest"
 	case stackPython:
 		return "Python.Python.<family selected by stack>"
 	case stackRustMSVC:
 		return "Rustlang.Rustup"
 	case stackTradingView:
-		return "OpenJS.NodeJS.LTS + TradingView stable/latest signed MSIX + @ferroxlabs/tvcontrol@latest"
+		return "OpenJS.NodeJS + TradingView stable/latest signed MSIX + @ferroxlabs/tvcontrol@latest"
 	case stackUV:
 		return packageUV
 	case stackZig:

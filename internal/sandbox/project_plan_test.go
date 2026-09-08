@@ -183,7 +183,7 @@ func TestInspectProjectProvisioningPlanDefaultsHyperFramesToolsToLatestStable(t 
 	if strings.Join(projectStackStrings(inspection.Workspaces[0].Stacks), "|") != "hyperframes" {
 		t.Fatalf("HyperFrames stacks = %v", inspection.Workspaces[0].Stacks)
 	}
-	wantTools := []string{"Gyan.FFmpeg", "hyperframes", "OpenJS.NodeJS.LTS"}
+	wantTools := []string{"Gyan.FFmpeg", "hyperframes", "OpenJS.NodeJS"}
 	if len(inspection.ToolVersions) != len(wantTools) {
 		t.Fatalf("HyperFrames tool plan = %#v", inspection.ToolVersions)
 	}

@@ -894,7 +894,7 @@ func TestOnlineWinGetPackageInstallsKnownIDDirectlyInWindowsPowerShell51(t *test
 	basePath := defaultProvisioningPath(t, baseProvisioningName)
 	functionSetup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  basePath,
-		names: []string{"Get-ProvisioningToolVersion", "Confirm-ProvisioningWinGetReadback", "Install-ProvisioningOnlineWinGetPackage"},
+		names: []string{"Get-ProvisioningToolVersion", "Get-ProvisioningMetadataValue", "Confirm-ProvisioningWinGetReadback", "Install-ProvisioningOnlineWinGetPackage"},
 	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 trap { Write-Output ($_ | Out-String); exit 1 }
@@ -903,8 +903,10 @@ $script:installArguments = @()
 $script:installCalls = 0
 $script:installedVersion = ''
 $script:verifiedVersion = ''
+$script:latestVersion = '9.8.7'
 function Invoke-ProvisioningNative {
     param($Role, $FilePath, [object[]]$ArgumentList)
+    if ($ArgumentList[0] -ceq 'show') { return @("Version: $script:latestVersion") }
     $script:installArguments = @($ArgumentList)
     $script:installCalls += 1
     $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
@@ -920,13 +922,18 @@ function Test-ProvisioningWinGetPackageInstalled {
 }
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
 $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
-if ($versionIndex -ge 0 -or $script:installedVersion -cne '9.8.7' -or $script:verifiedVersion -cne '') {
+if ($versionIndex -lt 0 -or $script:installedVersion -cne '9.8.7' -or $script:verifiedVersion -cne '9.8.7') {
     throw 'Known online WinGet package ID did not install latest directly.'
 }
 $installCalls = $script:installCalls
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
 if ($script:installCalls -ne $installCalls) {
     throw 'Installed latest online WinGet package was sent through installation again.'
+}
+$script:latestVersion = '9.8.8'
+Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
+if ($script:installCalls -ne ($installCalls + 1) -or $script:installedVersion -cne '9.8.8') {
+    throw 'An older installed package prevented installation of the latest version.'
 }
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -Version '1.2.3'
 $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
@@ -1263,16 +1270,13 @@ $warnings = @()
 $sevenZipWarnings = @()
 $xamlWarnings = @()
 if (-not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $metadata) -or
-    -not (Test-ProvisioningWinGetListOutput -Lines $wrongVersion -Metadata $metadata -WarningVariable warnings) -or
+    (Test-ProvisioningWinGetListOutput -Lines $wrongVersion -Metadata $metadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $metadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $matching -Metadata $latestMetadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $duplicate -Metadata $latestMetadata) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $sevenZip -Metadata $sevenZipMetadata -WarningVariable sevenZipWarnings) -or
     -not (Test-ProvisioningWinGetListOutput -Lines $xaml -Metadata $xamlMetadata -WarningVariable xamlWarnings)) {
     throw 'WinGet list parser did not recognize an installed exact ID.'
-}
-if ($warnings.Count -ne 1 -or [string]$warnings[0] -notmatch 'Provisioning will continue') {
-    throw 'WinGet version drift did not emit one continuation warning.'
 }
 if ($sevenZipWarnings.Count -ne 0 -or $xamlWarnings.Count -ne 0) {
     throw 'Equivalent WinGet package versions emitted a warning.'
