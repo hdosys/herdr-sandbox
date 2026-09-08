@@ -925,14 +925,14 @@ $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
 if ($versionIndex -lt 0 -or $script:installedVersion -cne '9.8.7' -or $script:verifiedVersion -cne '9.8.7') {
     throw 'Known online WinGet package ID did not install latest directly.'
 }
-$installCalls = $script:installCalls
+$previousInstallCalls = $script:installCalls
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
-if ($script:installCalls -ne $installCalls) {
+if ($script:installCalls -ne $previousInstallCalls) {
     throw 'Installed latest online WinGet package was sent through installation again.'
 }
 $script:latestVersion = '9.8.8'
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package'
-if ($script:installCalls -ne ($installCalls + 1) -or $script:installedVersion -cne '9.8.8') {
+if ($script:installCalls -ne ($previousInstallCalls + 1) -or $script:installedVersion -cne '9.8.8') {
     throw 'An older installed package prevented installation of the latest version.'
 }
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -Version '1.2.3'
@@ -940,9 +940,9 @@ $versionIndex = [Array]::IndexOf($script:installArguments, '--version')
 if ($versionIndex -lt 0 -or $script:installArguments[$versionIndex + 1] -cne '1.2.3' -or $script:verifiedVersion -cne '1.2.3') {
     throw 'Exact online WinGet package version was not preserved.'
 }
-$installCalls = $script:installCalls
+$previousInstallCalls = $script:installCalls
 Install-ProvisioningOnlineWinGetPackage -Role 'Example' -Id 'Example.Package' -Version '1.2.3'
-if ($script:installCalls -ne $installCalls) {
+if ($script:installCalls -ne $previousInstallCalls) {
     throw 'Matching online WinGet package was reinstalled.'
 }
 `, functionSetup)
