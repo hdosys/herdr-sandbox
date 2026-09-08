@@ -128,8 +128,9 @@ These are deliberate non-guarantees:
   default; toggling it through `/mcps` exposes its tools, including launch, to that
   OpenCode session. TVControl and the guest agent run in the same interactive
   Session 1 context, so that upstream command directly spawns the visible Desktop
-  from the already verified `TradingView.exe` on `PATH`. The stack leaves the
-  upstream TVControl package unmodified and installs and verifies the official
+  from the already verified `TradingView.exe` on `PATH`. The stack applies only
+  the whole-file-hash-verified input-setter correction described in
+  [Architecture](ARCHITECTURE.md#tradingview-session-boundary) and verifies the official
   signed MSIX payload, but provisioning and configuration sync never launch
   Desktop, open the endpoint themselves, or perform an interactive authentication
   flow.

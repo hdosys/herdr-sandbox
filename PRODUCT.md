@@ -190,8 +190,11 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   for the current session only; every new session starts without its tools in
   model context. Provisioning and configuration sync never launch Desktop, sign
   in interactively, read charts/accounts, or edit a mapped project's package
-  files. The stack leaves the installed upstream TVControl package unmodified,
-  and `TradingView.exe` is already verified and exposed through guest `PATH`.
+  files. The stack applies the reviewed TVControl input-setter correction only
+  to a whole-file-hash-verified source, preserving every input not requested by
+  the caller. Already corrected bytes are accepted without rewriting; unknown
+  source stops provisioning for review. This does not pin the npm version.
+  `TradingView.exe` is verified and exposed through guest `PATH`.
   The managed Start-menu and taskbar shortcut remains the explicit manual launch
   path and passes only `--remote-debugging-port=9222`. TVControl has one direct
   upstream launch path. Because TVControl and the guest agent run in the same

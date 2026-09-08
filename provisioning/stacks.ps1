@@ -3997,6 +3997,87 @@ function Get-TradingViewDesktopPortablePackage {
     }
 }
 
+function Repair-TVControlInputSetter {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$PackageDirectory)
+
+    # Whole-file identities of official 2.5.2 and the reviewed correction.
+    # These validate patch applicability; they never select the npm version.
+    $originalHash = '8922A45C867B078616D50B3376CB0FBA62831D4BE0482D4DBF4141E15C0F7325'
+    $correctedHash = '5AB3A6DFF57C3C36BB06D403968475C00CC06B985476B261A6B7A609032B5E4D'
+    $sourcePath = Join-Path $PackageDirectory 'src\core\indicators.js'
+    $item = Get-Item -LiteralPath $sourcePath -Force -ErrorAction Stop
+    if ($item.PSIsContainer -or $item.Length -le 0 -or $item.Length -gt 1MB) {
+        throw 'TVControl input-setter source is not a bounded regular file.'
+    }
+    $entry = $item
+    while ($null -ne $entry) {
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "TVControl input-setter source path contains a reparse point: $($entry.FullName)"
+        }
+        $entry = if ($entry -is [IO.FileInfo]) { $entry.Directory } else { $entry.Parent }
+    }
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($sourcePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        if ($stream.Length -le 0 -or $stream.Length -gt 1MB) { throw 'TVControl input-setter source size changed.' }
+        $hash = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+        if ($hash -ceq $correctedHash) {
+            Write-Output 'TVControl input setter: verified corrected source; no patch needed.'
+            return
+        }
+        if ($hash -cne $originalHash) {
+            throw "TVControl input-setter source is unknown (SHA-256 $hash). Review the current official source before provisioning; no patch was applied."
+        }
+        $stream.Position = 0
+        $reader = New-Object IO.StreamReader($stream, (New-Object Text.UTF8Encoding($false, $true)), $false, 4096, $true)
+        try { $source = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        $before = @'
+      var availableIds = [];
+      for (var i = 0; i < currentInputs.length; i++) {
+        availableIds.push(currentInputs[i].id);
+        if (overrides.hasOwnProperty(currentInputs[i].id)) {
+          currentInputs[i].value = overrides[currentInputs[i].id];
+          updatedKeys[currentInputs[i].id] = overrides[currentInputs[i].id];
+        }
+      }
+      study.setInputValues(currentInputs);
+'@
+        $after = @'
+      var availableIds = [];
+      var changedInputs = [];
+      for (var i = 0; i < currentInputs.length; i++) {
+        availableIds.push(currentInputs[i].id);
+        if (overrides.hasOwnProperty(currentInputs[i].id)) {
+          changedInputs.push({ id: currentInputs[i].id, value: overrides[currentInputs[i].id] });
+          updatedKeys[currentInputs[i].id] = overrides[currentInputs[i].id];
+        }
+      }
+      // Getter-serialized values (notably Pine colors) are not setter-ready.
+      // Leave every input outside this request untouched.
+      if (changedInputs.length > 0) study.setInputValues(changedInputs);
+'@
+        $corrected = $source.Replace($before.Replace("`r`n", "`n"), $after.Replace("`r`n", "`n"))
+        $bytes = (New-Object Text.UTF8Encoding($false, $true)).GetBytes($corrected)
+        if ([BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '') -cne $correctedHash) {
+            throw 'TVControl input-setter patch did not produce the reviewed source; no patch was applied.'
+        }
+        $stream.Position = 0
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.SetLength($bytes.Length)
+        $stream.Flush($true)
+        $stream.Position = 0
+        if ([BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') -cne $correctedHash) {
+            throw 'TVControl input-setter patch readback failed.'
+        }
+        Write-Output 'TVControl input setter: applied and verified requested-input-only correction.'
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        $sha256.Dispose()
+    }
+}
+
 function Install-TradingViewStack {
     [CmdletBinding()]
     param(
@@ -4141,6 +4222,7 @@ function Install-TradingViewStack {
     if ([string]$package.version -cne $TVControlVersion) {
         Write-Warning "TVControl installed successfully, but its package version does not match $TVControlVersion. Provisioning will continue to the CLI smoke."
     }
+    Repair-TVControlInputSetter -PackageDirectory $packageDirectory
     $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
     foreach ($bin in @($tvBin, $tvControlBin)) {
         if ([string]::IsNullOrWhiteSpace($bin) -or $bin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or

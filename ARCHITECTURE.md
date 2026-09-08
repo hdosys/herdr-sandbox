@@ -521,8 +521,17 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 ### TradingView Session Boundary
 
-- `Install-TradingViewStack` leaves the installed upstream TVControl package
-  unmodified, verifies the regular `TradingView.exe`, and exposes it through
+- `Install-TradingViewStack` owns `Repair-TVControlInputSetter` in
+  `provisioning/stacks.ps1`, including the exact source delta and complete original
+  and corrected SHA-256 identities. After npm installation and package identity
+  validation, it patches only the reviewed source, verifies corrected bytes before
+  writing and after flush, accepts that exact corrected source idempotently, and
+  rejects unknown source without mutation. A future official correction is accepted
+  only when its complete source matches the reviewed corrected identity; other
+  upstream changes require review, never a heuristic patch or an older npm pin.
+  The setter receives only requested known IDs, not serialized untouched getter
+  values. Direct color edits are outside this correction's acceptance evidence.
+  The stack verifies the regular `TradingView.exe` and exposes it through
   machine `PATH`. TVControl and the guest agent run in the same interactive
   Session 1 context, so TVControl's upstream `launch` command and `tv_launch`
   tool directly spawn the visible Desktop with CDP.

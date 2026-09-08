@@ -12,6 +12,43 @@ import (
 	"testing"
 )
 
+func TestTVControlInputSetterRejectsUnknownSourceWithoutMutation(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 patch boundary")
+	}
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "src", "core", "indicators.js")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Plausible setter source is insufficient evidence of patch applicability.
+	source := []byte("export async function setInputs() {\n      var availableIds = [];\n      study.setInputValues(currentInputs);\n}\n")
+	if err := os.WriteFile(sourcePath, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: defaultProvisioningPath(t, stackProvisioningName), names: []string{"Repair-TVControlInputSetter"},
+	})
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+%s
+try {
+    Repair-TVControlInputSetter -PackageDirectory '%s'
+} catch {
+    if ($_.Exception.Message -like 'TVControl input-setter source is unknown*') { exit 0 }
+    throw
+}
+throw 'Unknown TVControl source was accepted.'
+`, setup, strings.ReplaceAll(root, "'", "''"))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("TVControl patch rejection: %v: %s", err, output)
+	}
+	after, err := os.ReadFile(sourcePath)
+	if err != nil || string(after) != string(source) {
+		t.Fatalf("unknown source changed: %v", err)
+	}
+}
+
 func TestTradingViewPackageMetadataUsesSignedAppxIdentityInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 metadata regression")
