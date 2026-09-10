@@ -349,10 +349,11 @@ func TestBootstrapDefersHerdrDeploymentAndLifecycleToHostProvisioning(t *testing
 		"Host provisioning did not publish the guest Herdr executable identity.",
 		"Provisioned Herdr client status",
 		"function Invoke-HerdrBoundary",
+		"function ConvertFrom-HerdrClientStatus",
 		"[HerdrSandbox.ProvisioningProcess]::Run($spec)",
 		"$result.OutputTruncated",
 		"$result.OutputBytes -gt 65536",
-		"'version|herdr_version|build_id|protocol|binary|session'",
+		"@('version', 'herdr_version', 'build_id', 'protocol', 'binary', 'session')",
 		"Provisioned guest Herdr client identity is invalid.",
 		"herdrRuntimeVersion = $herdrRuntimeVersion",
 		"herdrBinary = $herdrExecutable",
@@ -365,6 +366,43 @@ func TestBootstrapDefersHerdrDeploymentAndLifecycleToHostProvisioning(t *testing
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("bootstrap retains replaced Herdr deployment or lifecycle contract %q", forbidden)
 		}
+	}
+}
+
+func TestBootstrapHerdrClientStatusAcceptsAdditiveFieldsInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 regression")
+	}
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-HerdrClientStatus' }, $true)
+if ($null -eq $definition) { throw 'Missing Herdr client status parser.' }
+Invoke-Expression $definition.Extent.Text
+$executable = 'C:\HerdrManaged\current\herdr.exe'
+$old = '{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}'
+$current = '{"version":"2026.09.09.1206Z+b99002ac99b0.30cbccdf79fa","herdr_version":"0.9.0","build_id":"b99002ac99b0.30cbccdf79fa","protocol":22,"endpoint_protocol_generation":1,"endpoint_capabilities":["windows_remote_host"],"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}'
+$null = ConvertFrom-HerdrClientStatus -Text $old -ExpectedExecutable $executable
+$parsed = ConvertFrom-HerdrClientStatus -Text $current -ExpectedExecutable $executable
+if ([int]$parsed.protocol -ne 22) { throw 'Current Herdr status protocol was not preserved.' }
+$rejected = $false
+try { $null = ConvertFrom-HerdrClientStatus -Text '{"version":"x","herdr_version":"0.9.0","build_id":null,"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}' -ExpectedExecutable $executable } catch { $rejected = $true }
+if (-not $rejected) { throw 'Missing required Herdr status field was accepted.' }
+`, quote(bootstrapPath))
+	harnessPath := filepath.Join(directory, "herdr-client-status-regression.ps1")
+	if err := os.WriteFile(harnessPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("guest Herdr client status regression: %v: %s", err, output)
 	}
 }
 

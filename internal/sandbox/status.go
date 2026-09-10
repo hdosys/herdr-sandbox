@@ -296,17 +296,27 @@ func validateExactJSONObjectShape(data []byte, objectName string, expectedFields
 	return nil
 }
 
-func validateRequiredJSONObjectShape(data []byte, objectName string, requiredFields []string) error {
-	seen, err := decodeJSONObjectShape(data, objectName, requiredFields, true)
+func decodeRequiredJSONObject[T any](data []byte, objectName string, requiredFields []string) (T, error) {
+	var value T
+	trimmed := bytes.TrimSpace(data)
+	seen, err := decodeJSONObjectShape(trimmed, objectName, requiredFields, true)
 	if err != nil {
-		return err
+		return value, err
 	}
 	for _, field := range requiredFields {
 		if !seen[field] {
-			return fmt.Errorf("%s is missing field %q", objectName, field)
+			return value, fmt.Errorf("%s is missing field %q", objectName, field)
 		}
 	}
-	return nil
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	if err := decoder.Decode(&value); err != nil {
+		return value, fmt.Errorf("decode %s: %w", objectName, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return value, fmt.Errorf("%s contains trailing JSON data", objectName)
+	}
+	return value, nil
 }
 
 func decodeJSONObjectShape(data []byte, objectName string, allowedFields []string, allowUnknownFields bool) (map[string]bool, error) {

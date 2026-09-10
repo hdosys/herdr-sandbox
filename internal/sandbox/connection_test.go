@@ -103,16 +103,22 @@ func TestGuestHerdrPublicationAddsExactRuntimeDirectoryToMachinePath(t *testing.
 	}
 }
 
-func TestDecodeGuestHerdrStatusRequiresExactShape(t *testing.T) {
+func TestDecodeGuestHerdrStatusAcceptsAdditiveFields(t *testing.T) {
 	valid := []byte(`{"status":"running","running":true,"version":"0.8.0+build","protocol":42,"binary":"C:\\HerdrManaged\\current\\herdr.exe","capabilities":{"live_handoff":false,"detached_server_daemon":true},"compatible":true,"socket":"C:\\Users\\WDAGUtilityAccount\\.herdr\\herdr.sock","session":null,"restart_needed":false}`)
 	status, err := decodeGuestHerdrStatus(valid)
 	if err != nil || !status.Running || status.Capabilities == nil || !status.Capabilities.DetachedServerDaemon {
 		t.Fatalf("guest status = %#v, err = %v", status, err)
 	}
+	current := []byte(strings.Replace(string(valid), `"compatible":true`, `"compatible":true,"endpoint_compatible":true`, 1))
+	current = []byte(strings.Replace(string(current), `"detached_server_daemon":true`, `"detached_server_daemon":true,"health_check":true`, 1))
+	if _, err := decodeGuestHerdrStatus(current); err != nil {
+		t.Fatalf("guest status with additive fields: %v", err)
+	}
 	for _, invalid := range [][]byte{
 		append(append([]byte{}, valid...), []byte(` {}`)...),
 		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":"42"`, 1)),
-		[]byte(strings.Replace(string(valid), `"restart_needed":false`, `"extra":true,"restart_needed":false`, 1)),
+		[]byte(strings.Replace(string(current), `"restart_needed":false`, `"endpoint_compatible":false,"restart_needed":false`, 1)),
+		[]byte(strings.Replace(string(valid), `,"protocol":42`, "", 1)),
 	} {
 		if _, err := decodeGuestHerdrStatus(invalid); err == nil {
 			t.Fatalf("invalid guest status passed: %s", invalid)

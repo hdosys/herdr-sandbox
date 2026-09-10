@@ -284,6 +284,42 @@ function Invoke-HerdrBoundary {
     return [string]$result.Output
 }
 
+function ConvertFrom-HerdrClientStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedExecutable
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text) -or [Text.Encoding]::UTF8.GetByteCount($Text) -gt 65536) {
+        throw 'Provisioned guest Herdr client status is empty or oversized.'
+    }
+    try { $status = $Text | ConvertFrom-Json } catch {
+        throw 'Provisioned guest Herdr client status is invalid JSON.'
+    }
+    if ($null -eq $status -or $status -is [array]) {
+        throw 'Provisioned guest Herdr client status is not an object.'
+    }
+    $properties = @($status.PSObject.Properties.Name)
+    foreach ($name in @('version', 'herdr_version', 'build_id', 'protocol', 'binary', 'session')) {
+        if (@($properties | Where-Object { [string]$_ -ceq $name }).Count -ne 1) {
+            throw "Provisioned guest Herdr client status is missing required field: $name"
+        }
+    }
+    if ($status.version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$status.version) -or
+        $status.herdr_version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$status.herdr_version) -or
+        ($null -ne $status.build_id -and ($status.build_id -isnot [string] -or [string]$status.build_id -notmatch '^[0-9a-f]{12}\.[0-9a-f]{12}$')) -or
+        $status.protocol -isnot [int] -or [int]$status.protocol -lt 1 -or
+        $status.binary -isnot [string] -or
+        -not [string]::Equals([string]$status.binary, $ExpectedExecutable, [StringComparison]::OrdinalIgnoreCase) -or
+        ($null -ne $status.session -and $status.session -isnot [string])) {
+        throw 'Provisioned guest Herdr client identity is invalid.'
+    }
+    return $status
+}
+
 function Assert-BootstrapCachePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -960,21 +996,7 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     }
     $herdrClientStatusText = (Invoke-HerdrBoundary -Role 'Provisioned Herdr client status' -FilePath $herdrExecutable `
         -ArgumentList @('status', 'client', '--json')).Trim()
-    if ([Text.Encoding]::UTF8.GetByteCount($herdrClientStatusText) -gt 65536 -or
-        $herdrClientStatusText -notmatch '^\{"version":"(?:[^"\\]|\\.)+","herdr_version":"(?:[^"\\]|\\.)+","build_id":(?:null|"[0-9a-f]{12}\.[0-9a-f]{12}"),"protocol":[1-9][0-9]*,"binary":"(?:[^"\\]|\\.)+","session":(?:null|"(?:[^"\\]|\\.)+")\}$') {
-        throw 'Provisioned guest Herdr client status is not canonical.'
-    }
-    $herdrClientStatus = $herdrClientStatusText | ConvertFrom-Json
-    $herdrClientStatusProperties = @($herdrClientStatus.PSObject.Properties.Name)
-    if (($herdrClientStatusProperties -join '|') -cne 'version|herdr_version|build_id|protocol|binary|session' -or
-        $herdrClientStatus.version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$herdrClientStatus.version) -or
-        $herdrClientStatus.herdr_version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$herdrClientStatus.herdr_version) -or
-        ($null -ne $herdrClientStatus.build_id -and $herdrClientStatus.build_id -isnot [string]) -or
-        $herdrClientStatus.protocol -isnot [int] -or [int]$herdrClientStatus.protocol -lt 1 -or
-        $herdrClientStatus.binary -isnot [string] -or
-        -not [string]::Equals([string]$herdrClientStatus.binary, $herdrExecutable, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Provisioned guest Herdr client identity is invalid.'
-    }
+    $herdrClientStatus = ConvertFrom-HerdrClientStatus -Text $herdrClientStatusText -ExpectedExecutable $herdrExecutable
     $herdrRuntimeVersion = [string]$herdrClientStatus.version
     $herdrProtocol = [int]$herdrClientStatus.protocol
     $herdrVersion = (Invoke-HerdrBoundary -Role 'Provisioned Herdr version' -FilePath $herdrExecutable `

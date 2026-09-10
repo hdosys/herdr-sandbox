@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -463,20 +462,7 @@ type guestHerdrCapabilities struct {
 }
 
 func decodeGuestHerdrStatus(output []byte) (guestHerdrStatus, error) {
-	trimmed := bytes.TrimSpace(output)
-	if err := validateExactJSONObjectShape(trimmed, "guest Herdr server status", []string{
+	return decodeRequiredJSONObject[guestHerdrStatus](output, "guest Herdr server status", []string{
 		"status", "running", "version", "protocol", "binary", "capabilities", "compatible", "socket", "session", "restart_needed",
-	}); err != nil {
-		return guestHerdrStatus{}, err
-	}
-	var status guestHerdrStatus
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&status); err != nil {
-		return guestHerdrStatus{}, fmt.Errorf("decode guest Herdr server status: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return guestHerdrStatus{}, errors.New("decode guest Herdr server status: trailing JSON data")
-	}
-	return status, nil
+	})
 }

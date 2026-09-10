@@ -325,6 +325,10 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 	if err := result.validate(host, sshTargetName); err != nil {
 		t.Fatalf("validate remote provision result: %v", err)
 	}
+	additive := []byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"endpoint_protocol_generation":1,"endpoint_capabilities":["windows_remote_host"]`, 1))
+	if _, err := decodeRemoteProvisionResult(additive); err != nil {
+		t.Fatalf("remote provision result with additive fields: %v", err)
+	}
 	alternate := result
 	alternate.Binary = `D:\Managed Herdr\build-id\herdr.exe`
 	if err := alternate.validate(host, sshTargetName); err != nil {
@@ -349,7 +353,8 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 	for _, data := range [][]byte{
 		append(append([]byte{}, valid...), []byte(` {}`)...),
 		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":"42"`, 1)),
-		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"extra":true`, 1)),
+		[]byte(strings.Replace(string(additive), `"protocol":42`, `"protocol":42,"endpoint_protocol_generation":2`, 1)),
+		[]byte(strings.Replace(string(valid), `,"protocol":42`, "", 1)),
 	} {
 		if _, err := decodeRemoteProvisionResult(data); err == nil {
 			t.Fatalf("invalid remote provision JSON passed: %s", data)

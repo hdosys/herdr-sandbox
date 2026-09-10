@@ -1,10 +1,8 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -267,20 +265,11 @@ func expectedSSHLookupFailure(output []byte) bool {
 }
 
 func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
-	trimmed := bytes.TrimSpace(output)
-	if err := validateRequiredJSONObjectShape(trimmed, "host Herdr client status", []string{
+	status, err := decodeRequiredJSONObject[hostHerdrClientStatus](output, "host Herdr client status", []string{
 		"version", "herdr_version", "build_id", "protocol", "binary", "session",
-	}); err != nil {
+	})
+	if err != nil {
 		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
-	}
-	var status hostHerdrClientStatus
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	if err := decoder.Decode(&status); err != nil {
-		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return hostHerdrClientStatus{}, errors.New("`herdr status client --json` contains trailing data")
 	}
 	if err := validateTerminalText("host Herdr client version", status.Version, 250); err != nil || strings.HasPrefix(status.Version, "herdr ") {
 		return hostHerdrClientStatus{}, fmt.Errorf("invalid host Herdr client version %q", status.Version)
@@ -514,20 +503,11 @@ func (host HostHerdr) provisionRemote(ctx context.Context, connection Connection
 }
 
 func decodeRemoteProvisionResult(data []byte) (remoteProvisionResult, error) {
-	trimmed := bytes.TrimSpace(data)
-	if err := validateExactJSONObjectShape(trimmed, "remote provision result", []string{
+	result, err := decodeRequiredJSONObject[remoteProvisionResult](data, "remote provision result", []string{
 		"target", "platform", "binary", "binary_outcome", "server_outcome", "version", "protocol",
-	}); err != nil {
+	})
+	if err != nil {
 		return remoteProvisionResult{}, err
-	}
-	var result remoteProvisionResult
-	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return remoteProvisionResult{}, fmt.Errorf("decode remote provision result: %w: %s", err, boundedText(trimmed))
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return remoteProvisionResult{}, errors.New("decode remote provision result: trailing JSON data")
 	}
 	return result, nil
 }

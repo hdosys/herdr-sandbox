@@ -9,6 +9,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Herdr client, remote-provisioning, and server status checks now accept additive
+  fields from compatible Herdr-Win versions while preserving required identity,
+  protocol, binary, and capability validation.
 - Android provisioning now uses the verified Platform Tools archive directly and
   no longer executes the Android launcher that crashes inside Windows Sandbox.
 
