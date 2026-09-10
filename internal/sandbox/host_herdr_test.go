@@ -284,15 +284,19 @@ func TestExpectedSSHLookupFailureAcceptsOnlyTheLookupBoundary(t *testing.T) {
 	}
 }
 
-func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *testing.T) {
-	valid := []byte(`{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"endpoint_protocol_generation":1,"endpoint_capabilities":["remote_connect_only","windows_remote_host"],"binary":"C:\\Herdr\\herdr.exe","session":null}`)
+func TestParseHostHerdrClientStatusAcceptsAdditiveFieldsAndRejectsInvalidIdentity(t *testing.T) {
+	valid := []byte(`{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null}`)
 	status, err := parseHostHerdrClientStatus(valid)
-	if err != nil || status.Version != "local+346411fa21af.f32339bad77e" || status.HerdrVersion != "0.8.0" || status.Protocol != 42 || status.EndpointProtocolGeneration != 1 || len(status.EndpointCapabilities) != 2 {
+	if err != nil || status.Version != "local+346411fa21af.f32339bad77e" || status.HerdrVersion != "0.8.0" || status.Protocol != 42 {
 		t.Fatalf("valid status = %#v, %v", status, err)
+	}
+	current := []byte(strings.Replace(string(valid), `"binary":`, `"endpoint_protocol_generation":1,"endpoint_capabilities":["remote_connect_only","windows_remote_host"],"binary":`, 1))
+	if _, err := parseHostHerdrClientStatus(current); err != nil {
+		t.Fatalf("status with additive fields: %v", err)
 	}
 	for _, invalid := range [][]byte{
 		append(append([]byte{}, valid...), []byte(` {}`)...),
-		[]byte(strings.Replace(string(valid), `"session":null`, `"session":null,"extra":true`, 1)),
+		[]byte(strings.Replace(string(current), `"session":null`, `"session":null,"endpoint_protocol_generation":2`, 1)),
 		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"protocol":42`, 1)),
 		[]byte(strings.Replace(string(valid), `,"herdr_version":"0.8.0"`, "", 1)),
 		[]byte(strings.Replace(string(valid), `"herdr_version":"0.8.0"`, `"channel":"preview"`, 1)),

@@ -279,12 +279,12 @@ func statusFields(value any) ([]string, error) {
 }
 
 func validateJSONObjectShape(data []byte, objectName string, allowedFields []string) error {
-	_, err := decodeJSONObjectShape(data, objectName, allowedFields)
+	_, err := decodeJSONObjectShape(data, objectName, allowedFields, false)
 	return err
 }
 
 func validateExactJSONObjectShape(data []byte, objectName string, expectedFields []string) error {
-	seen, err := decodeJSONObjectShape(data, objectName, expectedFields)
+	seen, err := decodeJSONObjectShape(data, objectName, expectedFields, false)
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,20 @@ func validateExactJSONObjectShape(data []byte, objectName string, expectedFields
 	return nil
 }
 
-func decodeJSONObjectShape(data []byte, objectName string, allowedFields []string) (map[string]bool, error) {
+func validateRequiredJSONObjectShape(data []byte, objectName string, requiredFields []string) error {
+	seen, err := decodeJSONObjectShape(data, objectName, requiredFields, true)
+	if err != nil {
+		return err
+	}
+	for _, field := range requiredFields {
+		if !seen[field] {
+			return fmt.Errorf("%s is missing field %q", objectName, field)
+		}
+	}
+	return nil
+}
+
+func decodeJSONObjectShape(data []byte, objectName string, allowedFields []string, allowUnknownFields bool) (map[string]bool, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil {
@@ -316,7 +329,7 @@ func decodeJSONObjectShape(data []byte, objectName string, allowedFields []strin
 			return nil, err
 		}
 		key, ok := token.(string)
-		if !ok || !allowed[key] {
+		if !ok || (!allowUnknownFields && !allowed[key]) {
 			return nil, fmt.Errorf("unknown field %q", key)
 		}
 		if seen[key] {

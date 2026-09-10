@@ -61,14 +61,12 @@ type hostHerdrRuntimeFile struct {
 }
 
 type hostHerdrClientStatus struct {
-	Version                    string   `json:"version"`
-	HerdrVersion               string   `json:"herdr_version"`
-	BuildID                    *string  `json:"build_id"`
-	Protocol                   int      `json:"protocol"`
-	EndpointProtocolGeneration int      `json:"endpoint_protocol_generation"`
-	EndpointCapabilities       []string `json:"endpoint_capabilities"`
-	Binary                     string   `json:"binary"`
-	Session                    *string  `json:"session"`
+	Version      string  `json:"version"`
+	HerdrVersion string  `json:"herdr_version"`
+	BuildID      *string `json:"build_id"`
+	Protocol     int     `json:"protocol"`
+	Binary       string  `json:"binary"`
+	Session      *string `json:"session"`
 }
 
 type remoteProvisionResult struct {
@@ -270,14 +268,13 @@ func expectedSSHLookupFailure(output []byte) bool {
 
 func parseHostHerdrClientStatus(output []byte) (hostHerdrClientStatus, error) {
 	trimmed := bytes.TrimSpace(output)
-	if err := validateExactJSONObjectShape(trimmed, "host Herdr client status", []string{
-		"version", "herdr_version", "build_id", "protocol", "endpoint_protocol_generation", "endpoint_capabilities", "binary", "session",
+	if err := validateRequiredJSONObjectShape(trimmed, "host Herdr client status", []string{
+		"version", "herdr_version", "build_id", "protocol", "binary", "session",
 	}); err != nil {
 		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
 	}
 	var status hostHerdrClientStatus
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&status); err != nil {
 		return hostHerdrClientStatus{}, fmt.Errorf("decode `herdr status client --json`: %w", err)
 	}
