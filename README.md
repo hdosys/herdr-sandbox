@@ -586,18 +586,22 @@ for the existing Edge profile:
 sandbox init --stack playwright-cli
 ```
 
-After enabling the extension, copy its token only into the disposable guest and
-attach automation to that same profile:
+After enabling the extension, copy its displayed
+`PLAYWRIGHT_MCP_EXTENSION_TOKEN=...` line. During provisioning, the visible
+Sandbox bootstrap opens a window where you paste that line once. It makes the
+token available to the agents created in that disposable guest. Leaving the
+window empty keeps Playwright's manual connection approval. Then attach
+automation to the same Edge profile:
 
 ```powershell
-$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = '<token from the extension>'
 playwright-cli.cmd -s=edge-main attach --extension=msedge
 # Run Playwright CLI commands here.
 playwright-cli.cmd -s=edge-main detach
 ```
 
-A fresh Sandbox has a fresh Edge profile, so extension approval must currently be
-repeated. Do not create a second browser or profile for this integration.
+A fresh Sandbox has a fresh Edge profile, so enabling the extension and pasting
+its new token remain one-time steps in that guest. Do not create a second browser
+or profile for this integration.
 
 </details>
 

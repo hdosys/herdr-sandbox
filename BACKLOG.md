@@ -37,12 +37,6 @@ Open, planned, blocked, or deferred product features and fixes only. User-visibl
   skipping credentials, integrity checks, or functional verification. Require no
   `down`, GUI input, watcher, daemon, second provisioner, or fresh launch; keep the
   unavoidable pre-SSH failure window minimal and explicit.
-- Automate the official Playwright Extension token handoff. Keep the unmodified
-  Chrome Web Store extension, existing headed main-user Edge profile, and
-  `playwright-cli.cmd -s=edge-main attach --extension=msedge` contract; extract
-  the extension-generated profile-local token and publish it only to disposable
-  guest environment state without UI automation, logging, project persistence,
-  remote debugging, another profile, or a custom extension.
 - Design intelligent lifecycle, refresh, and explicit reset management for
   durable Windows development VMs as a future product mode. Start with one
   concrete VM owner; define reset so it removes only that VM's proven mutable

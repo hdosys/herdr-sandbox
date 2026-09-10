@@ -40,6 +40,12 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"-WorkspacesDirectory 'C:\\Workspaces' -PackagePlanPath $packagePlanPath",
 		"-UserProvisioningPath $userProvisioning",
 		"-ProcessOwnerPath $processOwner",
+		"function ConvertFrom-PlaywrightExtensionTokenInput",
+		"function Initialize-PlaywrightExtensionToken",
+		"[Microsoft.VisualBasic.Interaction]::InputBox",
+		"'PLAYWRIGHT_MCP_EXTENSION_TOKEN='",
+		"[Environment]::SetEnvironmentVariable($variableName, $token, 'Machine')",
+		`$workspaceArguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")`,
 		"function Get-PowerShell7Installation",
 		"Get-AppxPackage -Name 'Microsoft.PowerShell'",
 		"Join-Path ([string]$package.InstallLocation) 'pwsh.exe'",
@@ -193,6 +199,7 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 		"Add-AppxPackage -Path $wingetBundle",
 		"$vcRuntimeProcess = Start-Process",
 		"-Phase 'Development'",
+		"$playwrightExtensionToken = Initialize-PlaywrightExtensionToken",
 		"$powerShell7 = Get-PowerShell7Installation",
 		"$openSSHInstallProcess = Start-Process",
 		"'connectable.json'",
@@ -217,6 +224,43 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	readyIndex := strings.LastIndex(script, "schemaVersion = 3\n        ip = $ipAddress")
 	if connectableIndex < 0 || readyIndex <= connectableIndex {
 		t.Fatalf("bootstrap connection/ready schemas are not ordered: connectable=%d ready=%d", connectableIndex, readyIndex)
+	}
+}
+
+func TestBootstrapNormalizesPlaywrightExtensionTokenInputInWindowsPowerShell51(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 Playwright token input regression")
+	}
+	directory := t.TempDir()
+	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
+	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+trap { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }
+$tokens = $null
+$errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-PlaywrightExtensionTokenInput' }, $true)
+if ($null -eq $definition) { throw 'Missing Playwright token input parser.' }
+Invoke-Expression $definition.Extent.Text
+if ((ConvertFrom-PlaywrightExtensionTokenInput -Value ' token-value_123 ') -cne 'token-value_123') { throw 'Bare token normalization failed.' }
+if ((ConvertFrom-PlaywrightExtensionTokenInput -Value 'PLAYWRIGHT_MCP_EXTENSION_TOKEN=token-value_456') -cne 'token-value_456') { throw 'Copied assignment normalization failed.' }
+$empty = [string](ConvertFrom-PlaywrightExtensionTokenInput -Value '  ')
+if ($empty -cne '') { throw 'Empty token normalization failed.' }
+$invalidAccepted = $false
+try { $null = ConvertFrom-PlaywrightExtensionTokenInput -Value (('a' * 513) -join ''); $invalidAccepted = $true } catch { }
+if ($invalidAccepted) { throw 'Overlong token was accepted.' }
+$invalidAccepted = $false
+try { $null = ConvertFrom-PlaywrightExtensionTokenInput -Value ('first' + [char]10 + 'second'); $invalidAccepted = $true } catch { }
+if ($invalidAccepted) { throw 'Multiline token was accepted.' }
+[Console]::WriteLine('ok')
+`, quote(bootstrapPath))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Playwright token input regression: %v: %s", err, output)
 	}
 }
 

@@ -291,6 +291,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 # Native all-stack verification uses no extra global guest customization.
+$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = 'native-all-stacks-fixture'
 `,
 		filepath.Join(fixture.AppData, "GitHub CLI", "config.yml"): "git_protocol: https\nprompt: disabled\n",
 		filepath.Join(fixture.UserProfile, ".gitconfig"):           "[init]\n\tdefaultBranch = main\n",

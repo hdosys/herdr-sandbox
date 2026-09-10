@@ -80,6 +80,65 @@ function Write-ProgressStatus {
     })
 }
 
+function ConvertFrom-PlaywrightExtensionTokenInput {
+    param(
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    $token = $Value.Trim()
+    $prefix = 'PLAYWRIGHT_MCP_EXTENSION_TOKEN='
+    if ($token.StartsWith($prefix, [StringComparison]::Ordinal)) {
+        $token = $token.Substring($prefix.Length).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        return ''
+    }
+    if ($token.Length -gt 512 -or $token -match '[\x00-\x1F\x7F]') {
+        throw 'The Playwright Extension token must be one bounded line.'
+    }
+    return $token
+}
+
+function Initialize-PlaywrightExtensionToken {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$Enabled
+    )
+
+    if (-not $Enabled) {
+        return ''
+    }
+    $variableName = 'PLAYWRIGHT_MCP_EXTENSION_TOKEN'
+    $token = ConvertFrom-PlaywrightExtensionTokenInput -Value `
+        ([string][Environment]::GetEnvironmentVariable($variableName, 'Process'))
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        $token = ConvertFrom-PlaywrightExtensionTokenInput -Value `
+            ([string][Environment]::GetEnvironmentVariable($variableName, 'Machine'))
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $inputValue = [Microsoft.VisualBasic.Interaction]::InputBox(
+            'Enable Playwright MCP Bridge in Edge, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN line, and paste it here. Leave empty to approve browser connections manually.',
+            'Enable Playwright browser access',
+            '')
+        $token = ConvertFrom-PlaywrightExtensionTokenInput -Value $inputValue
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        Write-Warning 'Playwright Extension token was not set; browser connections will require manual approval.'
+        return ''
+    }
+
+    [Environment]::SetEnvironmentVariable($variableName, $token, 'Machine')
+    [Environment]::SetEnvironmentVariable($variableName, $token, 'Process')
+    if ([Environment]::GetEnvironmentVariable($variableName, 'Machine') -cne $token -or
+        [Environment]::GetEnvironmentVariable($variableName, 'Process') -cne $token) {
+        throw 'Playwright Extension token environment publication failed.'
+    }
+    Write-Host 'Playwright Extension token is available to Sandbox agent processes.'
+    return $token
+}
+
 function Read-ConfigurationHandoff {
     param(
         [Parameter(Mandatory = $true)]
@@ -851,6 +910,13 @@ try {
     & $baseProvisioning -Phase 'Development' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
+    $toolVersionPlan = [IO.File]::ReadAllText($toolVersionPlanPath) | ConvertFrom-Json
+    $playwrightCLISelected = @($toolVersionPlan.tools | Where-Object {
+            $_.tool -is [string] -and [string]$_.tool -ceq '@playwright/cli'
+        }).Count -eq 1
+    Write-ProgressStatus -Phase 'playwright-extension' `
+        -Message 'Preparing optional Playwright access to the existing Edge profile'
+    $playwrightExtensionToken = Initialize-PlaywrightExtensionToken -Enabled $playwrightCLISelected
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
 
@@ -1029,6 +1095,9 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         $workspaceDirectory = [string]$workspace.directory
         $workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName,
             '--env', "PATH=$workspacePath", '--env', "HERDR_SANDBOX_HERDR_EXE=$herdrExecutable")
+        if (-not [string]::IsNullOrWhiteSpace($playwrightExtensionToken)) {
+            $workspaceArguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")
+        }
         if ($workspaceDirectory -ceq $activeWorkspace) { $workspaceArguments += '--focus' }
         $workspaceOutput = Invoke-HerdrBoundary -Role "Herdr workspace creation for $workspaceName" `
             -FilePath $herdrExecutable -ArgumentList $workspaceArguments
