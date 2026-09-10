@@ -25,3 +25,10 @@ cross-project workflow in the global OpenCode configuration repository.
   artifact. Add a focused `gh api markdown` check for one controlled video element
   before committing README video changes. Expected benefit: catch non-playing
   embeds before push and avoid unnecessary conversion work.
+- **Status: proposed. Preflight WinGetCreate authentication before submission.**
+  Evidence: an otherwise ready WinGet update waited five minutes in an unseen
+  device-login prompt before timing out, while the existing authenticated GitHub
+  CLI account completed submission immediately after secure local credential
+  bridging. Add a bounded preflight that either confirms cached authorization or
+  selects the repository-approved noninteractive bridge before submission.
+  Expected benefit: remove the release workflow's largest avoidable serial wait.
