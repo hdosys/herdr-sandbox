@@ -5,13 +5,25 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
+## v0.0.24
+
+### Changed
+
+- Provisioning now refreshes omitted external tool selections to the latest stable
+  release on each run while preserving explicit project and configuration pins.
+
+### Fixed
+
+- TradingView provisioning now preserves pre-existing TVControl indicator inputs
+  that were not requested by the current project profile.
+- Herdr client, remote-provisioning, and server status checks now accept additive
+  fields from compatible Herdr-Win versions while preserving required identity,
+  protocol, binary, and capability validation.
+
 ## v0.0.23
 
 ### Fixed
 
-- Herdr client, remote-provisioning, and server status checks now accept additive
-  fields from compatible Herdr-Win versions while preserving required identity,
-  protocol, binary, and capability validation.
 - Android provisioning now uses the verified Platform Tools archive directly and
   no longer executes the Android launcher that crashes inside Windows Sandbox.
 
