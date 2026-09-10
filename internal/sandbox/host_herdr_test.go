@@ -43,12 +43,14 @@ func runHostHerdrFixtureProcess() {
 		protocol := 0
 		_, _ = fmt.Sscanf(os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_PROTOCOL"), "%d", &protocol)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"version":       os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
-			"herdr_version": os.Getenv(hostHerdrBaseVersionEnvironment),
-			"build_id":      os.Getenv(hostHerdrBuildIDEnvironment),
-			"protocol":      protocol,
-			"binary":        os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
-			"session":       nil,
+			"version":                      os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION"),
+			"herdr_version":                os.Getenv(hostHerdrBaseVersionEnvironment),
+			"build_id":                     os.Getenv(hostHerdrBuildIDEnvironment),
+			"protocol":                     protocol,
+			"endpoint_protocol_generation": 1,
+			"endpoint_capabilities":        []string{"remote_connect_only", "windows_remote_host"},
+			"binary":                       os.Getenv("HERDR_SANDBOX_TEST_HOST_HERDR_RUNTIME"),
+			"session":                      nil,
 		})
 		os.Exit(0)
 	case len(arguments) == 1 && arguments[0] == "--remote":
@@ -283,9 +285,9 @@ func TestExpectedSSHLookupFailureAcceptsOnlyTheLookupBoundary(t *testing.T) {
 }
 
 func TestParseHostHerdrClientStatusRejectsInvalidIdentityAndTrailingData(t *testing.T) {
-	valid := []byte(`{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"binary":"C:\\Herdr\\herdr.exe","session":null}`)
+	valid := []byte(`{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"endpoint_protocol_generation":1,"endpoint_capabilities":["remote_connect_only","windows_remote_host"],"binary":"C:\\Herdr\\herdr.exe","session":null}`)
 	status, err := parseHostHerdrClientStatus(valid)
-	if err != nil || status.Version != "local+346411fa21af.f32339bad77e" || status.HerdrVersion != "0.8.0" || status.Protocol != 42 {
+	if err != nil || status.Version != "local+346411fa21af.f32339bad77e" || status.HerdrVersion != "0.8.0" || status.Protocol != 42 || status.EndpointProtocolGeneration != 1 || len(status.EndpointCapabilities) != 2 {
 		t.Fatalf("valid status = %#v, %v", status, err)
 	}
 	for _, invalid := range [][]byte{
