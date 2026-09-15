@@ -1,25 +1,56 @@
 # Herdr Sandbox
 
-**Run coding agents in a disposable, native Windows development environment without RDP, broad home-directory mounts, or host toolchain drift.**
+**Disposable Windows workstations for coding agents.**
 
 [![Nightly checks](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/nightly.yml) [![Release](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml/badge.svg)](https://github.com/hdosys/herdr-sandbox/actions/workflows/release.yml) [![Go 1.26.7](https://img.shields.io/badge/Go-1.26.7-00ADD8?logo=go&logoColor=white)](go.mod) ![Windows Sandbox](https://img.shields.io/badge/platform-Windows%20Sandbox-0078D4?logo=windows11&logoColor=white) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-Herdr Sandbox is a Windows-native counterpart to a [dev container](https://containers.dev/). Run `sandbox up` from a project and continue working in the normal host terminal while coding agents and native Windows toolchains run inside Windows Sandbox. Selected source folders remain on the host; guest tools and processes disappear when the Sandbox closes.
+Run coding agents in a prepared, isolated, native Windows environment without
+loading your main machine with project SDKs, build tools, agent processes, and
+experimental runtime state. Your selected work stays available on the host. The
+Windows environment is disposable.
 
-[Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Troubleshooting](#troubleshooting) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
+Start a Sandbox from a project and keep working in your normal host terminal.
+Reuse that guest while it is productive, or recreate it when you want a clean
+workstation again.
+
+[Why](#why-disposable-workstations) · [Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Troubleshooting](#troubleshooting) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
 
 ## See it in action
 
 https://github.com/user-attachments/assets/b6c02367-683b-4a1f-94e6-b662149d89d9
 
-Detach and reconnect to the same OpenCode session through Herdr's managed Windows Sandbox connection, without switching to an RDP workflow.
+Work from the normal host terminal while Herdr connects to coding agents inside
+Windows Sandbox. Detach and reconnect to the same OpenCode session without
+switching to an RDP workflow.
+
+## Why disposable workstations?
+
+Coding agents can install dependencies, compile projects, run experiments, and
+accumulate temporary state much faster than a manually maintained developer
+machine can be cleaned. Herdr Sandbox separates the work worth keeping from the
+environment used to produce it.
+
+The host keeps source, identity, configuration, cache, and diagnostics. The guest
+owns compilation, agent execution, and disposable runtime state.
+
+| Keep on the host | Recreate in Windows Sandbox |
+| --- | --- |
+| Selected projects and optional persistent worktrees | Coding agents and their processes |
+| Approved agent configuration and shared models | Native Windows compilers, SDKs, and tools |
+| Verified package cache and diagnostics | Build processes, experiments, and guest-local temporary state |
+
+The goal is not to preserve a long-lived machine. It is to preserve the developer
+workflow: keep what matters, replace the execution environment, and continue from
+the normal terminal.
 
 ## What you get
 
+- **Less host toolchain drift:** keep project SDKs, compilers, and agent processes inside the guest instead of accumulating them on the host.
+- **A disposable workstation for agents:** recreate the Windows environment instead of manually untangling experimental tools and temporary state.
 - **Confidence in real Windows behavior:** compile, test, package, and automate GUI applications in Windows Sandbox instead of a compatibility layer.
 - **Your normal terminal:** Herdr attaches from the host, so routine work does not require RDP or a second desktop workflow.
-- **Repeatable project setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
-- **Fast iteration:** reuse and reprovision a compatible ready guest instead of rebuilding it for every change.
+- **Repeatable setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
+- **Fast iteration:** reuse and reprovision a compatible ready guest while it remains useful, then deliberately replace it when needed.
 - **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
 - **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
@@ -33,6 +64,9 @@ Detach and reconnect to the same OpenCode session through Herdr's managed Window
 - **Real release evidence:** fast tests and static checks cover the control plane; release checks compile and validate the real installer, while a real Windows Sandbox run exercises provisioning, SSH, and attach.
 
 ## How it works
+
+Herdr Sandbox applies the host and guest split as a product boundary, not just a
+packaging detail:
 
 ```mermaid
 flowchart LR
@@ -60,7 +94,7 @@ flowchart LR
     HostHerdr <-->|console-backed attach| Herdr
 ```
 
-The host keeps source, identity, configuration, cache, and diagnostics. The guest owns compilation, agent execution, and disposable runtime state. Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
+Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 > [!IMPORTANT]
 > Windows Sandbox separates this work from the normal Windows installation, but selected projects remain writable and guest administrators can access explicitly transferred credentials. Networking is enabled. Keep backups and normal supply-chain controls; see [Security boundaries](#security-boundaries) before using untrusted code.
