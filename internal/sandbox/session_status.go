@@ -142,7 +142,7 @@ func decodeGuestFreeSpace(data []byte) (GuestFreeSpace, error) {
 		return GuestFreeSpace{}, fmt.Errorf("guest free space schemaVersion = %d, want %d", status.SchemaVersion, guestFreeSpaceSchemaVersion)
 	}
 	if status.Volume != "C:" {
-		return GuestFreeSpace{}, fmt.Errorf("guest free space volume = %q, want C:", status.Volume)
+		return GuestFreeSpace{}, fmt.Errorf("guest free space volume = %q, want %q", status.Volume, "C:")
 	}
 	if status.TotalBytes == 0 {
 		return GuestFreeSpace{}, errors.New("guest free space totalBytes must be positive")
