@@ -8,6 +8,32 @@ import (
 	"testing"
 )
 
+func TestDecodeGuestFreeSpaceValidatesGuestBoundary(t *testing.T) {
+	freeSpace, err := decodeGuestFreeSpace([]byte(`{"schemaVersion":1,"volume":"C:","freeBytes":3221225472,"totalBytes":8589934592}`))
+	if err != nil {
+		t.Fatalf("decodeGuestFreeSpace: %v", err)
+	}
+	if freeSpace.Volume != "C:" || freeSpace.FreeBytes != 3<<30 || freeSpace.TotalBytes != 8<<30 {
+		t.Fatalf("free space = %#v", freeSpace)
+	}
+
+	invalid := map[string]string{
+		"unknown field": `{"schemaVersion":1,"volume":"C:","freeBytes":1,"totalBytes":2,"usedBytes":1}`,
+		"duplicate":     `{"schemaVersion":1,"volume":"C:","freeBytes":1,"freeBytes":1,"totalBytes":2}`,
+		"schema":        `{"schemaVersion":2,"volume":"C:","freeBytes":1,"totalBytes":2}`,
+		"volume":        `{"schemaVersion":1,"volume":"D:","freeBytes":1,"totalBytes":2}`,
+		"empty total":   `{"schemaVersion":1,"volume":"C:","freeBytes":0,"totalBytes":0}`,
+		"free overflow": `{"schemaVersion":1,"volume":"C:","freeBytes":3,"totalBytes":2}`,
+	}
+	for name, data := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeGuestFreeSpace([]byte(data)); err == nil {
+				t.Fatal("invalid guest free space unexpectedly decoded")
+			}
+		})
+	}
+}
+
 func TestEnrichSessionStatusKeepsGuestReadinessSeparateFromLatestOperation(t *testing.T) {
 	dataDirectory := t.TempDir()
 	runID := "20260729-120000-abcdef12"

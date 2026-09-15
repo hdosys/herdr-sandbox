@@ -5,6 +5,13 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
+## Unreleased
+
+### Added
+
+- `sandbox status` now shows the ready guest's age and current free space on its
+  `C:` logical volume without presenting it as host disk consumption.
+
 ## v0.0.24
 
 ### Changed

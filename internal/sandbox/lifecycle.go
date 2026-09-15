@@ -43,6 +43,7 @@ type SessionStatus struct {
 	RunID              string
 	PID                int
 	StartedAtUTC       string
+	GuestFreeSpace     *GuestFreeSpace
 	Phase              string
 	Message            string
 	GuestIP            string
@@ -58,6 +59,12 @@ type SessionStatus struct {
 	NextAction         string
 	CleanupRemovedRuns int
 	Processes          []string
+}
+
+type GuestFreeSpace struct {
+	Volume     string
+	FreeBytes  uint64
+	TotalBytes uint64
 }
 
 type DownResult struct {
@@ -328,6 +335,14 @@ func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus,
 		return SessionStatus{}, err
 	}
 	enrichSessionStatus(dataDirectory, active, &status)
+	if status.State == SessionReady {
+		freeSpace, freeSpaceErr := inspectGuestFreeSpace(ctx, dataDirectory, active)
+		if freeSpaceErr != nil {
+			status.Warnings = append(status.Warnings, "Guest free space unavailable: "+freeSpaceErr.Error())
+		} else {
+			status.GuestFreeSpace = &freeSpace
+		}
+	}
 	return status, nil
 }
 

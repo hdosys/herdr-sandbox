@@ -1,11 +1,27 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 )
+
+const (
+	guestFreeSpaceSchemaVersion = 1
+	guestFreeSpaceTimeout       = 5 * time.Second
+	maximumGuestFreeSpaceBytes  = 1024
+)
+
+type guestFreeSpaceStatus struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Volume        string `json:"volume"`
+	FreeBytes     uint64 `json:"freeBytes"`
+	TotalBytes    uint64 `json:"totalBytes"`
+}
 
 func enrichSessionStatus(dataDirectory string, active activeSession, status *SessionStatus) {
 	status.StartedAtUTC = active.StartedAtUTC
@@ -43,6 +59,102 @@ func enrichSessionStatus(dataDirectory string, active activeSession, status *Ses
 			}
 		}
 	}
+}
+
+func inspectGuestFreeSpace(ctx context.Context, dataDirectory string, active activeSession) (GuestFreeSpace, error) {
+	runDirectory := filepath.Join(dataDirectory, "runs", active.RunID)
+	ready, found, err := readOptionalStatus[readyStatus](filepath.Join(runDirectory, "status", readyFileName))
+	if err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("read ready identity: %w", err)
+	}
+	if !found {
+		return GuestFreeSpace{}, errors.New("ready identity is missing")
+	}
+	if err := ready.validate(); err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("validate ready identity: %w", err)
+	}
+
+	sshDirectory := filepath.Join(runDirectory, ".ssh")
+	knownHostsPath := filepath.Join(sshDirectory, "known_hosts")
+	hostKeyAlias := "windows-sandbox-" + active.RunID
+	expectedKnownHosts := hostKeyAlias + " " + ready.SSHHostKey + "\n"
+	knownHosts, found, err := readBoundedRegularFile(knownHostsPath, maximumUserSSHConfigurationBytes)
+	if err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("read run SSH host key: %w", err)
+	}
+	if !found || !bytes.Equal(knownHosts, []byte(expectedKnownHosts)) {
+		return GuestFreeSpace{}, errors.New("run SSH host key does not match the ready Sandbox")
+	}
+
+	configPath := filepath.Join(sshDirectory, "config")
+	privateKeyPath := filepath.Join(dataDirectory, "identity", "id_ed25519")
+	expectedConfig := renderSSHConfig(connectionStatus(ready), privateKeyPath, knownHostsPath, hostKeyAlias)
+	config, found, err := readBoundedRegularFile(configPath, maximumUserSSHConfigurationBytes)
+	if err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("read run SSH configuration: %w", err)
+	}
+	if !found || !bytes.Equal(config, []byte(expectedConfig)) {
+		return GuestFreeSpace{}, errors.New("run SSH configuration does not match the ready Sandbox")
+	}
+
+	queryContext, cancel := context.WithTimeout(ctx, guestFreeSpaceTimeout)
+	defer cancel()
+	output, err := runSSHPowerShell(queryContext, Connection{
+		SSHConfigPath: configPath,
+		SSHTarget:     sshTargetName,
+	}, nil, guestFreeSpacePowerShell(), "inspect guest free space", maximumGuestFreeSpaceBytes)
+	if err != nil {
+		return GuestFreeSpace{}, err
+	}
+	return decodeGuestFreeSpace(output)
+}
+
+func guestFreeSpacePowerShell() string {
+	return `$ErrorActionPreference = 'Stop'
+$drive = [System.IO.DriveInfo]::new('C:\')
+if (-not $drive.IsReady) { throw 'Guest C: logical volume is not ready.' }
+$totalBytes = [Int64]$drive.TotalSize
+$freeBytes = [Int64]$drive.TotalFreeSpace
+if ($totalBytes -le 0 -or $freeBytes -lt 0 -or $freeBytes -gt $totalBytes) { throw 'Guest C: logical volume returned invalid free space.' }
+[ordered]@{
+    schemaVersion = 1
+    volume = 'C:'
+    freeBytes = $freeBytes
+    totalBytes = $totalBytes
+} | ConvertTo-Json -Compress`
+}
+
+func decodeGuestFreeSpace(data []byte) (GuestFreeSpace, error) {
+	fields := []string{"schemaVersion", "volume", "freeBytes", "totalBytes"}
+	if err := validateExactJSONObjectShape(data, "guest free space", fields); err != nil {
+		return GuestFreeSpace{}, err
+	}
+	var status guestFreeSpaceStatus
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&status); err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("decode guest free space: %w", err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return GuestFreeSpace{}, fmt.Errorf("decode guest free space: %w", err)
+	}
+	if status.SchemaVersion != guestFreeSpaceSchemaVersion {
+		return GuestFreeSpace{}, fmt.Errorf("guest free space schemaVersion = %d, want %d", status.SchemaVersion, guestFreeSpaceSchemaVersion)
+	}
+	if status.Volume != "C:" {
+		return GuestFreeSpace{}, fmt.Errorf("guest free space volume = %q, want C:", status.Volume)
+	}
+	if status.TotalBytes == 0 {
+		return GuestFreeSpace{}, errors.New("guest free space totalBytes must be positive")
+	}
+	if status.FreeBytes > status.TotalBytes {
+		return GuestFreeSpace{}, errors.New("guest free space freeBytes exceeds totalBytes")
+	}
+	return GuestFreeSpace{
+		Volume:     status.Volume,
+		FreeBytes:  status.FreeBytes,
+		TotalBytes: status.TotalBytes,
+	}, nil
 }
 
 // interruptAbandonedActiveOperation runs immediately after lifecycle-lock

@@ -589,6 +589,10 @@ func printCleanResult(output io.Writer, result sandbox.CleanResult) {
 }
 
 func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
+	printSessionStatusAt(output, status, time.Now())
+}
+
+func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now time.Time) {
 	fmt.Fprintln(output, "Sandbox")
 	fmt.Fprintf(output, "  State: %s\n", status.State)
 	if status.RunID != "" {
@@ -599,6 +603,16 @@ func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
 	}
 	if status.StartedAtUTC != "" {
 		fmt.Fprintf(output, "  Started: %s\n", status.StartedAtUTC)
+		if status.State == sandbox.SessionReady {
+			if age, ok := sessionAge(status.StartedAtUTC, now); ok {
+				fmt.Fprintf(output, "  Age: %s\n", age)
+			}
+		}
+	}
+	if freeSpace := status.GuestFreeSpace; freeSpace != nil {
+		const bytesPerGiB = 1024 * 1024 * 1024
+		fmt.Fprintf(output, "  Guest free space: %.2f GiB of %.2f GiB (%s logical volume)\n",
+			float64(freeSpace.FreeBytes)/bytesPerGiB, float64(freeSpace.TotalBytes)/bytesPerGiB, freeSpace.Volume)
 	}
 	if status.Phase != "" {
 		fmt.Fprintf(output, "  Phase: %s\n", status.Phase)
@@ -682,6 +696,14 @@ func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
 	if status.NextAction != "" {
 		fmt.Fprintf(output, "\nNext: %s\n", status.NextAction)
 	}
+}
+
+func sessionAge(startedAtUTC string, now time.Time) (time.Duration, bool) {
+	startedAt, err := time.Parse(time.RFC3339Nano, startedAtUTC)
+	if err != nil || now.Before(startedAt) {
+		return 0, false
+	}
+	return now.Sub(startedAt).Truncate(time.Second), true
 }
 
 func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {

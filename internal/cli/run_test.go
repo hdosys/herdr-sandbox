@@ -832,6 +832,7 @@ func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *t
 		State:           sandbox.SessionReady,
 		RunID:           "20260729-120000-abcdef12",
 		StartedAtUTC:    "2026-07-29T12:00:00Z",
+		GuestFreeSpace:  &sandbox.GuestFreeSpace{Volume: "C:", FreeBytes: 3 << 30, TotalBytes: 8 << 30},
 		WinGetVersion:   "v1.29.0",
 		HerdrVersion:    "herdr 1.0.0",
 		HerdrProtocol:   18,
@@ -848,9 +849,10 @@ func TestPrintSessionStatusIncludesOperationDiagnosticsTimingsAndNextAction(t *t
 		NextAction: "Run `sandbox attach`.",
 	}
 	var output bytes.Buffer
-	printSessionStatus(&output, status)
+	printSessionStatusAt(&output, status, time.Date(2026, 7, 29, 14, 5, 6, 900_000_000, time.UTC))
 	for _, required := range []string{
-		"Started: 2026-07-29T12:00:00Z", "WinGet: v1.29.0", "Herdr protocol: 18",
+		"Started: 2026-07-29T12:00:00Z", "Age: 2h5m6s", "Guest free space: 3.00 GiB of 8.00 GiB (C: logical volume)",
+		"WinGet: v1.29.0", "Herdr protocol: 18",
 		"* project (active)", "Operation\n  Kind: reprovision\n  State: failed", "Phase: configuration-sync",
 		"Diagnostics\n  Path: C:\\state\\status", "- Go package total: 1.25s",
 		"Warnings\n  - diagnostic warning", "Next: Run `sandbox attach`.",

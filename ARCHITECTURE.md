@@ -68,7 +68,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - One app-local Windows lifecycle mutex serializes app-owned launch preparation, a pre- and post-preparation no-running check, launch/publication, and every `down` or cleanup mutation; concurrent operations therefore cannot collide in the shared host cache, lifecycle identity, or run deletion.
 - Immediately after launching its concrete `WindowsSandbox.exe`, Go atomically records one strict active-session contract containing the run/config identity, the stable-Tailscale opt-in bit, and the observed PID, executable, creation time, and exact command line.
 - The launching command retains and waits on that exact process until provisioning completes; early launcher exit cancels provisioning immediately so the command releases lifecycle ownership instead of hanging.
-- After bounded startup cleanup, `status`'s separately locked inspector combines that identity with existing progress/ready/failure files without further mutation.
+- After bounded startup cleanup, `status`'s separately locked inspector combines that identity with existing progress/ready/failure files without persistent mutation. For a ready guest it derives age from the verified launcher creation time and reuses the exact per-run SSH identity for one five-second read of the guest `C:` logical volume's current free and total bytes. It does not inspect or infer the undocumented host differencing-disk layout.
 - `down` retains the exact launcher and child-client process handles across revalidation; for a ready opted-in guest it stops Tailscale and captures current local state over the verified per-run SSH connection without restarting the service on success.
 - It then force-terminates the exact child client followed by its exact launcher and waits boundedly for both, bypassing the Windows close-confirmation dialog without targeting any unowned process.
 - Capture, host persistence, refusal, or termination failure restarts Tailscale when the guest remains reachable and preserves ownership for diagnosis.
@@ -183,7 +183,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - The guest-writable status mapping cannot forge it.
 - A terminal retained failure remains separate from ready guest health; immediately after any public lifecycle path freely acquires the lock, a matching running record is atomically marked interrupted before inspection, close, replacement, or deletion.
 - A new operation cannot overwrite a still-running record.
-- Status enriches lifecycle truth from the strict guest workspace manifest and at most eight of 128 bounded timing records without exposing host workspace paths, credentials, raw command output, or terminal-control sequences.
+- Status enriches lifecycle truth from the strict guest workspace manifest, a bounded live logical-volume query, and at most eight of 128 bounded timing records without exposing host workspace paths, credentials, raw command output, or terminal-control sequences.
 
 ### Installer Cleanup And Terminal Status
 
