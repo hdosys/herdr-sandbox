@@ -117,15 +117,7 @@ function Initialize-PlaywrightExtensionToken {
             ([string][Environment]::GetEnvironmentVariable($variableName, 'Machine'))
     }
     if ([string]::IsNullOrWhiteSpace($token)) {
-        Add-Type -AssemblyName Microsoft.VisualBasic
-        $inputValue = [Microsoft.VisualBasic.Interaction]::InputBox(
-            'Enable Playwright MCP Bridge in Edge, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN line, and paste it here. Leave empty to approve browser connections manually.',
-            'Enable Playwright browser access',
-            '')
-        $token = ConvertFrom-PlaywrightExtensionTokenInput -Value $inputValue
-    }
-    if ([string]::IsNullOrWhiteSpace($token)) {
-        Write-Warning 'Playwright Extension token was not set; browser connections will require manual approval.'
+        Write-Warning 'Playwright Extension token was not set; provisioning will continue without browser setup. Enable the extension in Edge when needed and approve browser connections manually.'
         return ''
     }
 

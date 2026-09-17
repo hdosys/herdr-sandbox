@@ -7,6 +7,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Fixed
+
+- Optional Playwright browser setup no longer opens a blocking token dialog during
+  provisioning. A missing token leaves manual browser approval available without
+  delaying Sandbox startup.
+
 ### Added
 
 - `sandbox status` now shows the ready guest's age and current free space on its
