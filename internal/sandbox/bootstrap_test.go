@@ -266,7 +266,7 @@ if ((Initialize-PlaywrightExtensionToken -Enabled $true) -cne 'token-value_saved
 if ([string](Initialize-PlaywrightExtensionToken -Enabled $false) -cne '') { throw 'Unselected Playwright used a token.' }
 [Console]::WriteLine('ok')
 `, quote(accessPath))
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("Playwright token input regression: %v: %s", err, output)
 	}

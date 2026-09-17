@@ -2937,12 +2937,15 @@ function Install-PlaywrightBrowserAccess {
             throw "Playwright browser access path is unsafe: $path"
         }
     }
-    $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    if ((Test-Path -LiteralPath $destination) -and -not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+        throw 'Playwright browser access destination is not a regular file.'
+    }
+    $sourceBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($source))
     if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or
-        (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne $sourceHash) {
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
         Copy-Item -LiteralPath $source -Destination $destination -Force
     }
-    if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne $sourceHash) {
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
         throw 'Playwright browser access script verification failed.'
     }
     $powerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
