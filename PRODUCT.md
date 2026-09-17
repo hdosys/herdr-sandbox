@@ -17,7 +17,7 @@ The current product contract is:
 ## Terminology
 
 - **Windows Sandbox**: Microsoft's disposable Windows guest environment.
-- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI and executable remain `herdr` and `herdr.exe`. Sandbox requires the maintained [`herdr-ext`](https://github.com/hdosys/herdr-ext) Windows distribution because upstream Herdr does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow needs. The host command must identify itself with the exact `herdr-ext` marker and prove unattended `--remote <target> --provision --yes --json` behavior. Herdr Ext remains an independent distribution that Sandbox never installs or updates on the host.
+- **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI and executable remain `herdr` and `herdr.exe`. Sandbox requires the maintained [`herdr-ext`](https://github.com/hdosys/herdr-ext) Windows distribution because upstream Herdr does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow needs. The host command must identify itself with the exact `herdr-ext` marker and prove unattended `--remote <target> --provision --yes --json` behavior. Herdr Extended remains an independent distribution that Sandbox never installs or updates on the host.
 - **Host**: the user's normal Windows machine.
 - **Guest**: the disposable Windows Sandbox instance.
 

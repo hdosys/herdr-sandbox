@@ -57,6 +57,6 @@ For each release, re-download the public installer, recompute its SHA-256, run
 version directory through WinGetCreate. Do not store or pass a GitHub token in
 this repository, command logs, or manifest files.
 
-The package contains only Herdr Sandbox. Herdr Ext remains a separate distribution
+The package contains only Herdr Sandbox. Herdr Extended remains a separate distribution
 and is not bundled or declared as a dependency; install its community package
-`hdosys.herdr-ext` separately.
+`hdosys.herdr-win` separately. The WinGet ID is unchanged by the distribution rename.

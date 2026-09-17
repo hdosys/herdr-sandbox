@@ -18,6 +18,14 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Verify external distribution identities before rename edits.**
+  Evidence: the Herdr rename changed the version marker and repository name but
+  retained WinGet ID `hdosys.herdr-win`; assuming all identities changed required
+  a documentation correction after the candidate build. Check the distribution's
+  canonical rename guidance once before editing package IDs or display names,
+  while keeping the demonstrated parser fix direct. Expected benefit: avoid
+  incorrect installation instructions and an extra review/commit loop.
+
 - **Status: proposed. Validate GitHub README video embeds with the target renderer.**
   Evidence: a repository-relative MP4 passed media checks but rendered only as a
   linked preview, while the native player required a bare GitHub user-attachment

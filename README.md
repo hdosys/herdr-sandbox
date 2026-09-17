@@ -105,7 +105,7 @@ Go makes lifecycle decisions; PowerShell performs Windows-specific provisioning.
 
 - Windows 10 or Windows 11 with hardware virtualization and Windows Sandbox support.
 - Windows Terminal, the Windows OpenSSH Client (`ssh.exe` on host `PATH`), and internet access for cache misses.
-- [Herdr Ext](https://github.com/hdosys/herdr-ext) on host `PATH`.
+- [Herdr Extended](https://github.com/hdosys/herdr-ext) on host `PATH`.
 - Go 1.26.7 or newer only when building this repository from source.
 
 If Windows Sandbox is not enabled, run the following from elevated Windows PowerShell and restart Windows:
@@ -116,26 +116,27 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 ### Install with WinGet (recommended)
 
-Herdr Sandbox requires Herdr Ext. Install both packages with:
+Herdr Sandbox requires Herdr Extended. Its WinGet ID remains `hdosys.herdr-win`.
+Install both packages with:
 
 ```powershell
-winget install hdosys.herdr-ext hdosys.herdr-sandbox
+winget install hdosys.herdr-win hdosys.herdr-sandbox
 ```
 
 Update both:
 
 ```powershell
-winget upgrade hdosys.herdr-ext hdosys.herdr-sandbox
+winget upgrade hdosys.herdr-win hdosys.herdr-sandbox
 ```
 
-Herdr Ext provides the Windows server and remote provisioning used by Herdr
+Herdr Extended provides the Windows server and remote provisioning used by Herdr
 Sandbox. It remains a separate package.
 
 ### Direct installer alternative
 
-Download and verify the latest [Herdr Ext](https://github.com/hdosys/herdr-ext/releases/latest)
+Download and verify the latest [Herdr Extended](https://github.com/hdosys/herdr-ext/releases/latest)
 and [Herdr Sandbox](https://github.com/hdosys/herdr-sandbox/releases/latest)
-setups, then install Herdr Ext first. GitHub displays the SHA-256 digest for each
+setups, then install Herdr Extended first. GitHub displays the SHA-256 digest for each
 release asset.
 
 ### Verify installation
@@ -150,7 +151,7 @@ sandbox --version
 The Herdr result must contain the exact `herdr-ext` marker.
 
 > [!WARNING]
-> The Herdr Ext and Herdr Sandbox installers are currently unsigned. For direct
+> The Herdr Extended and Herdr Sandbox installers are currently unsigned. For direct
 > downloads, use the linked releases and verify their GitHub SHA-256 digests.
 
 <details>
