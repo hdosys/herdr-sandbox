@@ -7,6 +7,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Fixed
+
+- Retained provisioning now streams its launcher script over SSH instead of
+  embedding it in the Windows command line. Larger provisioning scripts no longer
+  fail with the 30,000-character transport limit; the shared configuration-transfer
+  path uses the same verified file-based launch.
+
 ## v0.0.25
 
 ### Fixed

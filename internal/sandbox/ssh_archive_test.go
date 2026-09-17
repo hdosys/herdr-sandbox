@@ -1,9 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,33 +34,7 @@ func TestNativeSSHArchiveTransportHandlesLargeInput(t *testing.T) {
 				payload[index] = byte(index)
 			}
 			expectedDigest := fmt.Sprintf("%x", sha256.Sum256(payload))
-			launcher := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-[Console]::Error.WriteLine('[ssh-transport] receive-input')
-$expectedLength = [long]%d
-$inputStream = [Console]::OpenStandardInput()
-$outputStream = New-Object IO.MemoryStream
-try {
-    $remaining = $expectedLength
-    $buffer = New-Object byte[] 8192
-    while ($remaining -gt 0) {
-		$requested = [int][Math]::Min([long]$buffer.Length, $remaining)
-		$read = $inputStream.Read($buffer, 0, $requested)
-		if ($read -le 0) { throw "Input ended with $remaining bytes missing." }
-		$outputStream.Write($buffer, 0, $read)
-		$remaining -= $read
-    }
-    $data = $outputStream.ToArray()
-    $sha256 = [Security.Cryptography.SHA256]::Create()
-    try {
-        $digest = ([BitConverter]::ToString($sha256.ComputeHash($data))).Replace('-', '').ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
-    [Console]::Out.WriteLine(('{0} {1}' -f $data.Length, $digest))
-} finally {
-    $outputStream.Dispose()
-}
-exit 0`, size)
+			launcher := sshArchiveTransportProbe(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 			defer cancel()
 			output, err := runSSHArchivePowerShell(ctx, connection, payload, launcher, "verify SSH archive transport")
@@ -74,18 +50,20 @@ exit 0`, size)
 
 func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t *testing.T) {
 	inner := "Write-Output 'verified'"
-	command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, inner)
+	launcher := sshArchiveLauncherBytes(inner)
+	command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, launcher)
 	for _, required := range []string{
 		`C:\HerdrSandbox\staging`,
 		"transport-aaaaaaaaaaaaaaaa",
-		"$expectedTransportLength = [long]12345",
+		"$expectedArchiveLength = [long]12345",
+		fmt.Sprintf("$expectedLauncherLength = [long]%d", len(launcher)),
 		"New-Object byte[] 8192",
 		"Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue",
 		"Start-Process -FilePath 'powershell.exe'",
 		"'-WindowStyle','Hidden'",
 		"-RedirectStandardInput $archive",
 		"-NoNewWindow -Wait -PassThru",
-		encodePowerShell(withPlainPowerShellErrors(inner)),
+		"'-File'",
 		"Remove-GuestArchiveStaging",
 	} {
 		if !strings.Contains(command, required) {
@@ -94,6 +72,9 @@ func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t
 	}
 	if strings.Contains(command, "pwsh.exe") {
 		t.Fatal("SSH archive transport starts a second PowerShell 7 process")
+	}
+	if strings.Contains(command, inner) || strings.Contains(command, "-EncodedCommand") {
+		t.Fatal("SSH archive transport embeds the launcher in a process command line")
 	}
 	if len(command) > maximumSSHArchiveTransportCommandCharacters {
 		t.Fatalf("SSH archive transport command length = %d, maximum = %d", len(command), maximumSSHArchiveTransportCommandCharacters)
@@ -141,12 +122,80 @@ func TestSSHArchiveTransportCommandsFitWindowsCommandLine(t *testing.T) {
 			strings.Repeat("a", 64), 12345, 1,
 			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12",
 		),
+		"large launcher": strings.Repeat("# Larger than a Windows command line.\n", 4096),
 	}
 	for name, launcher := range launchers {
 		t.Run(name, func(t *testing.T) {
-			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, launcher)
+			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, sshArchiveLauncherBytes(launcher))
+			t.Logf("launcher: %d bytes; transport command: %d characters", len(launcher), len(command))
 			if len(command) > maximumSSHArchiveTransportCommandCharacters {
 				t.Fatalf("SSH archive transport command length = %d, maximum = %d", len(command), maximumSSHArchiveTransportCommandCharacters)
+			}
+		})
+	}
+}
+
+func sshArchiveTransportProbe(t *testing.T) string {
+	t.Helper()
+	script, err := os.ReadFile(filepath.Join("testdata", "ssh-archive-probe.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(script)
+}
+
+func TestSSHArchiveTransportStreamsLargeLauncherInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 streamed SSH launcher")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows process command-line and stdin boundary")
+	}
+	payload := make([]byte, 1024*1024)
+	for index := range payload {
+		payload[index] = byte(index)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(payload))
+	largeScript := strings.Repeat("# Launcher growth must not grow the SSH command.\n", 4096) + sshArchiveTransportProbe(t)
+	for _, test := range []struct {
+		name       string
+		script     string
+		corrupt    bool
+		truncate   bool
+		diagnostic string
+	}{
+		{name: "large UTF-8 launcher and binary archive", script: largeScript},
+		{name: "launcher integrity", script: largeScript, corrupt: true, diagnostic: "SSH launcher SHA-256 mismatch"},
+		{name: "truncated archive", script: largeScript, truncate: true, diagnostic: "SSH archive transport ended with 1 bytes missing"},
+		{name: "launcher failure", script: "throw 'clear remote failure'", diagnostic: "clear remote failure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guestRoot := filepath.Join(t.TempDir(), "guest staging with spaces")
+			launcher := sshArchiveLauncherBytes(test.script)
+			command := buildSSHArchiveTransportCommand(digest, len(payload), launcher)
+			command = strings.ReplaceAll(command, guestRootDirectory, strings.ReplaceAll(guestRoot, "'", "''"))
+			if test.corrupt {
+				launcher[len(launcher)-1] ^= 1
+			}
+			archive := payload
+			if test.truncate {
+				archive = archive[:len(archive)-1]
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			process := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(command))
+			process.Stdin = io.MultiReader(bytes.NewReader(launcher), bytes.NewReader(archive))
+			output, err := process.CombinedOutput()
+			if test.diagnostic == "" {
+				if err != nil {
+					t.Fatalf("streamed launcher failed: %v: %s", err, output)
+				}
+				if got, want := strings.TrimSpace(string(output)), fmt.Sprintf("%d %s", len(payload), digest); got != want {
+					t.Fatalf("streamed binary input = %q, want %q", got, want)
+				}
+			} else if err == nil || !strings.Contains(string(output), test.diagnostic) {
+				t.Fatalf("wanted terminal failure %q, got %v: %s", test.diagnostic, err, output)
+			}
+			if _, err := os.Stat(filepath.Join(guestRoot, "staging", "transport-"+digest[:16])); !os.IsNotExist(err) {
+				t.Fatalf("transport left staged script or archive: %v", err)
 			}
 		})
 	}

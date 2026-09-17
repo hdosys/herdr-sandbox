@@ -21,6 +21,9 @@ const (
 //go:embed assets/ssh-archive-staging.ps1
 var sshArchiveStagingPowerShell string
 
+//go:embed assets/ssh-archive-transport.ps1
+var sshArchiveTransportPowerShell string
+
 func guestArchiveStagingPowerShell(directoryName, role string) string {
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	return fmt.Sprintf(`$stagingRoot = '%s\staging'
@@ -44,46 +47,30 @@ func runSSHArchivePowerShellWithDiagnostics(ctx context.Context, connection Conn
 		return nil, fmt.Errorf("%s archive is empty", role)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
-	transportCommand := buildSSHArchiveTransportCommand(digest, len(archive), launcherScript)
+	launcher := sshArchiveLauncherBytes(launcherScript)
+	defer clear(launcher)
+	transportCommand := buildSSHArchiveTransportCommand(digest, len(archive), launcher)
 	if len(transportCommand) > maximumSSHArchiveTransportCommandCharacters {
 		return nil, fmt.Errorf("%s SSH transport command exceeds %d characters", role, maximumSSHArchiveTransportCommandCharacters)
 	}
-	return runSSHRemoteCommandWithDiagnostics(ctx, connection, bytes.NewReader(archive), []string{transportCommand}, role, maximumSSHResultBytes, includeRemoteDiagnostics)
+	input := io.MultiReader(bytes.NewReader(launcher), bytes.NewReader(archive))
+	return runSSHRemoteCommandWithDiagnostics(ctx, connection, input, []string{transportCommand}, role, maximumSSHResultBytes, includeRemoteDiagnostics)
 }
 
-func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcherScript string) string {
+func sshArchiveLauncherBytes(script string) []byte {
+	// Windows PowerShell 5.1 requires the BOM to read a UTF-8 script unambiguously.
+	return []byte("\xef\xbb\xbf" + withPlainPowerShellErrors(script))
+}
+
+func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcher []byte) string {
 	staging := guestArchiveStagingPowerShell("transport-"+expectedDigest[:16], "SSH archive transport")
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 %s
-$expectedTransportLength = [long]%d
-try {
-    $inputStream = [Console]::OpenStandardInput()
-    $outputStream = [IO.File]::Open($archive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    try {
-        $remaining = $expectedTransportLength
-        $buffer = New-Object byte[] 8192
-        while ($remaining -gt 0) {
-            $requested = [int][Math]::Min([long]$buffer.Length, $remaining)
-            $read = $inputStream.Read($buffer, 0, $requested)
-            if ($read -le 0) { throw "SSH archive transport ended with $remaining bytes missing." }
-            $outputStream.Write($buffer, 0, $read)
-            $remaining -= $read
-        }
-        $outputStream.Flush($true)
-    } finally {
-        $outputStream.Dispose()
-    }
-    Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
-    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-EncodedCommand','%s') -RedirectStandardInput $archive -NoNewWindow -Wait -PassThru
-    if ($process.ExitCode -ne 0) { exit $process.ExitCode }
-} catch {
-    [Console]::Error.WriteLine([string]$_.Exception.Message)
-    exit 1
-} finally {
-    Remove-GuestArchiveStaging
-}
-exit 0`, staging, expectedArchiveLength, encodePowerShell(withPlainPowerShellErrors(launcherScript)))
+$expectedLauncherLength = [long]%d
+$expectedArchiveLength = [long]%d
+$expectedLauncherDigest = '%x'
+%s`, staging, len(launcher), expectedArchiveLength, sha256.Sum256(launcher), sshArchiveTransportPowerShell)
 }
 
 func withPlainPowerShellErrors(script string) string {
