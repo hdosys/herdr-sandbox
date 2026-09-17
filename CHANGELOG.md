@@ -9,9 +9,10 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
-- Optional Playwright browser setup no longer opens a blocking token dialog during
-  provisioning. A missing token leaves manual browser approval available without
-  delaying Sandbox startup.
+- Optional Playwright browser setup now has an independent paste dialog, available
+  from the **Playwright browser access** taskbar and Start shortcut. Provisioning
+  never waits for the dialog, and closing it does not stop startup. Saved tokens
+  are picked up by agents started in new PowerShell terminal tabs.
 
 ### Added
 

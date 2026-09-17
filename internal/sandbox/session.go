@@ -34,6 +34,11 @@ var errSandboxExitedBeforeProvisioning = errors.New("provisioning did not comple
 //go:embed assets/bootstrap.ps1
 var bootstrapScript []byte
 
+//go:embed assets/playwright-access.ps1
+var playwrightAccessScript []byte
+
+const playwrightAccessName = "playwright-access.ps1"
+
 type Options struct {
 	DataDirectory string
 	MemoryMB      int
@@ -771,6 +776,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	processOwnerPath := filepath.Join(snapshotDirectory, provisioningProcessName)
 	if err := os.WriteFile(processOwnerPath, provisioningProcessSource, 0o600); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("write provisioning process snapshot: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDirectory, playwrightAccessName), playwrightAccessScript, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write Playwright browser access snapshot: %w", err)
 	}
 	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
 	if err != nil {

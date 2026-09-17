@@ -80,57 +80,6 @@ function Write-ProgressStatus {
     })
 }
 
-function ConvertFrom-PlaywrightExtensionTokenInput {
-    param(
-        [AllowEmptyString()]
-        [string]$Value
-    )
-
-    $token = $Value.Trim()
-    $prefix = 'PLAYWRIGHT_MCP_EXTENSION_TOKEN='
-    if ($token.StartsWith($prefix, [StringComparison]::Ordinal)) {
-        $token = $token.Substring($prefix.Length).Trim()
-    }
-    if ([string]::IsNullOrWhiteSpace($token)) {
-        return ''
-    }
-    if ($token.Length -gt 512 -or $token -match '[\x00-\x1F\x7F]') {
-        throw 'The Playwright Extension token must be one bounded line.'
-    }
-    return $token
-}
-
-function Initialize-PlaywrightExtensionToken {
-    param(
-        [Parameter(Mandatory = $true)]
-        [bool]$Enabled
-    )
-
-    if (-not $Enabled) {
-        return ''
-    }
-    $variableName = 'PLAYWRIGHT_MCP_EXTENSION_TOKEN'
-    $token = ConvertFrom-PlaywrightExtensionTokenInput -Value `
-        ([string][Environment]::GetEnvironmentVariable($variableName, 'Process'))
-    if ([string]::IsNullOrWhiteSpace($token)) {
-        $token = ConvertFrom-PlaywrightExtensionTokenInput -Value `
-            ([string][Environment]::GetEnvironmentVariable($variableName, 'Machine'))
-    }
-    if ([string]::IsNullOrWhiteSpace($token)) {
-        Write-Warning 'Playwright Extension token was not set; provisioning will continue without browser setup. Enable the extension in Edge when needed and approve browser connections manually.'
-        return ''
-    }
-
-    [Environment]::SetEnvironmentVariable($variableName, $token, 'Machine')
-    [Environment]::SetEnvironmentVariable($variableName, $token, 'Process')
-    if ([Environment]::GetEnvironmentVariable($variableName, 'Machine') -cne $token -or
-        [Environment]::GetEnvironmentVariable($variableName, 'Process') -cne $token) {
-        throw 'Playwright Extension token environment publication failed.'
-    }
-    Write-Host 'Playwright Extension token is available to Sandbox agent processes.'
-    return $token
-}
-
 function Read-ConfigurationHandoff {
     param(
         [Parameter(Mandatory = $true)]
@@ -908,6 +857,7 @@ try {
         }).Count -eq 1
     Write-ProgressStatus -Phase 'playwright-extension' `
         -Message 'Preparing optional Playwright access to the existing Edge profile'
+    . (Join-Path $provisioningDirectory 'playwright-access.ps1')
     $playwrightExtensionToken = Initialize-PlaywrightExtensionToken -Enabled $playwrightCLISelected
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable

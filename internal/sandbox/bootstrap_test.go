@@ -40,11 +40,7 @@ func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
 		"-WorkspacesDirectory 'C:\\Workspaces' -PackagePlanPath $packagePlanPath",
 		"-UserProvisioningPath $userProvisioning",
 		"-ProcessOwnerPath $processOwner",
-		"function ConvertFrom-PlaywrightExtensionTokenInput",
-		"function Initialize-PlaywrightExtensionToken",
-		"[Microsoft.VisualBasic.Interaction]::InputBox",
-		"'PLAYWRIGHT_MCP_EXTENSION_TOKEN='",
-		"[Environment]::SetEnvironmentVariable($variableName, $token, 'Machine')",
+		". (Join-Path $provisioningDirectory 'playwright-access.ps1')",
 		`$workspaceArguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")`,
 		"function Get-PowerShell7Installation",
 		"Get-AppxPackage -Name 'Microsoft.PowerShell'",
@@ -227,25 +223,28 @@ func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
 	}
 }
 
-func TestBootstrapNormalizesPlaywrightExtensionTokenInputInWindowsPowerShell51(t *testing.T) {
+func TestPlaywrightBrowserAccessTokenInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 Playwright token input regression")
 	}
 	directory := t.TempDir()
-	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
-	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
+	accessPath := filepath.Join(directory, playwrightAccessName)
+	if err := os.WriteFile(accessPath, playwrightAccessScript, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 trap { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }
-$tokens = $null
-$errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-PlaywrightExtensionTokenInput' }, $true)
-if ($null -eq $definition) { throw 'Missing Playwright token input parser.' }
-Invoke-Expression $definition.Extent.Text
+class Environment {
+    static [hashtable]$Values = @{}
+    static [string] GetEnvironmentVariable([string]$name, [string]$target) { return [Environment]::Values[$target] }
+    static [void] SetEnvironmentVariable([string]$name, [string]$value, [string]$target) { [Environment]::Values[$target] = $value }
+}
+. '%s'
+if ([string](Initialize-PlaywrightExtensionToken -Enabled $true) -cne '' -or [Environment]::Values.Count -ne 0) {
+    throw 'Missing token did not continue without UI or environment writes.'
+}
 if ((ConvertFrom-PlaywrightExtensionTokenInput -Value ' token-value_123 ') -cne 'token-value_123') { throw 'Bare token normalization failed.' }
 if ((ConvertFrom-PlaywrightExtensionTokenInput -Value 'PLAYWRIGHT_MCP_EXTENSION_TOKEN=token-value_456') -cne 'token-value_456') { throw 'Copied assignment normalization failed.' }
 $empty = [string](ConvertFrom-PlaywrightExtensionTokenInput -Value '  ')
@@ -256,8 +255,17 @@ if ($invalidAccepted) { throw 'Overlong token was accepted.' }
 $invalidAccepted = $false
 try { $null = ConvertFrom-PlaywrightExtensionTokenInput -Value ('first' + [char]10 + 'second'); $invalidAccepted = $true } catch { }
 if ($invalidAccepted) { throw 'Multiline token was accepted.' }
+Set-PlaywrightExtensionToken -Value 'PLAYWRIGHT_MCP_EXTENSION_TOKEN=token-value_saved'
+if ([Environment]::Values['Machine'] -cne 'token-value_saved' -or [Environment]::Values['Process'] -cne 'token-value_saved') {
+    throw 'Dialog token was not published to the guest environment.'
+}
+[Environment]::Values['Process'] = 'stale-token'
+if ((Initialize-PlaywrightExtensionToken -Enabled $true) -cne 'token-value_saved') {
+    throw 'Bootstrap did not prefer the latest dialog-saved machine token.'
+}
+if ([string](Initialize-PlaywrightExtensionToken -Enabled $false) -cne '') { throw 'Unselected Playwright used a token.' }
 [Console]::WriteLine('ok')
-`, quote(bootstrapPath))
+`, quote(accessPath))
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("Playwright token input regression: %v: %s", err, output)

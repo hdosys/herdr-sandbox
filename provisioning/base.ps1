@@ -2605,11 +2605,12 @@ public static class HerdrSandboxShellWindow {
 function Ensure-ProvisioningStartShortcut {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('AudioGridder Server', 'File Pilot', 'REAPER', 'TradingView')]
+        [ValidateSet('AudioGridder Server', 'File Pilot', 'REAPER', 'TradingView', 'Playwright browser access')]
         [string]$DisplayName,
         [Parameter(Mandatory = $true)]
         [string]$Executable,
-        [string]$ShortcutArguments = ''
+        [string]$ShortcutArguments = '',
+        [string]$IconLocation = ''
     )
 
     if (-not [IO.Path]::IsPathRooted($Executable) -or
@@ -2634,12 +2635,14 @@ function Ensure-ProvisioningStartShortcut {
     $matches = (Test-Path -LiteralPath $shortcutPath -PathType Leaf) -and
         [string]$shortcut.TargetPath -ieq $Executable -and
         [string]$shortcut.WorkingDirectory -ieq $workingDirectory -and
-        [string]$shortcut.Arguments -ceq $ShortcutArguments
+        [string]$shortcut.Arguments -ceq $ShortcutArguments -and
+        ([string]::IsNullOrWhiteSpace($IconLocation) -or [string]$shortcut.IconLocation -ieq $IconLocation)
     if (-not $matches) {
         $shortcut.TargetPath = $Executable
         $shortcut.WorkingDirectory = $workingDirectory
         $shortcut.Arguments = $ShortcutArguments
         $shortcut.Description = $DisplayName
+        if (-not [string]::IsNullOrWhiteSpace($IconLocation)) { $shortcut.IconLocation = $IconLocation }
         $shortcut.Save()
     }
     $shortcutInfo = Get-Item -LiteralPath $shortcutPath -Force
@@ -2647,7 +2650,8 @@ function Ensure-ProvisioningStartShortcut {
     if (($shortcutInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         [string]$verifiedShortcut.TargetPath -ine $Executable -or
         [string]$verifiedShortcut.WorkingDirectory -ine $workingDirectory -or
-        [string]$verifiedShortcut.Arguments -cne $ShortcutArguments) {
+        [string]$verifiedShortcut.Arguments -cne $ShortcutArguments -or
+        (-not [string]::IsNullOrWhiteSpace($IconLocation) -and [string]$verifiedShortcut.IconLocation -ine $IconLocation)) {
         throw "$DisplayName Start shortcut read-back did not match the installed executable and arguments."
     }
     Write-Host "$DisplayName Start shortcut ready: $shortcutPath"
@@ -2676,6 +2680,14 @@ function Ensure-ProvisioningTaskbarPins {
     }
     $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="MSEdge" />') | Out-Null
     $pinNames.Add('Microsoft Edge') | Out-Null
+    $playwrightShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Playwright browser access.lnk'
+    if (Test-Path -LiteralPath $playwrightShortcut -PathType Leaf) {
+        if (((Get-Item -LiteralPath $playwrightShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright browser access taskbar shortcut is unsafe: $playwrightShortcut"
+        }
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\Playwright browser access.lnk" />') | Out-Null
+        $pinNames.Add('Playwright browser access') | Out-Null
+    }
     $explorerStartApps = @(Get-StartApps -ErrorAction Stop |
         Where-Object { [string]$_.AppID -ceq 'Microsoft.Windows.Explorer' })
     if ($explorerStartApps.Count -ne 1) {
@@ -3449,6 +3461,7 @@ $pathInitialization = @'
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $env:Path = @($machinePath, $userPath) -join ';'
+$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = [Environment]::GetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', 'Machine')
 '@ + [Environment]::NewLine
 $expectedPowerShellProfile = $pathInitialization + $mobileSSHInitialization + $starshipInitialization
 $powerShellProfileDirectory = Split-Path -Parent $powerShellProfilePath

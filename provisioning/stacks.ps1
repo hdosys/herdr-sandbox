@@ -2922,6 +2922,35 @@ function Install-NodeStack {
     Install-PlaywrightChromium -Version $PlaywrightVersion
 }
 
+function Install-PlaywrightBrowserAccess {
+    $source = Join-Path $PSScriptRoot 'playwright-access.ps1'
+    $directory = 'C:\HerdrSandbox\tools\playwright-access'
+    $destination = Join-Path $directory 'playwright-access.ps1'
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
+        ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The Playwright browser access script is missing or unsafe.'
+    }
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    foreach ($path in @($directory, $destination)) {
+        if ((Test-Path -LiteralPath $path) -and
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Playwright browser access path is unsafe: $path"
+        }
+    }
+    $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+    if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne $sourceHash) {
+        Copy-Item -LiteralPath $source -Destination $destination -Force
+    }
+    if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne $sourceHash) {
+        throw 'Playwright browser access script verification failed.'
+    }
+    $powerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Ensure-ProvisioningStartShortcut -DisplayName 'Playwright browser access' -Executable $powerShell `
+        -ShortcutArguments ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "' + $destination + '" -ShowDialog') `
+        -IconLocation ((Join-Path $env:WINDIR 'System32\shell32.dll') + ',44')
+}
+
 function Install-PlaywrightCLIStack {
     [CmdletBinding()]
     param(
@@ -3082,8 +3111,9 @@ function Install-PlaywrightCLIStack {
         throw 'Playwright Extension registration verification failed.'
     }
 
+    Install-PlaywrightBrowserAccess
     Write-Output "Playwright CLI ready: $Version"
-    Write-Output 'Manual first use: open Edge, enable the registered Playwright Extension, copy its PLAYWRIGHT_MCP_EXTENSION_TOKEN value into the guest environment, then run playwright-cli.cmd -s=edge-main attach --extension=msedge.'
+    Write-Output 'Use the Playwright browser access taskbar icon to paste the extension token whenever ready. Browser setup is optional and does not pause provisioning.'
 }
 
 function Test-StackHyperFramesVoxCPM2ArchiveEntry {
