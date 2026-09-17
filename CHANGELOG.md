@@ -7,8 +7,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+## v0.0.25
+
 ### Fixed
 
+- Host compatibility checks now recognize the current Herdr Extended (`herdr-ext`)
+  distribution, allowing provisioning to proceed with compatible installed versions.
 - Optional Playwright browser setup now has an independent paste dialog, available
   from the **Playwright browser access** taskbar and Start shortcut. Provisioning
   never waits for the dialog, and closing it does not stop startup. Saved tokens
