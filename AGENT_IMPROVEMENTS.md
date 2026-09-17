@@ -33,10 +33,14 @@ cross-project workflow in the global OpenCode configuration repository.
   artifact. Add a focused `gh api markdown` check for one controlled video element
   before committing README video changes. Expected benefit: catch non-playing
   embeds before push and avoid unnecessary conversion work.
-- **Status: proposed. Preflight WinGetCreate authentication before submission.**
+- **Status: proposed. Preflight WinGetCreate authentication during the release build.**
   Evidence: an otherwise ready WinGet update waited five minutes in an unseen
   device-login prompt before timing out, while the existing authenticated GitHub
   CLI account completed submission immediately after secure local credential
   bridging. Add a bounded preflight that either confirms cached authorization or
-  selects the repository-approved noninteractive bridge before submission.
-  Expected benefit: remove the release workflow's largest avoidable serial wait.
+  selects the supported `WINGET_CREATE_GITHUB_TOKEN` child-process environment
+  handoff from existing GitHub CLI authorization, never a token command argument.
+  In the v0.0.25 release, generation then completed in 8.9 seconds without login
+  interaction, but tool discovery ran after a 183-second workflow watch. Prepare
+  the tool and authorization while GitHub packages the release. Expected benefit:
+  remove serial setup and prevent another hidden device-login wait.

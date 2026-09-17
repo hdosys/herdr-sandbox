@@ -9,18 +9,18 @@ dependency.
 
 The mirrored community package version may intentionally lag the newest GitHub
 release. These facts describe the currently mirrored WinGet package, version
-`0.0.24`, not the current Herdr Sandbox product release.
+`0.0.25`, not the current Herdr Sandbox product release.
 
-- Mirrored package version: `0.0.24`
-- Source tag: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.24>
+- Mirrored package version: `0.0.25`
+- Source tag: <https://github.com/hdosys/herdr-sandbox/releases/tag/v0.0.25>
 - Community package ID: `hdosys.herdr-sandbox`
 - Installer asset:
-  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.24/herdr-sandbox_v0.0.24_windows_amd64_setup.exe>
+  <https://github.com/hdosys/herdr-sandbox/releases/download/v0.0.25/herdr-sandbox_v0.0.25_windows_amd64_setup.exe>
 - Installer SHA-256:
-  `1ebdc363e11f719c5266c2bdecd3361bfc5eaa65f3694918273958fe568144bd`
+  `2f34526a557d7251ce228415a9f53f30e2adb1b38f410759d9cbcbd38fd659d5`
 - Manifest schema: `1.12.0`
 
-The currently mirrored v0.0.24 manifest passed the repository release gate,
+The currently mirrored v0.0.25 manifest passed the repository release gate,
 public GitHub asset digest verification, WinGetCreate generation, and `winget
 validate`. Community validation, installation, and publication remain downstream.
 The installer is currently not Authenticode-signed.
@@ -30,7 +30,7 @@ The installer is currently not Authenticode-signed.
 From the repository root:
 
 ```powershell
-$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.24'
+$manifest = '.\packaging\winget\manifests\h\hdosys\herdr-sandbox\0.0.25'
 winget validate --manifest $manifest --disable-interactivity
 winget install --manifest $manifest --silent --accept-package-agreements `
   --accept-source-agreements --disable-interactivity
