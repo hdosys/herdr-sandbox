@@ -112,20 +112,20 @@ func TestResolveHostHerdrUsesReportedPhysicalRuntime(t *testing.T) {
 			t.Fatalf("host Herdr %s paths identify different files: expected %q, got %q", expected.role, expected.want, expected.got)
 		}
 	}
-	if host.version != "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.runtimeVersion != "0.8.0-preview.346411fa21af.f32339bad77e" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
+	if host.version != "herdr-ext local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.runtimeVersion != "0.8.0-preview.346411fa21af.f32339bad77e" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
 		t.Fatalf("host identity = %#v", host)
 	}
 }
 
-func TestResolveHostHerdrRejectsRemoteCapableNonHerdrWinBuild(t *testing.T) {
+func TestResolveHostHerdrRejectsRemoteCapableNonHerdrExtBuild(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
 	prepareHostHerdrFixture(t)
 	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr local (Herdr 0.8.0)")
 	_, err := ResolveHostHerdr(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "herdr-win") || !strings.Contains(err.Error(), hostHerdrCompatibilityAction) {
-		t.Fatalf("non-herdr-win identity error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "herdr-ext") || !strings.Contains(err.Error(), hostHerdrCompatibilityAction) {
+		t.Fatalf("non-herdr-ext identity error = %v", err)
 	}
 }
 
@@ -134,9 +134,14 @@ func TestResolveHostHerdrAcceptsMarkerOutsideVersionPrefix(t *testing.T) {
 		t.Skip("Windows executable fixture")
 	}
 	prepareHostHerdrFixture(t)
-	t.Setenv(hostHerdrVersionOutputEnvironment, "local Windows build from herdr-win")
-	if _, err := ResolveHostHerdr(context.Background()); err != nil {
-		t.Fatalf("herdr-win marker outside prefix: %v", err)
+	for _, version := range []string{
+		"local Windows build from herdr-ext",
+		"herdr-ext 2026.09.16.1717Z (local, Herdr 0.9.0, build b99002ac99b0.abaf979c487b)",
+	} {
+		t.Setenv(hostHerdrVersionOutputEnvironment, version)
+		if _, err := ResolveHostHerdr(context.Background()); err != nil {
+			t.Fatalf("herdr-ext version %q: %v", version, err)
+		}
 	}
 }
 
@@ -204,7 +209,7 @@ func TestHostHerdrVerifyUnchangedRejectsHostUpdateRace(t *testing.T) {
 	if err := host.verifyUnchanged(context.Background()); err != nil {
 		t.Fatalf("unchanged host Herdr: %v", err)
 	}
-	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-win local (Herdr 0.8.1, build 346411fa21af.f32339bad77e)")
+	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-ext local (Herdr 0.8.1, build 346411fa21af.f32339bad77e)")
 	if err := host.verifyUnchanged(context.Background()); err == nil || !strings.Contains(err.Error(), "changed during provisioning") {
 		t.Fatalf("host update race error = %v", err)
 	}
@@ -313,7 +318,7 @@ func TestParseHostHerdrClientStatusAcceptsAdditiveFieldsAndRejectsInvalidIdentit
 
 func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testing.T) {
 	host := HostHerdr{
-		version:        "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)",
+		version:        "herdr-ext local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)",
 		runtimeVersion: "local+346411fa21af.f32339bad77e",
 		protocol:       42,
 	}
@@ -491,7 +496,7 @@ func prepareHostHerdrFixture(t *testing.T) (string, string) {
 		writeHostHerdrFixtureFile(t, filepath.Join(filepath.Dir(runtimePath), filepath.FromSlash(relative)), relative)
 	}
 	t.Setenv(hostHerdrFixtureEnvironment, "1")
-	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-win local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)")
+	t.Setenv(hostHerdrVersionOutputEnvironment, "herdr-ext local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)")
 	t.Setenv(hostHerdrBaseVersionEnvironment, "0.8.0")
 	t.Setenv(hostHerdrBuildIDEnvironment, "346411fa21af.f32339bad77e")
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_VERSION", "0.8.0-preview.346411fa21af.f32339bad77e")

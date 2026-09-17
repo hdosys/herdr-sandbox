@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	hostHerdrCompatibilityAction    = "ensure the `herdr-win` Windows `herdr.exe` with working unattended remote provisioning is on PATH, then retry"
+	hostHerdrCompatibilityAction    = "ensure the `herdr-ext` Windows `herdr.exe` with working unattended remote provisioning is on PATH, then retry"
 	hostHerdrInspectionTimeout      = 30 * time.Second
 	hostHerdrProvisionTimeout       = 5 * time.Minute
 	maximumRemoteProvisionOutput    = 64 * 1024
 	maximumHostHerdrRuntimeFileSize = 256 * 1024 * 1024
 	maximumHostHerdrRuntimeSize     = 512 * 1024 * 1024
 	hostHerdrChangedAction          = "retry `sandbox up` with the stable host Herdr command and runtime"
-	hostHerdrVersionMarker          = "herdr-win"
+	hostHerdrVersionMarker          = "herdr-ext"
 	remoteProvisionBinaryInstalled  = "installed"
 	remoteProvisionBinaryMatching   = "already_matching"
 	remoteProvisionServerStarted    = "started"

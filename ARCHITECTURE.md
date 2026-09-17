@@ -118,13 +118,13 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 ### Herdr Runtime And SSH
 
-- `herdr-win` is the required maintained Windows distribution because official upstream does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow depends on.
-- It supplies both support for the Herdr server on Windows and the exact unattended `--remote <target> --provision --yes --json` contract; the CLI and executable remain `herdr` and `herdr.exe`, while bounded `herdr --version` output must contain the exact case-sensitive `herdr-win` marker.
+- `herdr-ext` is the required maintained Windows distribution because official upstream does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow depends on.
+- It supplies both support for the Herdr server on Windows and the exact unattended `--remote <target> --provision --yes --json` contract; the CLI and executable remain `herdr` and `herdr.exe`, while bounded `herdr --version` output must contain the exact case-sensitive `herdr-ext` marker.
 - Its installer, release channel, and managed-install layout remain outside Sandbox ownership.
-- This repository publishes only Sandbox-owned files and never bundles or declares a package dependency on Herdr-Win.
+- This repository publishes only Sandbox-owned files and never bundles or declares a package dependency on Herdr Ext.
 - Before CLI-owned cleanup or lifecycle mutation, `up` and `attach` resolve the standard host `herdr.exe` command, run bounded hidden `--version`, `--remote`, and `status client --json` probes, and resolve the active physical runtime reported by that public status contract.
-- The version probe rejects every identity without the exact case-sensitive `herdr-win` marker before capability inspection.
-- Client status must contain `version|herdr_version|build_id|protocol|binary|session` exactly once, including a build ID consistent with the runtime identity. Additive Herdr-owned status fields are ignored so compatible older and newer Herdr-Win builds remain usable. The independently formatted runtime version remains bounded status data and is not compared with `--version`, while it owns protocol and active physical-runtime discovery.
+- The version probe rejects every identity without the exact case-sensitive `herdr-ext` marker before capability inspection.
+- Client status must contain `version|herdr_version|build_id|protocol|binary|session` exactly once, including a build ID consistent with the runtime identity. Additive Herdr-owned status fields are ignored so compatible older and newer Herdr Ext builds remain usable. The independently formatted runtime version remains bounded status data and is not compared with `--version`, while it owns protocol and active physical-runtime discovery.
 - The remote probe first verifies target parsing, then removes `PATH` and invokes an invalid target with exact `--provision --yes --json` so only a compatible implementation can reach its first `ssh.exe` lookup without starting SSH or network activity.
 - Success, timeout, empty output, crashes, unrelated failures, `unsupported`, a missing command, or an invalid identity fails closed.
 - Sandbox never invokes a host package manager for Herdr or assumes how the host command reaches its physical executable.
@@ -154,7 +154,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Before normal `up` performs cleanup or any provisioning, and before explicit `attach` opens the ready connection, the Windows adapter requires all three inherited standard streams to be real console handles.
 - Redirected/headless orchestration is rejected with the intentional `up --no-attach` path; native automation reads status separately and launches interactive attach only inside a real terminal.
 - After the user detaches, the CLI rechecks guest server status over a fresh SSH connection.
-- Windows host-client, Windows target bridge, and server-persistence fixes belong in the `herdr-win` project with their own tests/releases, not in a Go compatibility shim.
+- Windows host-client, Windows target bridge, and server-persistence fixes belong in the `herdr-ext` project with their own tests/releases, not in a Go compatibility shim.
 - The bootstrap reports explicit progress and exactly one terminal outcome.
 - Errors cross the guest/host boundary as bounded diagnostic text without credentials or private key material.
 - The shared hidden-process `CombinedOutput` owner captures at most one MiB and terminates the owned process tree on overflow.
@@ -206,7 +206,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - The Sandbox tool updates a stable app-owned `Host sandbox` file and owns one idempotent, marked `Include` at the start of the user's standard SSH config; unrelated user content is preserved.
 - That first matching target explicitly disables `ControlMaster`, `ControlPath`, and `ControlPersist`: official Win32-OpenSSH design and the installed 9.5 client confirm that Windows lacks the AF_UNIX ancillary file-descriptor path required by OpenSSH multiplexing.
 - Reuse means reconnecting fresh SSH clients to the same ready guest and persistent Herdr server, not sharing one TCP connection.
-- The `herdr-win` project owns generic Windows SSH behavior matching Unix: it builds a private temporary config that includes the normal user and system SSH configs before Herdr keepalive defaults, then passes that file to `ssh.exe -F`.
+- The `herdr-ext` project owns generic Windows SSH behavior matching Unix: it builds a private temporary config that includes the normal user and system SSH configs before Herdr keepalive defaults, then passes that file to `ssh.exe -F`.
 - It has no Sandbox-specific target knowledge or required environment-variable contract.
 - Superseded application and installer contracts are not supported through backward-compatibility state, schema versions, dual read/write paths, aliases, migration code, replacement filenames, historical marker parsers, or cleanup bridges.
 - Setup accepts only its current product GUID, registration, payload names, and direct application protocol.
