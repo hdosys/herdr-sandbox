@@ -61,6 +61,7 @@ var defaultGlobalConfiguration = []byte(`{
   "cacheDirectory": "",
   "worktreeDirectory": "",
   "modelsDirectory": "",
+  "ttsBundle": "",
   "memoryMB": 32768,
   "audio": false,
   "audioInput": false,
@@ -249,6 +250,7 @@ type provisioningPlan struct {
 	CacheDirectory          string
 	WorktreeDirectory       string
 	ModelsDirectory         string
+	TTSBundle               string
 	MemoryMB                int
 	AudioOutput             bool
 	AudioInput              bool
@@ -269,6 +271,7 @@ type globalConfiguration struct {
 	CacheDirectory          string                           `json:"cacheDirectory"`
 	WorktreeDirectory       string                           `json:"worktreeDirectory"`
 	ModelsDirectory         string                           `json:"modelsDirectory"`
+	TTSBundle               string                           `json:"ttsBundle"`
 	MemoryMB                *int                             `json:"memoryMB,omitempty"`
 	AudioOutput             bool                             `json:"audio"`
 	AudioInput              bool                             `json:"audioInput"`
@@ -581,6 +584,17 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 			return provisioningPlan{}, fmt.Errorf("modelsDirectory overlaps user configuration: %s", modelsDirectory)
 		}
 	}
+	if configuration.TTSBundle != "" {
+		if modelsDirectory == "" || !filepath.IsAbs(configuration.TTSBundle) {
+			return provisioningPlan{}, errors.New("ttsBundle requires modelsDirectory and an absolute local bundle path")
+		}
+		if _, err := canonicalMappedDirectory(filepath.Dir(configuration.TTSBundle)); err != nil {
+			return provisioningPlan{}, fmt.Errorf("validate ttsBundle directory: %w", err)
+		}
+		if exists, err := regularFileExists(configuration.TTSBundle); err != nil || !exists {
+			return provisioningPlan{}, fmt.Errorf("ttsBundle must identify an existing regular file: %s: %v", configuration.TTSBundle, err)
+		}
+	}
 	memoryMB, err := validateConfiguredMemoryMB(configuration.MemoryMB)
 	if err != nil {
 		return provisioningPlan{}, err
@@ -799,6 +813,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		CacheDirectory:          cacheDirectory,
 		WorktreeDirectory:       worktreeDirectory,
 		ModelsDirectory:         modelsDirectory,
+		TTSBundle:               configuration.TTSBundle,
 		MemoryMB:                memoryMB,
 		AudioOutput:             configuration.AudioOutput,
 		AudioInput:              configuration.AudioInput,
@@ -898,6 +913,14 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 				return err
 			}
 			if err := json.Unmarshal(raw, &config.ModelsDirectory); err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+		case "ttsBundle":
+			raw, err := decodeNonNullJSONValue(decoder, key)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &config.TTSBundle); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 		case "memoryMB":

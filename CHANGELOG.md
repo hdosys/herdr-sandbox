@@ -7,6 +7,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Added
+
+- HyperFrames narration supports Supertonic 3 as its CPU-only default with ten
+  built-in voices, 10 denoising steps and automatic 300-character chunking.
+  VoxCPM2 remains explicitly selectable. Local engine bundles can be selected
+  through `ttsBundle` without publishing a release.
+
 ### Fixed
 
 - Retained provisioning now streams its launcher script over SSH instead of

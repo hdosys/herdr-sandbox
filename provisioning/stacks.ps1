@@ -3124,6 +3124,8 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
 
     $allowed = $Entry -ceq 'manifest.json' -or $Entry -ceq 'THIRD_PARTY_NOTICES.md' -or
         $Entry -ceq 'bin/tts.ps1' -or
+        $Entry -ceq 'bin/download-supertonic.py' -or $Entry -ceq 'versions.json' -or
+        $Entry -ceq 'requirements.txt' -or
         $Entry -ceq 'reference/herdr-narrator-de.wav' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
@@ -3174,10 +3176,14 @@ function Get-StackHyperFramesVoxCPM2Descriptor {
         throw "HyperFrames VoxCPM2 release descriptor is invalid: $($_.Exception.Message)"
     }
     $properties = @($descriptor.PSObject.Properties.Name | Sort-Object)
+    $localBundle = [string]$descriptor.tag -cmatch '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}Z$'
+    $expectedArchive = if ($localBundle) { 'hyperframes-voxcpm2-local-windows-x64.zip' } else {
+        "hyperframes-voxcpm2-$($descriptor.tag)-windows-x64.zip"
+    }
     if (($properties -join '|') -cne 'archiveName|archiveSha256|archiveSize|hyperframesVersion|models|referenceAudio|runtimeCommit|schemaVersion|tag' -or
         [int]$descriptor.schemaVersion -ne 1 -or
-        [string]$descriptor.tag -notmatch '^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
-        [string]$descriptor.archiveName -cne "hyperframes-voxcpm2-$($descriptor.tag)-windows-x64.zip" -or
+        (-not $localBundle -and [string]$descriptor.tag -notmatch '^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') -or
+        [string]$descriptor.archiveName -cne $expectedArchive -or
         [long]$descriptor.archiveSize -le 0 -or [long]$descriptor.archiveSize -gt 268435456 -or
         [string]$descriptor.archiveSha256 -notmatch '^[0-9a-f]{64}$' -or
         [string]$descriptor.hyperframesVersion -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$' -or
@@ -3253,6 +3259,101 @@ function Assert-StackHyperFramesVoxCPM2Models {
     }
 }
 
+function Assert-StackSupertonicModels {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][object]$Model
+    )
+
+    if ([string]$Model.repository -cne 'supertone-oss-archive/supertonic-3' -or
+        [string]$Model.revision -cnotmatch '^[0-9a-f]{40}$' -or @($Model.files).Count -ne 17) {
+        throw 'Supertonic model identity is invalid.'
+    }
+    foreach ($item in @((Get-Item -LiteralPath $Directory -Force)) + @(Get-ChildItem -LiteralPath $Directory -Recurse -Force)) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Supertonic model path is unsafe: $($item.FullName)"
+        }
+    }
+    $seen = @{}
+    foreach ($file in @($Model.files)) {
+        $name = [string]$file.name
+        if ($name -cnotmatch '^(onnx/(duration_predictor|text_encoder|vector_estimator|vocoder)\.onnx|onnx/(tts|unicode_indexer)\.json|voice_styles/[MF][1-5]\.json|LICENSE)$' -or
+            $seen.ContainsKey($name) -or [long]$file.size -le 0) {
+            throw "Supertonic model file record is invalid: $name"
+        }
+        $seen[$name] = $true
+        $path = Join-Path $Directory $name.Replace('/', '\')
+        $info = Get-Item -LiteralPath $path -Force
+        if ($info.PSIsContainer -or [long]$info.Length -ne [long]$file.size) {
+            throw "Supertonic model file size changed: $name"
+        }
+        $isONNX = $name.EndsWith('.onnx', [StringComparison]::Ordinal)
+        $expected = if ($isONNX) { [string]$file.sha256 } else { [string]$file.gitBlob }
+        if (($isONNX -and $expected -cnotmatch '^[0-9a-f]{64}$') -or
+            (-not $isONNX -and $expected -cnotmatch '^[0-9a-f]{40}$')) {
+            throw "Supertonic model digest is invalid: $name"
+        }
+        $hasher = if ($isONNX) { [Security.Cryptography.SHA256]::Create() } else { [Security.Cryptography.SHA1]::Create() }
+        $stream = [IO.File]::OpenRead($path)
+        try {
+            if ($isONNX) {
+                $digest = $hasher.ComputeHash($stream)
+            } else {
+                $prefix = [Text.Encoding]::UTF8.GetBytes("blob $($info.Length)`0")
+                $null = $hasher.TransformBlock($prefix, 0, $prefix.Length, $prefix, 0)
+                $buffer = New-Object byte[] 65536
+                while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $null = $hasher.TransformBlock($buffer, 0, $count, $buffer, 0)
+                }
+                $null = $hasher.TransformFinalBlock((New-Object byte[] 0), 0, 0)
+                $digest = $hasher.Hash
+            }
+            $actual = [BitConverter]::ToString($digest).Replace('-', '').ToLowerInvariant()
+        } finally { $stream.Dispose(); $hasher.Dispose() }
+        if ($actual -cne $expected) { throw "Supertonic model checksum changed: $name" }
+    }
+}
+
+function Install-StackHyperFramesSupertonic {
+    param(
+        [Parameter(Mandatory = $true)][string]$BundleRoot,
+        [Parameter(Mandatory = $true)][string]$ModelRoot
+    )
+
+    $versions = [IO.File]::ReadAllText((Join-Path $BundleRoot 'versions.json')) | ConvertFrom-Json
+    $model = $versions.supertonic
+    if ([string]$model.repository -cne 'supertone-oss-archive/supertonic-3' -or
+        [string]$model.revision -cnotmatch '^[0-9a-f]{40}$') { throw 'Supertonic model identity is invalid.' }
+    $directory = Join-Path $ModelRoot ('supertonic-3-' + ([string]$model.revision).Substring(0, 7))
+    $environmentRoot = 'C:\HerdrSandbox\tools\supertonic-python'
+    foreach ($path in @($ModelRoot, $directory, $environmentRoot)) {
+        if (Test-Path -LiteralPath $path) {
+            $info = Get-Item -LiteralPath $path -Force
+            if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Supertonic directory is unsafe: $path"
+            }
+        }
+    }
+    $python = Wait-ProvisioningCommandAvailable -Role 'Supertonic Python' -Name 'python.exe'
+    $uv = Wait-ProvisioningCommandAvailable -Role 'Supertonic uv' -Name 'uv.exe'
+    $environmentPython = Join-Path $environmentRoot 'Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $environmentRoot)) {
+        Invoke-ProvisioningNative -Role 'Supertonic Python environment' -FilePath $uv `
+            -ArgumentList @('venv', '--python', $python, '--no-python-downloads', $environmentRoot) -TimeoutSeconds 120 | Out-Null
+    }
+    Invoke-ProvisioningNative -Role 'Supertonic locked CPU dependencies' -FilePath $uv `
+        -ArgumentList @('pip', 'sync', '--python', $environmentPython, '--require-hashes', '--only-binary', ':all:',
+            (Join-Path $BundleRoot 'requirements.txt')) -TimeoutSeconds 600 | Out-Null
+    Invoke-ProvisioningNative -Role 'Supertonic model admission' -FilePath $environmentPython `
+        -ArgumentList @((Join-Path $BundleRoot 'bin\download-supertonic.py'), '--model-dir', $directory) `
+        -TimeoutSeconds 900 | Out-Null
+    Assert-StackSupertonicModels -Directory $directory -Model $model
+    Invoke-ProvisioningNative -Role 'Supertonic CPU runtime import' -FilePath $environmentPython `
+        -ArgumentList @('-c', 'import supertonic, onnxruntime; assert "CPUExecutionProvider" in onnxruntime.get_available_providers()') `
+        -TimeoutSeconds 30 | Out-Null
+    return @{ Python = $environmentPython; ModelDirectory = $directory }
+}
+
 function Install-StackHyperFramesVoxCPM2 {
     param(
         [Parameter(Mandatory = $true)][string]$Node
@@ -3260,7 +3361,7 @@ function Install-StackHyperFramesVoxCPM2 {
 
     $modelRoot = 'C:\Models'
     if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
-        Write-Output 'HyperFrames VoxCPM2 disabled: set modelsDirectory in the host configuration to enable it.'
+        Write-Output 'HyperFrames TTS disabled: set modelsDirectory in the host configuration to enable it.'
         return
     }
     $modelRootInfo = Get-Item -LiteralPath $modelRoot -Force
@@ -3365,6 +3466,9 @@ function Install-StackHyperFramesVoxCPM2 {
             }
         }
         foreach ($required in @('bin/tts.ps1', 'engine/audio/scripts/audio.mjs',
+                'bin/download-supertonic.py', 'versions.json', 'requirements.txt',
+                'engine/audio/scripts/versions.json', 'engine/audio/scripts/lib/supertonic.mjs',
+                'engine/audio/scripts/lib/supertonic-runner.py',
                 'engine/audio/scripts/lib/tts.mjs', 'engine/audio/scripts/lib/voxcpm2-cli.mjs',
                 'engine/audio/scripts/lib/voxcpm2.mjs', 'runtime/cpu/llama-tts-server.exe',
                 'reference/herdr-narrator-de.wav',
@@ -3387,13 +3491,16 @@ function Install-StackHyperFramesVoxCPM2 {
         }
     }
 
+    Install-PythonStack
+    Install-Uv
+    $supertonic = Install-StackHyperFramesSupertonic -BundleRoot $destination -ModelRoot $modelRoot
     $engine = Join-Path $destination 'engine\audio'
     $cliDirectory = Join-Path $destination 'bin'
     $cli = Join-Path $cliDirectory 'tts.ps1'
     $cliModule = Join-Path $engine 'scripts\lib\voxcpm2-cli.mjs'
     $provider = Join-Path $engine 'scripts\lib\voxcpm2.mjs'
     $cpuServer = Join-Path $destination 'runtime\cpu\llama-tts-server.exe'
-    foreach ($module in @($provider, $cliModule)) {
+    foreach ($module in @($provider, $cliModule, (Join-Path $engine 'scripts\lib\supertonic.mjs'))) {
         Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider syntax' -FilePath $Node `
             -ArgumentList @('--check', $module) -TimeoutSeconds 30 | Out-Null
     }
@@ -3406,7 +3513,7 @@ function Install-StackHyperFramesVoxCPM2 {
     $cliHelp = ((Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CLI help' -FilePath $Node `
             -ArgumentList @($cliModule, '--help') -TimeoutSeconds 30) -join "`n")
     if ($cliHelp -notmatch '(?m)^Usage:$' -or $cliHelp -notmatch '(?m)^  --design DESCRIPTION ' -or
-        $cliHelp -notmatch '(?m)^  --voice FILE ') {
+        $cliHelp -notmatch '(?m)^  --voice ' -or $cliHelp -notmatch '(?m)^  --provider ') {
         throw 'HyperFrames VoxCPM2 CLI help identity is unexpected.'
     }
     Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server smoke' `
@@ -3416,6 +3523,8 @@ function Install-StackHyperFramesVoxCPM2 {
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     $settings = [ordered]@{
         'HF_MEDIA_ENGINE' = $engine
+        'HF_SUPERTONIC_PYTHON' = $supertonic.Python
+        'HF_SUPERTONIC_MODEL_DIR' = $supertonic.ModelDirectory
         'HF_VOXCPM2_BASE_LM' = Join-Path $modelRoot 'VoxCPM2-BaseLM-F16.gguf'
         'HF_VOXCPM2_ACOUSTIC' = Join-Path $modelRoot 'VoxCPM2-Acoustic-F16.gguf'
         'HF_VOXCPM2_SERVER_CPU' = $cpuServer
@@ -3443,7 +3552,8 @@ function Install-StackHyperFramesVoxCPM2 {
     foreach ($entry in $settings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
     }
-    Write-Output "HyperFrames VoxCPM2 CPU ready: $($descriptor.tag), models $($descriptor.models.revision)"
+    Write-Output "HyperFrames TTS CPU ready: $($descriptor.tag); Supertonic 3 default, VoxCPM2 via --provider voxcpm2."
+    Write-Output 'Supertonic output is machine-generated speech. Follow the model OpenRAIL-M license and use restrictions.'
 }
 
 function Assert-StackHyperFramesSoftwareEncode {

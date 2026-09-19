@@ -24,6 +24,11 @@
       "default": "",
       "description": "Existing dedicated host model directory mapped read-write to C:\\Models. Empty disables it."
     },
+    "ttsBundle": {
+      "type": "string",
+      "default": "",
+      "description": "Absolute local HyperFrames TTS ZIP with adjacent SHA-256 sidecar. Requires modelsDirectory. Empty selects the latest public release; local failures never fall back to it."
+    },
     "memoryMB": {
       "type": "integer",
       "minimum": 2048,

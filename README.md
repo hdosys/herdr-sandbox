@@ -721,14 +721,35 @@ does not claim a hardware encoder.
 
 To persist AI models, create one shared model folder and set `modelsDirectory`
 to its absolute host path. Herdr Sandbox maps it read/write at `C:\Models`, where
-guest tools can download models. On `sandbox up`, the host also downloads and
-verifies the latest stable
+guest tools can download models. HyperFrames TTS uses Supertonic 3 by default,
+with original ONNX models, CPU inference, 16 threads, 10 denoising steps, sequential
+chunks of at most 300 characters, and no batching. The built-in voices are M1-M5
+and F1-F5. The direct CLI defaults to German and M1:
+
+```powershell
+tts.ps1 --text "Dies ist eine maschinell erzeugte Sprachaufnahme." --voice M1 --output narration.wav
+```
+
+For HyperFrames requests, set `lang` to `de` and select the desired voice. Speech
+is machine-generated and must be disclosed as such; the model's OpenRAIL-M license
+and use restrictions apply. VoxCPM2 remains available via `--provider voxcpm2`,
+including its narrator reference, `--voice` WAV, and `--design` choices.
+
+Until a public engine release includes Supertonic, select the verified local bundle
+explicitly in the host `config.json`:
+
+```json
+"ttsBundle": "C:\\Workspaces\\hyperframes-voxcpm2\\dist\\hyperframes-voxcpm2-local-windows-x64.zip"
+```
+
+Keep its adjacent `.sha256` file. An empty `ttsBundle` selects the latest stable
 [`hyperframes-voxcpm2`](https://github.com/hdosys/hyperframes-voxcpm2/releases/latest)
-bundle plus its exact models in that same root. The HyperFrames stack rechecks
-their hashes, installs the matching CPU-only runtime, and launches it with GPU
-layers disabled. VoxCPM2 never uses Sandbox vGPU or the optional Vulkan runtime
-package. Leave the setting empty to omit the shared mapping and avoid its roughly
-5 GB model download.
+release, which must contain the same Supertonic contract. Invalid local input never
+falls back to a download. Provisioning installs the bundle's hash-locked Python
+dependencies in a dedicated guest environment and verifies the model files before
+activation. Models persist in the shared root, including roughly 5 GB for the
+selectable VoxCPM2 engine and 400 MB for Supertonic. Neither engine uses Sandbox
+vGPU or Vulkan. Empty `modelsDirectory` disables this integration.
 
 </details>
 

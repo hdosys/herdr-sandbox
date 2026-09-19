@@ -37,6 +37,7 @@ const (
 
 var (
 	voxcpm2ReleaseTagPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	ttsLocalTagPattern       = regexp.MustCompile(`^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}Z$`)
 	voxcpm2SHA256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	voxcpm2RevisionPattern   = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
@@ -84,6 +85,14 @@ type voxcpm2CoreManifest struct {
 	Runtime struct {
 		Commit string `json:"commit"`
 	} `json:"runtime"`
+	Downstream struct {
+		Commit string `json:"commit"`
+		Dirty  bool   `json:"dirty"`
+	} `json:"downstream"`
+	Supertonic struct {
+		Repository string `json:"repository"`
+		Revision   string `json:"revision"`
+	} `json:"supertonic"`
 	Models         voxcpm2ModelSet       `json:"models"`
 	ReferenceAudio voxcpm2Artifact       `json:"referenceAudio"`
 	Files          []voxcpm2ManifestFile `json:"files"`
@@ -107,7 +116,7 @@ type voxcpm2ModelCompletion struct {
 	ReferenceAudio voxcpm2Artifact `json:"referenceAudio"`
 }
 
-func prepareHyperFramesVoxCPM2(ctx context.Context, modelDirectory string, output io.Writer) error {
+func prepareHyperFramesVoxCPM2(ctx context.Context, modelDirectory, localBundle string, output io.Writer) error {
 	if !filepath.IsAbs(modelDirectory) {
 		return errors.New("shared models directory must be absolute")
 	}
@@ -123,7 +132,12 @@ func prepareHyperFramesVoxCPM2(ctx context.Context, modelDirectory string, outpu
 	if err != nil {
 		return err
 	}
-	descriptor, err := prepareVoxCPM2CoreRelease(ctx, curl, releaseRoot, output)
+	var descriptor voxcpm2ReleaseDescriptor
+	if localBundle != "" {
+		descriptor, err = prepareLocalTTSBundle(localBundle, releaseRoot)
+	} else {
+		descriptor, err = prepareVoxCPM2CoreRelease(ctx, curl, releaseRoot, output)
+	}
 	if err != nil {
 		return err
 	}
@@ -150,6 +164,102 @@ func windowsCurlExecutable() (string, error) {
 		return "", fmt.Errorf("required Windows curl.exe is unavailable: %s", curl)
 	}
 	return curl, nil
+}
+
+// prepareLocalTTSBundle admits an explicitly selected build without consulting releases.
+func prepareLocalTTSBundle(bundle, cacheRoot string) (voxcpm2ReleaseDescriptor, error) {
+	var empty voxcpm2ReleaseDescriptor
+	if !filepath.IsAbs(bundle) || filepath.Base(bundle) != "hyperframes-voxcpm2-local-windows-x64.zip" {
+		return empty, errors.New("ttsBundle must be the absolute path to hyperframes-voxcpm2-local-windows-x64.zip")
+	}
+	if _, err := canonicalMappedDirectory(filepath.Dir(bundle)); err != nil {
+		return empty, err
+	}
+	readInput := func(name string, maximum int64) ([]byte, error) {
+		info, err := os.Lstat(name)
+		if err != nil {
+			return nil, err
+		}
+		reparse, err := fileInfoIsReparsePoint(info)
+		if err != nil {
+			return nil, err
+		}
+		if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maximum {
+			return nil, fmt.Errorf("local TTS input is unsafe: %s", name)
+		}
+		file, err := os.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, maximum+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) != info.Size() {
+			return nil, errors.New("local TTS input size changed")
+		}
+		return data, nil
+	}
+	sidecar, err := readInput(bundle+".sha256", 1024)
+	if err != nil {
+		return empty, fmt.Errorf("read local TTS sidecar: %w", err)
+	}
+	digest, err := parseVoxCPM2Sidecar(sidecar, filepath.Base(bundle))
+	if err != nil {
+		return empty, err
+	}
+	payload, err := readInput(bundle, maximumVoxCPM2ArchiveBytes)
+	if err != nil {
+		return empty, err
+	}
+	actual := sha256.Sum256(payload)
+	if hex.EncodeToString(actual[:]) != digest {
+		return empty, errors.New("local TTS archive checksum mismatch")
+	}
+	manifest, err := inspectVoxCPM2CoreArchive(bundle, "")
+	if err != nil {
+		return empty, err
+	}
+	if !ttsLocalTagPattern.MatchString("v" + manifest.ReleaseVersion) {
+		return empty, errors.New("ttsBundle is not a local build")
+	}
+	tag := "v" + manifest.ReleaseVersion
+	directory, err := ensurePhysicalDirectory(filepath.Join(cacheRoot, "releases", tag), "local TTS bundle cache")
+	if err != nil {
+		return empty, err
+	}
+	for name, data := range map[string][]byte{filepath.Base(bundle): payload, filepath.Base(bundle) + ".sha256": sidecar} {
+		destination := filepath.Join(directory, name)
+		existing, err := readInput(destination, maximumVoxCPM2ArchiveBytes)
+		if err == nil {
+			if !bytes.Equal(existing, data) {
+				return empty, fmt.Errorf("local TTS cache identity conflict: %s", destination)
+			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return empty, err
+		}
+		file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return empty, err
+		}
+		_, writeErr := file.Write(data)
+		if err := errors.Join(writeErr, file.Close()); err != nil {
+			return empty, err
+		}
+	}
+	// Validate the cached bytes, not a source that could change between reads.
+	manifest, err = inspectVoxCPM2CoreArchive(filepath.Join(directory, filepath.Base(bundle)), tag)
+	if err != nil {
+		return empty, err
+	}
+	return voxcpm2ReleaseDescriptor{
+		SchemaVersion: 1, Tag: tag, ArchiveName: filepath.Base(bundle), ArchiveSize: int64(len(payload)),
+		ArchiveSHA256: digest, HyperFramesVersion: manifest.HyperFrames.Version,
+		RuntimeCommit: manifest.Runtime.Commit, Models: manifest.Models, ReferenceAudio: manifest.ReferenceAudio,
+	}, nil
 }
 
 func secureVoxCPM2CurlArguments(uri string, timeout time.Duration, headers ...string) []string {
@@ -457,16 +567,32 @@ func hashVoxCPM2ZipEntry(entry *zip.File, expectedSize int64) (string, error) {
 }
 
 func validateVoxCPM2CoreManifest(manifest voxcpm2CoreManifest, tag string) error {
+	if tag == "" {
+		tag = "v" + manifest.ReleaseVersion
+	}
 	version := strings.TrimPrefix(tag, "v")
+	local := ttsLocalTagPattern.MatchString(tag)
 	if manifest.SchemaVersion != 1 || manifest.ReleaseVersion != version || manifest.Platform != "windows-x64" ||
-		!voxcpm2ReleaseTagPattern.MatchString("v"+manifest.ReleaseVersion) ||
+		(!voxcpm2ReleaseTagPattern.MatchString(tag) && !local) ||
 		!voxcpm2ReleaseTagPattern.MatchString("v"+manifest.HyperFrames.Version) ||
 		!voxcpm2RevisionPattern.MatchString(manifest.Runtime.Commit) {
 		return errors.New("HyperFrames VoxCPM2 archive manifest identity is invalid")
 	}
+	if local && (!voxcpm2RevisionPattern.MatchString(manifest.Downstream.Commit) || manifest.Downstream.Dirty) {
+		return errors.New("local TTS bundle must come from a clean committed source")
+	}
+	if manifest.Supertonic.Repository != "supertone-oss-archive/supertonic-3" || !voxcpm2RevisionPattern.MatchString(manifest.Supertonic.Revision) {
+		return errors.New("TTS bundle lacks the Supertonic 3 model contract; select a current ttsBundle until a matching public release is available")
+	}
 	required := []string{
 		"THIRD_PARTY_NOTICES.md",
 		"bin/tts.ps1",
+		"bin/download-supertonic.py",
+		"versions.json",
+		"requirements.txt",
+		"engine/audio/scripts/versions.json",
+		"engine/audio/scripts/lib/supertonic.mjs",
+		"engine/audio/scripts/lib/supertonic-runner.py",
 		"reference/herdr-narrator-de.wav",
 		"engine/audio/scripts/audio.mjs",
 		"engine/audio/scripts/lib/tts.mjs",

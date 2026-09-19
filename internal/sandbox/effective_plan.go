@@ -53,6 +53,7 @@ type EffectivePlan struct {
 	CacheDirectory                string
 	WorktreeDirectory             string
 	ModelsDirectory               string
+	TTSBundle                     string
 	MemoryMB                      int
 	AudioOutput                   bool
 	AudioInput                    bool
@@ -112,6 +113,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		CacheDirectory:                cacheDirectory,
 		WorktreeDirectory:             provisioning.WorktreeDirectory,
 		ModelsDirectory:               provisioning.ModelsDirectory,
+		TTSBundle:                     provisioning.TTSBundle,
 		MemoryMB:                      provisioning.MemoryMB,
 		AudioOutput:                   provisioning.AudioOutput,
 		AudioInput:                    provisioning.AudioInput,

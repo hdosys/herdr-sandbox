@@ -20,7 +20,8 @@ func TestPrepareHyperFramesVoxCPM2AgainstPublicLatest(t *testing.T) {
 	if modelRoot == "" {
 		t.Skip("explicit public HyperFrames VoxCPM2 latest-release gate")
 	}
-	if err := prepareHyperFramesVoxCPM2(t.Context(), modelRoot, os.Stdout); err != nil {
+	localBundle := os.Getenv("HERDR_SANDBOX_TTS_BUNDLE")
+	if err := prepareHyperFramesVoxCPM2(t.Context(), modelRoot, localBundle, os.Stdout); err != nil {
 		t.Fatalf("prepare public latest HyperFrames VoxCPM2 release: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(modelRoot, ".herdr-sandbox", voxcpm2CacheDirectoryName, voxcpm2CurrentDescriptorName))
@@ -31,7 +32,7 @@ func TestPrepareHyperFramesVoxCPM2AgainstPublicLatest(t *testing.T) {
 	if err := decodeStrictJSON(data, &descriptor); err != nil {
 		t.Fatal(err)
 	}
-	if !voxcpm2ReleaseTagPattern.MatchString(descriptor.Tag) {
+	if !voxcpm2ReleaseTagPattern.MatchString(descriptor.Tag) && !(localBundle != "" && ttsLocalTagPattern.MatchString(descriptor.Tag)) {
 		t.Fatalf("public latest release tag = %q", descriptor.Tag)
 	}
 }
@@ -112,14 +113,20 @@ func TestParseVoxCPM2SidecarBindsArchiveName(t *testing.T) {
 func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "release.zip")
 	files := map[string][]byte{
-		"THIRD_PARTY_NOTICES.md":                   []byte("notices"),
-		"bin/tts.ps1":                              []byte("wrapper"),
-		"reference/herdr-narrator-de.wav":          []byte("narrator"),
-		"engine/audio/scripts/audio.mjs":           []byte("audio"),
-		"engine/audio/scripts/lib/tts.mjs":         []byte("tts"),
-		"engine/audio/scripts/lib/voxcpm2-cli.mjs": []byte("cli"),
-		"engine/audio/scripts/lib/voxcpm2.mjs":     []byte("provider"),
-		"runtime/cpu/llama-tts-server.exe":         []byte("cpu"),
+		"bin/download-supertonic.py":                    []byte("download"),
+		"versions.json":                                 []byte("versions"),
+		"requirements.txt":                              []byte("requirements"),
+		"engine/audio/scripts/versions.json":            []byte("versions"),
+		"engine/audio/scripts/lib/supertonic.mjs":       []byte("provider"),
+		"engine/audio/scripts/lib/supertonic-runner.py": []byte("runner"),
+		"THIRD_PARTY_NOTICES.md":                        []byte("notices"),
+		"bin/tts.ps1":                                   []byte("wrapper"),
+		"reference/herdr-narrator-de.wav":               []byte("narrator"),
+		"engine/audio/scripts/audio.mjs":                []byte("audio"),
+		"engine/audio/scripts/lib/tts.mjs":              []byte("tts"),
+		"engine/audio/scripts/lib/voxcpm2-cli.mjs":      []byte("cli"),
+		"engine/audio/scripts/lib/voxcpm2.mjs":          []byte("provider"),
+		"runtime/cpu/llama-tts-server.exe":              []byte("cpu"),
 	}
 	manifest := voxcpm2CoreManifest{
 		SchemaVersion:  1,
@@ -136,6 +143,8 @@ func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 		ReferenceAudio: voxcpm2Artifact{Name: "reference_speaker.wav", Size: 12, SHA256: strings.Repeat("c", 64), URL: "https://raw.githubusercontent.com/example/repository/" + strings.Repeat("2", 40) + "/reference_speaker.wav"},
 	}
 	manifest.HyperFrames.Version = "0.8.6"
+	manifest.Supertonic.Repository = "supertone-oss-archive/supertonic-3"
+	manifest.Supertonic.Revision = strings.Repeat("4", 40)
 	manifest.Runtime.Commit = strings.Repeat("3", 40)
 	for name, payload := range files {
 		digest := sha256.Sum256(payload)

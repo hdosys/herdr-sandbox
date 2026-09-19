@@ -196,6 +196,16 @@ the selected release channel, but GitHub and the named upstream repositories
 remain trusted distribution authorities. Disable the setting when that dynamic
 release policy or outbound download is outside the accepted threat model.
 
+An explicit `ttsBundle` instead trusts the user-selected local ZIP and its adjacent
+checksum sidecar. A sidecar verifies bytes, not publisher identity. The same bounded
+archive/manifest validation applies and requires clean source provenance for local
+builds. No public release is substituted after a local failure. Supertonic uses the
+bundle's binary-only hash-locked Python dependencies and exact official archived
+model revision. Provisioning revalidates all ONNX, style, configuration and license
+files before activation, including cache hits. Supertonic's OpenRAIL-M license
+requires disclosure of machine-generated speech and compliance with its use
+restrictions. Built-in voice presets do not establish consent for voice cloning.
+
 The upstream Windows `opensrc` executable provisioned by Base is unsigned. Base
 resolves the current stable release and binds its official asset URL and SHA-256;
 both cache hits and guest-local copies are revalidated before execution. That

@@ -732,6 +732,9 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 		modelsDirectory = "disabled"
 	}
 	fmt.Fprintf(output, "  Models directory: %s\n", modelsDirectory)
+	if plan.TTSBundle != "" {
+		fmt.Fprintf(output, "  Local TTS bundle: %s\n", plan.TTSBundle)
+	}
 	fmt.Fprintf(output, "  Memory: %d MB\n", plan.MemoryMB)
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))

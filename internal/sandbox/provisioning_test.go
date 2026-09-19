@@ -2158,6 +2158,8 @@ func TestLoadGlobalConfigurationRejectsNonCanonicalJSON(t *testing.T) {
 		"null worktree directory":      `{"worktreeDirectory":null,"workspaces":{}}`,
 		"nonstring worktree directory": `{"worktreeDirectory":42,"workspaces":{}}`,
 		"null models directory":        `{"modelsDirectory":null,"workspaces":{}}`,
+		"null TTS bundle":              `{"ttsBundle":null,"workspaces":{}}`,
+		"nonstring TTS bundle":         `{"ttsBundle":42,"workspaces":{}}`,
 		"nonstring models directory":   `{"modelsDirectory":42,"workspaces":{}}`,
 		"null audio":                   `{"audio":null,"workspaces":{}}`,
 		"nonboolean audio":             `{"audio":"true","workspaces":{}}`,

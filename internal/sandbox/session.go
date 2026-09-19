@@ -264,7 +264,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 	if provisioning.ModelsDirectory != "" {
 		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
-		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, options.Output); err != nil {
+		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, provisioning.TTSBundle, options.Output); err != nil {
 			return Connection{}, err
 		}
 	}
