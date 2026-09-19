@@ -94,6 +94,7 @@ type voxcpm2CoreManifest struct {
 		Revision   string `json:"revision"`
 	} `json:"supertonic"`
 	Models         voxcpm2ModelSet       `json:"models"`
+	Qwen3          *voxcpm2ModelSet      `json:"qwen3,omitempty"`
 	ReferenceAudio voxcpm2Artifact       `json:"referenceAudio"`
 	Files          []voxcpm2ManifestFile `json:"files"`
 }
@@ -600,9 +601,28 @@ func validateVoxCPM2CoreManifest(manifest voxcpm2CoreManifest, tag string) error
 		"engine/audio/scripts/lib/voxcpm2.mjs",
 		"runtime/cpu/llama-tts-server.exe",
 	}
+	if manifest.Qwen3 != nil {
+		if manifest.Qwen3.Repository != "khimaros/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF" ||
+			!voxcpm2RevisionPattern.MatchString(manifest.Qwen3.Revision) || len(manifest.Qwen3.Files) != 2 {
+			return errors.New("Qwen3 model manifest is invalid")
+		}
+		names := make([]string, 0, 2)
+		for _, artifact := range manifest.Qwen3.Files {
+			if err := validateVoxCPM2Artifact(artifact, "huggingface.co"); err != nil {
+				return err
+			}
+			names = append(names, artifact.Name)
+		}
+		slices.Sort(names)
+		if !slices.Equal(names, []string{"Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf", "Qwen3-TTS-Tokenizer-12Hz-F16.gguf"}) {
+			return errors.New("Qwen3 model file selection is invalid")
+		}
+		required = append(required, "engine/audio/scripts/lib/qwen3.mjs", "runtime/qwen3/qwen3-tts-cli.exe")
+	}
 	paths := make([]string, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
-		if strings.HasPrefix(file.Path, "runtime/") && !strings.HasPrefix(file.Path, "runtime/cpu/") {
+		qwenRuntime := manifest.Qwen3 != nil && file.Path == "runtime/qwen3/qwen3-tts-cli.exe"
+		if strings.HasPrefix(file.Path, "runtime/") && !strings.HasPrefix(file.Path, "runtime/cpu/") && !qwenRuntime {
 			return fmt.Errorf("HyperFrames VoxCPM2 archive manifest contains a non-CPU runtime: %s", file.Path)
 		}
 		paths = append(paths, file.Path)

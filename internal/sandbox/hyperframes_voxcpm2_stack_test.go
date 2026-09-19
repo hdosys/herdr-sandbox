@@ -83,6 +83,10 @@ foreach ($name in @('Test-StackHyperFramesVoxCPM2ArchiveEntry', 'Assert-StackHyp
     Invoke-Expression $definition.Extent.Text
 }
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/cpu/llama-tts-server.exe'
+Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/qwen3/qwen3-tts-cli.exe'
+$qwenRejected = $false
+try { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'runtime/qwen3/unexpected.exe' } catch { $qwenRejected = $true }
+if (-not $qwenRejected) { throw 'Unexpected Qwen3 executable was accepted.' }
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'bin/tts.ps1'
 Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry 'reference/herdr-narrator-de.wav'
 $vulkanRejected = $false

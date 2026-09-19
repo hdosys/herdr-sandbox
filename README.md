@@ -735,6 +735,19 @@ is machine-generated and must be disclosed as such; the model's OpenRAIL-M licen
 and use restrictions apply. VoxCPM2 remains available via `--provider voxcpm2`,
 including its narrator reference, `--voice` WAV, and `--design` choices.
 
+A local bundle that includes Qwen3 also enables `--provider qwen3`. Supertonic/M1
+remains the default; Qwen uses Ryan unless `--voice` selects another preset:
+
+```powershell
+tts.ps1 --provider qwen3 --voice ryan --lang de --text "Dies ist ein Sprachtest." --output qwen.wav
+```
+
+This private evaluation option uses standalone `qwen3-tts.cpp` with a Q8_0
+CustomVoice model and an F16 vocoder, not llama.cpp or ONNX and not all-INT8.
+Its runtime redistribution rights are unconfirmed, so the engine bundle remains
+local-only. Selecting Qwen never changes the default or silently substitutes it
+when Supertonic is unavailable.
+
 Until a public engine release includes Supertonic, select the verified local bundle
 explicitly in the host `config.json`:
 

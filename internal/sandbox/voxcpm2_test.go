@@ -184,6 +184,26 @@ func TestInspectVoxCPM2CoreArchiveVerifiesPayload(t *testing.T) {
 	if _, err := inspectVoxCPM2CoreArchive(archive, "v1.2.3"); err != nil {
 		t.Fatalf("inspect exact archive: %v", err)
 	}
+	qwenManifest := manifest
+	qwenManifest.Files = slices.Clone(manifest.Files)
+	qwenManifest.Qwen3 = &voxcpm2ModelSet{
+		Repository: "khimaros/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF", Revision: strings.Repeat("5", 40),
+	}
+	for _, name := range []string{"Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf", "Qwen3-TTS-Tokenizer-12Hz-F16.gguf"} {
+		qwenManifest.Qwen3.Files = append(qwenManifest.Qwen3.Files, voxcpm2Artifact{
+			Name: name, Size: 100, SHA256: strings.Repeat("6", 64), URL: "https://huggingface.co/example/" + name,
+		})
+	}
+	qwenManifest.Files = append(qwenManifest.Files,
+		voxcpm2ManifestFile{Path: "engine/audio/scripts/lib/qwen3.mjs"},
+		voxcpm2ManifestFile{Path: "runtime/qwen3/qwen3-tts-cli.exe"})
+	if err := validateVoxCPM2CoreManifest(qwenManifest, "v1.2.3"); err != nil {
+		t.Fatalf("optional Qwen3 payload rejected: %v", err)
+	}
+	qwenManifest.Qwen3 = nil
+	if err := validateVoxCPM2CoreManifest(qwenManifest, "v1.2.3"); err == nil {
+		t.Fatal("Qwen3 executable accepted without its model contract")
+	}
 	manifest.Files = append(manifest.Files, voxcpm2ManifestFile{
 		Path: "runtime/vulkan/llama-tts-server.exe", Size: 1, SHA256: strings.Repeat("d", 64),
 	})

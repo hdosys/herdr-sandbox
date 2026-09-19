@@ -13,6 +13,8 @@ represent failed tag attempts; this changelog does not recreate them.
   built-in voices, 10 denoising steps and automatic 300-character chunking.
   VoxCPM2 remains explicitly selectable. Local engine bundles can be selected
   through `ttsBundle` without publishing a release.
+- Local TTS bundles can also provide Qwen3 CustomVoice as an explicitly selected
+  CPU option. Supertonic/M1 remains the standard voice.
 
 ### Fixed
 

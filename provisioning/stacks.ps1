@@ -3126,6 +3126,7 @@ function Test-StackHyperFramesVoxCPM2ArchiveEntry {
         $Entry -ceq 'bin/tts.ps1' -or
         $Entry -ceq 'bin/download-supertonic.py' -or $Entry -ceq 'versions.json' -or
         $Entry -ceq 'requirements.txt' -or
+        $Entry -ceq 'runtime/qwen3/qwen3-tts-cli.exe' -or
         $Entry -ceq 'reference/herdr-narrator-de.wav' -or
         $Entry.StartsWith('engine/audio/', [StringComparison]::Ordinal) -or
         $Entry.StartsWith('runtime/cpu/', [StringComparison]::Ordinal) -or
@@ -3354,6 +3355,64 @@ function Install-StackHyperFramesSupertonic {
     return @{ Python = $environmentPython; ModelDirectory = $directory }
 }
 
+function Assert-StackQwen3Models {
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [Parameter(Mandatory = $true)][object]$Model
+    )
+
+    if ([string]$Model.repository -cne 'khimaros/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF' -or
+        [string]$Model.revision -cnotmatch '^[0-9a-f]{40}$' -or @($Model.files).Count -ne 2) {
+        throw 'Qwen3 model identity is invalid.'
+    }
+    $root = Get-Item -LiteralPath $Directory -Force
+    if (-not $root.PSIsContainer -or ($root.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Qwen3 model directory is unsafe.'
+    }
+    $names = @($Model.files | ForEach-Object { [string]$_.name } | Sort-Object)
+    if (($names -join '|') -cne 'Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf|Qwen3-TTS-Tokenizer-12Hz-F16.gguf') {
+        throw 'Qwen3 model file selection is invalid.'
+    }
+    foreach ($file in @($Model.files)) {
+        Assert-StackHyperFramesVoxCPM2Artifact -Artifact $file -ExpectedHost 'huggingface.co'
+        $path = Join-Path $Directory ([string]$file.name)
+        $info = Get-Item -LiteralPath $path -Force
+        if ($info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            [long]$info.Length -ne [long]$file.size) { throw "Qwen3 model file identity changed: $path" }
+        $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -cne [string]$file.sha256) { throw "Qwen3 model checksum changed: $path" }
+    }
+}
+
+function Install-StackHyperFramesQwen3 {
+    param(
+        [Parameter(Mandatory = $true)][string]$BundleRoot,
+        [Parameter(Mandatory = $true)][string]$ModelRoot,
+        [Parameter(Mandatory = $true)][string]$Python
+    )
+
+    $versions = [IO.File]::ReadAllText((Join-Path $BundleRoot 'versions.json')) | ConvertFrom-Json
+    if ($null -eq $versions.PSObject.Properties['qwen3']) { return $null }
+    $model = $versions.qwen3
+    if ([string]$model.repository -cne 'khimaros/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF' -or
+        [string]$model.revision -cnotmatch '^[0-9a-f]{40}$') { throw 'Qwen3 model identity is invalid.' }
+    $directory = Join-Path $ModelRoot ('qwen3-customvoice-' + ([string]$model.revision).Substring(0, 7))
+    if (Test-Path -LiteralPath $directory) {
+        $info = Get-Item -LiteralPath $directory -Force
+        if (-not $info.PSIsContainer -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Qwen3 model directory is unsafe.'
+        }
+    }
+    Invoke-ProvisioningNative -Role 'Qwen3 model admission' -FilePath $Python `
+        -ArgumentList @((Join-Path $BundleRoot 'bin\download-supertonic.py'), '--engine', 'qwen3', '--model-dir', $directory) `
+        -TimeoutSeconds 1800 | Out-Null
+    Assert-StackQwen3Models -Directory $directory -Model $model
+    $cli = Join-Path $BundleRoot 'runtime\qwen3\qwen3-tts-cli.exe'
+    Invoke-ProvisioningNative -Role 'Qwen3 CPU runtime capability' -FilePath $cli `
+        -ArgumentList @('--help') -TimeoutSeconds 30 | Out-Null
+    return @{ CLI = $cli; ModelDirectory = $directory }
+}
+
 function Install-StackHyperFramesVoxCPM2 {
     param(
         [Parameter(Mandatory = $true)][string]$Node
@@ -3475,6 +3534,13 @@ function Install-StackHyperFramesVoxCPM2 {
                 'THIRD_PARTY_NOTICES.md')) {
             if (-not $seen.ContainsKey($required)) { throw "HyperFrames VoxCPM2 payload is missing $required" }
         }
+        if ($null -ne $manifest.PSObject.Properties['qwen3']) {
+            foreach ($required in @('engine/audio/scripts/lib/qwen3.mjs', 'runtime/qwen3/qwen3-tts-cli.exe')) {
+                if (-not $seen.ContainsKey($required)) { throw "Qwen3 payload is missing $required" }
+            }
+        } elseif ($seen.ContainsKey('runtime/qwen3/qwen3-tts-cli.exe')) {
+            throw 'Qwen3 runtime has no model manifest.'
+        }
         if (Test-Path -LiteralPath $destination) {
             foreach ($item in @(Get-ChildItem -LiteralPath $destination -Recurse -Force)) {
                 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -3494,6 +3560,7 @@ function Install-StackHyperFramesVoxCPM2 {
     Install-PythonStack
     Install-Uv
     $supertonic = Install-StackHyperFramesSupertonic -BundleRoot $destination -ModelRoot $modelRoot
+    $qwen3 = Install-StackHyperFramesQwen3 -BundleRoot $destination -ModelRoot $modelRoot -Python $supertonic.Python
     $engine = Join-Path $destination 'engine\audio'
     $cliDirectory = Join-Path $destination 'bin'
     $cli = Join-Path $cliDirectory 'tts.ps1'
@@ -3523,6 +3590,8 @@ function Install-StackHyperFramesVoxCPM2 {
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     $settings = [ordered]@{
         'HF_MEDIA_ENGINE' = $engine
+        'HF_QWEN3_TTS_CLI' = $(if ($null -ne $qwen3) { $qwen3.CLI } else { $null })
+        'HF_QWEN3_TTS_MODEL_DIR' = $(if ($null -ne $qwen3) { $qwen3.ModelDirectory } else { $null })
         'HF_SUPERTONIC_PYTHON' = $supertonic.Python
         'HF_SUPERTONIC_MODEL_DIR' = $supertonic.ModelDirectory
         'HF_VOXCPM2_BASE_LM' = Join-Path $modelRoot 'VoxCPM2-BaseLM-F16.gguf'
@@ -3553,6 +3622,7 @@ function Install-StackHyperFramesVoxCPM2 {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
     }
     Write-Output "HyperFrames TTS CPU ready: $($descriptor.tag); Supertonic 3 default, VoxCPM2 via --provider voxcpm2."
+    if ($null -ne $qwen3) { Write-Output 'Qwen3 CustomVoice is available for local use via --provider qwen3; it is not the default.' }
     Write-Output 'Supertonic output is machine-generated speech. Follow the model OpenRAIL-M license and use restrictions.'
 }
 
