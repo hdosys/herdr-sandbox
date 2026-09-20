@@ -18,6 +18,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- App-local `python` and `python3` now include their complete runtime, so they and
+  their virtual environments start without another Python installation in `PATH`.
+
 - Retained provisioning now streams its launcher script over SSH instead of
   embedding it in the Windows command line. Larger provisioning scripts no longer
   fail with the 30,000-character transport limit; the shared configuration-transfer

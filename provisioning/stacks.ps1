@@ -4578,6 +4578,24 @@ function Install-PythonStack {
             throw "Python command directory is unsafe: $directory"
         }
     }
+    # Windows Python needs its DLLs and standard library beside the app-local commands.
+    # Copying only python.exe makes the loader depend on a foreign Python directory in PATH.
+    $pythonHome = Split-Path -Parent $pythonPath
+    foreach ($required in @('Lib\encodings\__init__.py', 'DLLs', 'python3.dll')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $pythonHome $required))) {
+            throw "Installed Python runtime is incomplete: $pythonHome"
+        }
+    }
+    foreach ($root in @($pythonHome, $pythonAliasDirectory)) {
+        foreach ($item in @((Get-Item -LiteralPath $root -Force)) + @(Get-ChildItem -LiteralPath $root -Recurse -Force)) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Python runtime tree contains a reparse point: $($item.FullName)"
+            }
+        }
+    }
+    foreach ($entry in @(Get-ChildItem -LiteralPath $pythonHome -Force)) {
+        Copy-Item -LiteralPath $entry.FullName -Destination $pythonAliasDirectory -Recurse -Force
+    }
     $pythonHash = (Get-FileHash -LiteralPath $pythonPath -Algorithm SHA256).Hash
     foreach ($pythonCommand in @($pythonAlias, $python3)) {
         if (Test-Path -LiteralPath $pythonCommand) {
@@ -4599,6 +4617,11 @@ function Install-PythonStack {
         if ($pythonCommandHash -cne $pythonHash) {
             throw "Python command copy failed verification: $pythonCommand"
         }
+    }
+    $runtimeCheck = 'import ctypes, encodings, pathlib, sqlite3, ssl, sys, venv; root = pathlib.Path(sys.argv[1]).resolve(); assert pathlib.Path(sys.prefix).resolve() == root; assert pathlib.Path(encodings.__file__).resolve().is_relative_to(root); print(sys.version)'
+    foreach ($pythonCommand in @($pythonAlias, $python3)) {
+        Invoke-ProvisioningNative -Role 'App-local Python runtime smoke' -FilePath $pythonCommand `
+            -ArgumentList @('-I', '-c', $runtimeCheck, $pythonAliasDirectory) -TimeoutSeconds 30 | Out-Null
     }
     Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
     $resolvedPython = Wait-ProvisioningCommandAvailable -Role 'App-local Python command' -Name 'python.exe'
