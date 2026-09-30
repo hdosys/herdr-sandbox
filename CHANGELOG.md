@@ -18,8 +18,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
-- OpenCode configuration transfer now respects disabled agents instead of failing
-  when a built-in agent such as `build` is explicitly disabled.
+- OpenCode configuration transfer validates the effective Sandbox permission
+  policy in one inspection, without assuming built-in agent names or starting
+  a separate inspection process per agent. Disabled and custom agents are supported.
 - App-local `python` and `python3` now include their complete runtime, so they and
   their virtual environments start without another Python installation in `PATH`.
 

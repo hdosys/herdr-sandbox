@@ -639,7 +639,6 @@ function Invoke-OpenCodeJSON {
 function Assert-OpenCodeSandboxConfiguration {
     param([bool]$TradingViewEnabled = $false)
     $allowAllPermissions = Get-OpenCodeAllowAllPermissions
-    $requiredPermissions = @($allowAllPermissions.Keys | Where-Object { $_ -cne '*' })
     $resolvedConfig = Invoke-OpenCodeJSON -Role 'OpenCode effective configuration inspection' -Arguments @('debug', 'config')
     $resolvedPermissionNames = @($resolvedConfig.permission.PSObject.Properties.Name | Sort-Object)
     $expectedPermissionNames = @($allowAllPermissions.Keys | Sort-Object)
@@ -661,42 +660,16 @@ function Assert-OpenCodeSandboxConfiguration {
             throw 'OpenCode effective TVControl MCP configuration is invalid.'
         }
     }
-    $agentNames = @('build', 'plan', 'general', 'explore', 'compaction', 'title', 'summary')
-    if ($null -ne $resolvedConfig.agent) {
-        $agentNames += @($resolvedConfig.agent.PSObject.Properties.Name)
-    }
-    foreach ($agentName in @($agentNames | Sort-Object -Unique)) {
-        if ($null -ne $resolvedConfig.agent) {
-            $configuredAgent = $resolvedConfig.agent.PSObject.Properties[[string]$agentName]
-            if ($null -ne $configuredAgent -and $configuredAgent.Value.disable -eq $true) {
-                continue
-            }
+    # Validate the policy we supply, not OpenCode's internal agent registry.
+    foreach ($agent in $resolvedConfig.agent.PSObject.Properties) {
+        if ($agent.Value.disable -eq $true) { continue }
+        $permissionNames = @($agent.Value.permission.PSObject.Properties.Name | Sort-Object)
+        if (($permissionNames -join '|') -cne ($expectedPermissionNames -join '|')) {
+            throw "OpenCode configured agent permissions were not replaced by the Sandbox allow-all policy: $($agent.Name)"
         }
-        $agent = Invoke-OpenCodeJSON -Role "OpenCode agent permission inspection ($agentName)" -Arguments @('debug', 'agent', [string]$agentName)
-        $rules = @($agent.permission)
-        $lastAllowAll = -1
-        for ($index = 0; $index -lt $rules.Count; $index++) {
-            if ([string]$rules[$index].permission -ceq '*' -and
-                [string]$rules[$index].pattern -ceq '*' -and
-                [string]$rules[$index].action -ceq 'allow') {
-                $lastAllowAll = $index
-            }
-        }
-        if ($lastAllowAll -lt 0) {
-            throw "OpenCode agent lacks a final allow-all rule: $agentName"
-        }
-        for ($index = $lastAllowAll + 1; $index -lt $rules.Count; $index++) {
-            if ([string]$rules[$index].action -cne 'allow') {
-                throw "OpenCode agent has a restrictive rule after allow-all: $agentName"
-            }
-        }
-        foreach ($permissionName in $requiredPermissions) {
-            $matches = @($rules | Where-Object {
-                ([string]$_.permission -ceq '*' -or [string]$_.permission -ceq $permissionName) -and
-                [string]$_.pattern -ceq '*'
-            })
-            if ($matches.Count -eq 0 -or [string]$matches[-1].action -cne 'allow') {
-                throw "OpenCode agent permission is not allow: $agentName/$permissionName"
+        foreach ($permissionName in $allowAllPermissions.Keys) {
+            if ([string]$agent.Value.permission.PSObject.Properties[$permissionName].Value -cne 'allow') {
+                throw "OpenCode configured agent permission is not allow: $($agent.Name)/$permissionName"
             }
         }
     }
