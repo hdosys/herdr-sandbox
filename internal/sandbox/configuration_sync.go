@@ -312,7 +312,6 @@ type hostConfigurationSources struct {
 	TradingViewAuthentication []byte
 	CodingAgents              codingAgentConfigurationSources
 	HerdrConfig               string
-	NushellEnabled            bool
 	WorktreeDirectory         string
 	WindowsTerminalSettings   string
 	WindowsTerminalFragments  string
@@ -685,7 +684,7 @@ func validateGitHubCLIAccount(account githubCLIAccount, requireToken bool) error
 	return nil
 }
 
-func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, nushellEnabled, tradingViewEnabled, worktreesEnabled bool, provisioningInput string, reportOutput io.Writer) error {
+func syncDevelopmentConfiguration(ctx context.Context, connection Connection, terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled, worktreesEnabled bool, provisioningInput string, reportOutput io.Writer) error {
 	if err := terminal.validate(); err != nil {
 		return err
 	}
@@ -701,7 +700,6 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	provisioningInput = filepath.Clean(provisioningInput)
 	sources.PackagePlan = filepath.Join(provisioningInput, wingetPackagePlanFileName)
-	sources.NushellEnabled = nushellEnabled
 	if packages.enabled(packageGit) || sources.WindowsTerminalSettings != "" {
 		sources.WorkspaceManifest = filepath.Join(provisioningInput, workspaceManifestName)
 	}
@@ -1124,7 +1122,7 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	if err := archiveCodingAgentConfiguration(ctx, sources.CodingAgents, add, addData); err != nil {
 		return nil, err
 	}
-	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig, sources.WorktreeDirectory, sources.NushellEnabled)
+	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig, sources.WorktreeDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -1158,10 +1156,10 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	return buffer.Bytes(), nil
 }
 
-func buildGuestHerdrConfig(path, worktreeDirectory string, nushellEnabled bool) ([]byte, error) {
+func buildGuestHerdrConfig(path, worktreeDirectory string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return patchGuestHerdrConfig(nil, worktreeDirectory, nushellEnabled)
+		return patchGuestHerdrConfig(nil, worktreeDirectory)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect Herdr config: %w", err)
@@ -1173,10 +1171,10 @@ func buildGuestHerdrConfig(path, worktreeDirectory string, nushellEnabled bool) 
 	if err != nil {
 		return nil, fmt.Errorf("read Herdr config: %w", err)
 	}
-	return patchGuestHerdrConfig(contents, worktreeDirectory, nushellEnabled)
+	return patchGuestHerdrConfig(contents, worktreeDirectory)
 }
 
-func patchGuestHerdrConfig(contents []byte, worktreeDirectory string, nushellEnabled bool) ([]byte, error) {
+func patchGuestHerdrConfig(contents []byte, worktreeDirectory string) ([]byte, error) {
 	if bytes.IndexByte(contents, 0) >= 0 {
 		return nil, errors.New("config for Herdr contains a NUL byte")
 	}
@@ -1189,7 +1187,7 @@ func patchGuestHerdrConfig(contents []byte, worktreeDirectory string, nushellEna
 	}
 	var err error
 	defaultShell := `default_shell = "pwsh.exe"`
-	if nushellEnabled && hostHerdrConfigUsesNushell(lines) {
+	if hostHerdrConfigUsesNushell(lines) {
 		defaultShell = `default_shell = "nu.exe"`
 	}
 	lines, err = upsertHerdrConfigValue(lines, "terminal", "default_shell", defaultShell)

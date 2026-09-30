@@ -52,7 +52,6 @@ const (
 	stackJust          projectStack = "just"
 	stackNode          projectStack = "node"
 	stackNSIS          projectStack = "nsis"
-	stackNushell       projectStack = "nushell"
 	stackPlaywrightCLI projectStack = "playwright-cli"
 	stackPython        projectStack = "python"
 	stackRustMSVC      projectStack = "rust-msvc"
@@ -122,7 +121,6 @@ var (
 		"microsoft.openjdk":              "Microsoft.OpenJDK",
 		"nextest.cargo-nextest":          "nextest.cargo-nextest",
 		"nsis.nsis":                      "NSIS.NSIS",
-		"nushell.nushell":                "Nushell.Nushell",
 		"openjs.nodejs":                  "OpenJS.NodeJS",
 		"oven-sh.bun":                    "Oven-sh.Bun",
 		"playwright":                     "playwright",
@@ -136,7 +134,7 @@ var (
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackAndroid, stackAudio, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackNushell, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
+	case stackAndroid, stackAudio, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false

@@ -26,7 +26,7 @@ func TestRunPrintsHelp(t *testing.T) {
 		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
 		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "nushell", "playwright-cli", "python-ai", "tradingview",
+		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -43,7 +43,7 @@ func TestRunPrintsHelp(t *testing.T) {
 }
 
 func TestStackHelpListsGenericStacksBeforeMetaAndCheckoutShortcuts(t *testing.T) {
-	generic := "android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|nushell|playwright-cli|python|python-ai|rust|tradingview|zig"
+	generic := "android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|playwright-cli|python|python-ai|rust|tradingview|zig"
 	trailing := "all|handy|herdr"
 	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
 		if name == "usage" {
@@ -804,7 +804,6 @@ func TestRunInitAcceptsRepeatedFlagsAndGuidedSelection(t *testing.T) {
 		{name: "herdr virtual", args: []string{"init", "--stack", "herdr"}, want: "herdr"},
 		{name: "java", args: []string{"init", "--stack", "java"}, want: "java"},
 		{name: "NSIS", args: []string{"init", "--stack", "nsis"}, want: "nsis"},
-		{name: "Nushell", args: []string{"init", "--stack", "nushell"}, want: "nushell"},
 		{name: "playwright cli", args: []string{"init", "--stack", "playwright-cli"}, want: "playwright-cli"},
 		{name: "python ai", args: []string{"init", "--stack", "python-ai"}, want: "python-ai"},
 		{name: "tradingview", args: []string{"init", "--stack", "tradingview"}, want: "tradingview"},

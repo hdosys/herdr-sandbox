@@ -7,6 +7,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Changed
+
+- Nushell is now mandatory Base tooling in every Sandbox, with verified command
+  startup and the selected Starship prompt. No Nushell stack selection is needed.
+  Remove existing `Install-NushellStack` calls from user and project profiles;
+  Nushell versions are selected through `wingetPackages.versions` instead.
+
 ### Added
 
 - HyperFrames narration supports Supertonic 3 as its CPU-only default with ten

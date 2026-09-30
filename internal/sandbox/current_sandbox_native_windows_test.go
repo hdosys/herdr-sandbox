@@ -119,7 +119,7 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 	workspaces := map[string][]string{
 		"herdr-sandbox-native-audio": {"audio"},
 		"herdr-sandbox-native-core": {
-			"dotnet", "android", "go", "hyperframes", "cpp", "java", "nsis", "nushell", "playwright-cli", "tradingview",
+			"dotnet", "android", "go", "hyperframes", "cpp", "java", "nsis", "playwright-cli", "tradingview",
 		},
 		"herdr-sandbox-native-handy":     {"handy"},
 		"herdr-sandbox-native-herdr":     {"herdr"},

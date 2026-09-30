@@ -21,7 +21,7 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	profile := filepath.Join(configuration, projectProvisioningName)
-	profileData := []byte("Install-AndroidStack\nInstall-AudioStack\nInstall-CppStack\nInstall-DotNetStack\nInstall-GoStack\nInstall-HandyStack -ProjectDirectory $ProjectDirectory\nInstall-JavaStack\nInstall-NSISStack\nInstall-NushellStack\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
+	profileData := []byte("Install-AndroidStack\nInstall-AudioStack\nInstall-CppStack\nInstall-DotNetStack\nInstall-GoStack\nInstall-HandyStack -ProjectDirectory $ProjectDirectory\nInstall-JavaStack\nInstall-NSISStack\nInstall-PythonAIStack\nInstall-TradingViewStack\n")
 	if err := os.WriteFile(profile, profileData, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +58,16 @@ func TestBuildEffectivePlanInspectsDirectStacksWithoutMutatingInputs(t *testing.
 		t.Fatal(err)
 	}
 	if plan.WorktreeDirectory != filepath.Join(root, "worktrees") || plan.ModelsDirectory != filepath.Join(root, "models") || len(plan.Mounts) != 1 || plan.Mounts[0].Name != "reference" || !plan.Mounts[0].ReadOnly ||
-		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "android|audio|bun|cpp|dotnet|go|handy|java|nsis|nushell|python|rust-msvc|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
-		len(plan.StackPackages) != 14 || plan.StackPackages[0].PackageOwner != "Android SDK Command-line Tools + Platform Tools + current stable JDK" ||
+		len(plan.Workspaces) != 2 || strings.Join(plan.Workspaces[0].Stacks, "|") != "android|audio|bun|cpp|dotnet|go|handy|java|nsis|python|rust-msvc|tradingview|uv" || len(plan.Workspaces[1].Stacks) != 0 ||
+		len(plan.StackPackages) != 13 || plan.StackPackages[0].PackageOwner != "Android SDK Command-line Tools + Platform Tools + current stable JDK" ||
 		plan.StackPackages[1].PackageOwner != packageREAPER+" + AudioGridder Server + VST2/VST3 clients" ||
 		plan.StackPackages[2].PackageOwner != "Oven-sh.Bun" ||
 		plan.StackPackages[3].PackageOwner != "current stable Visual Studio Build Tools C++ workload + "+packageCMake ||
 		plan.StackPackages[6].PackageOwner != "Kitware.CMake + KhronosGroup.VulkanSDK + Microsoft.EdgeWebView2Runtime" ||
 		plan.StackPackages[7].PackageOwner != "current stable Microsoft.OpenJDK family" ||
 		plan.StackPackages[8].PackageOwner != packageNSIS ||
-		plan.StackPackages[9].PackageOwner != packageNushell ||
-		plan.StackPackages[12].PackageOwner != "OpenJS.NodeJS + TradingView stable/latest signed MSIX + @ferroxlabs/tvcontrol@latest" ||
-		plan.StackPackages[13].PackageOwner != packageUV || len(plan.ToolVersions) == 0 || !plan.RequiresVisualStudio ||
+		plan.StackPackages[11].PackageOwner != "OpenJS.NodeJS + TradingView stable/latest signed MSIX + @ferroxlabs/tvcontrol@latest" ||
+		plan.StackPackages[12].PackageOwner != packageUV || len(plan.ToolVersions) == 0 || !plan.RequiresVisualStudio ||
 		plan.ConfigurationExists || plan.UserScriptExists || !strings.Contains(plan.NextAction, "up") {
 		t.Fatalf("effective plan = %#v", plan)
 	}

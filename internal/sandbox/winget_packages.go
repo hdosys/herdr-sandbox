@@ -45,6 +45,7 @@ const (
 
 var basePackageIDs = []string{
 	packagePowerShell,
+	packageNushell,
 	packageStarship,
 	packageFZF,
 	packageRipgrep,
@@ -64,7 +65,6 @@ var projectStackPackageIDs = []string{
 	"OpenJS.NodeJS",
 	packageFFmpeg,
 	packageNSIS,
-	packageNushell,
 	"Oven-sh.Bun",
 	"zig.zig",
 	"Rustlang.Rustup",
@@ -112,6 +112,7 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 	defaults := map[string]string{}
 	for _, id := range []string{
 		packagePowerShell,
+		packageNushell,
 		packageStarship,
 		packageFZF,
 		packageRipgrep,
@@ -139,8 +140,8 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 			return wingetPackagePlan{}, fmt.Errorf("wingetPackages.remove package %q is not an effective Base default", id)
 		}
 		switch canonical {
-		case packagePowerShell:
-			return wingetPackagePlan{}, errors.New("wingetPackages.remove must not disable Core package Microsoft.PowerShell")
+		case packagePowerShell, packageNushell:
+			return wingetPackagePlan{}, fmt.Errorf("wingetPackages.remove must not disable Core package %s", canonical)
 		case packageTerminalXAML:
 			return wingetPackagePlan{}, errors.New("wingetPackages.remove must not disable the Windows Terminal framework independently")
 		}
@@ -259,8 +260,10 @@ func (plan wingetPackagePlan) validate(terminal windowsTerminalConfiguration) er
 			seen[identity] = true
 		}
 	}
-	if !seen[strings.ToLower(packagePowerShell)] {
-		return errors.New("WinGet package plan is missing Core package Microsoft.PowerShell")
+	for _, id := range []string{packagePowerShell, packageNushell} {
+		if !seen[strings.ToLower(id)] {
+			return fmt.Errorf("WinGet package plan is missing Core package %s", id)
+		}
 	}
 	terminalEnabled := seen[strings.ToLower(terminal.WinGetPackageID)]
 	xamlEnabled := seen[strings.ToLower(packageTerminalXAML)]

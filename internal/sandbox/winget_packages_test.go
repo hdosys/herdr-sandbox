@@ -14,7 +14,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 		t.Fatalf("resolve defaults: %v", err)
 	}
 	for _, id := range []string{
-		packagePowerShell, packageStarship, packageFZF, packageRipgrep, packageGit,
+		packagePowerShell, packageNushell, packageStarship, packageFZF, packageRipgrep, packageGit,
 		packageActionlint, packageGitHubCLI, packageTailscale, packageWinDirStat, packageFilePilot,
 		packageTerminalXAML, packageTerminalStable,
 	} {
@@ -110,6 +110,9 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"disable Core": {
 			Remove: []string{packagePowerShell}, Versions: map[string]string{},
 		},
+		"disable Nushell case-insensitively": {
+			Remove: []string{"nUsHeLl.NuShElL"}, Versions: map[string]string{},
+		},
 		"remove unknown": {
 			Remove: []string{"Example.Unknown"}, Versions: map[string]string{},
 		},
@@ -134,7 +137,7 @@ func TestResolveWingetPackagePlanRejectsConflicts(t *testing.T) {
 		"bypass NSIS stack case-insensitively": {
 			Add: []string{"nSiS.nSiS"}, Versions: map[string]string{},
 		},
-		"bypass Nushell stack case-insensitively": {
+		"re-add Nushell case-insensitively": {
 			Add: []string{"nUsHeLl.NuShElL"}, Versions: map[string]string{},
 		},
 		"bypass CMake stack": {

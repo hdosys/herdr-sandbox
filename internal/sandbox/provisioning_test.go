@@ -1011,15 +1011,19 @@ $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.L
 Invoke-Expression $definition.Extent.Text
 $path = '%s'
 $utf8 = New-Object Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($path, '{"schemaVersion":1,"windowsTerminalEdition":"stable","defaults":[{"id":"Microsoft.PowerShell","version":""}],"additions":[{"id":"7zip.7zip","version":"26.00"}]}', $utf8)
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"windowsTerminalEdition":"stable","defaults":[{"id":"Microsoft.PowerShell","version":""},{"id":"Nushell.Nushell","version":""}],"additions":[{"id":"7zip.7zip","version":"26.00"}]}', $utf8)
 $resolved = Read-ProvisioningPackagePlan -Path $path
-if (-not $resolved.Enabled.ContainsKey('Microsoft.PowerShell') -or -not $resolved.Enabled.ContainsKey('7ZIP.7ZIP') -or [string]$resolved.Versions['7zip.7zip'] -cne '26.00') {
+if (-not $resolved.Enabled.ContainsKey('Microsoft.PowerShell') -or -not $resolved.Enabled.ContainsKey('Nushell.Nushell') -or -not $resolved.Enabled.ContainsKey('7ZIP.7ZIP') -or [string]$resolved.Versions['7zip.7zip'] -cne '26.00') {
     throw 'Canonical package plan was not preserved.'
 }
 [IO.File]::WriteAllText($path, '{"schemaVersion":1,"windowsTerminalEdition":"stable","defaults":[{"id":"Git.Git","version":""}],"additions":[]}', $utf8)
 $accepted = $false
 try { $null = Read-ProvisioningPackagePlan -Path $path; $accepted = $true } catch { }
 if ($accepted) { throw 'Package plan without Core PowerShell was accepted.' }
+[IO.File]::WriteAllText($path, '{"schemaVersion":1,"windowsTerminalEdition":"stable","defaults":[{"id":"Microsoft.PowerShell","version":""}],"additions":[]}', $utf8)
+$accepted = $false
+try { $null = Read-ProvisioningPackagePlan -Path $path; $accepted = $true } catch { }
+if ($accepted) { throw 'Package plan without Core Nushell was accepted.' }
 } catch {
     Write-Output ($_ | Out-String)
     exit 1

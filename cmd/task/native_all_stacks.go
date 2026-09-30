@@ -312,7 +312,6 @@ Install-HyperFramesStack
 Install-CppStack
 Install-JavaStack
 Install-NSISStack
-Install-NushellStack
 Install-Uv
 Install-NodeStack
 Install-PlaywrightCLIStack

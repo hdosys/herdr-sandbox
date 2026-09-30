@@ -229,6 +229,9 @@ terminal. Plain `ssh sandbox` remains available for diagnostics.
 Project profiles own per-project tools. `config.json` and `user.ps1` own global
 choices. Setup never overwrites either user-owned file.
 
+Nushell is always installed by Base, alongside PowerShell 7. It needs no project
+stack or `user.ps1` call and cannot be disabled through `wingetPackages.remove`.
+
 ### Global configuration
 
 Open the user-owned configuration:
@@ -495,7 +498,7 @@ and is intended for exhaustive environments rather than the usual first run.
 
 | Selection | Guest tooling |
 | --- | --- |
-| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Nushell, Playwright CLI, Python AI with current stable Python and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
+| `all` | Every generic built-in: Android, Audio, Bun, Cargo Nextest, C/C++, .NET, Go, HyperFrames, Java, Just, Node/Playwright, NSIS, Playwright CLI, Python AI with current stable Python and uv, Rust/MSVC, TradingView, and Zig; checkout-specific Handy and Herdr remain separate |
 | `android` | Current Android SDK command-line tools, Platform Tools/ADB, and the shared current stable Microsoft OpenJDK stack |
 | `audio` | REAPER plus AudioGridder Server and clients, with production VST execution inside the Sandbox |
 | `cpp` | C and C++ with current stable Visual Studio Build Tools, Windows 11 SDK, and CMake |
@@ -505,7 +508,6 @@ and is intended for exhaustive environments rather than the usual first run.
 | `java` | Current stable Microsoft OpenJDK family |
 | `node` | Latest stable Node.js, Playwright, and Chromium |
 | `nsis` | NSIS compiler for building Windows installers |
-| `nushell` | Latest stable Nushell command-line shell |
 | `playwright-cli` | Playwright CLI without a bundled browser |
 | `python` | Latest stable Python |
 | `python-ai` | Current stable Python and uv for CPU inference, notebooks, and API-based projects |

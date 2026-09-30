@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 55
+# herdr-sandbox-base-contract: 56
 param(
     [ValidateSet('Registry', 'Development')]
     [string]$Phase = 'Development',
@@ -310,12 +310,13 @@ function Read-ProvisioningPackagePlan {
         $plan.schemaVersion -isnot [int] -or $plan.windowsTerminalEdition -isnot [string] -or
         [int]$plan.schemaVersion -ne 1 -or
         [string]$plan.windowsTerminalEdition -notin @('stable', 'preview') -or
-        $defaults.Count -eq 0 -or $defaults.Count -gt 13 -or $additions.Count -gt 64) {
+        $defaults.Count -eq 0 -or $defaults.Count -gt 14 -or $additions.Count -gt 64) {
         throw 'WinGet package plan has an unsupported contract.'
     }
     $known = @{}
     foreach ($id in @(
         'Microsoft.PowerShell',
+        'Nushell.Nushell',
         'Starship.Starship',
         'junegunn.fzf',
         'BurntSushi.ripgrep.MSVC',
@@ -332,7 +333,7 @@ function Read-ProvisioningPackagePlan {
         $known[$id] = $true
     }
     $projectStackPackages = @{}
-    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS', 'Gyan.FFmpeg', 'NSIS.NSIS', 'Nushell.Nushell',
+    foreach ($id in @('GoLang.Go', 'OpenJS.NodeJS', 'Gyan.FFmpeg', 'NSIS.NSIS',
         'Oven-sh.Bun', 'zig.zig', 'Rustlang.Rustup', 'nextest.cargo-nextest', 'Casey.Just',
         'TradingView.TradingViewDesktop', 'astral-sh.uv', 'Kitware.CMake', 'KhronosGroup.VulkanSDK',
         'Microsoft.EdgeWebView2Runtime', 'Cockos.REAPER')) {
@@ -365,8 +366,10 @@ function Read-ProvisioningPackagePlan {
             $versions[$id] = $version
         }
     }
-    if (-not $enabled.ContainsKey('Microsoft.PowerShell')) {
-        throw 'WinGet package plan is missing Core package Microsoft.PowerShell.'
+    foreach ($id in @('Microsoft.PowerShell', 'Nushell.Nushell')) {
+        if (-not $enabled.ContainsKey($id)) {
+            throw "WinGet package plan is missing Core package $id."
+        }
     }
     $terminalID = 'Microsoft.WindowsTerminal'
     $otherTerminalID = 'Microsoft.WindowsTerminal.Preview'
@@ -401,6 +404,109 @@ function Get-ProvisioningPackageVersion {
         throw "WinGet package is not enabled in the resolved plan: $Id"
     }
     return [string]$provisioningPackagePlan.Versions[$Id]
+}
+
+function Install-ProvisioningNushell {
+    $packageID = 'Nushell.Nushell'
+    $Version = Get-ProvisioningPackageVersion -Id $packageID
+    $metadata = Get-ProvisioningWinGetMetadata -Role 'Nushell' -Id $packageID -Version $Version `
+        -Architecture 'x64' -InstallerType 'wix' -Scope 'machine'
+    if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Architecture -cne 'x64' -or
+        [string]$metadata.InstallerType -cne 'wix' -or [string]$metadata.Scope -cne 'machine' -or
+        [string]$metadata.Version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
+        throw "Nushell metadata is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Architecture)"
+    }
+    $Version = [string]$metadata.Version
+
+    Write-Output "Installing Nushell $Version..."
+    Install-ProvisioningCachedPackage -Role 'Nushell' -Metadata $metadata -DownloadSource 'WinGet' `
+        -Adapter 'MSI' -ExecutableName 'nu.exe' -InstallerArguments @('ALLUSERS=1')
+
+    $expectedCommand = Join-Path $env:ProgramFiles 'nu\bin\nu.exe'
+    if (-not (Test-Path -LiteralPath $expectedCommand -PathType Leaf) -or
+        ((Get-Item -LiteralPath $expectedCommand -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Nushell command is missing or unsafe: $expectedCommand"
+    }
+    $resolvedCommand = Get-Command 'nu.exe' -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    if ([IO.Path]::GetFullPath([string]$resolvedCommand.Source) -ine [IO.Path]::GetFullPath($expectedCommand)) {
+        throw "Nushell command resolved from an unexpected path: $($resolvedCommand.Source)"
+    }
+    Invoke-ProvisioningNative -Role 'Nushell command smoke' -FilePath $expectedCommand `
+        -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
+
+    $nushellDataDirectory = [IO.Path]::GetFullPath((Join-Path $env:APPDATA 'nushell'))
+    $expectedAppDataRoot = [IO.Path]::GetFullPath($env:APPDATA).TrimEnd('\') + '\'
+    if (-not $nushellDataDirectory.StartsWith($expectedAppDataRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Nushell data directory is outside the guest user profile: $nushellDataDirectory"
+    }
+    $nushellVendorDirectory = Join-Path $nushellDataDirectory 'vendor'
+    $nushellAutoloadDirectory = Join-Path $nushellVendorDirectory 'autoload'
+    foreach ($directory in @($nushellDataDirectory, $nushellVendorDirectory, $nushellAutoloadDirectory)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+        }
+        $directoryInfo = Get-Item -LiteralPath $directory -Force
+        if (-not $directoryInfo.PSIsContainer -or
+            ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Nushell initialization directory is unsafe: $directory"
+        }
+    }
+
+    $nushellInitializationLines = New-Object 'Collections.Generic.List[string]'
+    $nushellInitializationLines.Add('$env.config.show_banner = false')
+    $expectedStarshipShell = ''
+    if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
+        $starshipCommand = Get-Command 'starship.exe' -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1
+        $starshipInitialization = @(Invoke-ProvisioningNative -Role 'Nushell Starship initialization generation' `
+            -FilePath $starshipCommand.Source -ArgumentList @('init', 'nu') -TimeoutSeconds 30)
+        if ($starshipInitialization.Count -eq 0) {
+            throw 'Starship returned empty Nushell initialization.'
+        }
+        foreach ($line in $starshipInitialization) { $nushellInitializationLines.Add([string]$line) }
+        $expectedStarshipShell = 'nu'
+    }
+    $nushellInitialization = [string]::Join(
+        [Environment]::NewLine,
+        [string[]]$nushellInitializationLines.ToArray()
+    ) + [Environment]::NewLine
+    $nushellInitializationPath = Join-Path $nushellAutoloadDirectory 'herdr-sandbox.nu'
+    if (Test-Path -LiteralPath $nushellInitializationPath) {
+        $initializationInfo = Get-Item -LiteralPath $nushellInitializationPath -Force
+        if ($initializationInfo.PSIsContainer -or
+            ($initializationInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Nushell initialization file is unsafe: $nushellInitializationPath"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $nushellInitializationPath -PathType Leaf) -or
+        [IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
+        [IO.File]::WriteAllText(
+            $nushellInitializationPath,
+            $nushellInitialization,
+            (New-Object Text.UTF8Encoding($false))
+        )
+    }
+    if ([IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
+        throw 'Nushell initialization read-back failed.'
+    }
+    $nushellProbeOutput = @(Invoke-ProvisioningNative -Role 'Nushell initialization smoke' `
+        -FilePath $expectedCommand -ArgumentList @(
+            '--no-config-file',
+            '--commands',
+            'source ($nu.data-dir | path join "vendor/autoload/herdr-sandbox.nu"); [$nu.data-dir, $env.config.show_banner, ($env.STARSHIP_SHELL? | default "")] | to json --raw'
+        ) -TimeoutSeconds 30)
+    try {
+        $nushellProbe = @((($nushellProbeOutput -join [Environment]::NewLine) | ConvertFrom-Json))
+    } catch {
+        throw "Nushell initialization returned invalid JSON: $($_.Exception.Message)"
+    }
+    if ($nushellProbe.Count -ne 3 -or
+        [IO.Path]::GetFullPath([string]$nushellProbe[0]) -ine $nushellDataDirectory -or
+        [bool]$nushellProbe[1] -ne $false -or [string]$nushellProbe[2] -cne $expectedStarshipShell) {
+        throw 'Nushell Starship and banner configuration verification failed.'
+    }
+    Write-Output "Nushell ready: $Version"
 }
 
 function New-ProvisioningNativeSpec {
@@ -3445,6 +3551,8 @@ if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
     $starshipInitialization = 'Invoke-Expression (&starship init powershell)' + [Environment]::NewLine
     Write-Output "Starship ready: $starshipVersion"
 }
+Install-ProvisioningNushell
+
 $mobileSSHInitialization = @'
 $herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
