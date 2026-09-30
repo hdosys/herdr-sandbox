@@ -437,7 +437,7 @@ func TestCurrentOpenCodeManagedPluginReplacesTransferredPermissions(t *testing.T
 			t.Fatal(err)
 		}
 	}
-	writeTestFile(t, filepath.Join(configRoot, "opencode", "opencode.json"), `{"permission":{"*":"deny","bash":{"*":"deny"}},"agent":{"locked":{"description":"locked","mode":"subagent","permission":{"*":"deny","bash":"deny"}}}}`)
+	writeTestFile(t, filepath.Join(configRoot, "opencode", "opencode.json"), `{"permission":{"*":"deny","bash":{"*":"deny"}},"agent":{"build":{"disable":true},"plan":{"disable":true},"general":{"disable":true},"locked":{"description":"locked","mode":"subagent","permission":{"*":"deny","bash":"deny"}}}}`)
 	writeTestFile(t, filepath.Join(project, "opencode.json"), `{"permission":{"edit":"deny"},"agent":{"project":{"description":"project","mode":"subagent","permission":{"*":"deny","edit":"deny"}}}}`)
 	programData := filepath.Join(root, "program-data")
 	start := bytes.Index(configurationSyncScript, []byte("$script:CopiedConfigurationFiles = 0"))

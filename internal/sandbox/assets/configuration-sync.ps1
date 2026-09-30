@@ -666,6 +666,12 @@ function Assert-OpenCodeSandboxConfiguration {
         $agentNames += @($resolvedConfig.agent.PSObject.Properties.Name)
     }
     foreach ($agentName in @($agentNames | Sort-Object -Unique)) {
+        if ($null -ne $resolvedConfig.agent) {
+            $configuredAgent = $resolvedConfig.agent.PSObject.Properties[[string]$agentName]
+            if ($null -ne $configuredAgent -and $configuredAgent.Value.disable -eq $true) {
+                continue
+            }
+        }
         $agent = Invoke-OpenCodeJSON -Role "OpenCode agent permission inspection ($agentName)" -Arguments @('debug', 'agent', [string]$agentName)
         $rules = @($agent.permission)
         $lastAllowAll = -1
