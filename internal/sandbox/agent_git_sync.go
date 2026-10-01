@@ -286,7 +286,7 @@ func cleanAgentGitRelativePath(value string) (string, error) {
 func blockedAgentGitTrackedPath(archiveRoot, relative string) string {
 	normalized := strings.ToLower(filepath.ToSlash(relative))
 	if slices.Contains([]string{
-		".claude.json", ".credentials.json", ".env", ".env.local", "auth.json",
+		".claude.json", ".credentials.json", ".env", ".env.local", ".usage-status.env", "auth.json",
 		"credentials.json", "history.json", "history.jsonl", "secrets.json",
 	}, normalized) {
 		return "credential or runtime file"

@@ -752,7 +752,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $agentSync = [IO.File]::ReadAllText($agentSyncPath) | ConvertFrom-Json
     $agentSyncProperties = @($agentSync.PSObject.Properties.Name | Sort-Object)
     if (($agentSyncProperties -join '|') -cne 'claudeCode|codex|credentialSync|githubCopilot|gitTrackedDeletions|herdrHookSourcePaths|opencode|pi|schemaVersion' -or
-        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 4 -or
+        $agentSync.schemaVersion -isnot [int] -or [int]$agentSync.schemaVersion -ne 5 -or
         $agentSync.opencode -isnot [bool] -or $agentSync.claudeCode -isnot [bool] -or
         $agentSync.codex -isnot [bool] -or $agentSync.githubCopilot -isnot [bool] -or
         $agentSync.pi -isnot [bool] -or $null -eq $agentSync.gitTrackedDeletions -or
@@ -760,7 +760,8 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         throw 'Coding-agent sync manifest has an unsupported contract.'
     }
     $credentialSyncProperties = @($agentSync.credentialSync.PSObject.Properties.Name | Sort-Object)
-    if (($credentialSyncProperties -join '|') -cne 'claudeCode|codex|githubCLI|opencode|pi|tradingView' -or
+    if (($credentialSyncProperties -join '|') -cne 'apify|claudeCode|codex|githubCLI|opencode|pi|tradingView' -or
+        $agentSync.credentialSync.apify -isnot [bool] -or
         $agentSync.credentialSync.opencode -isnot [bool] -or $agentSync.credentialSync.claudeCode -isnot [bool] -or
         $agentSync.credentialSync.codex -isnot [bool] -or $agentSync.credentialSync.githubCLI -isnot [bool] -or
         $agentSync.credentialSync.pi -isnot [bool] -or $agentSync.credentialSync.tradingView -isnot [bool]) {
@@ -850,6 +851,18 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     if ([bool]$agentSync.credentialSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode-authentication')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'opencode-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.local\share\opencode\auth.json')
+    }
+    . (Join-Path $expanded 'herdr-sandbox\apify-access.ps1')
+    $apifyDestination = Join-Path $env:USERPROFILE '.config\opencode\.usage-status.env'
+    if (Test-Path -LiteralPath $apifyDestination -PathType Leaf) {
+        Protect-ApifyTokenFile -Path $apifyDestination
+    }
+    if ([bool]$agentSync.credentialSync.apify) {
+        $apifySource = Join-Path $expanded 'apify-auth\.usage-status.env'
+        if (Test-Path -LiteralPath $apifySource -PathType Leaf) {
+            Protect-ApifyTokenFile -Path $apifyDestination
+            Set-AtomicConfigurationFile -Source $apifySource -Destination $apifyDestination
+        }
     }
 
     $openCodeInstalled = $null -ne (Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue |

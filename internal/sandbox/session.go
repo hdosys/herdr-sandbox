@@ -39,6 +39,11 @@ var playwrightAccessScript []byte
 
 const playwrightAccessName = "playwright-access.ps1"
 
+//go:embed assets/apify-access.ps1
+var apifyAccessScript []byte
+
+const apifyAccessName = "apify-access.ps1"
+
 type Options struct {
 	DataDirectory string
 	MemoryMB      int
@@ -776,6 +781,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}
 	if err := os.WriteFile(filepath.Join(snapshotDirectory, playwrightAccessName), playwrightAccessScript, 0o600); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("write Playwright browser access snapshot: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDirectory, apifyAccessName), apifyAccessScript, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write Apify access snapshot: %w", err)
 	}
 	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
 	if err != nil {

@@ -99,11 +99,12 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 		t.Fatalf("buildDevelopmentConfigurationArchive: %v", err)
 	}
 	var credentialReport bytes.Buffer
-	allCredentials := credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
+	allCredentials := credentialSyncConfiguration{Apify: true, OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
 	if err := writeCredentialTransferReport(&credentialReport, data, allCredentials, true, 1, false, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
+		"Apify: skipped (portable host credentials not found)",
 		"OpenCode: transferred and verified", "Claude Code: skipped (portable host credentials not found)",
 		"Codex: skipped (portable host credentials not found)", "GitHub CLI: transferred and verified",
 		"Pi: skipped (portable host credentials not found)", "TradingView: skipped (stack is not selected)",

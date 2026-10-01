@@ -79,6 +79,7 @@ var defaultGlobalConfiguration = []byte(`{
     "pi": true
   },
   "credentialSync": {
+    "apify": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,
@@ -127,6 +128,7 @@ var sampleGlobalConfiguration = []byte(`{
     "pi": true
   },
   "credentialSync": {
+    "apify": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,
@@ -305,6 +307,7 @@ type codingAgentSyncConfiguration struct {
 }
 
 type credentialSyncConfiguration struct {
+	Apify       bool `json:"apify"`
 	OpenCode    bool `json:"opencode"`
 	ClaudeCode  bool `json:"claudeCode"`
 	Codex       bool `json:"codex"`
@@ -1232,6 +1235,8 @@ func decodeCredentialSyncConfiguration(decoder *json.Decoder) (credentialSyncCon
 			configuration.Pi = enabled
 		case "tradingView":
 			configuration.TradingView = enabled
+		case "apify":
+			configuration.Apify = enabled
 		default:
 			return credentialSyncConfiguration{}, fmt.Errorf("unknown field %q", name)
 		}

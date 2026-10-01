@@ -195,6 +195,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "apify": {
+          "type": "boolean",
+          "default": false,
+          "description": "Transfer the private .usage-status.env from the host OpenCode configuration root over verified SSH."
+        },
         "opencode": {
           "type": "boolean",
           "default": false

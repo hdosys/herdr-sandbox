@@ -36,11 +36,16 @@ The product protects these boundaries:
 - The separate mobile SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
-- Portable agent, GitHub CLI, and TradingView credentials default to no transfer.
+- Portable agent, Apify, GitHub CLI, and TradingView credentials default to no transfer.
   Each provider must be enabled independently through `credentialSync`; selected
   credentials are streamed only over the verified SSH channel and are not placed
   in host run mappings or logs. Turning a field off does not revoke a credential
   already present in a retained guest. Close the Sandbox to discard that copy.
+- Apify's private `.usage-status.env` remains plain text on the host and in the
+  disposable guest. Enable `credentialSync.apify` only when guest administrators
+  may use that API token. Keep it out of Git, including repository history. The
+  guest dialog masks input and adds local Git exclusions; it never writes back to
+  the host. The next enabled host transfer replaces a guest-entered token.
 - When the TradingView stack is selected and `credentialSync.tradingView` is
   true, only the `sessionid` and
   `sessionid_sign` cookie pair for `tradingview.com` subdomains is read from the

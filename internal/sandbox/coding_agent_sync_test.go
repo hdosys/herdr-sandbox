@@ -55,12 +55,12 @@ func TestLoadGlobalConfigurationRejectsInvalidCodingAgentSync(t *testing.T) {
 
 func TestLoadGlobalConfigurationDefaultsAndOverridesCredentialSync(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	writeTestFile(t, path, `{"credentialSync":{"opencode":true,"claudeCode":true,"codex":true,"githubCLI":true,"pi":true,"tradingView":true}}`)
+	writeTestFile(t, path, `{"credentialSync":{"apify":true,"opencode":true,"claudeCode":true,"codex":true,"githubCLI":true,"pi":true,"tradingView":true}}`)
 	configuration, err := loadGlobalConfiguration(path)
 	if err != nil {
 		t.Fatalf("loadGlobalConfiguration: %v", err)
 	}
-	want := credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
+	want := credentialSyncConfiguration{Apify: true, OpenCode: true, ClaudeCode: true, Codex: true, GitHubCLI: true, Pi: true, TradingView: true}
 	if configuration.CredentialSync != want {
 		t.Fatalf("credentialSync = %#v, want %#v", configuration.CredentialSync, want)
 	}
@@ -350,7 +350,7 @@ func TestBuildDevelopmentConfigurationArchiveIncludesApprovedAgentConfigurationA
 	if err := json.Unmarshal(contents[codingAgentSyncManifestArchivePath], &syncManifest); err != nil {
 		t.Fatal(err)
 	}
-	if syncManifest.SchemaVersion != 4 || syncManifest.CredentialSync != (credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) ||
+	if syncManifest.SchemaVersion != 5 || syncManifest.CredentialSync != (credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) ||
 		strings.Join(syncManifest.GitTrackedDeletions["opencode"], "|") != "removed.md" || entries["opencode/removed.md"] ||
 		syncManifest.HerdrHookSourcePaths["claude"] != filepath.Join(claude, "hooks", "herdr-agent-state.ps1") ||
 		syncManifest.HerdrHookSourcePaths["codex"] != filepath.Join(codex, "herdr-agent-state.ps1") ||
@@ -385,6 +385,7 @@ func TestArchiveCodingAgentConfigurationKeepsCredentialsIndependent(t *testing.T
 	}
 	writeTestFile(t, filepath.Join(openCodeConfiguration, "opencode.json"), `{}`)
 	credentials := map[string]string{
+		"apify-auth/.usage-status.env":       filepath.Join(root, ".usage-status.env"),
 		"opencode-auth/auth.json":            filepath.Join(root, "opencode-auth.json"),
 		"claude-code-auth/.credentials.json": filepath.Join(root, "claude-credentials.json"),
 		"codex-auth/auth.json":               filepath.Join(root, "codex-auth.json"),
@@ -414,7 +415,8 @@ func TestArchiveCodingAgentConfigurationKeepsCredentialsIndependent(t *testing.T
 		return entries
 	}
 	credentialOnly := archive(codingAgentConfigurationSources{
-		CredentialSync:           credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true},
+		CredentialSync:           credentialSyncConfiguration{Apify: true, OpenCode: true, ClaudeCode: true, Codex: true, Pi: true},
+		ApifyAuthentication:      credentials["apify-auth/.usage-status.env"],
 		OpenCodeAuthentication:   credentials["opencode-auth/auth.json"],
 		ClaudeCodeAuthentication: credentials["claude-code-auth/.credentials.json"],
 		CodexAuthentication:      credentials["codex-auth/auth.json"],
@@ -433,11 +435,12 @@ func TestArchiveCodingAgentConfigurationKeepsCredentialsIndependent(t *testing.T
 	if err := json.Unmarshal(credentialOnly[codingAgentSyncManifestArchivePath], &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.CredentialSync != (credentialSyncConfiguration{OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) || manifest.OpenCode {
+	if manifest.CredentialSync != (credentialSyncConfiguration{Apify: true, OpenCode: true, ClaudeCode: true, Codex: true, Pi: true}) || manifest.OpenCode {
 		t.Fatalf("credential-only manifest = %#v", manifest)
 	}
 
 	configurationOnly := archive(codingAgentConfigurationSources{
+		ApifyAuthentication:    credentials["apify-auth/.usage-status.env"],
 		Selection:              codingAgentSyncConfiguration{OpenCode: true},
 		OpenCodeDirectory:      openCodeConfiguration,
 		OpenCodeAuthentication: credentials["opencode-auth/auth.json"],
@@ -445,8 +448,8 @@ func TestArchiveCodingAgentConfigurationKeepsCredentialsIndependent(t *testing.T
 	if configurationOnly["opencode/opencode.json"] == nil {
 		t.Fatal("configuration-only archive is missing OpenCode configuration")
 	}
-	if configurationOnly["opencode-auth/auth.json"] != nil {
-		t.Fatal("configuration-only archive contains OpenCode credentials")
+	if configurationOnly["opencode-auth/auth.json"] != nil || configurationOnly["apify-auth/.usage-status.env"] != nil {
+		t.Fatal("configuration-only archive contains credentials")
 	}
 }
 

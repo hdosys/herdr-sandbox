@@ -283,6 +283,7 @@ credentials.
     "pi": true
   },
   "credentialSync": {
+    "apify": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,
@@ -354,6 +355,7 @@ letter or number, and are at most 64 characters.
 | `codingAgentSync.githubCopilot` | Boolean streaming GitHub Copilot configuration into the guest. Defaults to `true`. |
 | `codingAgentSync.pi` | Boolean streaming Pi configuration into the guest. Defaults to `true`. |
 | `credentialSync.opencode` | Boolean streaming an existing OpenCode API credential. |
+| `credentialSync.apify` | Boolean streaming the private host `.usage-status.env` for Apify usage status. |
 | `credentialSync.claudeCode` | Boolean streaming an existing Claude Code credential. |
 | `credentialSync.codex` | Boolean streaming an existing Codex credential. |
 | `credentialSync.githubCLI` | Boolean streaming an existing GitHub CLI credential. |
@@ -406,6 +408,7 @@ selections separately.
 ```json
 {
   "credentialSync": {
+    "apify": false,
     "opencode": false,
     "claudeCode": false,
     "codex": false,
@@ -415,6 +418,20 @@ selections separately.
   }
 }
 ```
+
+For persistent Apify usage status, create `.usage-status.env` in the host OpenCode
+configuration directory (normally `%USERPROFILE%\.config\opencode`) with
+`APIFY_TOKEN="your-token"`. Exclude `/.usage-status.env` in that checkout's local
+`.git/info/exclude` **before** saving the token. Enable `credentialSync.apify` in
+Herdr Sandbox's host `config.json`, then run `sandbox up`. The private file travels
+over verified SSH, not Git or a mapped host directory.
+
+Inside the guest, **Apify access** on the taskbar opens a masked paste dialog.
+Enter only the token, then choose **Save**. Usage status reads it on its next
+refresh. Cancel or empty input changes nothing. This dialog changes only the
+guest copy; a later enabled host transfer replaces it. Keep the host token for
+reuse after closing and recreating the Sandbox. Never paste tokens into chats,
+command lines, or tracked files.
 
 When enabled, registered configuration repositories fast-forward before `up` and
 after `down`. Local edits are never rebased, stashed, or overwritten; divergence

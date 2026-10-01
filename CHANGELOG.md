@@ -16,6 +16,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Added
 
+- Apify access has a masked token dialog in Start and the Sandbox taskbar.
+  Enable `credentialSync.apify` to reuse the private host token after Sandbox
+  replacement; guest entries are never copied back to the host.
 - HyperFrames narration supports Supertonic 3 as its CPU-only default with ten
   built-in voices, 10 denoising steps and automatic 300-character chunking.
   VoxCPM2 remains explicitly selectable. Local engine bundles can be selected

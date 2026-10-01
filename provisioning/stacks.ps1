@@ -2814,35 +2814,7 @@ function Install-NodeStack {
 }
 
 function Install-PlaywrightBrowserAccess {
-    $source = Join-Path $PSScriptRoot 'playwright-access.ps1'
-    $directory = 'C:\HerdrSandbox\tools\playwright-access'
-    $destination = Join-Path $directory 'playwright-access.ps1'
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
-        ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw 'The Playwright browser access script is missing or unsafe.'
-    }
-    New-Item -ItemType Directory -Path $directory -Force | Out-Null
-    foreach ($path in @($directory, $destination)) {
-        if ((Test-Path -LiteralPath $path) -and
-            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Playwright browser access path is unsafe: $path"
-        }
-    }
-    if ((Test-Path -LiteralPath $destination) -and -not (Test-Path -LiteralPath $destination -PathType Leaf)) {
-        throw 'Playwright browser access destination is not a regular file.'
-    }
-    $sourceBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($source))
-    if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or
-        [Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
-        Copy-Item -LiteralPath $source -Destination $destination -Force
-    }
-    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
-        throw 'Playwright browser access script verification failed.'
-    }
-    $powerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    Ensure-ProvisioningStartShortcut -DisplayName 'Playwright browser access' -Executable $powerShell `
-        -ShortcutArguments ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "' + $destination + '" -ShowDialog') `
-        -IconLocation ((Join-Path $env:WINDIR 'System32\shell32.dll') + ',44')
+    Install-ProvisioningAccessShortcut -Name 'playwright-access' -DisplayName 'Playwright browser access'
 }
 
 function Install-PlaywrightCLIStack {

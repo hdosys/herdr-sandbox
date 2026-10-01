@@ -188,6 +188,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		userProvisioningName:                 "user",
 		provisioningProcessName:              "process",
 		playwrightAccessName:                 string(playwrightAccessScript),
+		apifyAccessName:                      string(apifyAccessScript),
 		wingetPackagePlanFileName:            "packages",
 		toolVersionPlanFileName:              "tools",
 		workspaceManifestName:                "workspaces",

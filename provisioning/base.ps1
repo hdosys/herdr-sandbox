@@ -2711,7 +2711,7 @@ public static class HerdrSandboxShellWindow {
 function Ensure-ProvisioningStartShortcut {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet('AudioGridder Server', 'File Pilot', 'REAPER', 'TradingView', 'Playwright browser access')]
+        [ValidateSet('AudioGridder Server', 'File Pilot', 'REAPER', 'TradingView', 'Playwright browser access', 'Apify access')]
         [string]$DisplayName,
         [Parameter(Mandatory = $true)]
         [string]$Executable,
@@ -2769,6 +2769,42 @@ function Ensure-ProvisioningFilePilotStartShortcut {
     Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $filePilotExecutable
 }
 
+function Install-ProvisioningAccessShortcut {
+    param(
+        [ValidateSet('playwright-access', 'apify-access')][string]$Name,
+        [ValidateSet('Playwright browser access', 'Apify access')][string]$DisplayName
+    )
+    $source = Join-Path $PSScriptRoot ($Name + '.ps1')
+    $directory = Join-Path 'C:\HerdrSandbox\tools' $Name
+    $destination = Join-Path $directory ($Name + '.ps1')
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
+        ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$DisplayName script is missing or unsafe."
+    }
+    foreach ($path in @('C:\HerdrSandbox', 'C:\HerdrSandbox\tools', $directory, $destination)) {
+        if ((Test-Path -LiteralPath $path) -and
+            ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$DisplayName path is unsafe: $path"
+        }
+    }
+    if ((Test-Path -LiteralPath $destination) -and -not (Test-Path -LiteralPath $destination -PathType Leaf)) {
+        throw "$DisplayName destination is not a regular file."
+    }
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $sourceBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($source))
+    if (-not (Test-Path -LiteralPath $destination -PathType Leaf) -or
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
+        Copy-Item -LiteralPath $source -Destination $destination -Force
+    }
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) -cne $sourceBytes) {
+        throw "$DisplayName script verification failed."
+    }
+    $powerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Ensure-ProvisioningStartShortcut -DisplayName $DisplayName -Executable $powerShell `
+        -ShortcutArguments ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "' + $destination + '" -ShowDialog') `
+        -IconLocation ((Join-Path $env:WINDIR 'System32\shell32.dll') + ',44')
+}
+
 function Ensure-ProvisioningTaskbarPins {
     param(
         [Parameter(Mandatory = $true)]
@@ -2786,13 +2822,14 @@ function Ensure-ProvisioningTaskbarPins {
     }
     $pinElements.Add('<taskbar:DesktopApp DesktopApplicationID="MSEdge" />') | Out-Null
     $pinNames.Add('Microsoft Edge') | Out-Null
-    $playwrightShortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Playwright browser access.lnk'
-    if (Test-Path -LiteralPath $playwrightShortcut -PathType Leaf) {
-        if (((Get-Item -LiteralPath $playwrightShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Playwright browser access taskbar shortcut is unsafe: $playwrightShortcut"
+    foreach ($accessName in @('Playwright browser access', 'Apify access')) {
+        $accessShortcut = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\' + $accessName + '.lnk')
+        if (-not (Test-Path -LiteralPath $accessShortcut -PathType Leaf)) { continue }
+        if (((Get-Item -LiteralPath $accessShortcut -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$accessName taskbar shortcut is unsafe: $accessShortcut"
         }
-        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\Playwright browser access.lnk" />') | Out-Null
-        $pinNames.Add('Playwright browser access') | Out-Null
+        $pinElements.Add('<taskbar:DesktopApp DesktopApplicationLinkPath="%APPDATA%\Microsoft\Windows\Start Menu\Programs\' + $accessName + '.lnk" />') | Out-Null
+        $pinNames.Add($accessName) | Out-Null
     }
     $explorerStartApps = @(Get-StartApps -ErrorAction Stop |
         Where-Object { [string]$_.AppID -ceq 'Microsoft.Windows.Explorer' })
@@ -3855,6 +3892,7 @@ if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
             -DelayMilliseconds 0 -BestEffort | Out-Null
     }
 }
+Install-ProvisioningAccessShortcut -Name 'apify-access' -DisplayName 'Apify access'
 Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
     -TerminalPackageFamily $terminalPackageFamily
 $provisioningStopwatch.Stop()

@@ -19,6 +19,7 @@ const codingAgentSyncManifestArchivePath = "herdr-sandbox/coding-agent-sync.json
 type codingAgentConfigurationSources struct {
 	Selection                codingAgentSyncConfiguration
 	CredentialSync           credentialSyncConfiguration
+	ApifyAuthentication      string
 	OpenCodeDirectory        string
 	OpenCodeAuthentication   string
 	ClaudeCodeDirectory      string
@@ -47,7 +48,7 @@ type codingAgentSyncManifest struct {
 
 func newCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, gitTrackedDeletions map[string][]string, herdrHookSourcePaths map[string]string) codingAgentSyncManifest {
 	return codingAgentSyncManifest{
-		SchemaVersion:        4,
+		SchemaVersion:        5,
 		OpenCode:             configuration.OpenCode,
 		ClaudeCode:           configuration.ClaudeCode,
 		Codex:                configuration.Codex,
@@ -72,7 +73,7 @@ func defaultCodingAgentConfigurationSources(userHome string, selection codingAge
 		return codingAgentConfigurationSources{}, fmt.Errorf("user home is not absolute: %q", userHome)
 	}
 	sources := codingAgentConfigurationSources{Selection: selection, CredentialSync: credentialSync}
-	if selection.OpenCode || credentialSync.OpenCode {
+	if selection.OpenCode || credentialSync.OpenCode || credentialSync.Apify {
 		configuration, data, resolveErr := defaultOpenCodeDirectories(userHome)
 		if resolveErr != nil {
 			return codingAgentConfigurationSources{}, resolveErr
@@ -82,6 +83,9 @@ func defaultCodingAgentConfigurationSources(userHome string, selection codingAge
 		}
 		if credentialSync.OpenCode {
 			sources.OpenCodeAuthentication = filepath.Join(data, "auth.json")
+		}
+		if credentialSync.Apify {
+			sources.ApifyAuthentication = filepath.Join(configuration, ".usage-status.env")
 		}
 	}
 	if selection.ClaudeCode || credentialSync.ClaudeCode {
@@ -204,6 +208,11 @@ func archiveCodingAgentConfiguration(
 	if sources.CredentialSync.OpenCode {
 		if err := addOptionalConfigurationFile(sources.OpenCodeAuthentication, filepath.Join("opencode-auth", "auth.json"), addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode authentication: %w", err)
+		}
+	}
+	if sources.CredentialSync.Apify {
+		if err := addOptionalConfigurationFile(sources.ApifyAuthentication, "apify-auth/.usage-status.env", addConfiguration); err != nil {
+			return fmt.Errorf("archive Apify authentication: %w", err)
 		}
 	}
 
@@ -512,6 +521,7 @@ func credentialSyncNames(configuration credentialSyncConfiguration) []string {
 		{configuration.GitHubCLI, "GitHub CLI"},
 		{configuration.Pi, "Pi"},
 		{configuration.TradingView, "TradingView"},
+		{configuration.Apify, "Apify"},
 	} {
 		if entry.enabled {
 			selected = append(selected, entry.name)

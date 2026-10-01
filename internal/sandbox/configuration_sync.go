@@ -401,6 +401,7 @@ func writeCredentialTransferReport(output io.Writer, archive []byte, selection c
 		return "skipped (portable host credentials not found)"
 	}
 	statuses := map[string]string{
+		"Apify":       fileStatus(files["apify-auth/.usage-status.env"]),
 		"OpenCode":    fileStatus(files["opencode-auth/auth.json"]),
 		"Claude Code": fileStatus(files["claude-code-auth/.credentials.json"]),
 		"Codex":       fileStatus(files["codex-auth/auth.json"] || files["codex-auth/.credentials.json"]),
@@ -977,6 +978,9 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	}
 	if err := addData(applyScript, configurationApplyScriptArchivePath, "development configuration apply script"); err != nil {
 		return nil, fmt.Errorf("archive development configuration apply script: %w", err)
+	}
+	if err := addData(apifyAccessScript, "herdr-sandbox/apify-access.ps1", "Apify access script"); err != nil {
+		return nil, err
 	}
 	if err := add(sources.PackagePlan, configurationPackagePlanArchivePath); err != nil {
 		return nil, fmt.Errorf("archive resolved WinGet package plan: %w", err)
