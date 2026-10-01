@@ -26,7 +26,7 @@ function Protect-ApifyTokenFile {
         Assert-ApifyRegularPath -Path $exclude
         New-Item -ItemType Directory -Path (Split-Path -Parent $exclude) -Force | Out-Null
         $text = if (Test-Path -LiteralPath $exclude -PathType Leaf) { [IO.File]::ReadAllText($exclude) } else { '' }
-        foreach ($pattern in @('/.usage-status.env', '/.usage-status.env.*.tmp')) {
+        foreach ($pattern in @('/.usage-status.env', '/.usage-status.env.*.tmp', '/.usage-status.env.*.tmp.bak')) {
             if (@($text -split '\r?\n') -cnotcontains $pattern) {
                 [IO.File]::AppendAllText($exclude, ("`n" + $pattern + "`n"), (New-Object Text.UTF8Encoding($false)))
             }
@@ -46,15 +46,17 @@ function Set-ApifyToken {
     }
     Protect-ApifyTokenFile -Path $Path
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $backup = $temporary + '.bak'
     try {
         [IO.File]::WriteAllText($temporary, ('APIFY_TOKEN="' + $token + '"' + "`n"), (New-Object Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
-            [IO.File]::Replace($temporary, $Path, $null)
+            [IO.File]::Replace($temporary, $Path, $backup)
         } else {
             [IO.File]::Move($temporary, $Path)
         }
     } finally {
         if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) }
+        if (Test-Path -LiteralPath $backup) { [IO.File]::Delete($backup) }
     }
 }
 
