@@ -9,6 +9,11 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Herdr now owns portable Herdr settings transfer during Sandbox provisioning.
+  Sandbox preserves guest-local settings and applies only its shell and mapped
+  worktree overrides. Custom `HERDR_CONFIG_PATH` selections are honored. This
+  requires a Herdr Extended build that reports its configuration-provisioning
+  outcome; agent configuration and credential transfers remain unchanged.
 - Initial development provisioning and retries use the same verified SSH path.
   A failed project profile preserves the running Sandbox and installed tools;
   correct the profile and run `sandbox up` again. Initial workspace creation is

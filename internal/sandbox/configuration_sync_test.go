@@ -543,7 +543,7 @@ func TestPatchGuestWindowsTerminalSettingsDoesNotSynthesizeLegacyProfile(t *test
 
 func TestPatchGuestHerdrConfigUsesAvailableHostNushell(t *testing.T) {
 	input := []byte("onboarding = false\n\n[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\n\n[theme]\nname = \"one-light\"\n")
-	patched, err := patchGuestHerdrConfig(input, "")
+	patched, err := patchGuestHerdrConfig(input, "", "nu.exe")
 	if err != nil {
 		t.Fatalf("patchGuestHerdrConfig: %v", err)
 	}
@@ -552,18 +552,18 @@ func TestPatchGuestHerdrConfigUsesAvailableHostNushell(t *testing.T) {
 		!strings.Contains(text, "[theme]\nname = \"one-light\"") {
 		t.Fatalf("patched config:\n%s", text)
 	}
-	withoutTerminal, err := patchGuestHerdrConfig([]byte("onboarding = false\n"), "")
+	withoutTerminal, err := patchGuestHerdrConfig([]byte("onboarding = false\n"), "", "pwsh.exe")
 	if err != nil || !strings.Contains(string(withoutTerminal), "[terminal]\ndefault_shell = \"pwsh.exe\"") {
 		t.Fatalf("missing-section patch = %q, err = %v", withoutTerminal, err)
 	}
-	if _, err := patchGuestHerdrConfig([]byte("[terminal]\n[terminal]\n"), ""); err == nil {
+	if _, err := patchGuestHerdrConfig([]byte("[terminal]\n[terminal]\n"), "", "pwsh.exe"); err == nil {
 		t.Fatal("duplicate terminal sections unexpectedly succeeded")
 	}
 }
 
 func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
 	input := []byte("onboarding = false\n\n[worktrees]\ndirectory = \"D:/old\"\ninclude_repo_name = true\n")
-	patched, err := patchGuestHerdrConfig(input, guestWorktreeDirectory)
+	patched, err := patchGuestHerdrConfig(input, guestWorktreeDirectory, "pwsh.exe")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,7 +572,7 @@ func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
 		!strings.Contains(text, "[terminal]\ndefault_shell = \"pwsh.exe\"") {
 		t.Fatalf("patched config:\n%s", text)
 	}
-	if _, err := patchGuestHerdrConfig([]byte("[worktrees]\n[worktrees]\n"), guestWorktreeDirectory); err == nil {
+	if _, err := patchGuestHerdrConfig([]byte("[worktrees]\n[worktrees]\n"), guestWorktreeDirectory, "pwsh.exe"); err == nil {
 		t.Fatal("duplicate worktrees sections unexpectedly succeeded")
 	}
 	for name, contents := range map[string]string{
@@ -585,19 +585,19 @@ func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
 		"quoted nested table": `["worktrees".cleanup]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := patchGuestHerdrConfig([]byte(contents+"\n"), guestWorktreeDirectory); err == nil || !strings.Contains(err.Error(), "ambiguous worktrees") {
+			if _, err := patchGuestHerdrConfig([]byte(contents+"\n"), guestWorktreeDirectory, "pwsh.exe"); err == nil || !strings.Contains(err.Error(), "ambiguous worktrees") {
 				t.Fatalf("ambiguous definition error = %v", err)
 			}
 		})
 	}
-	withComment, err := patchGuestHerdrConfig([]byte("[worktrees] # retained comment\ninclude_repo_name = true\n"), guestWorktreeDirectory)
+	withComment, err := patchGuestHerdrConfig([]byte("[worktrees] # retained comment\ninclude_repo_name = true\n"), guestWorktreeDirectory, "pwsh.exe")
 	if err != nil || strings.Count(string(withComment), "[worktrees]") != 1 || !strings.Contains(string(withComment), `directory = "C:/Worktrees"`) {
 		t.Fatalf("commented worktrees section patch = %q, error = %v", withComment, err)
 	}
 }
 
 func TestBuildGuestHerdrConfigAllowsMissingHostConfig(t *testing.T) {
-	config, err := buildGuestHerdrConfig(filepath.Join(t.TempDir(), "missing", "config.toml"), "")
+	config, err := buildGuestHerdrConfig(filepath.Join(t.TempDir(), "missing", "config.toml"), nil, "")
 	if err != nil {
 		t.Fatalf("build missing host Herdr config: %v", err)
 	}

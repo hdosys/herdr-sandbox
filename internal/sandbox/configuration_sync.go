@@ -312,6 +312,7 @@ type hostConfigurationSources struct {
 	TradingViewAuthentication []byte
 	CodingAgents              codingAgentConfigurationSources
 	HerdrConfig               string
+	GuestHerdrConfig          []byte
 	WorktreeDirectory         string
 	WindowsTerminalSettings   string
 	WindowsTerminalFragments  string
@@ -372,6 +373,9 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
+		if file.Name == "herdr/expected-sha256.txt" {
+			continue
+		}
 		if !file.FileInfo().IsDir() && file.Name != "herdr-sandbox/apify-access.ps1" && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != configurationAgentWorktreeInstructionsArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath && file.Name != tradingViewSettingsArchivePath {
 			count++
 		}
@@ -707,6 +711,11 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if worktreesEnabled {
 		sources.WorktreeDirectory = guestWorktreeDirectory
 	}
+	sources.GuestHerdrConfig, err = readGuestHerdrConfiguration(ctx, connection)
+	if err != nil {
+		return err
+	}
+	defer clear(sources.GuestHerdrConfig)
 	expectedGitHubAccounts := 0
 	expectedTradingViewCookies := 0
 	tradingViewCredentialsFound := false
@@ -852,7 +861,18 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 	if !filepath.IsAbs(roamingAppData) {
 		return hostConfigurationSources{}, fmt.Errorf("APPDATA is not absolute: %q", roamingAppData)
 	}
-	sources := hostConfigurationSources{HerdrConfig: filepath.Join(roamingAppData, "herdr", "config.toml")}
+	herdrConfig, hasHerdrConfigOverride := os.LookupEnv("HERDR_CONFIG_PATH")
+	if !hasHerdrConfigOverride {
+		herdrConfig = filepath.Join(roamingAppData, "herdr", "config.toml")
+	}
+	if herdrConfig == "" {
+		return hostConfigurationSources{}, errors.New("HERDR_CONFIG_PATH is empty")
+	}
+	herdrConfig, err = filepath.Abs(herdrConfig)
+	if err != nil {
+		return hostConfigurationSources{}, fmt.Errorf("resolve host Herdr configuration: %w", err)
+	}
+	sources := hostConfigurationSources{HerdrConfig: herdrConfig}
 	if tradingViewEnabled {
 		sources.TradingViewProfile, err = defaultTradingViewProfilePath()
 		if err != nil {
@@ -1126,12 +1146,19 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	if err := archiveCodingAgentConfiguration(ctx, sources.CodingAgents, add, addData); err != nil {
 		return nil, err
 	}
-	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig, sources.WorktreeDirectory)
+	herdrConfig, err := buildGuestHerdrConfig(sources.HerdrConfig, sources.GuestHerdrConfig, sources.WorktreeDirectory)
 	if err != nil {
 		return nil, err
 	}
 	if err := addData(herdrConfig, filepath.Join("herdr", "config.toml"), sources.HerdrConfig); err != nil {
 		return nil, fmt.Errorf("archive Herdr config: %w", err)
+	}
+	expectedHerdrConfig := "missing"
+	if sources.GuestHerdrConfig != nil {
+		expectedHerdrConfig = fmt.Sprintf("%x", sha256.Sum256(sources.GuestHerdrConfig))
+	}
+	if err := addData([]byte(expectedHerdrConfig), "herdr/expected-sha256.txt", "guest Herdr configuration snapshot"); err != nil {
+		return nil, err
 	}
 	if sources.WindowsTerminalEdition != "" && sources.WindowsTerminalSettings != "" {
 		if activeWorkspace == "" {
@@ -1160,10 +1187,10 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	return buffer.Bytes(), nil
 }
 
-func buildGuestHerdrConfig(path, worktreeDirectory string) ([]byte, error) {
+func buildGuestHerdrConfig(path string, guestConfig []byte, worktreeDirectory string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return patchGuestHerdrConfig(nil, worktreeDirectory)
+		return patchGuestHerdrConfig(guestConfig, worktreeDirectory, "pwsh.exe")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect Herdr config: %w", err)
@@ -1175,10 +1202,17 @@ func buildGuestHerdrConfig(path, worktreeDirectory string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Herdr config: %w", err)
 	}
-	return patchGuestHerdrConfig(contents, worktreeDirectory)
+	defaultShell := "pwsh.exe"
+	if hostHerdrConfigUsesNushell(strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")) {
+		defaultShell = "nu.exe"
+	}
+	return patchGuestHerdrConfig(guestConfig, worktreeDirectory, defaultShell)
 }
 
-func patchGuestHerdrConfig(contents []byte, worktreeDirectory string) ([]byte, error) {
+func patchGuestHerdrConfig(contents []byte, worktreeDirectory, defaultShell string) ([]byte, error) {
+	if defaultShell != "pwsh.exe" && defaultShell != "nu.exe" {
+		return nil, errors.New("guest Herdr shell must be pwsh.exe or nu.exe")
+	}
 	if bytes.IndexByte(contents, 0) >= 0 {
 		return nil, errors.New("config for Herdr contains a NUL byte")
 	}
@@ -1190,11 +1224,7 @@ func patchGuestHerdrConfig(contents []byte, worktreeDirectory string) ([]byte, e
 		}
 	}
 	var err error
-	defaultShell := `default_shell = "pwsh.exe"`
-	if hostHerdrConfigUsesNushell(lines) {
-		defaultShell = `default_shell = "nu.exe"`
-	}
-	lines, err = upsertHerdrConfigValue(lines, "terminal", "default_shell", defaultShell)
+	lines, err = upsertHerdrConfigValue(lines, "terminal", "default_shell", fmt.Sprintf("default_shell = %q", defaultShell))
 	if err != nil {
 		return nil, err
 	}

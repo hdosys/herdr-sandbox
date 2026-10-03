@@ -322,13 +322,21 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 		runtimeVersion: "local+346411fa21af.f32339bad77e",
 		protocol:       42,
 	}
-	valid := []byte(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"installed","server_outcome":"started","version":"local+346411fa21af.f32339bad77e","protocol":42}`)
+	valid := []byte(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"installed","server_outcome":"started","config_outcome":"applied","version":"local+346411fa21af.f32339bad77e","protocol":42}`)
 	result, err := decodeRemoteProvisionResult(valid)
 	if err != nil {
 		t.Fatalf("decode valid remote provision result: %v", err)
 	}
 	if err := result.validate(host, sshTargetName); err != nil {
 		t.Fatalf("validate remote provision result: %v", err)
+	}
+	for _, outcome := range []string{"applied", "no_source", "", "skipped"} {
+		candidate := result
+		candidate.ConfigOutcome = outcome
+		err := candidate.validate(host, sshTargetName)
+		if (err == nil) != (outcome == "applied" || outcome == "no_source") {
+			t.Fatalf("configuration outcome %q: %v", outcome, err)
+		}
 	}
 	additive := []byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":42,"endpoint_protocol_generation":1,"endpoint_capabilities":["windows_remote_host"]`, 1))
 	if _, err := decodeRemoteProvisionResult(additive); err != nil {
@@ -351,11 +359,13 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 		{Target: sshTargetName, Platform: "windows-x86_64", Binary: result.Binary, BinaryOutcome: remoteProvisionBinaryInstalled, ServerOutcome: remoteProvisionServerStarted, Version: "other", Protocol: host.protocol},
 	}
 	for _, candidate := range invalid {
+		candidate.ConfigOutcome = "applied"
 		if err := candidate.validate(host, sshTargetName); err == nil {
 			t.Fatalf("invalid remote provision result passed: %#v", candidate)
 		}
 	}
 	for _, data := range [][]byte{
+		[]byte(strings.Replace(string(valid), `,"config_outcome":"applied"`, "", 1)),
 		append(append([]byte{}, valid...), []byte(` {}`)...),
 		[]byte(strings.Replace(string(valid), `"protocol":42`, `"protocol":"42"`, 1)),
 		[]byte(strings.Replace(string(additive), `"protocol":42`, `"protocol":42,"endpoint_protocol_generation":2`, 1)),
@@ -376,7 +386,7 @@ func TestHostHerdrProvisionKeepsSuccessfulDiagnosticOutOfJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","config_outcome":"applied","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
 	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "# independent successful diagnostic")
 	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")
@@ -398,7 +408,7 @@ func TestHostHerdrProvisionRejectsCombinedOutputOverLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
+	resultJSON := fmt.Sprintf(`{"target":"sandbox","platform":"windows-x86_64","binary":"C:\\HerdrManaged\\current\\herdr.exe","binary_outcome":"already_matching","server_outcome":"reloaded","config_outcome":"no_source","version":%q,"protocol":%d}`, host.runtimeVersion, host.protocol)
 	t.Setenv(hostHerdrRemoteOutputEnvironment, resultJSON)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", strings.Repeat("x", maximumRemoteProvisionOutput-1))
 	t.Setenv(hostHerdrRemoteExitCodeEnvironment, "0")

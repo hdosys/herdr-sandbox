@@ -57,7 +57,8 @@ function Copy-VerifiedConfigurationFile {
 function Set-AtomicConfigurationFile {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [string]$ExpectedSHA256 = ''
     )
     if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
         throw "Configuration source file is missing: $Source"
@@ -69,6 +70,15 @@ function Set-AtomicConfigurationFile {
     $backup = $null
     try {
         [IO.File]::Copy($Source, $temporary, $false)
+        if ($ExpectedSHA256 -ne '') {
+            $actualBefore = 'missing'
+            if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+                $actualBefore = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash
+            }
+            if ($actualBefore -ine $ExpectedSHA256) {
+                throw 'Guest Herdr configuration changed during sync; retry sandbox up.'
+            }
+        }
         if (Test-Path -LiteralPath $Destination -PathType Leaf) {
             $backup = Join-Path $destinationDirectory ('.herdr-sandbox-config-' + [Guid]::NewGuid().ToString('N') + '.bak')
             [IO.File]::Replace($temporary, $Destination, $backup, $true)
@@ -1400,7 +1410,11 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     [Console]::Error.WriteLine('[config-sync] apply-herdr')
     $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
     $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
-    Set-AtomicConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination
+    $herdrExpectedSHA256 = [IO.File]::ReadAllText((Join-Path $expanded 'herdr\expected-sha256.txt'))
+    if ($herdrExpectedSHA256 -cne 'missing' -and $herdrExpectedSHA256 -cnotmatch '^[a-f0-9]{64}$') {
+        throw 'Guest Herdr configuration snapshot digest is invalid.'
+    }
+    Set-AtomicConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination -ExpectedSHA256 $herdrExpectedSHA256
 
     if ($starshipEnabled) {
     [Console]::Error.WriteLine('[config-sync] apply-starship')
