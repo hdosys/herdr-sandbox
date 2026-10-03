@@ -3,11 +3,111 @@ package sandbox
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 provisioning retry")
+	root := t.TempDir()
+	guestRoot := filepath.Join(root, "guest")
+	workspaces := filepath.Join(root, "workspaces")
+	project := filepath.Join(workspaces, "project")
+	source := filepath.Join(root, "source")
+	projects := filepath.Join(source, "projects")
+	for _, directory := range []string{project, projects} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, err := os.ReadFile(filepath.Join("testdata", "retry-provisioning-base.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	productionBase, err := os.ReadFile(filepath.Join("..", "..", "provisioning", "base.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{
+		baseProvisioningName: base, stackProvisioningName: productionBase,
+		userProvisioningName: []byte("# no user customization"), provisioningProcessName: provisioningProcessSource,
+		playwrightAccessName: playwrightAccessScript, apifyAccessName: apifyAccessScript,
+		guestFinalizationName: guestFinalizationScript, wingetPackagePlanFileName: []byte("{}"),
+		toolVersionPlanFileName: []byte("{}"), workspaceManifestName: []byte("{}"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(source, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profile := filepath.Join(projects, "project.ps1")
+	snapshot := provisioningSnapshot{Directory: source, ProcessOwnerPath: filepath.Join(source, provisioningProcessName),
+		PackagePlanPath: filepath.Join(source, wingetPackagePlanFileName), ToolVersionPlanPath: filepath.Join(source, toolVersionPlanFileName),
+		WorkspaceManifestPath: filepath.Join(source, workspaceManifestName), ProjectScriptsDirectory: projects,
+		Workspaces: []workspacePlan{{Name: "project", ProvisioningPath: profile}}}
+	for index, profileScript := range []string{
+		"param($ProjectDirectory)\nthrow 'intentional project failure'",
+		"param($ProjectDirectory)\n[IO.File]::WriteAllText((Join-Path $ProjectDirectory 'accepted.txt'), 'corrected')",
+	} {
+		if err := os.WriteFile(profile, []byte(profileScript), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		archive, err := buildReprovisionArchive(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
+		attempt := fmt.Sprintf("20261002-12000%d-abcdef12", index)
+		launcherScript := buildReprovisionLauncher(digest, len(archive), 1, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false)
+		launcherScript = strings.ReplaceAll(launcherScript, guestWorkspacesDirectory, workspaces)
+		launcher := sshArchiveLauncherBytes(launcherScript)
+		command := buildSSHArchiveTransportCommand(digest, len(archive), launcher, 30*time.Second, attempt)
+		command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
+		output, runErr := runLocalSSHTransport(t, command, launcher, archive, nil)
+		if index == 0 {
+			if runErr == nil || !strings.Contains(string(output), `workspace "project"`) || !strings.Contains(string(output), "intentional project failure") {
+				t.Fatalf("project failure not preserved: %v: %s", runErr, output)
+			}
+		} else {
+			result, err := decodeReprovisionResult(output)
+			if runErr != nil || err != nil || result.ArchiveSHA256 != digest || result.ProjectCount != 1 {
+				t.Fatalf("corrected same-guest retry failed: run=%v decode=%v output=%s", runErr, err, output)
+			}
+		}
+		entries, err := os.ReadDir(filepath.Join(guestRoot, "staging"))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("provisioning left attempt input: %v %v", entries, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(project, "accepted.txt")); err != nil || string(data) != "corrected" {
+		t.Fatalf("corrected profile did not execute in the same project: %q %v", data, err)
+	}
+}
+
+func TestGuestWorkspaceFinalizationRetriesWithoutDuplicatesInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 workspace finalization retry")
+	fixture, err := os.ReadFile(filepath.Join("testdata", "retry-workspaces.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: filepath.Join("assets", guestFinalizationName), names: []string{"Initialize-GuestWorkspaces"},
+	})
+	script := "$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version 2.0\n" + setup + string(fixture)
+	path := filepath.Join(t.TempDir(), "retry-workspaces.ps1")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "verified" {
+		t.Fatalf("workspace finalization retry failed: %v: %s", err, output)
+	}
+}
 
 func TestRetainedRunPlanRequiresCompatibleExistingLaunchPlan(t *testing.T) {
 	root := t.TempDir()
@@ -189,6 +289,7 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 		provisioningProcessName:              "process",
 		playwrightAccessName:                 string(playwrightAccessScript),
 		apifyAccessName:                      string(apifyAccessScript),
+		guestFinalizationName:                string(guestFinalizationScript),
 		wingetPackagePlanFileName:            "packages",
 		toolVersionPlanFileName:              "tools",
 		workspaceManifestName:                "workspaces",
@@ -292,15 +393,15 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 	digest := strings.Repeat("a", 64)
 	restartID := "20260801-080000-1234abcd"
 	taskName := "HerdrSandbox-ExplorerRestart-" + restartID
-	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName)
+	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName, false)
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedArchiveLength = [long]1234",
-		"Retained provisioning archive SHA-256 mismatch",
+		"Provisioning archive SHA-256 mismatch",
 		"function Remove-GuestArchiveStaging",
 		"staging cleanup did not remove all input",
-		`C:\HerdrSandbox\staging`,
-		"reprovision-aaaaaaaaaaaaaaaa",
+		"Join-Path $PSScriptRoot 'staging'",
+		"provisioning-" + restartID,
 		"Assert-GuestArchiveTree",
 		"New-Item -ItemType Directory -Path $projectsDirectory -Force",
 		`$env:HERDR_SANDBOX_STATUS_DIRECTORY = 'C:\SandboxStatus'`,

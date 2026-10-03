@@ -9,6 +9,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Initial development provisioning and retries use the same verified SSH path.
+  A failed project profile preserves the running Sandbox and installed tools;
+  correct the profile and run `sandbox up` again. Initial workspace creation is
+  repeatable without duplicating workspaces already created before a failure.
+- `sandbox up` cancels its SSH-owned provisioning process tree before returning
+  from an ordinary interruption. Uncertain interrupted transfer state is preserved
+  and reported rather than overwritten by another attempt.
 - Nushell is now mandatory Base tooling in every Sandbox, with verified command
   startup and the selected Starship prompt. No Nushell stack selection is needed.
   Remove existing `Install-NushellStack` calls from user and project profiles;
@@ -28,6 +35,10 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Nested SSH commands discard inherited OpenSSH descriptor metadata, preventing
+  stalled input/output when invoked from an SSH-created environment.
+- Old `Install-NushellStack` calls are rejected during profile planning with the
+  file and line number, before starting lengthy provisioning.
 - OpenCode configuration transfer validates the effective Sandbox permission
   policy in one inspection, without assuming built-in agent names or starting
   a separate inspection process per agent. Disabled and custom agents are supported.

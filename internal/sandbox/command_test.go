@@ -50,6 +50,17 @@ func requireExternalBoundaryTest(t *testing.T, boundary string) {
 	}
 }
 
+func TestChildProcessEnvironmentDropsInheritedOpenSSHDescriptors(t *testing.T) {
+	parent := []string{"PATH=C:\\Tools", "c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE=stale", "HOME=C:\\Users\\test"}
+	child := childProcessEnvironment(parent)
+	if got := strings.Join(child, "|"); got != "PATH=C:\\Tools|HOME=C:\\Users\\test" {
+		t.Fatalf("child inherited obsolete OpenSSH descriptors or lost normal environment: %q", got)
+	}
+	if len(parent) != 3 {
+		t.Fatal("parent environment changed")
+	}
+}
+
 func TestRunBoundedGitHubCLITerminatesOwnedCommandOnOverflow(t *testing.T) {
 	environment := append(os.Environ(), boundedOutputHelper+"=1")
 	_, err := runBoundedGitHubCLI(t.Context(), os.Args[0], environment, 4, "-test.run=^TestBoundedOutputHelper$")

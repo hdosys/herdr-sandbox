@@ -21,6 +21,8 @@ namespace HerdrSandbox
         public int TimeoutMilliseconds { get; set; }
         public int[] SuccessExitCodes { get; set; }
         public bool TerminateDescendantsAfterRootExit { get; set; }
+        public string StandardInputFile { get; set; }
+        public bool SeparateErrorOutput { get; set; }
     }
 
     public sealed class ProvisioningProcessResult
@@ -28,6 +30,7 @@ namespace HerdrSandbox
         public string Role { get; internal set; }
         public int ExitCode { get; internal set; }
         public string Output { get; internal set; }
+        public string ErrorOutput { get; internal set; }
         public long OutputBytes { get; internal set; }
         public bool OutputTruncated { get; internal set; }
         public long ElapsedMilliseconds { get; internal set; }
@@ -56,6 +59,24 @@ namespace HerdrSandbox
                 throw new ArgumentException("A provisioning process group requires exactly two tasks.", "specs");
             }
             return ProvisioningProcessGroup.Start(specs);
+        }
+
+        // The SSH receiver keeps stdin open after its framed input. EOF means
+        // cancellation or a lost host connection, not successful completion.
+        public static ProvisioningProcessResult RunWithInputLease(ProvisioningProcessSpec spec)
+        {
+            using (ProvisioningProcessTask task = ProvisioningProcessTask.Start(spec))
+            {
+                Task inputClosed = Task.Factory.StartNew(
+                    delegate { Console.OpenStandardInput().ReadByte(); },
+                    CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                int completed = Task.WaitAny(new Task[] { task.Completion, inputClosed }, task.RemainingTimeoutMilliseconds);
+                if (completed != 0)
+                {
+                    task.Stop(completed < 0);
+                }
+                return task.WaitAfterStop();
+            }
         }
     }
 
@@ -339,6 +360,7 @@ namespace HerdrSandbox
         private readonly IntPtr jobHandle;
         private readonly IntPtr completionPort;
         private readonly Task<BoundedOutput> outputTask;
+        private readonly Task<BoundedOutput> errorTask;
         private readonly Task<ProvisioningProcessResult> completion;
         private int stopRequested;
         private int timeoutRequested;
@@ -350,7 +372,8 @@ namespace HerdrSandbox
             IntPtr processHandle,
             IntPtr jobHandle,
             IntPtr completionPort,
-            Task<BoundedOutput> outputTask)
+            Task<BoundedOutput> outputTask,
+            Task<BoundedOutput> errorTask)
         {
             this.spec = spec;
             this.stopwatch = stopwatch;
@@ -358,6 +381,7 @@ namespace HerdrSandbox
             this.jobHandle = jobHandle;
             this.completionPort = completionPort;
             this.outputTask = outputTask;
+            this.errorTask = errorTask;
             completion = Task.Factory.StartNew<ProvisioningProcessResult>(
                 new Func<ProvisioningProcessResult>(CompleteOwnedProcessTree),
                 CancellationToken.None,
@@ -395,6 +419,8 @@ namespace HerdrSandbox
             IntPtr completionPort = IntPtr.Zero;
             IntPtr readPipe = IntPtr.Zero;
             IntPtr writePipe = IntPtr.Zero;
+            IntPtr errorReadPipe = IntPtr.Zero;
+            IntPtr errorWritePipe = IntPtr.Zero;
             IntPtr nullInput = IntPtr.Zero;
             IntPtr attributeList = IntPtr.Zero;
             IntPtr jobList = IntPtr.Zero;
@@ -440,8 +466,16 @@ namespace HerdrSandbox
                 {
                     NativeMethods.ThrowLastError("protect provisioning process output reader");
                 }
+                if (spec.SeparateErrorOutput)
+                {
+                    if (!NativeMethods.CreatePipe(out errorReadPipe, out errorWritePipe, ref security, 65536) ||
+                        !NativeMethods.SetHandleInformation(errorReadPipe, NativeMethods.HANDLE_FLAG_INHERIT, 0))
+                    {
+                        NativeMethods.ThrowLastError("create provisioning process error pipe");
+                    }
+                }
                 nullInput = NativeMethods.CreateFile(
-                    "NUL",
+                    String.IsNullOrEmpty(spec.StandardInputFile) ? "NUL" : spec.StandardInputFile,
                     NativeMethods.GENERIC_READ,
                     NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE,
                     ref security,
@@ -482,7 +516,7 @@ namespace HerdrSandbox
                 startup.StartupInfo.wShowWindow = NativeMethods.SW_HIDE;
                 startup.StartupInfo.hStdInput = nullInput;
                 startup.StartupInfo.hStdOutput = writePipe;
-                startup.StartupInfo.hStdError = writePipe;
+                startup.StartupInfo.hStdError = spec.SeparateErrorOutput ? errorWritePipe : writePipe;
                 startup.AttributeList = attributeList;
                 StringBuilder commandLine = new StringBuilder(BuildCommandLine(spec.FilePath, spec.Arguments));
                 uint flags = NativeMethods.CREATE_SUSPENDED | NativeMethods.CREATE_NEW_CONSOLE |
@@ -504,6 +538,8 @@ namespace HerdrSandbox
 
                 NativeMethods.CloseHandle(writePipe);
                 writePipe = IntPtr.Zero;
+                NativeMethods.CloseIfValid(errorWritePipe);
+                errorWritePipe = IntPtr.Zero;
                 NativeMethods.CloseHandle(nullInput);
                 nullInput = IntPtr.Zero;
                 SafeFileHandle safeReadPipe = new SafeFileHandle(readPipe, true);
@@ -513,6 +549,15 @@ namespace HerdrSandbox
                     CancellationToken.None,
                     TaskCreationOptions.LongRunning,
                     TaskScheduler.Default);
+                Task<BoundedOutput> errorTask = null;
+                if (spec.SeparateErrorOutput)
+                {
+                    SafeFileHandle safeErrorPipe = new SafeFileHandle(errorReadPipe, true);
+                    errorReadPipe = IntPtr.Zero;
+                    errorTask = Task.Factory.StartNew(
+                        delegate { return ReadOutput(safeErrorPipe); },
+                        CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                }
                 Stopwatch stopwatch = Stopwatch.StartNew();
                 ProvisioningProcessTask owned = new ProvisioningProcessTask(
                     spec,
@@ -520,7 +565,8 @@ namespace HerdrSandbox
                     process.Process,
                     job,
                     completionPort,
-                    outputTask);
+                    outputTask,
+                    errorTask);
                 process.Process = IntPtr.Zero;
                 job = IntPtr.Zero;
                 completionPort = IntPtr.Zero;
@@ -554,6 +600,8 @@ namespace HerdrSandbox
                 NativeMethods.CloseIfValid(nullInput);
                 NativeMethods.CloseIfValid(writePipe);
                 NativeMethods.CloseIfValid(readPipe);
+                NativeMethods.CloseIfValid(errorWritePipe);
+                NativeMethods.CloseIfValid(errorReadPipe);
                 NativeMethods.CloseIfValid(completionPort);
                 NativeMethods.CloseIfValid(job);
             }
@@ -696,6 +744,7 @@ namespace HerdrSandbox
                 NativeMethods.ThrowLastError("read provisioning process exit code " + spec.Role);
             }
             BoundedOutput output = outputTask.GetAwaiter().GetResult();
+            BoundedOutput errorOutput = errorTask == null ? null : errorTask.GetAwaiter().GetResult();
             stopwatch.Stop();
             bool timedOut = Interlocked.CompareExchange(ref timeoutRequested, 0, 0) != 0;
             bool stopped = Interlocked.CompareExchange(ref stopRequested, 0, 0) != 0 && !timedOut;
@@ -705,8 +754,9 @@ namespace HerdrSandbox
                 Role = spec.Role,
                 ExitCode = signedExitCode,
                 Output = output.Text,
+                ErrorOutput = errorOutput == null ? "" : errorOutput.Text,
                 OutputBytes = output.TotalBytes,
-                OutputTruncated = output.Truncated,
+                OutputTruncated = output.Truncated || (errorOutput != null && errorOutput.Truncated),
                 ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
                 TimedOut = timedOut,
                 Stopped = stopped,
@@ -743,9 +793,14 @@ namespace HerdrSandbox
                     throw new ArgumentException("Provisioning process argument is null or contains NUL.", "spec");
                 }
             }
-            if (spec.TimeoutMilliseconds < 1000 || spec.TimeoutMilliseconds > 7200000)
+            if (spec.TimeoutMilliseconds < 1000)
             {
-                throw new ArgumentException("Provisioning process timeout must be between 1 and 7200 seconds.", "spec");
+                throw new ArgumentException("Provisioning process timeout must be at least one second.", "spec");
+            }
+            if (!String.IsNullOrEmpty(spec.StandardInputFile) &&
+                (!Path.IsPathRooted(spec.StandardInputFile) || !File.Exists(spec.StandardInputFile)))
+            {
+                throw new ArgumentException("Provisioning process input must be an existing absolute file.", "spec");
             }
             if (spec.SuccessExitCodes == null || spec.SuccessExitCodes.Length == 0 || spec.SuccessExitCodes.Length > 8)
             {

@@ -21,12 +21,13 @@ const (
 	activeSessionSchemaVersion = 2
 	maximumActiveSessionBytes  = 64 * 1024
 
-	SessionStopped   = "stopped"
-	SessionUnmanaged = "unmanaged"
-	SessionStarting  = "starting"
-	SessionReady     = "ready"
-	SessionFailed    = "failed"
-	SessionStale     = "stale"
+	SessionStopped     = "stopped"
+	SessionUnmanaged   = "unmanaged"
+	SessionStarting    = "starting"
+	SessionConnectable = "connectable"
+	SessionReady       = "ready"
+	SessionFailed      = "failed"
+	SessionStale       = "stale"
 
 	statusLifecycleLockTimeout   = time.Second
 	lifecycleMutationLockTimeout = 10 * time.Second
@@ -380,7 +381,8 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 			return SessionStatus{}, fmt.Errorf("validate active Sandbox connectable status: %w", err)
 		}
 		status.Phase = "connectable"
-		status.Message = "SSH is ready; applying verified host configuration and provisioning Herdr"
+		status.State = SessionConnectable
+		status.Message = "SSH is ready; provisioning can continue in this Sandbox"
 		status.GuestIP = connectable.IP
 		status.WinGetVersion = connectable.WinGetVersion
 		return status, nil
@@ -445,19 +447,17 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 			}
 			captureStatus = connectionStatus(ready)
 			capture = true
-		case SessionFailed:
-			hostPhase := ""
-			handoff, handoffFound, err := readOptionalStatus[configurationHandoffStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", configurationHandoffFileName))
+		case SessionFailed, SessionConnectable:
+			hostPhase := "bootstrap"
+			operation, operationFound, err := readSessionOperation(filepath.Join(dataDirectory, "runs", active.RunID))
 			if err != nil {
-				return DownResult{}, fmt.Errorf("read failed Sandbox configuration handoff for Tailscale recovery: %w", err)
+				return DownResult{}, fmt.Errorf("read Sandbox operation for Tailscale recovery: %w", err)
 			}
-			if handoffFound {
-				if err := handoff.validate(); err != nil {
-					return DownResult{}, fmt.Errorf("validate failed Sandbox configuration handoff for Tailscale recovery: %w", err)
+			if operationFound {
+				if operation.RunID != active.RunID {
+					return DownResult{}, errors.New("operation identity differs from the Sandbox selected for Tailscale recovery")
 				}
-				if handoff.Outcome == configurationHandoffFailed {
-					hostPhase = handoff.Phase
-				}
+				hostPhase = operation.Phase
 			}
 			if !tailscaleFailurePrecedesIdentity(hostPhase) {
 				connectable, found, err := readOptionalStatus[connectableStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", connectableFileName))
@@ -518,6 +518,8 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 func tailscaleFailurePrecedesIdentity(phase string) bool {
 	switch phase {
 	case "guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled":
+		return true
+	case "bootstrap", "connection-verification", "preparing", "visual-studio-layout", "development-provisioning", "credential-sync":
 		return true
 	default:
 		return false

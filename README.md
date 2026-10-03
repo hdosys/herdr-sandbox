@@ -50,7 +50,7 @@ the normal terminal.
 - **Confidence in real Windows behavior:** compile, test, package, and automate GUI applications in Windows Sandbox instead of a compatibility layer.
 - **Your normal terminal:** Herdr attaches from the host, so routine work does not require RDP or a second desktop workflow.
 - **Repeatable setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
-- **Fast iteration:** reuse and reprovision a compatible ready guest while it remains useful, then deliberately replace it when needed.
+- **Retry without starting over:** correct a failed project profile and rerun `sandbox up` in the same compatible guest, preserving installed tools.
 - **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
 - **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
@@ -592,6 +592,8 @@ when it is safe, and reports the next action.
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
 | Guest Herdr provisioning fails | Confirm current Herdr-Win, host `ssh.exe`, and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
+| Project provisioning fails | Correct the named profile and rerun `sandbox up`. Keep the Sandbox open; installed tools and matching workspaces are reused. |
+| Minimal bootstrap fails before SSH | Use the retry command shown in the existing Sandbox console, then rerun `sandbox up` on the host. |
 | Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
 
 <details>

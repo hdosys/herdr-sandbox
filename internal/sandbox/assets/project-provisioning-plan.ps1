@@ -302,9 +302,12 @@ function Get-SelectedProvisioningStacks {
             return $false
         }
         $commandName = $node.GetCommandName()
-        return $null -ne $commandName -and $knownStacks.ContainsKey($commandName)
+        return $null -ne $commandName -and ($knownStacks.ContainsKey($commandName) -or $commandName -ieq 'Install-NushellStack')
     }, $true))
     foreach ($command in $commands) {
+        if ($command.GetCommandName() -ieq 'Install-NushellStack') {
+            throw "$Role script $($Script.Name) at line $($command.Extent.StartLineNumber) calls removed Install-NushellStack. Nushell is installed by Base; remove this call."
+        }
         foreach ($stack in @($knownStacks[$command.GetCommandName()])) {
             $selected[[string]$stack] = $true
         }

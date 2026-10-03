@@ -22,11 +22,10 @@ import (
 )
 
 const (
-	defaultMemoryMB             = 32768
-	defaultSandboxUpTimeout     = 4 * time.Hour
-	configurationSyncTimeout    = 5 * time.Minute
-	configurationHandoffTimeout = tailscaleIdentityTimeout + configurationSyncTimeout + hostHerdrProvisionTimeout + guestHerdrIntegrationTimeout + mobileSSHPreparationTimeout + 2*time.Minute
-	sshTargetName               = "sandbox"
+	defaultMemoryMB          = 32768
+	defaultSandboxUpTimeout  = 4 * time.Hour
+	configurationSyncTimeout = 5 * time.Minute
+	sshTargetName            = "sandbox"
 )
 
 var errSandboxExitedBeforeProvisioning = errors.New("provisioning did not complete before Windows Sandbox exited")
@@ -43,6 +42,11 @@ const playwrightAccessName = "playwright-access.ps1"
 var apifyAccessScript []byte
 
 const apifyAccessName = "apify-access.ps1"
+
+//go:embed assets/finalize-provisioning.ps1
+var guestFinalizationScript []byte
+
+const guestFinalizationName = "finalize-provisioning.ps1"
 
 type Options struct {
 	DataDirectory string
@@ -138,7 +142,7 @@ func cancellationOutcomeError(cause error, stage provisioningCancellationStage) 
 	message := "startup cancelled before a Sandbox was launched"
 	switch stage {
 	case provisioningCancellationRetained:
-		message = "retained provisioning cancelled; the ready Sandbox was preserved. Run `sandbox status` to inspect it"
+		message = "provisioning cancelled; the Sandbox was preserved. Run `sandbox up` to retry in the same guest"
 	case provisioningCancellationFresh:
 		message = "fresh provisioning wait cancelled; the Sandbox may continue guest bootstrap. Run `sandbox status` to inspect it"
 	}
@@ -218,10 +222,14 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if !interruptedOperation && sessionStatus.Operation != nil && sessionStatus.Operation.State == operationStateInterrupted {
 		fmt.Fprintln(options.Output, "Warning: the previous retained reprovision ended without a terminal result and is recorded as interrupted.")
 	}
-	var retainedPlan runPlan
-	var retainedReady readyStatus
+	var plan runPlan
+	var ready readyStatus
 	var tailscaleBootstrap tailscaleBootstrap
-	if sessionStatus.State == SessionReady {
+	retained := sessionStatus.State != SessionStopped
+	if retained {
+		if !canResumeSession(sessionStatus) {
+			return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; %s", sessionStatus.State, sessionNextAction(sessionStatus))
+		}
 		cancellationStage = provisioningCancellationRetained
 		sandboxExecutable, err := windowsSandboxExecutable()
 		if err != nil {
@@ -232,36 +240,38 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 			return Connection{}, err
 		}
 		if !found {
-			return Connection{}, errors.New("ready Sandbox lost its active-session identity")
+			return Connection{}, errors.New("running Sandbox lost its active-session identity")
 		}
-		retainedPlan, err = retainedRunPlan(active, provisioning, memoryMB)
+		plan, err = retainedRunPlan(active, provisioning, memoryMB)
 		if err != nil {
 			return Connection{}, err
 		}
-		retainedReady, found, err = readOptionalStatus[readyStatus](filepath.Join(retainedPlan.StatusDirectory, readyFileName))
+		ready, found, err = readOptionalStatus[readyStatus](filepath.Join(plan.StatusDirectory, readyFileName))
 		if err != nil {
 			return Connection{}, fmt.Errorf("read retained Sandbox ready status: %w", err)
 		}
-		if !found {
+		if !found && sessionStatus.State == SessionReady {
 			return Connection{}, errors.New("retained Sandbox ready status is missing")
 		}
-		if err := retainedReady.validate(); err != nil {
-			return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
+		if found {
+			if err := ready.validate(); err != nil {
+				return Connection{}, fmt.Errorf("validate retained Sandbox ready status: %w", err)
+			}
 		}
-	} else if sessionStatus.State != SessionStopped {
-		return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; inspect with `sandbox status` and use `sandbox down` before a fresh launch", sessionStatus.State)
 	} else {
 		if err := ensureNoRunningSandbox(runContext); err != nil {
 			return Connection{}, err
 		}
+	}
+	if ready.SchemaVersion == 0 {
 		tailscaleBootstrap, err = prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
 		if err != nil {
 			return Connection{}, err
 		}
 		defer tailscaleBootstrap.clear()
 	}
-	if sessionStatus.State == SessionReady {
-		fmt.Fprintln(options.Output, "Mode: reusing and reprovisioning the ready Sandbox")
+	if retained {
+		fmt.Fprintln(options.Output, "Mode: provisioning the existing Sandbox over SSH; installed tools are preserved")
 	} else {
 		fmt.Fprintln(options.Output, "Mode: starting and provisioning a new Sandbox")
 	}
@@ -272,152 +282,30 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		}
 	}
 
-	if sessionStatus.State == SessionReady {
-		connection, err := reprovisionReadySession(runContext, options, retainedPlan, retainedReady, provisioning, hostHerdr)
+	if !retained {
+		plan, err = prepareRun(runContext, dataDirectory, memoryMB, provisioning)
 		if err != nil {
 			return Connection{}, err
 		}
-		fmt.Fprintln(options.Output, "Ready Sandbox")
-		fmt.Fprintln(options.Output, "  Mode: retained and reprovisioned")
-		fmt.Fprintf(options.Output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
-		return connection, nil
-	}
-
-	plan, err := prepareRun(runContext, dataDirectory, memoryMB, provisioning)
-	if err != nil {
-		return Connection{}, err
-	}
-	fmt.Fprintf(options.Output, "Run workspace: %s\n", plan.RunDirectory)
-	if plan.RequiresVisualStudioLayout {
-		fmt.Fprintln(options.Output, "Preparing the required Visual Studio Build Tools layout on the host...")
-		if err := prepareVisualStudioLayout(runContext, plan, options.Output); err != nil {
+		fmt.Fprintf(options.Output, "Run workspace: %s\n", plan.RunDirectory)
+		if err := ensureNoRunningSandbox(runContext); err != nil {
 			return Connection{}, err
 		}
-	}
-
-	if err := ensureNoRunningSandbox(runContext); err != nil {
-		return Connection{}, err
-	}
-	sandboxExited, err := launchSandbox(runContext, plan)
-	if err != nil {
-		return Connection{}, err
-	}
-	cancellationStage = provisioningCancellationFresh
-	if err := releaseLifecycle(); err != nil {
-		return Connection{}, err
-	}
-	runContext, stopSandboxExitWatch := withSandboxProcessExit(runContext, sandboxExited)
-	defer func() {
-		stopSandboxExitWatch()
-		resultErr = preserveSandboxProcessExitCause(runContext, resultErr)
-	}()
-	fmt.Fprintln(options.Output, "Windows Sandbox started; waiting for guest provisioning...")
-
-	connectable, err := waitForConnectable(runContext, plan.StatusDirectory, options.Output)
-	if err != nil {
-		return Connection{}, err
-	}
-	connection, err := writeRunConnection(plan, connectable, hostHerdr.commandPath)
-	if err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-material", err)
-	}
-	if err := verifySSH(runContext, connection); err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-verification", err)
-	}
-	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "ssh-alias", err)
-	}
-	if plan.Tailscale {
-		fmt.Fprintln(options.Output, "Restoring or enrolling the stable Tailscale identity...")
-		releaseTailscale, lockErr := acquireLifecycleLock(runContext)
-		if lockErr != nil {
-			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "tailscale-preflight", lockErr)
-		}
-		tailscaleContext, cancelTailscale := context.WithTimeout(runContext, tailscaleIdentityTimeout)
-		err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap)
-		releaseErr := releaseTailscale()
-		cancelTailscale()
-		if err == nil {
-			err = releaseErr
-		} else if releaseErr != nil {
-			err = fmt.Errorf("%w; additionally release Tailscale lifecycle lock: %v", err, releaseErr)
-		}
+		sandboxExited, err := launchSandbox(runContext, plan)
 		if err != nil {
-			phase := "tailscale-identity"
-			if errors.Is(err, errTailscaleIdentityNotEstablished) {
-				phase = "tailscale-not-enrolled"
-			}
-			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, phase, err)
+			return Connection{}, err
 		}
-		fmt.Fprintln(options.Output, "Stable Tailscale identity restored, verified, and protected on the host.")
+		cancellationStage = provisioningCancellationFresh
+		var stopSandboxExitWatch context.CancelFunc
+		runContext, stopSandboxExitWatch = withSandboxProcessExit(runContext, sandboxExited)
+		defer func() {
+			stopSandboxExitWatch()
+			resultErr = preserveSandboxProcessExitCause(runContext, resultErr)
+		}()
+		fmt.Fprintln(options.Output, "Windows Sandbox started; preparing the SSH management connection...")
 	}
-	writeProvisioningConfiguration(options.Output, "Transferring and verifying development configuration", plan.Packages, plan.CodingAgentSync)
-	syncContext, cancelSync := context.WithTimeout(runContext, configurationSyncTimeout)
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, plan.CodingAgentSync, plan.CredentialSync, plan.TradingViewEnabled, plan.WorktreeDirectory != "", filepath.Join(plan.InputDirectory, "provisioning"), options.Output)
-	cancelSync()
+	connection, err := provisionSession(runContext, options, plan, ready, provisioning, hostHerdr, tailscaleBootstrap)
 	if err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "configuration-sync", err)
-	}
-	fmt.Fprintln(options.Output, "Provisioning and activating the matching guest Herdr runtime...")
-	provision, err := hostHerdr.provisionRemote(runContext, connection)
-	if err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-provision", err)
-	}
-	connection.guestHerdrPath = provision.Binary
-	connection.HerdrVersion = hostHerdr.version
-	connection.HerdrProtocol = hostHerdr.protocol
-	connection.herdrRuntimeVersion = hostHerdr.runtimeVersion
-	if provision.ServerOutcome != remoteProvisionServerStarted {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-provision", fmt.Errorf("fresh guest Herdr server outcome = %q, want %q", provision.ServerOutcome, remoteProvisionServerStarted))
-	}
-	if err := publishGuestHerdrExecutable(runContext, connection, provision.Binary); err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-publication", err)
-	}
-	if err := verifyGuestHerdr(runContext, connection); err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-verification", err)
-	}
-	fmt.Fprintln(options.Output, "Installing missing Herdr integrations for selected coding agents...")
-	installedIntegrations, err := installMissingGuestHerdrIntegrations(runContext, connection, plan.CodingAgentSync)
-	if err != nil {
-		return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "herdr-integrations", err)
-	}
-	if len(installedIntegrations) > 0 {
-		fmt.Fprintf(options.Output, "Herdr integrations installed: %s\n", strings.Join(installedIntegrations, ", "))
-	}
-	var mobileHandoff *mobileAccessHandoff
-	if len(plan.MobileSSHAuthorizedKeys) > 0 {
-		fmt.Fprintln(options.Output, "Preparing the private mobile Herdr endpoint over Tailscale...")
-		access, err := prepareMobileSSH(runContext, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
-		if err != nil {
-			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "mobile-ssh-preparation", err)
-		}
-		mobileHandoff, err = newMobileAccessHandoff(access)
-		if err != nil {
-			return Connection{}, publishConfigurationFailure(plan.StatusDirectory, "mobile-ssh-handoff", err)
-		}
-		connection.MobileAccess = &access
-		fmt.Fprintf(options.Output, "Mobile Herdr endpoint prepared: %s\n", access.URI)
-	}
-	if err := writeConfigurationHandoff(plan.StatusDirectory, configurationHandoffStatus{
-		SchemaVersion: statusSchemaVersion,
-		Outcome:       configurationHandoffVerified,
-		MobileAccess:  mobileHandoff,
-	}); err != nil {
-		return Connection{}, err
-	}
-	fmt.Fprintln(options.Output, "Development configuration transferred and verified; waiting for final workspace creation...")
-	ready, err := waitForReady(runContext, plan.StatusDirectory, options.Output)
-	if err != nil {
-		return Connection{}, err
-	}
-	if !sameConnectionIdentity(connectable, ready) {
-		return Connection{}, errors.New("terminal ready identity differs from the verified connection identity")
-	}
-	if ready.HerdrVersion != hostHerdr.version || ready.HerdrRuntimeVersion != hostHerdr.runtimeVersion ||
-		ready.HerdrProtocol != hostHerdr.protocol || !strings.EqualFold(filepath.Clean(ready.HerdrBinary), filepath.Clean(provision.Binary)) {
-		return Connection{}, errors.New("terminal ready Herdr identity differs from the provisioned host contract")
-	}
-	if err := hostHerdr.verifyUnchanged(runContext); err != nil {
 		return Connection{}, err
 	}
 
@@ -430,21 +318,15 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	return connection, nil
 }
 
-func publishConfigurationFailure(statusDirectory, phase string, cause error) error {
-	message := sanitizeTerminalText(boundedText([]byte(cause.Error())), 4096)
-	if message == "" {
-		message = "Configuration failed without printable diagnostics."
+func canResumeSession(status SessionStatus) bool {
+	switch status.State {
+	case SessionReady, SessionConnectable, SessionStarting:
+		return true
+	case SessionFailed:
+		return status.GuestIP != ""
+	default:
+		return false
 	}
-	handoffErr := writeConfigurationHandoff(statusDirectory, configurationHandoffStatus{
-		SchemaVersion: statusSchemaVersion,
-		Outcome:       configurationHandoffFailed,
-		Phase:         phase,
-		Message:       message,
-	})
-	if handoffErr != nil {
-		return fmt.Errorf("%w; additionally publish configuration failure handoff: %v", cause, handoffErr)
-	}
-	return cause
 }
 
 func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -784,6 +666,9 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 	}
 	if err := os.WriteFile(filepath.Join(snapshotDirectory, apifyAccessName), apifyAccessScript, 0o600); err != nil {
 		return provisioningSnapshot{}, fmt.Errorf("write Apify access snapshot: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotDirectory, guestFinalizationName), guestFinalizationScript, 0o600); err != nil {
+		return provisioningSnapshot{}, fmt.Errorf("write guest finalization snapshot: %w", err)
 	}
 	packagePlanData, err := encodeWingetPackagePlan(provisioning.Packages, provisioning.WindowsTerminal)
 	if err != nil {

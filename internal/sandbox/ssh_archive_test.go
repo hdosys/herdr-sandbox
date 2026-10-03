@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,18 +52,18 @@ func TestNativeSSHArchiveTransportHandlesLargeInput(t *testing.T) {
 func TestSSHArchiveTransportUsesDefaultShellReceiverAndHiddenWindowsPowerShell(t *testing.T) {
 	inner := "Write-Output 'verified'"
 	launcher := sshArchiveLauncherBytes(inner)
-	command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, launcher)
+	command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, launcher, time.Minute, "fixture")
 	for _, required := range []string{
 		`C:\HerdrSandbox\staging`,
-		"transport-aaaaaaaaaaaaaaaa",
+		"transport-fixture",
 		"$expectedArchiveLength = [long]12345",
 		fmt.Sprintf("$expectedLauncherLength = [long]%d", len(launcher)),
 		"New-Object byte[] 8192",
 		"Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue",
-		"Start-Process -FilePath 'powershell.exe'",
+		"HerdrSandbox.ProvisioningProcess]::RunWithInputLease($spec)",
 		"'-WindowStyle','Hidden'",
-		"-RedirectStandardInput $archive",
-		"-NoNewWindow -Wait -PassThru",
+		"$spec.StandardInputFile = $archive",
+		"$spec.SeparateErrorOutput = $true",
 		"'-File'",
 		"Remove-GuestArchiveStaging",
 	} {
@@ -120,13 +121,13 @@ func TestSSHArchiveTransportCommandsFitWindowsCommandLine(t *testing.T) {
 		"configuration": buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345),
 		"reprovision": buildReprovisionLauncher(
 			strings.Repeat("a", 64), 12345, 1,
-			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12",
+			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12", false,
 		),
 		"large launcher": strings.Repeat("# Larger than a Windows command line.\n", 4096),
 	}
 	for name, launcher := range launchers {
 		t.Run(name, func(t *testing.T) {
-			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, sshArchiveLauncherBytes(launcher))
+			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 12345, sshArchiveLauncherBytes(launcher), time.Minute, "fixture")
 			t.Logf("launcher: %d bytes; transport command: %d characters", len(launcher), len(command))
 			if len(command) > maximumSSHArchiveTransportCommandCharacters {
 				t.Fatalf("SSH archive transport command length = %d, maximum = %d", len(command), maximumSSHArchiveTransportCommandCharacters)
@@ -170,7 +171,7 @@ func TestSSHArchiveTransportStreamsLargeLauncherInWindowsPowerShell51(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			guestRoot := filepath.Join(t.TempDir(), "guest staging with spaces")
 			launcher := sshArchiveLauncherBytes(test.script)
-			command := buildSSHArchiveTransportCommand(digest, len(payload), launcher)
+			command := buildSSHArchiveTransportCommand(digest, len(payload), launcher, 25*time.Second, "fixture")
 			command = strings.ReplaceAll(command, guestRootDirectory, strings.ReplaceAll(guestRoot, "'", "''"))
 			if test.corrupt {
 				launcher[len(launcher)-1] ^= 1
@@ -179,11 +180,12 @@ func TestSSHArchiveTransportStreamsLargeLauncherInWindowsPowerShell51(t *testing
 			if test.truncate {
 				archive = archive[:len(archive)-1]
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			process := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(command))
-			process.Stdin = io.MultiReader(bytes.NewReader(launcher), bytes.NewReader(archive))
-			output, err := process.CombinedOutput()
+			output, err := runLocalSSHTransport(t, command, launcher, archive, func(closeInput func()) error {
+				if test.truncate {
+					closeInput()
+				}
+				return nil
+			})
 			if test.diagnostic == "" {
 				if err != nil {
 					t.Fatalf("streamed launcher failed: %v: %s", err, output)
@@ -194,8 +196,108 @@ func TestSSHArchiveTransportStreamsLargeLauncherInWindowsPowerShell51(t *testing
 			} else if err == nil || !strings.Contains(string(output), test.diagnostic) {
 				t.Fatalf("wanted terminal failure %q, got %v: %s", test.diagnostic, err, output)
 			}
-			if _, err := os.Stat(filepath.Join(guestRoot, "staging", "transport-"+digest[:16])); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(guestRoot, "staging", "transport-fixture")); !os.IsNotExist(err) {
 				t.Fatalf("transport left staged script or archive: %v", err)
+			}
+		})
+	}
+}
+
+func runLocalSSHTransport(t *testing.T, script string, launcher, archive []byte, afterSend func(func()) error) ([]byte, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	path := filepath.Join(t.TempDir(), "receiver.ps1")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	process := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	process.Stdin = reader
+	var output bytes.Buffer
+	process.Stdout = &output
+	process.Stderr = &output
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_, sendErr := io.Copy(writer, io.MultiReader(bytes.NewReader(provisioningProcessSource), bytes.NewReader(launcher), bytes.NewReader(archive)))
+	if sendErr != nil {
+		_ = writer.Close()
+	}
+	if afterSend != nil {
+		if err := afterSend(func() { _ = writer.Close() }); err != nil {
+			_ = writer.Close()
+			sendErr = err
+		}
+	}
+	waitErr := process.Wait()
+	if sendErr != nil && waitErr == nil {
+		waitErr = sendErr
+	}
+	return output.Bytes(), waitErr
+}
+
+func TestSSHProvisioningCancellationAndTimeoutPermitRetryInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 cancelled SSH provisioning")
+	guestRoot := filepath.Join(t.TempDir(), "guest")
+	for _, disconnect := range []bool{true, false} {
+		t.Run(fmt.Sprintf("disconnect=%t", disconnect), func(t *testing.T) {
+			listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			if err := listener.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			launcher := sshArchiveLauncherBytes(fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$child = Start-Process -FilePath powershell.exe -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-WindowStyle','Hidden','-Command','Start-Sleep -Seconds 60') -PassThru
+$client = New-Object Net.Sockets.TcpClient('127.0.0.1', %d)
+$signal = New-Object IO.StreamWriter($client.GetStream())
+$signal.WriteLine([string]$child.Id)
+$signal.Flush()
+$client.Dispose()
+Start-Sleep -Seconds 60`, listener.Addr().(*net.TCPAddr).Port))
+			budget := 12 * time.Second
+			command := buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 1, launcher, budget, "cancel-fixture")
+			command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
+			var childID string
+			output, err := runLocalSSHTransport(t, command, launcher, []byte{1}, func(closeInput func()) error {
+				connection, err := listener.Accept()
+				if err != nil {
+					return err
+				}
+				defer connection.Close()
+				_ = connection.SetReadDeadline(time.Now().Add(time.Second))
+				data, err := io.ReadAll(io.LimitReader(connection, 32))
+				childID = strings.TrimSpace(string(data))
+				if disconnect {
+					closeInput()
+				}
+				return err
+			})
+			want := "operation deadline"
+			if disconnect {
+				want = "cancelled or disconnected"
+			}
+			if err == nil || !strings.Contains(string(output), want) || childID == "" {
+				t.Fatalf("expected %s after child startup, got child=%q err=%v output=%s", want, childID, err, output)
+			}
+			probe := hiddenCommand(mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", "if (Get-Process -Id "+childID+" -ErrorAction SilentlyContinue) { throw 'Owned child survived' }")
+			if output, err := probe.CombinedOutput(); err != nil {
+				t.Fatalf("owned child was not terminal: %v: %s", err, output)
+			}
+			retry := sshArchiveLauncherBytes("Write-Output 'retry succeeded'")
+			command = buildSSHArchiveTransportCommand(strings.Repeat("a", 64), 1, retry, 20*time.Second, "retry-fixture")
+			command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
+			output, err = runLocalSSHTransport(t, command, retry, []byte{1}, nil)
+			if err != nil || strings.TrimSpace(string(output)) != "retry succeeded" {
+				t.Fatalf("same-guest retry failed: %v: %s", err, output)
 			}
 		})
 	}
@@ -301,5 +403,5 @@ exit 0`
 
 func stagingScriptAtTestRoot(root, directoryName string) string {
 	root = strings.ReplaceAll(root, "'", "''")
-	return strings.ReplaceAll(guestArchiveStagingPowerShell(directoryName, "Test archive"), guestRootDirectory, root)
+	return strings.ReplaceAll(guestArchiveStagingPowerShell(directoryName, "Test archive", false), guestRootDirectory, root)
 }

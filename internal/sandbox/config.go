@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const (
@@ -64,7 +63,6 @@ func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
 		"'-StatusDirectory'", "'C:\\SandboxStatus'",
 		"'-AudioPlayback'", audioOutputSelection,
 		"'-AudioInput'", audioInputSelection,
-		"'-ConfigurationHandoffTimeoutMinutes'", fmt.Sprintf("'%d'", configurationHandoffTimeout/time.Minute),
 	}
 	return "Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @(" +
 		strings.Join(arguments, ",") + ")"

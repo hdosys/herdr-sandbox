@@ -17,17 +17,14 @@ import (
 )
 
 const (
-	statusSchemaVersion          = 1
-	readyStatusSchemaVersion     = 3
-	progressFileName             = "progress.json"
-	connectableFileName          = "connectable.json"
-	configurationHandoffFileName = "configuration-handoff.json"
-	readyFileName                = "ready.json"
-	failureFileName              = "failed.json"
-	configurationHandoffVerified = "verified"
-	configurationHandoffFailed   = "failed"
-	maxStatusFileBytes           = 64 * 1024
-	progressReadGrace            = 2 * time.Second
+	statusSchemaVersion      = 1
+	readyStatusSchemaVersion = 3
+	progressFileName         = "progress.json"
+	connectableFileName      = "connectable.json"
+	readyFileName            = "ready.json"
+	failureFileName          = "failed.json"
+	maxStatusFileBytes       = 64 * 1024
+	progressReadGrace        = 2 * time.Second
 )
 
 type progressStatus struct {
@@ -51,14 +48,6 @@ type connectionStatus struct {
 type connectableStatus connectionStatus
 
 type readyStatus connectionStatus
-
-type configurationHandoffStatus struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	Outcome       string               `json:"outcome"`
-	Phase         string               `json:"phase,omitempty"`
-	Message       string               `json:"message,omitempty"`
-	MobileAccess  *mobileAccessHandoff `json:"mobileAccess,omitempty"`
-}
 
 type failureStatus struct {
 	SchemaVersion int    `json:"schemaVersion"`
@@ -139,45 +128,6 @@ func waitForGuestStatus[T any](
 		case <-ticker.C:
 		}
 	}
-}
-
-func writeConfigurationHandoff(statusDirectory string, status configurationHandoffStatus) error {
-	if err := status.validate(); err != nil {
-		return fmt.Errorf("validate configuration handoff: %w", err)
-	}
-	if !filepath.IsAbs(statusDirectory) {
-		return fmt.Errorf("configuration handoff status directory is not absolute: %q", statusDirectory)
-	}
-	if info, err := os.Stat(statusDirectory); err != nil {
-		return fmt.Errorf("inspect configuration handoff status directory: %w", err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("configuration handoff status path is not a directory: %s", statusDirectory)
-	}
-	path := filepath.Join(statusDirectory, configurationHandoffFileName)
-	if _, err := os.Stat(path); err == nil {
-		return errors.New("configuration handoff is already published")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect existing configuration handoff: %w", err)
-	}
-	data, err := json.Marshal(status)
-	if err != nil {
-		return fmt.Errorf("encode configuration handoff: %w", err)
-	}
-	if err := writeFileAtomically(path, data, 0o600); err != nil {
-		return fmt.Errorf("publish configuration handoff: %w", err)
-	}
-	verified, ok, err := readOptionalStatus[configurationHandoffStatus](path)
-	if err != nil {
-		return fmt.Errorf("read back configuration handoff: %w", err)
-	}
-	verifiedData, marshalErr := json.Marshal(verified)
-	if marshalErr != nil {
-		return fmt.Errorf("encode read-back configuration handoff: %w", marshalErr)
-	}
-	if !ok || !bytes.Equal(verifiedData, data) {
-		return errors.New("configuration handoff read-back mismatch")
-	}
-	return nil
 }
 
 func writeReadyStatus(statusDirectory string, status readyStatus) error {
@@ -267,8 +217,6 @@ func statusFields(value any) ([]string, error) {
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case connectableStatus, readyStatus:
 		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrRuntimeVersion", "herdrProtocol", "herdrBinary"}, nil
-	case configurationHandoffStatus:
-		return []string{"schemaVersion", "outcome", "phase", "message", "mobileAccess"}, nil
 	case failureStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case explorerRestartStatus:
@@ -436,36 +384,6 @@ func validateConnectionStatus(status connectionStatus, expectedSchemaVersion int
 		}
 	} else if status.HerdrVersion != "" || status.HerdrRuntimeVersion != "" || status.HerdrProtocol != 0 || status.HerdrBinary != "" {
 		return errors.New("connectable status must not publish Herdr identity before host provisioning")
-	}
-	return nil
-}
-
-func (status configurationHandoffStatus) validate() error {
-	if status.SchemaVersion != statusSchemaVersion {
-		return fmt.Errorf("schemaVersion = %d, want %d", status.SchemaVersion, statusSchemaVersion)
-	}
-	switch status.Outcome {
-	case configurationHandoffVerified:
-		if status.Phase != "" || status.Message != "" {
-			return errors.New("verified configuration handoff must not contain failure details")
-		}
-		if status.MobileAccess != nil {
-			if err := status.MobileAccess.validate(); err != nil {
-				return fmt.Errorf("validate verified mobile access handoff: %w", err)
-			}
-		}
-	case configurationHandoffFailed:
-		if status.MobileAccess != nil {
-			return errors.New("failed configuration handoff must not publish mobile access")
-		}
-		if err := validateTerminalText("failed configuration handoff phase", status.Phase, 128); err != nil {
-			return err
-		}
-		if err := validateTerminalText("failed configuration handoff message", status.Message, 4096); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("configuration handoff outcome = %q", status.Outcome)
 	}
 	return nil
 }

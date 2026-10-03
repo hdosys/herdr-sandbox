@@ -46,6 +46,19 @@ type mobileSSHRuntimeResult struct {
 	PID           int    `json:"pid"`
 }
 
+func activateMobileSSH(ctx context.Context, connection Connection) error {
+	operationContext, cancel := context.WithTimeout(ctx, mobileSSHVerificationTimeout)
+	defer cancel()
+	output, err := runSSHPowerShell(operationContext, connection, nil,
+		"$ErrorActionPreference = 'Stop'\n& '"+guestMobileSSHScriptPath+"' -Mode Activate",
+		"activate mobile SSH endpoint", maximumMobileSSHResultBytes)
+	if err != nil {
+		return err
+	}
+	_, err = decodeMobileSSHRuntimeResult(output)
+	return err
+}
+
 func prepareMobileSSH(ctx context.Context, connection Connection, dataDirectory string, authorizedKeys []string) (MobileAccess, error) {
 	keys, err := canonicalizeMobileSSHAuthorizedKeys(authorizedKeys)
 	if err != nil {
@@ -199,7 +212,7 @@ func buildMobileSSHPrepareArchive(request mobileSSHPrepareRequest) ([]byte, erro
 }
 
 func buildMobileSSHPrepareLauncher(expectedDigest string, expectedArchiveLength int) string {
-	staging := guestArchiveStagingPowerShell("mobile-ssh-"+expectedDigest[:16], "Mobile SSH preparation")
+	staging := guestArchiveStagingPowerShell("mobile-ssh-"+expectedDigest[:16], "Mobile SSH preparation", true)
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 %s

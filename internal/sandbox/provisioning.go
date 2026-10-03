@@ -33,7 +33,7 @@ const (
 	configurationSchemaReference       = "./" + configurationSchemaName
 	guestMountsDirectory               = `C:\Mounts`
 	guestWorkspacesDirectory           = `C:\Workspaces`
-	baseProvisioningContract           = "# herdr-sandbox-base-contract: 56"
+	baseProvisioningContract           = "# herdr-sandbox-base-contract: 57"
 	stackProvisioningContract          = "# herdr-sandbox-stacks-contract: 27"
 	userProvisioningContract           = "# herdr-sandbox-user-contract: 1"
 	provisioningProcessContract        = "// herdr-sandbox-provisioning-process-contract: 3"

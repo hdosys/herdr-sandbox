@@ -75,6 +75,56 @@ func TestEnrichSessionStatusKeepsGuestReadinessSeparateFromLatestOperation(t *te
 	}
 }
 
+func TestFailedInitialProvisioningCanRetryWithoutReplacingGuest(t *testing.T) {
+	root := t.TempDir()
+	active := testActiveSession(root, "20260729-120000-abcdef12", filepath.Join(root, "WindowsSandbox.exe"))
+	runDirectory := filepath.Join(root, "runs", active.RunID)
+	statusDirectory := filepath.Join(runDirectory, "status")
+	if err := os.MkdirAll(statusDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	connectable := connectableStatus{SchemaVersion: 1, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: testHostKey, WinGetVersion: "v1"}
+	writeJSON(t, filepath.Join(statusDirectory, connectableFileName), connectable)
+	operation, err := startSessionOperation(runDirectory, active.RunID, operationKindReprovision, "development-provisioning", "Project profile failed.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finishSessionOperation(runDirectory, operation, operationStateFailed, operation.Phase, operation.Message); err != nil {
+		t.Fatal(err)
+	}
+	status, err := classifyManagedSession(root, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrichSessionStatus(root, active, &status)
+	if status.State != SessionFailed || !canResumeSession(status) || status.RunID != active.RunID || status.GuestIP != connectable.IP ||
+		!strings.Contains(sessionNextAction(status), "same Sandbox") {
+		t.Fatalf("failed initial provisioning lost retry identity: %#v", status)
+	}
+	retry, err := startSessionOperation(runDirectory, active.RunID, operationKindReprovision, "development-provisioning", "Corrected profile.")
+	if err != nil || retry.ID == operation.ID {
+		t.Fatalf("retry operation = %#v, error=%v", retry, err)
+	}
+	ready := readyStatus(connectable)
+	ready.SchemaVersion = readyStatusSchemaVersion
+	ready.HerdrVersion, ready.HerdrRuntimeVersion, ready.HerdrProtocol, ready.HerdrBinary = "herdr 1", "1+build", 18, testGuestHerdrExecutable
+	if err := writeReadyStatus(statusDirectory, ready); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finishSessionOperation(runDirectory, retry, operationStateSucceeded, "completed", "Ready."); err != nil {
+		t.Fatal(err)
+	}
+	status, err = classifyManagedSession(root, active)
+	if err != nil || status.State != SessionReady || status.RunID != active.RunID || status.PID != active.PID || !sameConnectionIdentity(connectable, ready) {
+		t.Fatalf("retry did not retain guest identity: %#v, %v", status, err)
+	}
+	for _, unsafe := range []SessionStatus{{State: SessionStale}, {State: SessionUnmanaged}, {State: SessionFailed}} {
+		if canResumeSession(unsafe) {
+			t.Fatalf("unsafe session admitted: %#v", unsafe)
+		}
+	}
+}
+
 func TestEnrichReadySessionReportsProtectedMobileAccess(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows DPAPI boundary")

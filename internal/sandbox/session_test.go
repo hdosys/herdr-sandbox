@@ -18,7 +18,7 @@ func TestCancellationOutcomeNamesSandboxStateByStage(t *testing.T) {
 		want  string
 	}{
 		{provisioningCancellationBeforeLaunch, "before a Sandbox was launched"},
-		{provisioningCancellationRetained, "ready Sandbox was preserved"},
+		{provisioningCancellationRetained, "Sandbox was preserved"},
 		{provisioningCancellationFresh, "may continue guest bootstrap"},
 	} {
 		err := cancellationOutcomeError(context.Canceled, test.stage)
@@ -113,13 +113,6 @@ func TestSandboxProcessExitCauseSurvivesPostLaunchFailure(t *testing.T) {
 	got := preserveSandboxProcessExitCause(ctx, phaseErr)
 	if !errors.Is(got, cause) || !errors.Is(got, phaseErr) || !strings.Contains(got.Error(), "launcher fixture") {
 		t.Fatalf("preserved post-launch error = %v", got)
-	}
-}
-
-func TestConfigurationHandoffTimeoutCoversBoundedHostPhases(t *testing.T) {
-	minimum := tailscaleIdentityTimeout + configurationSyncTimeout + time.Minute
-	if configurationHandoffTimeout < minimum {
-		t.Fatalf("configuration handoff timeout = %s, want at least %s", configurationHandoffTimeout, minimum)
 	}
 }
 

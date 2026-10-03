@@ -796,7 +796,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 }
 
 func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int) string {
-	staging := guestArchiveStagingPowerShell("configuration-"+expectedDigest[:16], "Development configuration")
+	staging := guestArchiveStagingPowerShell("configuration-"+expectedDigest[:16], "Development configuration", true)
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 %s

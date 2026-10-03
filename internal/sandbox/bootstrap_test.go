@@ -13,113 +13,6 @@ import (
 	"testing"
 )
 
-func TestBootstrapUsesPowerShellAndVerifiedHostHerdrOnly(t *testing.T) {
-	script := string(bootstrapScript)
-	for _, required := range []string{
-		"Net.SecurityProtocolType]::Tls12",
-		"-ErrorAction Stop",
-		"[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)",
-		"https://api.github.com/repos/$Repository/releases/latest",
-		"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
-		"DesktopAppInstaller_Dependencies.zip",
-		"function Get-ResolvedBootstrapAsset",
-		"function Get-BootstrapFileSHA256",
-		"function Assert-BootstrapCacheTree",
-		"C:\\HerdrSandbox\\cache",
-		"bootstrap cache hit",
-		"Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths",
-		"$env:HERDR_SANDBOX_STATUS_DIRECTORY = [IO.Path]::GetFullPath($StatusDirectory)",
-		"winget-packages.json",
-		"tool-versions.json",
-		"user.ps1",
-		"provisioning-process.cs",
-		"workspaces.json",
-		"$unknownProjectScriptNames",
-		"-Phase 'Registry'",
-		"-Phase 'Development'",
-		"-WorkspacesDirectory 'C:\\Workspaces' -PackagePlanPath $packagePlanPath",
-		"-UserProvisioningPath $userProvisioning",
-		"-ProcessOwnerPath $processOwner",
-		". (Join-Path $provisioningDirectory 'playwright-access.ps1')",
-		`$workspaceArguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")`,
-		"function Get-PowerShell7Installation",
-		"Get-AppxPackage -Name 'Microsoft.PowerShell'",
-		"Join-Path ([string]$package.InstallLocation) 'pwsh.exe'",
-		"$file.VersionInfo.ProductVersion",
-		"Get-AuthenticodeSignature -LiteralPath $executable",
-		"-Value $powerShell7Executable",
-		"OpenSSH default shell verification failed",
-		"Microsoft.VCRedist.2015+.x64",
-		"PowerShell/Win32-OpenSSH",
-		"function Get-OpenSSHRelease",
-		"releases?per_page=100",
-		"p(?<preview>\\d+)-Preview$",
-		"strictly named Preview exception",
-		"$openSSHAssetName = \"OpenSSH-Win64-v$openSSHAssetVersion.msi\"",
-		"OpenSSH MSI signature is invalid",
-		"OpenSSH Server version verification",
-		"'ADDLOCAL=Server'",
-		"administrators_authorized_keys",
-		"'connectable.json'",
-		"'configuration-handoff.json'",
-		"[int]$ConfigurationHandoffTimeoutMinutes",
-		"AddMinutes($ConfigurationHandoffTimeoutMinutes)",
-		"Verified host configuration did not arrive within $ConfigurationHandoffTimeoutMinutes minutes.",
-		"HERDR_SANDBOX_HERDR_EXE",
-		"Provisioned guest Herdr directory is not the unique first machine PATH entry.",
-		`'--env', "PATH=$workspacePath"`,
-		`'--env', "HERDR_SANDBOX_HERDR_EXE=$herdrExecutable"`,
-		"Host provisioning did not publish the guest Herdr executable identity.",
-		"'status', 'client', '--json'",
-		"$workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName,",
-		"$workspaceArguments += '--focus'",
-		"Creating $($workspaceEntries.Count) mounted-project workspaces",
-		"$workspaceResponse.result.root_pane.pane_id",
-		"PasswordAuthentication no",
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("bootstrap is missing %q", required)
-		}
-	}
-	lower := strings.ToLower(script)
-	for _, forbidden := range []string{"cmd.exe", ".cmd", ".bat", "ogulcancelik/herdr", "herdrdev/herdr", "herdr.dev/install", "github.com/hdosys/herdr-ext/releases/download/", "herdr-windows-x86_64.zip", "cachekey 'herdr-windows'", "c:\\herdr\\", "active-workspace.txt"} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("bootstrap contains forbidden path %q", forbidden)
-		}
-	}
-	for _, forbidden := range []string{
-		"-FilePath $powerShell7Executable",
-		"PowerShell 7 bootstrap version is unexpected",
-		"PowerShell 7 bootstrap verification",
-	} {
-		if strings.Contains(script, forbidden) {
-			t.Fatalf("bootstrap executes PowerShell 7 during provisioning with %q", forbidden)
-		}
-	}
-	for _, forbidden := range []string{
-		"host-herdr.json",
-		"herdr-runtime",
-		"Read-HostHerdrRuntimeInput",
-		`C:\HerdrSandbox\bin`,
-		"server'",
-		"reload-config",
-	} {
-		if strings.Contains(script, forbidden) {
-			t.Fatalf("bootstrap retains replaced Herdr lifecycle path %q", forbidden)
-		}
-	}
-	if count := strings.Count(script, "Invoke-WebRequest -Uri"); count != 1 {
-		t.Fatalf("bootstrap has %d direct web download owners; want one cached asset owner", count)
-	}
-	if strings.Contains(script, "-ArgumentList @('--version') -join") {
-		t.Fatal("bootstrap must join Invoke-Native output after command invocation")
-	}
-	mandatoryProfile := "-not (Test-Path -LiteralPath (Join-Path $projectProvisioningDirectory ($workspaceName + '.ps1')) -PathType Leaf)"
-	if strings.Contains(script, mandatoryProfile) {
-		t.Fatal("bootstrap still requires one provisioning profile per workspace")
-	}
-}
-
 func TestBootstrapSelectsStableOpenSSHBeforeStrictPreviewInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 OpenSSH release selection regression")
@@ -184,42 +77,6 @@ if (-not $rejected) { throw 'OpenSSH accepted an unsupported release channel.' }
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("OpenSSH release selection regression: %v: %s", err, output)
-	}
-}
-
-func TestBootstrapOrdersConfigurationBeforeWorkspacesAndReady(t *testing.T) {
-	script := string(bootstrapScript)
-	needles := []string{
-		"-Phase 'Registry'",
-		"Get-ResolvedBootstrapAsset -Role 'WinGet bundle'",
-		"Add-AppxPackage -Path $wingetBundle",
-		"$vcRuntimeProcess = Start-Process",
-		"-Phase 'Development'",
-		"$playwrightExtensionToken = Initialize-PlaywrightExtensionToken",
-		"$powerShell7 = Get-PowerShell7Installation",
-		"$openSSHInstallProcess = Start-Process",
-		"'connectable.json'",
-		"'configuration-handoff.json'",
-		"HERDR_SANDBOX_HERDR_EXE",
-		"'status', 'client', '--json'",
-		"$workspaceArguments = @('workspace', 'create'",
-		"'ready.json'",
-	}
-	previous := -1
-	for _, needle := range needles {
-		index := strings.Index(script, needle)
-		if index < 0 {
-			t.Fatalf("bootstrap is missing %q", needle)
-		}
-		if index <= previous {
-			t.Fatalf("bootstrap ordering is wrong at %q", needle)
-		}
-		previous = index
-	}
-	connectableIndex := strings.Index(script, "schemaVersion = 1\n        ip = $ipAddress")
-	readyIndex := strings.LastIndex(script, "schemaVersion = 3\n        ip = $ipAddress")
-	if connectableIndex < 0 || readyIndex <= connectableIndex {
-		t.Fatalf("bootstrap connection/ready schemas are not ordered: connectable=%d ready=%d", connectableIndex, readyIndex)
 	}
 }
 
@@ -421,43 +278,6 @@ func TestBootstrapDefersHerdrDeploymentAndLifecycleToHostProvisioning(t *testing
 	}
 }
 
-func TestBootstrapHerdrClientStatusAcceptsAdditiveFieldsInWindowsPowerShell51(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell 5.1 regression")
-	}
-	directory := t.TempDir()
-	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
-	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$tokens = $null
-$errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertFrom-HerdrClientStatus' }, $true)
-if ($null -eq $definition) { throw 'Missing Herdr client status parser.' }
-Invoke-Expression $definition.Extent.Text
-$executable = 'C:\HerdrManaged\current\herdr.exe'
-$old = '{"version":"local+346411fa21af.f32339bad77e","herdr_version":"0.8.0","build_id":"346411fa21af.f32339bad77e","protocol":42,"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}'
-$current = '{"version":"2026.09.09.1206Z+b99002ac99b0.30cbccdf79fa","herdr_version":"0.9.0","build_id":"b99002ac99b0.30cbccdf79fa","protocol":22,"endpoint_protocol_generation":1,"endpoint_capabilities":["windows_remote_host"],"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}'
-$null = ConvertFrom-HerdrClientStatus -Text $old -ExpectedExecutable $executable
-$parsed = ConvertFrom-HerdrClientStatus -Text $current -ExpectedExecutable $executable
-if ([int]$parsed.protocol -ne 22) { throw 'Current Herdr status protocol was not preserved.' }
-$rejected = $false
-try { $null = ConvertFrom-HerdrClientStatus -Text '{"version":"x","herdr_version":"0.9.0","build_id":null,"binary":"C:\\HerdrManaged\\current\\herdr.exe","session":null}' -ExpectedExecutable $executable } catch { $rejected = $true }
-if (-not $rejected) { throw 'Missing required Herdr status field was accepted.' }
-`, quote(bootstrapPath))
-	harnessPath := filepath.Join(directory, "herdr-client-status-regression.ps1")
-	if err := os.WriteFile(harnessPath, []byte(script), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("guest Herdr client status regression: %v: %s", err, output)
-	}
-}
-
 func TestBootstrapHerdrBoundaryRejectsTimeoutAndOverflowInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows Job Object guest boundary regression")
@@ -506,59 +326,5 @@ exit 0
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("bounded guest Herdr boundary regression: %v: %s", err, output)
-	}
-}
-
-func TestBootstrapConfigurationHandoffParserIsStrictInWindowsPowerShell51(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell 5.1 regression")
-	}
-	directory := t.TempDir()
-	bootstrapPath := filepath.Join(directory, "bootstrap.ps1")
-	if err := os.WriteFile(bootstrapPath, bootstrapScript, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	handoffPath := filepath.Join(directory, "configuration-handoff.json")
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$tokens = $null
-$errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Read-ConfigurationHandoff' }, $true)
-Invoke-Expression $definition.Extent.Text
-$path = '%s'
-$utf8 = New-Object Text.UTF8Encoding($false)
-[IO.File]::WriteAllText($path, '{"schemaVersion":1,"outcome":"verified"}', $utf8)
-$verified = Read-ConfigurationHandoff -Path $path
-if ([string]$verified.outcome -cne 'verified') { throw 'Canonical verified handoff was rejected.' }
-[IO.File]::WriteAllText($path, '{"schemaVersion":1,"outcome":"failed","phase":"configuration-sync","message":"copy failed"}', $utf8)
-$failed = Read-ConfigurationHandoff -Path $path
-if ([string]$failed.outcome -cne 'failed' -or [string]$failed.phase -cne 'configuration-sync' -or [string]$failed.message -cne 'copy failed') {
-    throw 'Canonical failed handoff was rejected.'
-}
-$invalid = @(
-    '{"schemaVersion":"1","outcome":"verified"}',
-    '{"schemaVersion":true,"outcome":"verified"}',
-    '{"schemaVersion":1,"outcome":["verified"]}',
-    '{"schemaVersion":1,"outcome":"verified","outcome":"verified"}',
-    '{"schemaVersion":1,"outcome":"verified","extra":true}',
-    ' {"schemaVersion":1,"outcome":"verified"}'
-)
-foreach ($value in $invalid) {
-    [IO.File]::WriteAllText($path, $value, $utf8)
-    $accepted = $false
-    try { $null = Read-ConfigurationHandoff -Path $path; $accepted = $true } catch { }
-    if ($accepted) { throw "Invalid handoff was accepted: $value" }
-}
-[IO.File]::WriteAllText($path, ('x' * 8193), $utf8)
-$accepted = $false
-try { $null = Read-ConfigurationHandoff -Path $path; $accepted = $true } catch { }
-if ($accepted) { throw 'Oversized handoff was accepted.' }
-exit 0
-`, quote(bootstrapPath), quote(handoffPath))
-	powerShell := mustWindowsPowerShellPath(t)
-	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("configuration handoff parser regression: %v: %s", err, output)
 	}
 }

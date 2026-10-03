@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,14 +26,18 @@ var sshArchiveStagingPowerShell string
 //go:embed assets/ssh-archive-transport.ps1
 var sshArchiveTransportPowerShell string
 
-func guestArchiveStagingPowerShell(directoryName, role string) string {
+func guestArchiveStagingPowerShell(directoryName, role string, nested bool) string {
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	return fmt.Sprintf(`$stagingRoot = '%s\staging'
+	root := "'" + quote(guestRootDirectory) + "\\staging'"
+	if nested {
+		root = "Join-Path $PSScriptRoot 'staging'"
+	}
+	return fmt.Sprintf(`$stagingRoot = %s
 $transferRoot = Join-Path $stagingRoot '%s'
 $archive = Join-Path $transferRoot 'input.zip'
 $expanded = Join-Path $transferRoot 'expanded'
 $stagingRole = '%s'
-%s`, quote(guestRootDirectory), quote(directoryName), quote(role), sshArchiveStagingPowerShell)
+%s`, root, quote(directoryName), quote(role), sshArchiveStagingPowerShell)
 }
 
 func runSSHArchivePowerShell(ctx context.Context, connection Connection, archive []byte, launcherScript, role string) ([]byte, error) {
@@ -49,12 +55,71 @@ func runSSHArchivePowerShellWithDiagnostics(ctx context.Context, connection Conn
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	launcher := sshArchiveLauncherBytes(launcherScript)
 	defer clear(launcher)
-	transportCommand := buildSSHArchiveTransportCommand(digest, len(archive), launcher)
+	attemptID, err := newRunID()
+	if err != nil {
+		return nil, err
+	}
+	budget := defaultSandboxUpTimeout
+	if deadline, found := ctx.Deadline(); found {
+		budget = time.Until(deadline)
+	}
+	if budget < time.Second {
+		return nil, fmt.Errorf("%s has no remaining execution budget: %w", role, context.DeadlineExceeded)
+	}
+	transportCommand := buildSSHArchiveTransportCommand(digest, len(archive), launcher, budget, attemptID)
 	if len(transportCommand) > maximumSSHArchiveTransportCommandCharacters {
 		return nil, fmt.Errorf("%s SSH transport command exceeds %d characters", role, maximumSSHArchiveTransportCommandCharacters)
 	}
-	input := io.MultiReader(bytes.NewReader(launcher), bytes.NewReader(archive))
-	return runSSHRemoteCommandWithDiagnostics(ctx, connection, input, []string{transportCommand}, role, maximumSSHResultBytes, includeRemoteDiagnostics)
+	input := io.MultiReader(bytes.NewReader(provisioningProcessSource), bytes.NewReader(launcher), bytes.NewReader(archive))
+	return runSSHArchiveWithInputLease(ctx, connection, input, transportCommand, role, budget, includeRemoteDiagnostics)
+}
+
+func runSSHArchiveWithInputLease(ctx context.Context, connection Connection, frames io.Reader, command, role string, budget time.Duration, diagnostics bool) ([]byte, error) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("open SSH input lease: %w", err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	writeResult := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(writer, frames)
+		if err != nil {
+			_ = writer.Close()
+		}
+		writeResult <- err
+	}()
+	// Closing stdin requests remote Job Object cancellation. Keep SSH alive long
+	// enough to receive terminal cleanup instead of abandoning a remote installer.
+	const cleanupBudget = 40 * time.Second
+	commandContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget+cleanupBudget)
+	defer cancel()
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = writer.Close()
+			timer := time.NewTimer(cleanupBudget)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				cancel()
+			case <-finished:
+			}
+		case <-finished:
+		}
+	}()
+	output, runErr := runSSHRemoteCommandWithDiagnostics(commandContext, connection, reader, []string{command}, role, maximumSSHResultBytes, diagnostics)
+	close(finished)
+	_ = writer.Close()
+	writeErr := <-writeResult
+	if runErr != nil || ctx.Err() != nil {
+		return nil, errors.Join(runErr, ctx.Err())
+	}
+	if writeErr != nil {
+		return nil, fmt.Errorf("send %s input: %w", role, writeErr)
+	}
+	return output, nil
 }
 
 func sshArchiveLauncherBytes(script string) []byte {
@@ -62,15 +127,18 @@ func sshArchiveLauncherBytes(script string) []byte {
 	return []byte("\xef\xbb\xbf" + withPlainPowerShellErrors(script))
 }
 
-func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcher []byte) string {
-	staging := guestArchiveStagingPowerShell("transport-"+expectedDigest[:16], "SSH archive transport")
+func buildSSHArchiveTransportCommand(expectedDigest string, expectedArchiveLength int, launcher []byte, budget time.Duration, attemptID string) string {
+	staging := guestArchiveStagingPowerShell("transport-"+attemptID, "SSH archive transport", false)
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$transportDeadline = [DateTime]::UtcNow.AddMilliseconds(%d)
 %s
+$expectedProcessOwnerLength = [long]%d
+$expectedProcessOwnerDigest = '%x'
 $expectedLauncherLength = [long]%d
 $expectedArchiveLength = [long]%d
 $expectedLauncherDigest = '%x'
-%s`, staging, len(launcher), expectedArchiveLength, sha256.Sum256(launcher), sshArchiveTransportPowerShell)
+%s`, budget.Milliseconds(), staging, len(provisioningProcessSource), sha256.Sum256(provisioningProcessSource), len(launcher), expectedArchiveLength, sha256.Sum256(launcher), sshArchiveTransportPowerShell)
 }
 
 func withPlainPowerShellErrors(script string) string {

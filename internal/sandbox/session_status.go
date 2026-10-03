@@ -34,6 +34,15 @@ func enrichSessionStatus(dataDirectory string, active activeSession, status *Ses
 			status.Warnings = append(status.Warnings, "Operation diagnostics do not match the active run.")
 		} else {
 			status.Operation = &operation
+			if status.State == SessionConnectable {
+				status.Phase = operation.Phase
+				status.Message = operation.Message
+				if operation.State == operationStateRunning {
+					status.State = SessionStarting
+				} else if operation.State != operationStateSucceeded {
+					status.State = SessionFailed
+				}
+			}
 		}
 	}
 	if workspaces, err := readSessionWorkspaces(runDirectory); err != nil {
@@ -244,13 +253,18 @@ func sessionNextAction(status SessionStatus) string {
 		return "Run `sandbox up` from a configured project."
 	case SessionStarting:
 		return "Wait for provisioning, then run `sandbox status` again."
+	case SessionConnectable:
+		return "Run `sandbox up` to continue provisioning in the existing Sandbox."
 	case SessionReady:
 		if status.Operation != nil && status.Operation.State == operationStateRunning {
 			return "Wait for retained reprovisioning to finish, then run `sandbox attach`."
 		}
 		return "Run `sandbox attach` to connect without reprovisioning."
 	case SessionFailed:
-		return "Inspect the diagnostics above, then run `sandbox down` before retrying `up`."
+		if status.GuestIP != "" {
+			return "Correct the reported error, then run `sandbox up` to retry in the same Sandbox."
+		}
+		return "Retry the bootstrap using the command shown in the existing Sandbox console, then run `sandbox up`. Keep the Sandbox open."
 	case SessionStale:
 		return "Run `sandbox status` again to retry bounded stale-state cleanup."
 	case SessionUnmanaged:

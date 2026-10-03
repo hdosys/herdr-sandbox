@@ -1,6 +1,6 @@
-# herdr-sandbox-base-contract: 56
+# herdr-sandbox-base-contract: 57
 param(
-    [ValidateSet('Registry', 'Development')]
+    [ValidateSet('Registry', 'Core', 'Development')]
     [string]$Phase = 'Development',
     [string]$ProjectProvisioningDirectory = '',
     [string]$WorkspacesDirectory = 'C:\Workspaces',
@@ -3555,14 +3555,6 @@ Write-ProvisioningTiming -Role 'early registry customization' -Seconds $provisio
 return
 }
 
-$openCodeCopyOnSelectEnvironment = 'OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT'
-[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Machine')
-[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Process')
-if ([Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Machine') -cne 'false' -or
-    [Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Process') -cne 'false') {
-    throw 'OpenCode copy-on-select environment verification failed.'
-}
-
 Write-Output 'Installing PowerShell 7...'
 Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell' `
     -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') `
@@ -3570,6 +3562,15 @@ Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell
 $powerShell7 = Get-ProvisioningPowerShell7Installation
 $powerShellVersion = "PowerShell $($powerShell7.DisplayVersion)"
 Write-Output "PowerShell 7 ready: $powerShellVersion"
+if ($Phase -eq 'Core') { return }
+
+$openCodeCopyOnSelectEnvironment = 'OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT'
+[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Machine')
+[Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Process')
+if ([Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Machine') -cne 'false' -or
+    [Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Process') -cne 'false') {
+    throw 'OpenCode copy-on-select environment verification failed.'
+}
 
 $powerShellProfilePath = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'))
 $expectedProfileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\') + '\'

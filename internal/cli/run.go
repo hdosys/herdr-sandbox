@@ -413,6 +413,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		provisioningStartedAt.Sub(startedAt).Round(100*time.Millisecond),
 		completedAt.Sub(provisioningStartedAt).Round(100*time.Millisecond),
 		completedAt.Sub(startedAt).Round(100*time.Millisecond))
+	if connection.MobileAccess != nil {
+		if err := printMobileAccess(stdout, *connection.MobileAccess); err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		}
+	}
 	if noAttach {
 		fmt.Fprintln(stdout, "Next: run `sandbox attach` or `herdr --remote sandbox`.")
 		return 0

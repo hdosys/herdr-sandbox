@@ -237,33 +237,6 @@ func TestReadyStatusRejectsOldSchemaAndAmbiguousJSON(t *testing.T) {
 	}
 }
 
-func TestConfigurationHandoffIsStrictAndSingleAssignment(t *testing.T) {
-	directory := t.TempDir()
-	verified := configurationHandoffStatus{
-		SchemaVersion: statusSchemaVersion,
-		Outcome:       configurationHandoffVerified,
-	}
-	if err := writeConfigurationHandoff(directory, verified); err != nil {
-		t.Fatalf("writeConfigurationHandoff: %v", err)
-	}
-	if err := writeConfigurationHandoff(directory, verified); err == nil || !strings.Contains(err.Error(), "already published") {
-		t.Fatalf("second handoff error = %v", err)
-	}
-	failed := configurationHandoffStatus{
-		SchemaVersion: statusSchemaVersion,
-		Outcome:       configurationHandoffFailed,
-		Phase:         "configuration-sync",
-		Message:       "copy failed",
-	}
-	if err := failed.validate(); err != nil {
-		t.Fatalf("failed handoff validation: %v", err)
-	}
-	failed.Message = ""
-	if err := failed.validate(); err == nil {
-		t.Fatal("failed handoff accepted an empty message")
-	}
-}
-
 func TestReadyIdentityMustMatchConnectableIdentity(t *testing.T) {
 	connectable := connectableStatus{
 		SchemaVersion: statusSchemaVersion,

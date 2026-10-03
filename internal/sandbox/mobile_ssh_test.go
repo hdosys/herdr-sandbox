@@ -77,32 +77,6 @@ func TestBaseProfileRoutesOnlyMobileSSHPortDirectlyIntoHerdr(t *testing.T) {
 	}
 }
 
-func TestBootstrapActivatesAndDisplaysOnlyValidatedSecretFreeMobileHandoff(t *testing.T) {
-	bootstrap := string(bootstrapScript)
-	for _, required := range []string{
-		"schemaVersion|outcome|mobileAccess",
-		"uri|dnsName|ipv4|sshUser|port|hostKeyFingerprint|qr",
-		"'^(?:##|  )+$'",
-		"Write-ProgressStatus -Phase 'mobile-access'",
-		"$mobileScript -Mode Activate",
-		"Mobile Herdr access is ready over Tailscale.",
-		"Scan this secret-free QR code",
-		"Verify host key:",
-		"The device private key never leaves that device.",
-	} {
-		if !strings.Contains(bootstrap, required) {
-			t.Fatalf("bootstrap mobile handoff is missing %q", required)
-		}
-	}
-	activationIndex := strings.Index(bootstrap, "$mobileScript -Mode Activate")
-	workspaceIndex := strings.Index(bootstrap, "$createdRootPaneIds[$rootPaneId] = $true")
-	readyIndex := strings.Index(bootstrap, "Write-AtomicJson -Path (Join-Path $StatusDirectory 'ready.json')")
-	if activationIndex <= workspaceIndex || readyIndex <= activationIndex {
-		t.Fatalf("mobile activation ordering is invalid: workspace=%d activation=%d ready=%d", workspaceIndex, activationIndex, readyIndex)
-	}
-	assertPowerShell51Parses(t, bootstrap)
-}
-
 func TestMobileSSHPrepareArchiveContainsOnlyNativeAssetAndSecretRequest(t *testing.T) {
 	identity := testMobileSSHIdentity()
 	request := mobileSSHPrepareRequest{

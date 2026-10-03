@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -180,48 +179,6 @@ func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
 				t.Fatalf("finder module (%d,%d) = %q", x, y, module)
 			}
 		}
-	}
-}
-
-func TestMobileAccessHandoffIsStrictAndRoundTripsThroughStatusOwner(t *testing.T) {
-	identity := testTailscaleIdentity(t, "100.64.0.10")
-	access, err := buildMobileAccess(identity, testEd25519PublicKey(9), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handoff, err := newMobileAccessHandoff(access)
-	if err != nil {
-		t.Fatal(err)
-	}
-	status := configurationHandoffStatus{
-		SchemaVersion: statusSchemaVersion,
-		Outcome:       configurationHandoffVerified,
-		MobileAccess:  handoff,
-	}
-	directory := t.TempDir()
-	if err := writeConfigurationHandoff(directory, status); err != nil {
-		t.Fatal(err)
-	}
-	loaded, found, err := readOptionalStatus[configurationHandoffStatus](filepath.Join(directory, configurationHandoffFileName))
-	if err != nil || !found || loaded.MobileAccess == nil || loaded.MobileAccess.URI != access.URI {
-		t.Fatalf("loaded mobile handoff = %#v found=%t error=%v", loaded, found, err)
-	}
-	data, err := os.ReadFile(filepath.Join(directory, configurationHandoffFileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) != 3 || raw["mobileAccess"] == nil {
-		t.Fatalf("mobile handoff shape = %s", data)
-	}
-	invalid := *handoff
-	invalid.URI = "ssh://attacker.example:2222"
-	status.MobileAccess = &invalid
-	if err := status.validate(); err == nil {
-		t.Fatal("mismatched mobile URI accepted")
 	}
 }
 

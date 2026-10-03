@@ -74,14 +74,27 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Capture, host persistence, refusal, or termination failure restarts Tailscale when the guest remains reachable and preserves ownership for diagnosis.
 - A missing-process stale record is cleared only when no unmanaged Sandbox remains.
 - After CLI syntax validation, `internal/cli` invokes the single lifecycle cleanup owner before mutating `up` and `down`; `clean` invokes that owner directly and exactly once. `InspectSession` owns status-time cleanup and inspection under one lock acquisition so status does not run two separately locked passes. It waits only one second for the lifecycle mutex; when a strict host-owned running reprovision operation explains the busy lock, it skips cleanup and double-reads unchanged active/operation identity around one read-only status snapshot. Help, plan, and invalid input do not cross the native or destructive boundary. Cleanup reads the strict active identity, enumerates the launcher/client set, and revalidates the same process evidence before deletion. Process inspection pins the exact `Get-Process` handle before reading its canonical creation time and confirms a disappearing process through CIM instead of dereferencing a missing object. It pins non-reparse data, run, and SSH directories with Go 1.26 `os.Root` handles and owns only the exact `active.json`, `ssh\config`, and run-ID child names relative to those roots. A replacement at one of those exact app-owned rooted names may itself be removed, but no rename or reparse race may redirect deletion outside the pinned root. An exact running app-owned tree protects its run; only a missing active process together with an empty global Sandbox process set proves the Sandbox gone and permits removal of the former active run, stale active identity, and app-owned SSH target. If that exact owned process changes from running to proven gone between cleanup preflights, cleanup replans once from the unchanged active identity; every other identity change remains fail-closed. Unmanaged, changed-root, malformed, reparse-bearing, or inspection-failed state remains intact and returns a diagnosable incomplete-cleanup error; `status` reports that warning and continues to show preserved stale/unmanaged state, while mutating commands fail closed.
-- A repeated `up` under the same lifecycle mutex may reuse only the exact running session already classified ready.
+- The lifecycle mutex remains held through initial and retained provisioning.
+  A repeated `up` may resume the exact app-owned starting, connectable, ready,
+  or failed-but-connectable guest. Initial bootstrap establishes verified SSH
+  before Base Development, user profiles, or project profiles run.
 - Go canonicalizes the current selected folder-mount/workspace/cache paths, regenerates the complete WSB launch contract with current memory, accepts canonical contracts whose complete mapping sets differ only by Windows-equivalent letter casing or element order, and names exact audio input, audio output, memory, cache, folder-mount, workspace, Tailscale, or residual contract differences before refusing mutation.
 - Canonical round-trip validation keeps unknown XML or formatting drift fail-closed.
 - It snapshots current app-owned Base/Stacks, the user extension, each current project profile, and the current resolved package plan without changing the initial run input, reuses provisioning-plan inspection and host Visual Studio preparation, then streams one length/digest-bounded archive over the verified SSH connection.
 - Guest PowerShell extracts it to app-owned staging, rejects reparse points, runs the same Base Development owner with mapped status progress so package additions/removals/version changes apply in place, removes staging, and returns one strict result.
 - A concurrent host observer prints changed mapped progress and atomically updates the host operation record; observer persistence failure cancels the SSH operation.
 - The existing configuration-sync/read-back path runs again before attach.
-- Any changed fixed plan or non-ready/unmanaged state is refused rather than approximated.
+- Changed fixed plans and unmanaged or uncertain process identities are refused.
+  An early bootstrap failure has a manual retry command in the existing guest
+  console; it does not require destroying the guest.
+- The shared SSH archive owner sends verified process-owner, launcher, and payload
+  frames to attempt-specific staging. Its Windows Job Object bounds the launcher
+  and descendants. The host keeps input open after the frames; cancellation closes
+  that lease and allows up to 40 seconds for remote terminal cleanup. One guest-local
+  apply mutex serializes execution. An orphaned transfer directory remains a
+  fail-closed crash boundary, not evidence permitting automatic stale-state deletion.
+- Child processes discard Win32-OpenSSH's inherited descriptor-table environment
+  value: their newly assigned standard handles are not an ancestor's descriptor table.
 
 ### Attach And Read-only Inspection
 
@@ -139,7 +152,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - An installed binary cannot claim an unchanged-server reload.
 - Go publishes the accepted Herdr-owned executable path as machine-owned `HERDR_SANDBOX_HERDR_EXE` only after provision success and guest-side proof that the executable and its parent are non-reparse filesystem entries.
 - The same bounded publication makes its physical directory the unique first machine `PATH` entry and proves `Get-Command herdr.exe` resolves that exact file.
-- Because the already running server cannot inherit a later machine-environment update, bootstrap passes that resolved machine/user PATH and `HERDR_SANDBOX_HERDR_EXE` through Herdr's existing workspace launch environment for every initial mapped-project root.
+- Because the already running server cannot inherit a later machine-environment update, SSH finalization passes that resolved machine/user PATH and `HERDR_SANDBOX_HERDR_EXE` through Herdr's existing workspace launch environment for every initial mapped-project root.
 - Bootstrap uses the exact executable through the same bounded Job Object process owner for required client identity and initial workspace/pane creation, Base uses it only for the TCP 2222 mobile profile, and independent SSH verification parses only bounded stdout as `status server --json` evidence for running, compatible, no restart needed, matching runtime/protocol/binary, and detached-server capability. Both Herdr-owned status parsers allow additive fields while preserving required values and duplicate-key rejection at the Go boundary; PowerShell/SSH stderr remains diagnostic and cannot corrupt JSON.
 - Ready schema 3 records distribution and runtime versions, protocol, and the exact returned executable path.
 - Retained reprovision verifies SSH without rejecting stale ready Herdr metadata, provisions and verifies the current runtime, then atomically replaces ready identity before later mobile and unchanged-host checks, so a partial post-provision failure remains retryable.
@@ -177,9 +190,16 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Windows has no stdlib conditional rename, so an external editor writing in the final compare-to-rename interval remains a documented residual race rather than justification for a second native in-place file writer.
 - A nonterminal connectable contract contains only guest IP, management SSH identity/host key, and WinGet version.
 - Herdr identity does not exist until host-owned remote provisioning succeeds.
-- The host-written completion handoff optionally adds one strictly validated secret-free mobile URI, host-key fingerprint, and QR matrix.
-- Bootstrap validates the published provisioned Herdr executable, creates initial workspaces, activates the prepared listener, and then publishes terminal ready; any failure remains nonattachable.
-- Each retained reprovision owns one strict, host-only `<run>\operation.json` current/latest contract containing operation/run IDs, kind, running or terminal state, bounded phase/message, and ordered UTC timestamps.
+- There is no bootstrap/host completion handoff. The common host-owned SSH flow
+  verifies Herdr, runs `finalize-provisioning.ps1`, activates the selected mobile
+  listener, and publishes ready only after required final verification. The CLI
+  prints the verified secret-free mobile profile and QR. Failed initial attempts
+  remain nonattachable but retryable through the retained connectable identity.
+- Finalization reuses an existing uniquely named workspace only when a pane's cwd
+  matches its manifested project. It creates missing workspaces, preserves ambiguous
+  ones, and focuses the active project. A partial failure cannot blindly recreate
+  every workspace on retry.
+- Each initial or retained provisioning attempt owns one strict, host-only `<run>\operation.json` current/latest contract containing operation/run IDs, kind, running or terminal state, bounded phase/message, and ordered UTC timestamps.
 - The guest-writable status mapping cannot forge it.
 - A terminal retained failure remains separate from ready guest health; immediately after any public lifecycle path freely acquires the lock, a matching running record is atomically marked interrupted before inspection, close, replacement, or deletion.
 - A new operation cannot overwrite a still-running record.

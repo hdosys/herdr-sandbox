@@ -588,7 +588,7 @@ func TestClassifyManagedSessionUsesTerminalStatusPrecedence(t *testing.T) {
 	connectable := connectableStatus{SchemaVersion: statusSchemaVersion, IP: "172.24.1.2", SSHUser: "WDAGUtilityAccount", SSHHostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZha2VwdWJsaWNrZXlieXRlcw==", WinGetVersion: "v1"}
 	writeJSON(t, filepath.Join(statusDirectory, connectableFileName), connectable)
 	status, err = classifyManagedSession(root, active)
-	if err != nil || status.State != SessionStarting || status.Phase != "connectable" || status.GuestIP != connectable.IP ||
+	if err != nil || status.State != SessionConnectable || status.Phase != "connectable" || status.GuestIP != connectable.IP ||
 		status.WinGetVersion != connectable.WinGetVersion || status.HerdrVersion != "" || status.HerdrProtocol != 0 {
 		t.Fatalf("connectable status = %#v, %v", status, err)
 	}

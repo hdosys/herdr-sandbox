@@ -11,11 +11,7 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateSet('Disabled', 'Enabled')]
-    [string]$AudioInput,
-
-    [Parameter(Mandatory = $true)]
-    [ValidateRange(1, 60)]
-    [int]$ConfigurationHandoffTimeoutMinutes
+    [string]$AudioInput
 )
 
 Set-StrictMode -Version Latest
@@ -78,85 +74,6 @@ function Write-ProgressStatus {
         phase = $Phase
         message = $Message
     })
-}
-
-function Read-ConfigurationHandoff {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
-    if ($item.Length -le 0 -or $item.Length -gt 16384) {
-        throw "Configuration handoff size is invalid: $($item.Length)"
-    }
-    $text = [IO.File]::ReadAllText($item.FullName)
-    $verified = '{"schemaVersion":1,"outcome":"verified"}'
-    if ($text -ceq $verified) {
-        return [pscustomobject]@{ outcome = 'verified'; phase = ''; message = ''; mobileAccess = $null }
-    }
-    $failurePattern = '^\{"schemaVersion":1,"outcome":"failed","phase":"(?:[^"\\]|\\.)*","message":"(?:[^"\\]|\\.)*"\}$'
-    try {
-        $handoff = $text | ConvertFrom-Json
-    } catch {
-        throw "Configuration handoff is not valid JSON: $($_.Exception.Message)"
-    }
-    if ($text -match $failurePattern) {
-        if ($handoff.schemaVersion -isnot [int] -or [int]$handoff.schemaVersion -ne 1 -or
-            $handoff.outcome -isnot [string] -or [string]$handoff.outcome -cne 'failed' -or
-            $handoff.phase -isnot [string] -or
-            [string]::IsNullOrWhiteSpace([string]$handoff.phase) -or
-            $handoff.message -isnot [string] -or
-            [string]::IsNullOrWhiteSpace([string]$handoff.message) -or
-            ([string]$handoff.message).Length -gt 4096) {
-            throw 'Failed configuration handoff values are invalid.'
-        }
-        return [pscustomobject]@{
-            outcome = [string]$handoff.outcome
-            phase = [string]$handoff.phase
-            message = [string]$handoff.message
-            mobileAccess = $null
-        }
-    }
-    $properties = @($handoff.PSObject.Properties.Name)
-    if (($properties -join '|') -cne 'schemaVersion|outcome|mobileAccess' -or
-        $handoff.schemaVersion -isnot [int] -or [int]$handoff.schemaVersion -ne 1 -or
-        $handoff.outcome -isnot [string] -or [string]$handoff.outcome -cne 'verified' -or
-        $null -eq $handoff.mobileAccess) {
-        throw 'Configuration handoff is not canonical.'
-    }
-    $mobile = $handoff.mobileAccess
-    $mobileProperties = @($mobile.PSObject.Properties.Name)
-    if (($mobileProperties -join '|') -cne 'uri|dnsName|ipv4|sshUser|port|hostKeyFingerprint|qr' -or
-        $mobile.uri -isnot [string] -or $mobile.dnsName -isnot [string] -or $mobile.ipv4 -isnot [string] -or
-        $mobile.sshUser -isnot [string] -or [string]$mobile.sshUser -cne 'WDAGUtilityAccount' -or
-        $mobile.port -isnot [int] -or [int]$mobile.port -ne 2222 -or
-        $mobile.hostKeyFingerprint -isnot [string] -or
-        [string]$mobile.hostKeyFingerprint -notmatch '^SHA256:[A-Za-z0-9+/]{43}$' -or
-        [string]$mobile.dnsName -notmatch '^herdr-sandbox\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.ts\.net$' -or
-        [string]$mobile.uri -cne ('ssh://WDAGUtilityAccount@' + [string]$mobile.dnsName + ':2222')) {
-        throw 'Mobile access handoff values are invalid.'
-    }
-    $parsedIPv4 = $null
-    if (-not [Net.IPAddress]::TryParse([string]$mobile.ipv4, [ref]$parsedIPv4) -or
-        $parsedIPv4.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
-        $parsedIPv4.ToString() -cne [string]$mobile.ipv4) {
-        throw 'Mobile access handoff IPv4 address is invalid.'
-    }
-    $qr = @($mobile.qr)
-    if ($qr.Count -lt 29 -or $qr.Count -gt 65) { throw 'Mobile access QR height is invalid.' }
-    foreach ($line in $qr) {
-        if ($line -isnot [string] -or ([string]$line).Length -ne (2 * $qr.Count) -or
-            [string]$line -notmatch '^(?:##|  )+$') {
-            throw 'Mobile access QR matrix is invalid.'
-        }
-    }
-    return [pscustomobject]@{
-        outcome = 'verified'
-        phase = ''
-        message = ''
-        mobileAccess = $mobile
-    }
 }
 
 function Get-BoundedDiagnosticText {
@@ -282,42 +199,6 @@ function Invoke-HerdrBoundary {
         throw "$Role exited with code $($result.ExitCode). $detail"
     }
     return [string]$result.Output
-}
-
-function ConvertFrom-HerdrClientStatus {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Text,
-
-        [Parameter(Mandatory = $true)]
-        [string]$ExpectedExecutable
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Text) -or [Text.Encoding]::UTF8.GetByteCount($Text) -gt 65536) {
-        throw 'Provisioned guest Herdr client status is empty or oversized.'
-    }
-    try { $status = $Text | ConvertFrom-Json } catch {
-        throw 'Provisioned guest Herdr client status is invalid JSON.'
-    }
-    if ($null -eq $status -or $status -is [array]) {
-        throw 'Provisioned guest Herdr client status is not an object.'
-    }
-    $properties = @($status.PSObject.Properties.Name)
-    foreach ($name in @('version', 'herdr_version', 'build_id', 'protocol', 'binary', 'session')) {
-        if (@($properties | Where-Object { [string]$_ -ceq $name }).Count -ne 1) {
-            throw "Provisioned guest Herdr client status is missing required field: $name"
-        }
-    }
-    if ($status.version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$status.version) -or
-        $status.herdr_version -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$status.herdr_version) -or
-        ($null -ne $status.build_id -and ($status.build_id -isnot [string] -or [string]$status.build_id -notmatch '^[0-9a-f]{12}\.[0-9a-f]{12}$')) -or
-        $status.protocol -isnot [int] -or [int]$status.protocol -lt 1 -or
-        $status.binary -isnot [string] -or
-        -not [string]::Equals([string]$status.binary, $ExpectedExecutable, [StringComparison]::OrdinalIgnoreCase) -or
-        ($null -ne $status.session -and $status.session -isnot [string])) {
-        throw 'Provisioned guest Herdr client identity is invalid.'
-    }
-    return $status
 }
 
 function Assert-BootstrapCachePath {
@@ -656,12 +537,25 @@ function Get-PowerShell7Installation {
     }
 }
 
+$wingetDependenciesDirectory = $null
 try {
     if (-not (Test-Path -LiteralPath $InputDirectory -PathType Container)) {
         throw "Sandbox input directory does not exist: $InputDirectory"
     }
     if (-not (Test-Path -LiteralPath $StatusDirectory -PathType Container)) {
         throw "Sandbox status directory does not exist: $StatusDirectory"
+    }
+    if (Test-Path -LiteralPath (Join-Path $StatusDirectory 'connectable.json')) {
+        Write-Host 'SSH bootstrap already completed. Run sandbox up on the host to continue provisioning.'
+        return
+    }
+    $failurePath = Join-Path $StatusDirectory 'failed.json'
+    if (Test-Path -LiteralPath $failurePath) {
+        $failureItem = Get-Item -LiteralPath $failurePath -Force
+        if ($failureItem.PSIsContainer -or ($failureItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Bootstrap failure status is unsafe.'
+        }
+        Remove-Item -LiteralPath $failurePath -Force
     }
     $env:HERDR_SANDBOX_STATUS_DIRECTORY = [IO.Path]::GetFullPath($StatusDirectory)
 
@@ -762,7 +656,7 @@ try {
         -CacheTrustRoot $bootstrapCacheTrustRoot
 
     Write-ProgressStatus -Phase 'winget-install' -Message 'Installing the resolved WinGet package and dependencies'
-    $wingetDependenciesDirectory = Join-Path $env:TEMP 'winget-dependencies'
+    $wingetDependenciesDirectory = Join-Path $env:TEMP ('herdr-sandbox-winget-' + [Guid]::NewGuid().ToString('N'))
     Expand-Archive -LiteralPath $wingetDependenciesArchive -DestinationPath $wingetDependenciesDirectory
     $wingetDependencyPaths = @(Get-ChildItem -LiteralPath (Join-Path $wingetDependenciesDirectory 'x64') -File -Filter '*.appx' |
         ForEach-Object { $_.FullName })
@@ -847,18 +741,10 @@ try {
         Write-Warning "VC++ runtime installation succeeded, but WinGet did not report resolved version $($vcVersions[0]). Provisioning will continue with the installed runtime."
     }
 
-    Write-ProgressStatus -Phase 'development-provisioning' -Message 'Applying global and project development provisioning'
-    & $baseProvisioning -Phase 'Development' -ProjectProvisioningDirectory $projectProvisioningDirectory `
+    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing only the PowerShell shell required for SSH'
+    & $baseProvisioning -Phase 'Core' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
-    $toolVersionPlan = [IO.File]::ReadAllText($toolVersionPlanPath) | ConvertFrom-Json
-    $playwrightCLISelected = @($toolVersionPlan.tools | Where-Object {
-            $_.tool -is [string] -and [string]$_.tool -ceq '@playwright/cli'
-        }).Count -eq 1
-    Write-ProgressStatus -Phase 'playwright-extension' `
-        -Message 'Preparing optional Playwright access to the existing Edge profile'
-    . (Join-Path $provisioningDirectory 'playwright-access.ps1')
-    $playwrightExtensionToken = Initialize-PlaywrightExtensionToken -Enabled $playwrightCLISelected
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
 
@@ -982,122 +868,7 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         sshHostKey = $sshHostKey
         wingetVersion = $wingetVersion
     })
-    Write-ProgressStatus -Phase 'configuration-handoff' `
-        -Message 'Waiting for verified host configuration before workspace creation'
-    $configurationHandoffPath = Join-Path $StatusDirectory 'configuration-handoff.json'
-    $configurationDeadline = [DateTime]::UtcNow.AddMinutes($ConfigurationHandoffTimeoutMinutes)
-    while (-not (Test-Path -LiteralPath $configurationHandoffPath -PathType Leaf)) {
-        if ([DateTime]::UtcNow -ge $configurationDeadline) {
-            throw "Verified host configuration did not arrive within $ConfigurationHandoffTimeoutMinutes minutes."
-        }
-        Start-Sleep -Milliseconds 250
-    }
-    $configurationHandoff = Read-ConfigurationHandoff -Path $configurationHandoffPath
-    if ([string]$configurationHandoff.outcome -ceq 'failed') {
-        throw "Host configuration phase '$($configurationHandoff.phase)' failed: $($configurationHandoff.message)"
-    }
-
-    $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
-    if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or
-        -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
-        throw 'Host provisioning did not publish the guest Herdr executable identity.'
-    }
-    $herdrClientStatusText = (Invoke-HerdrBoundary -Role 'Provisioned Herdr client status' -FilePath $herdrExecutable `
-        -ArgumentList @('status', 'client', '--json')).Trim()
-    $herdrClientStatus = ConvertFrom-HerdrClientStatus -Text $herdrClientStatusText -ExpectedExecutable $herdrExecutable
-    $herdrRuntimeVersion = [string]$herdrClientStatus.version
-    $herdrProtocol = [int]$herdrClientStatus.protocol
-    $herdrVersion = (Invoke-HerdrBoundary -Role 'Provisioned Herdr version' -FilePath $herdrExecutable `
-        -ArgumentList @('--version')).Trim()
-    if ([string]::IsNullOrWhiteSpace($herdrVersion) -or $herdrVersion.Length -gt 256 -or
-        $herdrVersion.IndexOf("`r") -ge 0 -or $herdrVersion.IndexOf("`n") -ge 0) {
-        throw 'Provisioned guest Herdr version identity is invalid.'
-    }
-    $herdrDirectory = Split-Path -Parent $herdrExecutable
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $machinePathEntries = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($machinePathEntries.Count -eq 0 -or
-        $machinePathEntries[0].TrimEnd('\') -ine $herdrDirectory.TrimEnd('\') -or
-        @($machinePathEntries | Where-Object { $_.TrimEnd('\') -ieq $herdrDirectory.TrimEnd('\') }).Count -ne 1) {
-        throw 'Provisioned guest Herdr directory is not the unique first machine PATH entry.'
-    }
-    $workspacePath = @($machinePath, [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
-    if ([string]::IsNullOrWhiteSpace($workspacePath) -or $workspacePath.Length -gt 32767) {
-        throw 'Provisioned guest workspace PATH is invalid.'
-    }
-
-    Write-ProgressStatus -Phase 'herdr-workspace' -Message "Creating $($workspaceEntries.Count) mounted-project workspaces and terminal panes"
-    $orderedWorkspaceEntries = @($workspaceEntries | Sort-Object `
-        @{ Expression = { if ([string]$_.directory -ceq $activeWorkspace) { 1 } else { 0 } } }, `
-        @{ Expression = { [string]$_.name } })
-    $createdWorkspaceIds = @{}
-    $createdRootPaneIds = @{}
-    foreach ($workspace in $orderedWorkspaceEntries) {
-        $workspaceName = [string]$workspace.name
-        $workspaceDirectory = [string]$workspace.directory
-        $workspaceArguments = @('workspace', 'create', '--cwd', $workspaceDirectory, '--label', $workspaceName,
-            '--env', "PATH=$workspacePath", '--env', "HERDR_SANDBOX_HERDR_EXE=$herdrExecutable")
-        if (-not [string]::IsNullOrWhiteSpace($playwrightExtensionToken)) {
-            $workspaceArguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")
-        }
-        if ($workspaceDirectory -ceq $activeWorkspace) { $workspaceArguments += '--focus' }
-        $workspaceOutput = Invoke-HerdrBoundary -Role "Herdr workspace creation for $workspaceName" `
-            -FilePath $herdrExecutable -ArgumentList $workspaceArguments
-        $workspaceResponse = $workspaceOutput | ConvertFrom-Json
-        $workspaceId = [string]$workspaceResponse.result.workspace.workspace_id
-        $rootPaneId = [string]$workspaceResponse.result.root_pane.pane_id
-        if ([string]::IsNullOrWhiteSpace($workspaceId) -or [string]::IsNullOrWhiteSpace($rootPaneId) -or
-            $createdWorkspaceIds.ContainsKey($workspaceId) -or $createdRootPaneIds.ContainsKey($rootPaneId)) {
-            throw "Herdr did not create a unique workspace and root pane for: $workspaceName"
-        }
-        $createdWorkspaceIds[$workspaceId] = $true
-        $createdRootPaneIds[$rootPaneId] = $true
-    }
-
-    if ($null -ne $configurationHandoff.mobileAccess) {
-        Write-ProgressStatus -Phase 'mobile-access' -Message 'Starting the private Tailscale mobile Herdr endpoint'
-        $mobileScript = 'C:\HerdrSandbox\mobile-ssh\mobile-ssh.ps1'
-        $mobileScriptItem = Get-Item -LiteralPath $mobileScript -Force -ErrorAction Stop
-        if ($mobileScriptItem.PSIsContainer -or ($mobileScriptItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            $mobileScriptItem.Length -le 0 -or $mobileScriptItem.Length -gt 65536) {
-            throw 'Mobile SSH control script is unsafe or invalid.'
-        }
-        $activationOutput = @(& $mobileScript -Mode Activate)
-        $activationText = ($activationOutput -join [Environment]::NewLine).Trim()
-        try { $activation = $activationText | ConvertFrom-Json } catch { throw 'Mobile SSH activation returned invalid JSON.' }
-        $activationProperties = @($activation.PSObject.Properties.Name)
-        if (($activationProperties -join '|') -cne 'schemaVersion|state|pid' -or
-            $activation.schemaVersion -isnot [int] -or [int]$activation.schemaVersion -ne 1 -or
-            $activation.state -isnot [string] -or [string]$activation.state -cne 'running' -or
-            $activation.pid -isnot [int] -or [int]$activation.pid -lt 1) {
-            throw 'Mobile SSH activation result is invalid.'
-        }
-        Write-Host ''
-        Write-Host 'Mobile Herdr access is ready over Tailscale.' -ForegroundColor Green
-        Write-Host 'Scan this secret-free QR code with a mobile SSH app or camera:'
-        foreach ($line in @($configurationHandoff.mobileAccess.qr)) {
-            $rendered = ([string]$line).Replace('#', [string][char]0x2588)
-            Write-Host $rendered -ForegroundColor Black -BackgroundColor White
-        }
-        Write-Host ("Connect: " + [string]$configurationHandoff.mobileAccess.uri)
-        Write-Host ("Fallback: " + [string]$configurationHandoff.mobileAccess.sshUser + '@' + [string]$configurationHandoff.mobileAccess.ipv4 + ':2222')
-        Write-Host ("Verify host key: " + [string]$configurationHandoff.mobileAccess.hostKeyFingerprint)
-        Write-Host 'The device private key never leaves that device.'
-        Write-Host ''
-    }
-
-    Write-AtomicJson -Path (Join-Path $StatusDirectory 'ready.json') -Value ([ordered]@{
-        schemaVersion = 3
-        ip = $ipAddress
-        sshUser = 'WDAGUtilityAccount'
-        sshHostKey = $sshHostKey
-        wingetVersion = $wingetVersion
-        herdrVersion = $herdrVersion
-        herdrRuntimeVersion = $herdrRuntimeVersion
-        herdrProtocol = $herdrProtocol
-        herdrBinary = $herdrExecutable
-    })
-    Write-Host '[ready] Sandbox provisioning completed; this window may remain open.' -ForegroundColor Green
+    Write-Host '[connectable] SSH is ready. The host now provisions this Sandbox over SSH.' -ForegroundColor Green
 } catch {
     $message = Get-BoundedDiagnosticText -Text ([string]$_.Exception.Message) -MaximumBytes 4000
     $message = (($message -replace '[\x00-\x1F\x7F-\x9F]', ' ') -replace '\s+', ' ').Trim()
@@ -1113,5 +884,13 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     } catch {
         # The host timeout remains the fallback if the status mapping itself failed.
     }
-    exit 1
+    Write-Host "Bootstrap failed: $message" -ForegroundColor Red
+    Write-Host 'Keep this Sandbox open. Retry here with the following command, then run sandbox up on the host:'
+    Write-Host ("& '" + $PSCommandPath.Replace("'", "''") + "' -InputDirectory '" +
+        $InputDirectory.Replace("'", "''") + "' -StatusDirectory '" + $StatusDirectory.Replace("'", "''") +
+        "' -AudioPlayback " + $AudioPlayback + ' -AudioInput ' + $AudioInput)
+} finally {
+    if ($null -ne $wingetDependenciesDirectory -and (Test-Path -LiteralPath $wingetDependenciesDirectory)) {
+        Remove-Item -LiteralPath $wingetDependenciesDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
