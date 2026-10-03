@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestHerdrConfigurationUsesSelectedSourceOnlyForGuestOverrides(t *testing.T) {
@@ -19,7 +22,7 @@ func TestHerdrConfigurationUsesSelectedSourceOnlyForGuestOverrides(t *testing.T)
 	t.Setenv("APPDATA", root)
 	selected := filepath.Join(root, "selected.toml")
 	t.Setenv("HERDR_CONFIG_PATH", selected)
-	writeTestFile(t, selected, "[terminal]\ndefault_shell = 'nu'\n[theme]\nname = 'host-theme'\n[agent]\nargs = ['host-only']\n")
+	writeTestFile(t, selected, "[\"terminal\"]\n\"default_shell\" = 'nu'\n[theme]\nname = 'host-theme'\n[agent]\nargs = ['host-only']\n")
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Add: []string{}}, terminal)
 	if err != nil {
@@ -34,7 +37,7 @@ func TestHerdrConfigurationUsesSelectedSourceOnlyForGuestOverrides(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`default_shell = "nu.exe"`, `directory = "C:/Worktrees"`, "new_cwd = 'C:/Guest'", "name = 'guest-theme'", "args = ['guest-only']"} {
+	for _, want := range []string{`default_shell = "nu.exe"`, `directory = "C:/Worktrees"`, `new_cwd = "C:/Guest"`, `name = "guest-theme"`, `args = ["guest-only"]`} {
 		if !bytes.Contains(patched, []byte(want)) {
 			t.Fatalf("guest override lost %q: %s", want, patched)
 		}
@@ -49,6 +52,47 @@ func TestHerdrConfigurationUsesSelectedSourceOnlyForGuestOverrides(t *testing.T)
 		got, err := decodeGuestHerdrConfiguration([]byte(snapshot.input))
 		if err != nil || (got == nil) != snapshot.absent {
 			t.Fatalf("snapshot presence: %v, %v", got == nil, err)
+		}
+	}
+}
+
+func TestGuestHerdrOverridesPreserveTOMLValues(t *testing.T) {
+	for name, input := range map[string]string{
+		"quoted keys":     "[terminal]\n\"default_shell\" = 'nu.exe'\nnew_cwd = 'C:/Guest'\n[worktrees]\n'directory' = 'D:/old'\n",
+		"quoted tables":   "[\"terminal\"]\ndefault_shell = 'nu.exe'\n['worktrees']\ndirectory = 'D:/old'\n",
+		"dotted keys":     "terminal.default_shell = 'nu.exe'\nworktrees.directory = 'D:/old'\n",
+		"inline tables":   "terminal = { default_shell = 'nu.exe', new_cwd = 'C:/Guest' }\nworktrees = { directory = 'D:/old', include_repo_name = true }\n",
+		"multiline value": "[agent]\nargs = ['''\n[terminal]\ndefault_shell = 'not-a-table'\n''']\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			input += "\n[theme]\nname = 'dracula'\n"
+			var want map[string]any
+			if _, err := toml.Decode(input, &want); err != nil {
+				t.Fatal(err)
+			}
+			patched, err := patchGuestHerdrConfig([]byte(input), guestWorktreeDirectory, "pwsh.exe")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]any
+			if _, err := toml.Decode(string(patched), &got); err != nil {
+				t.Fatalf("published TOML would be invalid: %v", err)
+			}
+			for _, target := range []struct{ section, key, value string }{{"terminal", "default_shell", "pwsh.exe"}, {"worktrees", "directory", "C:/Worktrees"}} {
+				section, err := configurationObject(want, target.section)
+				if err != nil {
+					t.Fatal(err)
+				}
+				section[target.key] = target.value
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("guest override changed unrelated values: got %#v, want %#v", got, want)
+			}
+		})
+	}
+	for _, invalid := range []string{"[terminal]\ndefault_shell = 'nu'\n\"default_shell\" = 'pwsh'\n", "terminal = 'not a table'", "[terminal\n"} {
+		if output, err := patchGuestHerdrConfig([]byte(invalid), guestWorktreeDirectory, "pwsh.exe"); err == nil || output != nil {
+			t.Fatalf("invalid guest config produced publishable bytes: %q, %v", output, err)
 		}
 	}
 }

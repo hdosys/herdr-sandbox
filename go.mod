@@ -2,10 +2,12 @@ module herdr-sandbox
 
 go 1.26.7
 
-require rsc.io/qr v0.2.0
+require (
+	github.com/BurntSushi/toml v1.6.0
+	rsc.io/qr v0.2.0
+)
 
 require (
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/mod v0.39.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

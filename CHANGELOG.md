@@ -40,6 +40,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Guest Herdr overrides preserve valid TOML values, including quoted keys and
+  inline tables, and reject malformed configuration before replacing a guest file.
 - Nested SSH commands discard inherited OpenSSH descriptor metadata, preventing
   stalled input/output when invoked from an SSH-created environment.
 - Old `Install-NushellStack` calls are rejected during profile planning with the

@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/BurntSushi/toml"
 )
 
 //go:embed assets/configuration-sync.ps1
@@ -1203,7 +1205,15 @@ func buildGuestHerdrConfig(path string, guestConfig []byte, worktreeDirectory st
 		return nil, fmt.Errorf("read Herdr config: %w", err)
 	}
 	defaultShell := "pwsh.exe"
-	if hostHerdrConfigUsesNushell(strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")) {
+	var hostConfig struct {
+		Terminal struct {
+			DefaultShell string `toml:"default_shell"`
+		} `toml:"terminal"`
+	}
+	if _, err := toml.Decode(string(contents), &hostConfig); err != nil {
+		return nil, fmt.Errorf("parse host Herdr configuration: %w", err)
+	}
+	if strings.EqualFold(hostConfig.Terminal.DefaultShell, "nu") || strings.EqualFold(hostConfig.Terminal.DefaultShell, "nu.exe") {
 		defaultShell = "nu.exe"
 	}
 	return patchGuestHerdrConfig(guestConfig, worktreeDirectory, defaultShell)
@@ -1213,198 +1223,32 @@ func patchGuestHerdrConfig(contents []byte, worktreeDirectory, defaultShell stri
 	if defaultShell != "pwsh.exe" && defaultShell != "nu.exe" {
 		return nil, errors.New("guest Herdr shell must be pwsh.exe or nu.exe")
 	}
-	if bytes.IndexByte(contents, 0) >= 0 {
-		return nil, errors.New("config for Herdr contains a NUL byte")
+	configuration := map[string]any{}
+	if _, err := toml.Decode(string(contents), &configuration); err != nil {
+		return nil, fmt.Errorf("parse guest Herdr configuration: %w", err)
 	}
-	text := strings.ReplaceAll(string(contents), "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	if worktreeDirectory != "" {
-		if err := rejectAmbiguousHerdrWorktreeDefinitions(lines); err != nil {
-			return nil, err
-		}
-	}
-	var err error
-	lines, err = upsertHerdrConfigValue(lines, "terminal", "default_shell", fmt.Sprintf("default_shell = %q", defaultShell))
+	terminal, err := configurationObject(configuration, "terminal")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("patch guest Herdr terminal: %w", err)
 	}
+	terminal["default_shell"] = defaultShell
 	if worktreeDirectory != "" {
 		if !strings.EqualFold(filepath.Clean(worktreeDirectory), guestWorktreeDirectory) {
 			return nil, fmt.Errorf("guest Herdr worktree directory = %q, want %q", worktreeDirectory, guestWorktreeDirectory)
 		}
-		lines, err = upsertHerdrConfigValue(lines, "worktrees", "directory", `directory = "C:/Worktrees"`)
+		worktrees, err := configurationObject(configuration, "worktrees")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("patch guest Herdr worktrees: %w", err)
 		}
+		worktrees["directory"] = "C:/Worktrees"
 	}
-	return []byte(strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"), nil
-}
-
-func hostHerdrConfigUsesNushell(lines []string) bool {
-	inTerminalSection := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			header, exact := herdrConfigHeader(trimmed)
-			inTerminalSection = exact && herdrConfigSectionName(header) == "terminal"
-			continue
-		}
-		if !inTerminalSection {
-			continue
-		}
-		key, value, found := strings.Cut(trimmed, "=")
-		if !found || strings.TrimSpace(key) != "default_shell" {
-			continue
-		}
-		value = strings.TrimSpace(value)
-		if comment := strings.Index(value, "#"); comment >= 0 {
-			value = strings.TrimSpace(value[:comment])
-		}
-		if len(value) < 2 || value[0] != value[len(value)-1] || (value[0] != '\'' && value[0] != '"') {
-			return false
-		}
-		command := value[1 : len(value)-1]
-		return strings.EqualFold(command, "nu") || strings.EqualFold(command, "nu.exe")
+	var output bytes.Buffer
+	encoder := toml.NewEncoder(&output)
+	encoder.Indent = ""
+	if err := encoder.Encode(configuration); err != nil {
+		return nil, fmt.Errorf("encode guest Herdr configuration: %w", err)
 	}
-	return false
-}
-
-func rejectAmbiguousHerdrWorktreeDefinitions(lines []string) error {
-	inWorktreeSection := false
-	atRoot := true
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "[") {
-			header, exact := herdrConfigHeader(trimmed)
-			if !exact && herdrConfigHeaderTargetsWorktrees(header) {
-				return errors.New("config for Herdr has an ambiguous worktrees definition")
-			}
-			if !exact {
-				inWorktreeSection = false
-				atRoot = false
-				continue
-			}
-			atRoot = false
-			inWorktreeSection = herdrConfigSectionName(header) == "worktrees"
-			if !inWorktreeSection && herdrConfigHeaderTargetsWorktrees(header) {
-				return errors.New("config for Herdr has an ambiguous worktrees definition")
-			}
-			continue
-		}
-		if inWorktreeSection {
-			continue
-		}
-		if atRoot && herdrConfigAssignmentTargetsWorktrees(trimmed) {
-			return errors.New("config for Herdr has an ambiguous worktrees definition")
-		}
-	}
-	return nil
-}
-
-func herdrConfigHeader(line string) (string, bool) {
-	closing := strings.Index(line, "]")
-	if closing < 0 {
-		return line, false
-	}
-	if strings.HasPrefix(line, "[[") {
-		second := strings.Index(line[closing+1:], "]")
-		if second < 0 {
-			return line, false
-		}
-		closing += second + 1
-	}
-	header := line[:closing+1]
-	remainder := strings.TrimSpace(line[closing+1:])
-	return header, remainder == "" || strings.HasPrefix(remainder, "#")
-}
-
-func herdrConfigSectionName(header string) string {
-	if strings.HasPrefix(header, "[[") || !strings.HasPrefix(header, "[") || !strings.HasSuffix(header, "]") {
-		return ""
-	}
-	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(header, "["), "]"))
-}
-
-func herdrConfigHeaderTargetsWorktrees(header string) bool {
-	header = strings.TrimSpace(header)
-	header = strings.TrimLeft(header, "[")
-	header = strings.TrimSpace(strings.TrimRight(header, "]"))
-	for _, key := range []string{"worktrees", `"worktrees"`, "'worktrees'"} {
-		if !strings.HasPrefix(header, key) {
-			continue
-		}
-		remainder := strings.TrimSpace(header[len(key):])
-		return remainder == "" || strings.HasPrefix(remainder, ".")
-	}
-	return false
-}
-
-func herdrConfigAssignmentTargetsWorktrees(line string) bool {
-	for _, key := range []string{"worktrees", `"worktrees"`, "'worktrees'"} {
-		if !strings.HasPrefix(line, key) {
-			continue
-		}
-		remainder := strings.TrimSpace(line[len(key):])
-		return strings.HasPrefix(remainder, "=") || strings.HasPrefix(remainder, ".")
-	}
-	return false
-}
-
-func upsertHerdrConfigValue(lines []string, sectionName, key, replacement string) ([]string, error) {
-	sectionStart := -1
-	sectionEnd := len(lines)
-	keyLine := -1
-	inSection := false
-	for index, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			header, exact := herdrConfigHeader(trimmed)
-			if !exact {
-				continue
-			}
-			section := herdrConfigSectionName(header)
-			if inSection {
-				sectionEnd = index
-				inSection = false
-			}
-			if section == sectionName {
-				if sectionStart >= 0 {
-					return nil, fmt.Errorf("config for Herdr contains duplicate [%s] sections", sectionName)
-				}
-				sectionStart = index
-				sectionEnd = len(lines)
-				inSection = true
-			}
-			continue
-		}
-		if inSection {
-			withoutLeadingSpace := strings.TrimLeft(line, " \t")
-			if strings.HasPrefix(withoutLeadingSpace, key) {
-				separator := strings.Index(withoutLeadingSpace, "=")
-				if separator < 0 || strings.TrimSpace(withoutLeadingSpace[:separator]) != key || keyLine >= 0 {
-					return nil, fmt.Errorf("config for Herdr has an ambiguous %s.%s", sectionName, key)
-				}
-				keyLine = index
-			}
-		}
-	}
-	if sectionStart < 0 {
-		if len(lines) == 1 && lines[0] == "" {
-			lines = nil
-		} else if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
-			lines = append(lines, "")
-		}
-		lines = append(lines, "["+sectionName+"]", replacement)
-	} else if keyLine >= 0 {
-		indent := lines[keyLine][:len(lines[keyLine])-len(strings.TrimLeft(lines[keyLine], " \t"))]
-		lines[keyLine] = indent + replacement
-	} else {
-		lines = append(lines[:sectionEnd], append([]string{replacement}, lines[sectionEnd:]...)...)
-	}
-	return lines, nil
+	return output.Bytes(), nil
 }
 
 func buildGuestWindowsTerminalSettings(path, startingDirectory string) ([]byte, error) {
@@ -1437,11 +1281,11 @@ func patchGuestWindowsTerminalSettings(contents []byte, startingDirectory string
 	}
 	settings["defaultProfile"] = powerShellProfileGUID
 
-	profiles, err := terminalSettingsObject(settings, "profiles")
+	profiles, err := configurationObject(settings, "profiles")
 	if err != nil {
 		return nil, err
 	}
-	defaults, err := terminalSettingsObject(profiles, "defaults")
+	defaults, err := configurationObject(profiles, "defaults")
 	if err != nil {
 		return nil, err
 	}
@@ -1492,7 +1336,7 @@ func patchGuestWindowsTerminalSettings(contents []byte, startingDirectory string
 	return append(patched, '\n'), nil
 }
 
-func terminalSettingsObject(parent map[string]any, name string) (map[string]any, error) {
+func configurationObject(parent map[string]any, name string) (map[string]any, error) {
 	value, exists := parent[name]
 	if !exists {
 		object := map[string]any{}
@@ -1501,7 +1345,7 @@ func terminalSettingsObject(parent map[string]any, name string) (map[string]any,
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("%s in Windows Terminal is not an object", name)
+		return nil, fmt.Errorf("configuration %s is not an object", name)
 	}
 	return object, nil
 }

@@ -575,20 +575,8 @@ func TestPatchGuestHerdrConfigSetsDedicatedWorktreeDirectory(t *testing.T) {
 	if _, err := patchGuestHerdrConfig([]byte("[worktrees]\n[worktrees]\n"), guestWorktreeDirectory, "pwsh.exe"); err == nil {
 		t.Fatal("duplicate worktrees sections unexpectedly succeeded")
 	}
-	for name, contents := range map[string]string{
-		"inline table":        `worktrees = { directory = "D:/old" }`,
-		"dotted key":          `worktrees.directory = "D:/old"`,
-		"quoted root key":     `"worktrees" = { directory = "D:/old" }`,
-		"quoted table":        `["worktrees"]`,
-		"nested table":        `[worktrees.cleanup]`,
-		"array table":         `[[worktrees]]`,
-		"quoted nested table": `["worktrees".cleanup]`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := patchGuestHerdrConfig([]byte(contents+"\n"), guestWorktreeDirectory, "pwsh.exe"); err == nil || !strings.Contains(err.Error(), "ambiguous worktrees") {
-				t.Fatalf("ambiguous definition error = %v", err)
-			}
-		})
+	if _, err := patchGuestHerdrConfig([]byte("[[worktrees]]\n"), guestWorktreeDirectory, "pwsh.exe"); err == nil {
+		t.Fatal("array-valued worktrees was accepted")
 	}
 	withComment, err := patchGuestHerdrConfig([]byte("[worktrees] # retained comment\ninclude_repo_name = true\n"), guestWorktreeDirectory, "pwsh.exe")
 	if err != nil || strings.Count(string(withComment), "[worktrees]") != 1 || !strings.Contains(string(withComment), `directory = "C:/Worktrees"`) {
