@@ -212,3 +212,79 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 		t.Fatal("native import overwrote Sandbox-owned or guest-local settings")
 	}
 }
+
+// This executes the production archive, launcher and apply script together.
+// Optional tools are absent from the child PATH, and every destination is a
+// synthetic profile. It covers metadata/count drift missed by helper tests.
+func TestHerdrConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
+	requireExternalBoundaryTest(t, "isolated configuration archive application")
+	root := t.TempDir()
+	guestRoot := filepath.Join(root, "guest")
+	profile := filepath.Join(root, "profile")
+	appData := filepath.Join(profile, "AppData", "Roaming")
+	config := filepath.Join(appData, "herdr", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("USERPROFILE", profile)
+	t.Setenv("APPDATA", appData)
+	t.Setenv("LOCALAPPDATA", filepath.Join(profile, "AppData", "Local"))
+	t.Setenv("PATH", filepath.Join(os.Getenv("SystemRoot"), "System32"))
+	terminal := testStableWindowsTerminalConfiguration()
+	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{
+		Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageTerminalStable},
+		Add:    []string{}, Versions: map[string]string{},
+	}, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := encodeWingetPackagePlan(packages, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planPath := filepath.Join(root, "packages.json")
+	writeTestFile(t, planPath, string(plan))
+	hostConfig := filepath.Join(root, "host.toml")
+	writeTestFile(t, hostConfig, "[terminal]\n'default_shell' = 'nu'\n[theme]\nname = 'host-only'\n")
+	writeTestFile(t, config, "['terminal']\n'default_shell' = 'old'\n[agent]\nargs = ['guest-only']\n")
+	for attempt := range 2 {
+		snapshot, err := os.ReadFile(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive, err := buildDevelopmentConfigurationArchive(t.Context(), hostConfigurationSources{
+			HerdrConfig: hostConfig, GuestHerdrConfig: snapshot, PackagePlan: planPath,
+		}, configurationSyncScript)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
+		launcherScript := strings.ReplaceAll(buildDevelopmentConfigurationLauncher(digest, len(archive)), guestRootDirectory, guestRoot)
+		launcher := sshArchiveLauncherBytes(launcherScript)
+		command := buildSSHArchiveTransportCommand(digest, len(archive), launcher, 30*time.Second, fmt.Sprintf("config-%d", attempt))
+		command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
+		output, err := runLocalSSHTransport(t, command, launcher, archive, nil)
+		if err != nil {
+			t.Fatalf("apply real configuration archive: %v: %s", err, output)
+		}
+		// The local transport helper combines diagnostic stderr with stdout.
+		var resultJSON []byte
+		for line := range bytes.Lines(output) {
+			if bytes.HasPrefix(line, []byte("{")) {
+				if resultJSON != nil {
+					t.Fatal("configuration script returned multiple result objects")
+				}
+				resultJSON = line
+			}
+		}
+		result, err := decodeDevelopmentConfigurationSyncResult(resultJSON)
+		count, countErr := configurationArchivePayloadFileCount(archive)
+		if err != nil || countErr != nil || result.SchemaVersion != 9 || result.ArchiveSHA256 != digest || !result.HerdrConfigurationPublished || result.CopiedFiles != count {
+			t.Fatalf("configuration apply result mismatch: %#v, %v, %v: %s", result, err, countErr, output)
+		}
+		actual, err := os.ReadFile(config)
+		if err != nil || !bytes.Contains(actual, []byte("nu.exe")) || !bytes.Contains(actual, []byte("guest-only")) || bytes.Contains(actual, []byte("host-only")) {
+			t.Fatalf("guest configuration was not preserved: %q, %v", actual, err)
+		}
+	}
+}
