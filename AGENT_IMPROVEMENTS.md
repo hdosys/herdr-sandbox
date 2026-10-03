@@ -18,6 +18,16 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Establish a bounded real SSH smoke before lifecycle rewrites.**
+  Evidence: local PowerShell receiver tests passed while the real SSH check
+  stalled; inherited Win32-OpenSSH descriptor metadata was isolated only after
+  repeated long attempts. A temporary runner also waited on unbounded output
+  reads after killing its child. Start transport work with one small framed-input
+  smoke in the actual calling environment; give startup, execution, output drain,
+  and owned-tree cleanup a single finite total budget. Expected benefit: expose
+  environment-specific failures before cross-layer edits and avoid lengthy waits
+  without a usable installer.
+
 - **Status: proposed. Verify external distribution identities before rename edits.**
   Evidence: the Herdr rename changed the version marker and repository name but
   retained WinGet ID `hdosys.herdr-win`; assuming all identities changed required

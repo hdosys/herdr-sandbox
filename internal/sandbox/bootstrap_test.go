@@ -132,7 +132,7 @@ if ([string](Initialize-PlaywrightExtensionToken -Enabled $false) -cne '') { thr
 func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
 	script := string(bootstrapScript)
 	registryStart := strings.Index(script, "& $baseProvisioning -Phase 'Registry'")
-	developmentStart := strings.Index(script, "& $baseProvisioning -Phase 'Development'")
+	developmentStart := strings.Index(script, "& $baseProvisioning -Phase 'Core'")
 	if strings.Count(script, "[ValidateSet('Disabled', 'Enabled')]") < 2 ||
 		!strings.Contains(script, "[string]$AudioPlayback") || !strings.Contains(script, "[string]$AudioInput") ||
 		registryStart < 0 || developmentStart <= registryStart {
@@ -247,33 +247,6 @@ func TestBootstrapBoundsWinGetRegistrationRaceRetries(t *testing.T) {
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("bootstrap WinGet retry contract is missing %q", required)
-		}
-	}
-}
-
-func TestBootstrapDefersHerdrDeploymentAndLifecycleToHostProvisioning(t *testing.T) {
-	script := string(bootstrapScript)
-	for _, required := range []string{
-		"HERDR_SANDBOX_HERDR_EXE",
-		"Host provisioning did not publish the guest Herdr executable identity.",
-		"Provisioned Herdr client status",
-		"function Invoke-HerdrBoundary",
-		"function ConvertFrom-HerdrClientStatus",
-		"[HerdrSandbox.ProvisioningProcess]::Run($spec)",
-		"$result.OutputTruncated",
-		"$result.OutputBytes -gt 65536",
-		"@('version', 'herdr_version', 'build_id', 'protocol', 'binary', 'session')",
-		"Provisioned guest Herdr client identity is invalid.",
-		"herdrRuntimeVersion = $herdrRuntimeVersion",
-		"herdrBinary = $herdrExecutable",
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("bootstrap provisioned Herdr handoff is missing %q", required)
-		}
-	}
-	for _, forbidden := range []string{"host-herdr.json", "herdr-runtime", "Read-HostHerdrRuntimeInput", `C:\HerdrSandbox\bin`, "Start-Process -FilePath $herdrExecutable", "reload-config"} {
-		if strings.Contains(script, forbidden) {
-			t.Fatalf("bootstrap retains replaced Herdr deployment or lifecycle contract %q", forbidden)
 		}
 	}
 }

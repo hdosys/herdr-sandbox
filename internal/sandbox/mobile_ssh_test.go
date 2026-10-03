@@ -7,9 +7,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMobileSSHInitialRetryReusesVerifiedEndpointInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 mobile retry")
+	fixture, err := os.ReadFile(filepath.Join("testdata", "retry-mobile.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: filepath.Join("assets", "mobile-ssh.ps1"), names: []string{"Assert-RepeatedPreparation", "Invoke-Activate"},
+	})
+	path := filepath.Join(t.TempDir(), "retry-mobile.ps1")
+	if err := os.WriteFile(path, []byte("$ErrorActionPreference = 'Stop'\n"+setup+string(fixture)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "verified" {
+		t.Fatalf("mobile retry failed: %v: %s", err, output)
+	}
+}
 
 func TestMobileSSHControlScriptIsPowerShell51AndOwnsNarrowEndpoint(t *testing.T) {
 	script := string(mobileSSHScript)

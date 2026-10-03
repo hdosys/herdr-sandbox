@@ -1190,7 +1190,7 @@ func TestDevelopmentConfigurationLauncherReadsExactLengthWithoutWaitingForEOF(t 
 		"archive ended with $remaining bytes missing",
 		"[config-sync] invoke-apply-script",
 		"function Remove-GuestArchiveStaging",
-		`C:\HerdrSandbox\staging`,
+		"Join-Path $PSScriptRoot 'staging'",
 		"configuration-aaaaaaaaaaaaaaaa",
 		"Assert-GuestArchiveTree",
 		"staging tree contains a reparse point",

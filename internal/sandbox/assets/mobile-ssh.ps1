@@ -201,6 +201,40 @@ function Assert-PreparedFiles {
     return $sshd
 }
 
+function Write-PreparedIdentity {
+    param([Parameter(Mandatory = $true)][string]$PublicKey)
+    $privateBytes = [IO.File]::ReadAllBytes($script:PrivateKeyPath)
+    try {
+        [ordered]@{
+            schemaVersion = $script:SchemaVersion
+            privateKey = [Convert]::ToBase64String($privateBytes)
+            publicKey = $PublicKey
+        } | ConvertTo-Json -Compress
+    } finally {
+        [Array]::Clear($privateBytes, 0, $privateBytes.Length)
+    }
+}
+
+function Assert-RepeatedPreparation {
+    param([Parameter(Mandatory = $true)][object]$Request, [Parameter(Mandatory = $true)][object]$Prepared)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $authorizedBytes = [Text.Encoding]::UTF8.GetBytes((@($Request.authorizedKeys) -join "`n") + "`n")
+        $authorizedDigest = ([BitConverter]::ToString($sha256.ComputeHash($authorizedBytes))).Replace('-', '').ToLowerInvariant()
+    } finally { $sha256.Dispose() }
+    if ([string]$Prepared.tailscaleIPv4 -cne [string]$Request.tailscaleIPv4 -or
+        [string]$Prepared.authorizedKeysSHA256 -cne $authorizedDigest -or
+        [string]$Prepared.scriptSHA256 -cne [string]$Request.scriptSHA256 -or
+        (-not [string]::IsNullOrEmpty([string]$Request.publicKey) -and
+            [string]$Prepared.hostPublicKey -cne [string]$Request.publicKey)) {
+        throw 'Repeated mobile preparation does not match the existing endpoint identity.'
+    }
+    [void](Assert-PreparedFiles -State $Prepared)
+    if (Test-Path -LiteralPath $script:ProcessPath) {
+        [void](Assert-RunningEndpoint -Prepared $Prepared)
+    }
+}
+
 function Invoke-Prepare {
     if ([string]::IsNullOrWhiteSpace($RequestPath)) { throw 'Mobile SSH prepare request path is required.' }
     [void](Assert-RegularFile -Path $RequestPath -Maximum 65536 -Role 'Mobile SSH prepare request')
@@ -232,12 +266,18 @@ function Invoke-Prepare {
         New-Item -ItemType Directory -Path $script:Root -ErrorAction Stop | Out-Null
     }
     Assert-SafeRoot
+    $sourceScriptDigest = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sourceScriptDigest -cne [string]$request.scriptSHA256) { throw 'Mobile SSH control script SHA-256 mismatch.' }
+    if (Test-Path -LiteralPath $script:PreparedPath) {
+        $prepared = Read-PreparedState
+        Assert-RepeatedPreparation -Request $request -Prepared $prepared
+        Write-PreparedIdentity -PublicKey ([string]$prepared.hostPublicKey)
+        return
+    }
     if (Test-Path -LiteralPath $script:ProcessPath) { throw 'Mobile SSH process state already exists before preparation.' }
     if (Get-NetTCPConnection -State Listen -LocalPort $script:MobilePort -ErrorAction SilentlyContinue) {
         throw 'Mobile SSH port is already owned before preparation.'
     }
-    $sourceScriptDigest = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($sourceScriptDigest -cne [string]$request.scriptSHA256) { throw 'Mobile SSH control script SHA-256 mismatch.' }
     Set-AtomicBytes -Path $script:StableScriptPath -Bytes ([IO.File]::ReadAllBytes($PSCommandPath))
 
     $sshKeygen = Get-OpenSSHExecutable -Name 'ssh-keygen.exe'
@@ -304,16 +344,7 @@ SyslogFacility LOCAL0
         scriptSHA256 = $sourceScriptDigest
     }
     Set-AtomicText -Path $script:PreparedPath -Text (($prepared | ConvertTo-Json -Compress) + "`n")
-    $privateBytes = [IO.File]::ReadAllBytes($script:PrivateKeyPath)
-    try {
-        [ordered]@{
-            schemaVersion = $script:SchemaVersion
-            privateKey = [Convert]::ToBase64String($privateBytes)
-            publicKey = $derivedPublicKey
-        } | ConvertTo-Json -Compress
-    } finally {
-        [Array]::Clear($privateBytes, 0, $privateBytes.Length)
-    }
+    Write-PreparedIdentity -PublicKey $derivedPublicKey
 }
 
 function Remove-OwnedFirewallRules {
@@ -380,7 +411,11 @@ function Assert-RunningEndpoint {
 function Invoke-Activate {
     $prepared = Read-PreparedState
     $sshd = Assert-PreparedFiles -State $prepared
-    if (Test-Path -LiteralPath $script:ProcessPath) { throw 'Mobile SSH process state already exists before activation.' }
+    if (Test-Path -LiteralPath $script:ProcessPath) {
+        $verified = Assert-RunningEndpoint -Prepared $prepared
+        [ordered]@{ schemaVersion = $script:SchemaVersion; state = 'running'; pid = [int]$verified.pid } | ConvertTo-Json -Compress
+        return
+    }
     if (Get-NetTCPConnection -State Listen -LocalPort $script:MobilePort -ErrorAction SilentlyContinue) {
         throw 'Mobile SSH port is already owned before activation.'
     }
