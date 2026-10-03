@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,9 @@ func TestHerdrGuestConfigurationSnapshotAndPublicationInWindowsPowerShell51(t *t
 		t.Fatal("missing configuration was not represented as absent")
 	}
 	original := "[agent]\nargs = ['guest-local']\n"
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	writeTestFile(t, config, original)
 	if string(readSnapshot()) != original {
 		t.Fatal("guest configuration did not round trip")
@@ -109,6 +113,12 @@ try {
 if (-not $rejected) { throw 'A stale guest snapshot overwrote a newer configuration.' }
 `)
 	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", applyScript)
+	// The production SSH launcher removes the interactive shell's PSModulePath
+	// before starting Windows PowerShell 5.1. Exercise that same environment.
+	command.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, "PSModulePath")
+	})
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("publish guest overrides: %v: %s", err, output)
 	}
@@ -137,13 +147,10 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	incoming := "[terminal]\ndefault_shell = 'host-shell'\n[worktrees]\ndirectory = 'D:/Host'\n[agent]\nargs = ['host-local']\n[theme]\nname = 'dracula'\n"
 	command := hiddenCommandContext(ctx, executable, "config", "provision-import")
 	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
-	for index := 0; index < len(command.Env); index++ {
-		name, _, _ := strings.Cut(command.Env[index], "=")
-		if strings.EqualFold(name, "HERDR_REMOTE_SIDECAR_V1") {
-			command.Env = append(command.Env[:index], command.Env[index+1:]...)
-			break
-		}
-	}
+	command.Env = slices.DeleteFunc(command.Env, func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, "HERDR_REMOTE_SIDECAR_V1")
+	})
 	command.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString([]byte(incoming)))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native Herdr import: %v: %s", err, output)

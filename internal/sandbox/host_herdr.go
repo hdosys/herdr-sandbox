@@ -495,7 +495,7 @@ func (host HostHerdr) provisionRemote(ctx context.Context, connection Connection
 	}
 	result, err := decodeRemoteProvisionResult(stdout.buffer.Bytes())
 	if err != nil {
-		return remoteProvisionResult{}, fmt.Errorf("Herdr must report binary, server, and configuration provisioning outcomes; install the current Herdr Extended build and retry: %w", err)
+		return remoteProvisionResult{}, fmt.Errorf("guest Herdr must report binary, server, and configuration provisioning outcomes; install the current Herdr Extended build and retry: %w", err)
 	}
 	if err := result.validate(host, connection.SSHTarget); err != nil {
 		return remoteProvisionResult{}, fmt.Errorf("validate guest Herdr provision result: %w", err)
@@ -515,7 +515,7 @@ func decodeRemoteProvisionResult(data []byte) (remoteProvisionResult, error) {
 
 func (result remoteProvisionResult) validate(host HostHerdr, target string) error {
 	if result.ConfigOutcome != "applied" && result.ConfigOutcome != "no_source" {
-		return errors.New("Herdr did not report configuration provisioning; install the current Herdr Extended build and retry sandbox up")
+		return errors.New("guest Herdr did not report configuration provisioning; install the current Herdr Extended build and retry sandbox up")
 	}
 	if result.Target != target {
 		return fmt.Errorf("target = %q, want %q", result.Target, target)
