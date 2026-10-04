@@ -189,7 +189,7 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	// Native import receives the same encoding as Herdr's export owner. It must
 	// preserve our overlay even when incoming machine-local values are present.
 	incoming := "[terminal]\ndefault_shell = 'host-shell'\n[worktrees]\ndirectory = 'D:/Host'\n[agent]\nargs = ['host-local']\n[theme]\nname = 'dracula'\n"
-	command := hiddenCommandContext(ctx, executable, "config", "provision-import")
+	command := hiddenCommandContext(ctx, executable, "config", "provision-import", "--overwrite")
 	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
 	command.Env = slices.DeleteFunc(command.Env, func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
@@ -198,6 +198,8 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	command.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString([]byte(incoming)))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("native Herdr import: %v: %s", err, output)
+	} else if strings.TrimSpace(string(output)) != `"applied"` {
+		t.Fatalf("native Herdr import outcome = %q, want applied", output)
 	}
 	saved, err := os.ReadFile(path)
 	if err != nil {
