@@ -7,6 +7,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+## v0.0.26
+
 ### Changed
 
 - Herdr now owns portable Herdr settings transfer during Sandbox provisioning.
