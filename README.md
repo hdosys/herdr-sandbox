@@ -13,7 +13,7 @@ Start a Sandbox from a project and keep working in your normal host terminal.
 Reuse that guest while it is productive, or recreate it when you want a clean
 workstation again.
 
-[Why](#why-disposable-workstations) · [Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Troubleshooting](#troubleshooting) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Security](#security-boundaries) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
+[Why](#why-disposable-workstations) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
 
 ## See it in action
 
@@ -61,7 +61,7 @@ the normal terminal.
 - **One owner per responsibility:** state, process identity, project profiles, installer behavior, and external integrations have explicit boundaries rather than parallel implementations.
 - **Fail-closed lifecycle handling:** cancellation, bounded process trees, atomic state publication, strict parsing, and ownership checks prevent uncertain cleanup or attachment.
 - **Reproducible provisioning:** versions, package identity, hashes, signatures, and realized state are checked where the external boundary supports them. Repeated runs converge without duplicating work.
-- **Real release evidence:** fast tests and static checks cover the control plane; release checks compile and validate the real installer, while a real Windows Sandbox run exercises provisioning, SSH, and attach.
+- **Separate assurance and publication:** fast tests and static checks cover the control plane. Explicit Windows Sandbox checks exercise provisioning, SSH, and attach; release automation packages the accepted source and verifies uploaded artifact digests.
 
 ## How it works
 
@@ -130,7 +130,9 @@ winget upgrade hdosys.herdr-win hdosys.herdr-sandbox
 ```
 
 Herdr Extended provides the Windows server and remote provisioning used by Herdr
-Sandbox. It remains a separate package.
+Sandbox. It remains a separate package. WinGet catalog updates can lag GitHub
+releases; use the direct installers below when you need the newest release before
+it reaches WinGet.
 
 ### Direct installer alternative
 
@@ -159,7 +161,7 @@ The Herdr result must contain the exact `herdr-ext` marker.
 
 - Setup owns the fixed `%LOCALAPPDATA%\Programs\Herdr Sandbox` binary directory and replaces that complete directory during upgrade.
 - `%APPDATA%\herdr-sandbox\config.json` and `user.ps1` are created only when absent and survive upgrades and normal uninstall. Select **Also delete config.json and user.ps1** only when that removal is intended.
-- Files manually placed inside the installed binary directory are removed during upgrade or uninstall; projects, Herdr-Win, and unrelated user data remain outside installer ownership.
+- Files manually placed inside the installed binary directory are removed during upgrade or uninstall; projects, Herdr Extended, and unrelated user data remain outside installer ownership.
 - Remove an older-format installation with its matching uninstaller before installing the current release. The current setup deliberately does not migrate historical installer formats.
 - Uninstall from **Settings → Apps → Installed apps**. A running Windows Sandbox is preserved and becomes unmanaged rather than being closed by setup.
 
@@ -197,6 +199,11 @@ mappings before exposing them to the guest. The command creates `config.json`
 only when absent. See [Configuration](#configuration) for a practical example
 and the complete field reference.
 
+Agent configuration transfer defaults on; credential transfer defaults off.
+A transferred Git-backed configuration includes its repository history, which
+may contain old secrets. Disable any `codingAgentSync` source whose full contents
+are not safe for the guest.
+
 ### Launch your first project
 
 From the project root, choose a stack, inspect the plan, and start:
@@ -218,8 +225,9 @@ After detaching, the guest stays ready:
 ```powershell
 sandbox status
 sandbox attach
-sandbox down
 ```
+
+Run `sandbox down` when you are finished and want to discard the guest.
 
 Use `sandbox up --no-attach` from a headless caller, then attach later from a real
 terminal. Plain `ssh sandbox` remains available for diagnostics.
@@ -258,73 +266,22 @@ configurations are never rewritten. The schema checks JSON structure only;
 `sandbox plan` remains authoritative for paths, overlaps, package policy, and
 credentials.
 
-`config.json` is strict JSON. A complete practical example:
+`config.json` is strict JSON. Start with the settings you need; omitted fields
+use their defaults. For example, to use 32 GiB of memory and map one project:
 
 ```json
 {
   "$schema": "./config.schema.json",
-  "cacheDirectory": "D:\\HerdrSandboxCache",
-  "worktreeDirectory": "D:\\HerdrWorktrees",
-  "modelsDirectory": "D:\\Models",
   "memoryMB": 32768,
-  "audio": false,
-  "audioInput": false,
-  "tailscale": false,
-  "mobileSSHAuthorizedKeys": [],
-  "configurationSync": {
-    "pullHostGitRepositoriesOnUp": false,
-    "pullHostGitRepositoriesOnDown": false
-  },
-  "codingAgentSync": {
-    "opencode": true,
-    "claudeCode": true,
-    "codex": true,
-    "githubCopilot": true,
-    "pi": true
-  },
-  "credentialSync": {
-    "apify": false,
-    "opencode": false,
-    "claudeCode": false,
-    "codex": false,
-    "githubCLI": false,
-    "pi": false,
-    "tradingView": false
-  },
   "workspaces": {
     "project": "D:\\Projects\\project"
-  },
-  "mounts": {
-    "docs": {
-      "path": "D:\\Shared\\docs",
-      "readOnly": true
-    },
-    "scratch": {
-      "path": "D:\\Shared\\scratch",
-      "readOnly": false
-    }
-  },
-  "workspaceDiscovery": {
-    "root": "D:\\Projects",
-    "exclude": [
-      "^archive$"
-    ]
-  },
-  "wingetPackages": {
-    "remove": [],
-    "add": [
-      "SST.opencode",
-      "Anthropic.ClaudeCode",
-      "OpenAI.Codex",
-      "GitHub.Copilot"
-    ],
-    "versions": {}
   }
 }
 ```
 
-Replace paths with existing folders. User-chosen keys such as `client` and `docs`
-become the final guest folder names.
+Replace the path with an existing project folder. The key `project` makes its
+guest path `C:\Workspaces\project`. Add optional mappings only when needed; the
+generated `config.sample.json` provides a complete example.
 
 Review the effective configuration and resolved tool versions with `sandbox plan`
 before `up`. Package changes can apply to a compatible ready guest without
@@ -339,9 +296,10 @@ letter or number, and are at most 64 characters.
 | Field | Value and effect |
 | --- | --- |
 | `$schema` | Optional editor hint. When present, it must be `./config.schema.json`. |
-| `cacheDirectory` | Absolute dedicated cache root, created when absent. `""` uses task-owned temporary cache state. Never point it at shared data. |
+| `cacheDirectory` | Absolute dedicated cache root, created when absent. Empty or omitted uses `<system-temp>\herdr-sandbox\cache`, normally `%TEMP%\herdr-sandbox\cache`. Never point it at shared data. |
 | `worktreeDirectory` | Existing dedicated host directory mapped read-write to `C:\Worktrees`. `""` disables it. |
 | `modelsDirectory` | Existing dedicated host directory mapped read-write to `C:\Models`. `""` disables it. |
+| `ttsBundle` | Optional absolute local TTS bundle ZIP with an adjacent `.sha256` file. Requires `modelsDirectory`. Empty selects the latest stable engine release. See [HyperFrames](#optional-workflows) for the required bundle contract. |
 | `memoryMB` | Integer Sandbox memory limit in MiB, minimum `2048`. `--memory-mb` overrides one run. |
 | `audio` | Boolean enabling guest audio output. |
 | `audioInput` | Boolean enabling guest microphone input. |
@@ -367,7 +325,7 @@ letter or number, and are at most 64 characters.
 | `workspaceDiscovery.root` | Existing parent directory whose direct child directories become workspaces. `""` disables discovery. |
 | `workspaceDiscovery.exclude` | Array of at most 64 unique Go RE2 patterns matched against direct child names. |
 | `wingetPackages.remove` | Array of supported Base package IDs to remove from the default set. |
-| `wingetPackages.add` | Array of supported Base package IDs to add. It defaults to the four coding-agent packages shown above. |
+| `wingetPackages.add` | Array of supported Base package IDs to add. Defaults to `SST.opencode`, `Anthropic.ClaudeCode`, `OpenAI.Codex`, and `GitHub.Copilot`. |
 | `wingetPackages.versions.<packageID>` | Exact WinGet version string for a selected package. Omit it for newest-stable resolution. |
 
 </details>
@@ -384,6 +342,15 @@ lockfiles in their normal project owners.
 The first C/C++, Rust/MSVC, or Handy run may briefly show Microsoft Visual Studio
 Installer while Herdr Sandbox prepares a verified Build Tools layout in its cache.
 Nothing is installed into the host development environment.
+
+### Herdr settings
+
+Herdr Extended transfers portable settings from its selected host configuration,
+including a custom `HERDR_CONFIG_PATH`. Sandbox applies only its guest shell and
+mapped worktree overrides. Machine-local commands, agent arguments, working
+directories, and sound paths remain guest-owned. This requires a current Herdr
+Extended build with configuration provisioning support, not just the `herdr-ext`
+version marker.
 
 <details>
 <summary><strong>Agent configuration sync</strong></summary>
@@ -445,7 +412,7 @@ and authentication failures are reported for the user to resolve.
 - Prefer read-only `mounts` for reference material. Writable mappings expose host
   data to every guest administrator process.
 - `modelsDirectory` must be a dedicated existing AI-model folder. Every guest
-  administrator can read and modify it; Herdr Sandbox verifies its own VoxCPM2
+  administrator can read and modify it; Herdr Sandbox verifies selected TTS model
   files again before activation.
 - `workspaceDiscovery` selects only direct child directories and supports explicit
   exclusion patterns. The nearest profiled project is included automatically.
@@ -548,7 +515,7 @@ These repository-specific shortcuts remain outside `all`:
 | Shortcut | Intended setup |
 | --- | --- |
 | `handy` | The current Handy Windows checkout, including Bun, Rust/MSVC, CMake, Vulkan SDK, and WebView2 |
-| `herdr` | Herdr and Herdr-Win checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
+| `herdr` | Herdr and Herdr Extended checkouts, including Python, Rust/MSVC, Zig, Bun, Cargo Nextest, Just, and Git for Windows `sh` |
 
 Dependencies and application commands remain project-owned. `sandbox plan`
 expands each composition without executing the profile.
@@ -591,7 +558,8 @@ when it is safe, and reports the next action.
 | `ssh sandbox` no longer connects | Run `sandbox status`. If the guest is gone, run `sandbox up` to create a verified target. |
 | Legacy global Base is refused | Preserve `%APPDATA%\herdr-sandbox\base.ps1`, move only deliberate additions to `user.ps1`/config/project ownership, archive the legacy file under a non-reserved name, and retry. |
 | Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
-| Guest Herdr provisioning fails | Confirm current Herdr-Win, host `ssh.exe`, and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
+| Guest Herdr provisioning fails | Update Herdr Extended, confirm host `ssh.exe` and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
+| A profile calls `Install-NushellStack` | Remove that call. Nushell is mandatory Base tooling; select an exact version through `wingetPackages.versions` instead. |
 | Project provisioning fails | Correct the named profile and rerun `sandbox up`. Keep the Sandbox open; installed tools and matching workspaces are reused. |
 | Minimal bootstrap fails before SSH | Use the retry command shown in the existing Sandbox console, then rerun `sandbox up` on the host. |
 | Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
@@ -614,12 +582,17 @@ when it is safe, and reports the next action.
 <details>
 <summary><strong>Android wireless debugging</strong></summary>
 
-Select `android`, provision the guest, then use the pairing and debugging endpoints
-shown by an Android 11 or newer device:
+Select `android` on the host and provision the guest:
 
 ```powershell
 sandbox init --stack android
 sandbox up
+```
+
+In a guest terminal, use the pairing and debugging endpoints shown by an Android
+11 or newer device:
+
+```powershell
 adb pair <phone-ip>:<pairing-port>
 adb connect <phone-ip>:<debugging-port>
 adb devices -l
@@ -640,14 +613,18 @@ for the existing Edge profile:
 
 ```powershell
 sandbox init --stack playwright-cli
+sandbox up
 ```
 
-After enabling the extension, copy its displayed
-`PLAYWRIGHT_MCP_EXTENSION_TOKEN=...` line. During provisioning, the visible
-Sandbox bootstrap opens a window where you paste that line once. It makes the
-token available to the agents created in that disposable guest. Leaving the
-window empty keeps Playwright's manual connection approval. Then attach
-automation to the same Edge profile:
+In the guest Edge profile, enable the extension and copy its displayed
+`PLAYWRIGHT_MCP_EXTENSION_TOKEN=...` line. Open **Playwright browser access** from
+the guest taskbar or Start menu, paste the line, and choose **Save**. Provisioning
+never opens or waits for this dialog; closing it or leaving it empty changes
+nothing, and manual browser approval remains available.
+
+After saving, start the agent in a new PowerShell terminal tab so it receives the
+token. Existing agents keep their previous environment. Attach automation to the
+same guest Edge profile:
 
 ```powershell
 playwright-cli.cmd -s=edge-main attach --extension=msedge
@@ -773,7 +750,10 @@ Until a public engine release includes Supertonic, select the verified local bun
 explicitly in the host `config.json`:
 
 ```json
-"ttsBundle": "C:\\Workspaces\\hyperframes-voxcpm2\\dist\\hyperframes-voxcpm2-local-windows-x64.zip"
+{
+  "modelsDirectory": "D:\\Models",
+  "ttsBundle": "D:\\TTS\\hyperframes-voxcpm2-local-windows-x64.zip"
+}
 ```
 
 Keep its adjacent `.sha256` file. An empty `ttsBundle` selects the latest stable
@@ -792,9 +772,9 @@ vGPU or Vulkan. Empty `modelsDirectory` disables this integration.
 The repository uses one Go task runner for formatting, tests, stable builds, real
 Windows Sandbox checks, and release packaging.
 
-Packaging uses the same task runner and writes the installer and portable ZIP to
-`build\dist`. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification
-architecture.
+Local packaging writes one installer to `build\dist\herdr-sandbox_setup.exe`.
+Release packaging produces the versioned installer and portable ZIP instead.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification architecture.
 
 <details>
 <summary><strong>Verification and packaging command reference</strong></summary>
@@ -802,6 +782,7 @@ architecture.
 ```powershell
 go run ./cmd/task verify
 go run ./cmd/task verify-integration
+go run ./cmd/task package v0.0.RELEASE_ID
 go run ./cmd/task release VERSION
 go run ./cmd/task provisioning-preflight
 go run ./cmd/task native-current-sandbox
@@ -814,11 +795,14 @@ go run ./cmd/task native-all-stacks
   `build\bin` artifact.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   explicitly requested assurance.
+- `package VERSION` builds the canonical local installer. `package VERSION --release`
+  builds the public versioned installer and ZIP pair for release automation.
 - `release VERSION` accepts only a clean committed checkout contained in its
   configured upstream. It validates the matching changelog section, confirms the
   source commit stays unchanged and the tag is unused, then creates and pushes
-  the annotated tag consumed by release automation. It does not rerun tests,
-  installation, or provisioning.
+  the annotated tag consumed by release automation. Run it only after accepting
+  the installer and a freshly provisioned Sandbox; it does not rerun tests,
+  installation, or provisioning. `VERSION` has the form `v0.0.RELEASE_ID`.
 - `provisioning-preflight` checks production provisioning parsers plus available
   Java, Android, and Visual Studio inputs in the active Sandbox before a slower
   native or installed-candidate run. It does not install or update tools.
