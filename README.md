@@ -347,16 +347,21 @@ Nothing is installed into the host development environment.
 
 Herdr Extended transfers portable settings from its selected host configuration,
 including a custom `HERDR_CONFIG_PATH`. Sandbox applies only its guest shell and
-mapped worktree overrides. Machine-local commands, agent arguments, working
-directories, and sound paths remain guest-owned. This requires a current Herdr
-Extended build with configuration provisioning support, not just the `herdr-ext`
-version marker.
+mapped worktree overrides. Custom keybinding commands (`keys.command`), agent
+arguments, working directories, and sound paths remain guest-owned. This requires
+a current Herdr Extended build with configuration provisioning support, not just
+the `herdr-ext` version marker.
 
-Tab-bar status commands (`ui.tab_bar_right`) are also machine-local and are not
-copied from the host. Configure them on the machine running the Herdr server,
-then run `herdr server reload-config` there. For a Sandbox session, that means
-the guest's `%APPDATA%\herdr\config.toml`. Existing guest entries survive
-reprovisioning; a fresh Sandbox needs its own configuration.
+Herdr Extended's Settings Sync fix in development build `2026.10.04.1027Z`
+([source commit](https://github.com/hdosys/herdr-ext/commit/b4b72d23857cb8054d02c2aba43526e337c32303))
+transfers `ui.tab_bar_right` command and text entries, together with their
+separator, to new and existing guests. Configure usage displays in the selected
+host Herdr configuration rather than maintaining a separate setup in each
+disposable guest. Commands must use paths and tools available in the guest.
+
+The released Herdr Extended `2026.10.03.3` still excludes `ui.tab_bar_right` from
+Settings Sync. The fix above is a development candidate, not yet a public release;
+reloading that released binary does not add the corrected transfer behavior.
 
 <details>
 <summary><strong>Agent configuration sync</strong></summary>
