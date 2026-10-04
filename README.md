@@ -352,6 +352,12 @@ directories, and sound paths remain guest-owned. This requires a current Herdr
 Extended build with configuration provisioning support, not just the `herdr-ext`
 version marker.
 
+Tab-bar status commands (`ui.tab_bar_right`) are also machine-local and are not
+copied from the host. Configure them on the machine running the Herdr server,
+then run `herdr server reload-config` there. For a Sandbox session, that means
+the guest's `%APPDATA%\herdr\config.toml`. Existing guest entries survive
+reprovisioning; a fresh Sandbox needs its own configuration.
+
 <details>
 <summary><strong>Agent configuration sync</strong></summary>
 
