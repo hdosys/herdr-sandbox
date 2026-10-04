@@ -7,6 +7,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Changed
+
+- Explicit `sandbox up` adopts transferable host Herdr settings through the
+  dedicated provisioning overwrite permission. Ordinary attach and reconnects
+  leave configuration unchanged. This requires a Herdr Extended build supporting
+  `--provision --overwrite-config`; older binaries are rejected before launch.
+
 ## v0.0.26
 
 ### Changed

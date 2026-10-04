@@ -224,7 +224,7 @@ func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
 	// A target is required to reach the platform capability owner. Remove PATH so
 	// a compatible build can cross that boundary only as far as its first local
 	// ssh.exe lookup; no SSH process or network connection can be started.
-	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid", "--provision", "--yes", "--json")
+	command := hiddenCommandContext(ctx, path, "--remote", "herdr-sandbox-capability-probe.invalid", "--provision", "--overwrite-config", "--yes", "--json")
 	command.Env = hostHerdrCapabilityEnvironment(os.Environ())
 	output, err = command.CombinedOutput()
 	if remoteUnsupportedDiagnostic(output) {
@@ -471,7 +471,7 @@ func (host HostHerdr) provisionRemote(ctx context.Context, connection Connection
 	provisionContext, cancel := context.WithTimeout(ctx, hostHerdrProvisionTimeout)
 	defer cancel()
 	command := hiddenCommandContext(provisionContext, host.commandPath,
-		"--remote", connection.SSHTarget, "--provision", "--yes", "--json")
+		"--remote", connection.SSHTarget, "--provision", "--overwrite-config", "--yes", "--json")
 	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
 	stdout := boundedCommandOutput{maximum: maximumRemoteProvisionOutput}
 	stderr := boundedCommandOutput{maximum: maximumRemoteProvisionOutput}
@@ -514,7 +514,7 @@ func decodeRemoteProvisionResult(data []byte) (remoteProvisionResult, error) {
 }
 
 func (result remoteProvisionResult) validate(host HostHerdr, target string) error {
-	if result.ConfigOutcome != "applied" && result.ConfigOutcome != "no_source" {
+	if result.ConfigOutcome != "applied" && result.ConfigOutcome != "unchanged" && result.ConfigOutcome != "no_source" {
 		return errors.New("guest Herdr did not report configuration provisioning; install the current Herdr Extended build and retry sandbox up")
 	}
 	if result.Target != target {

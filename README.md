@@ -352,16 +352,21 @@ arguments, working directories, and sound paths remain guest-owned. This require
 a current Herdr Extended build with configuration provisioning support, not just
 the `herdr-ext` version marker.
 
-Herdr Extended's Settings Sync fix in development build `2026.10.04.1027Z`
-([source commit](https://github.com/hdosys/herdr-ext/commit/b4b72d23857cb8054d02c2aba43526e337c32303))
-transfers `ui.tab_bar_right` command and text entries, together with their
-separator, to new and existing guests. Configure usage displays in the selected
-host Herdr configuration rather than maintaining a separate setup in each
-disposable guest. Commands must use paths and tools available in the guest.
+Explicit `sandbox up` adopts transferable host Herdr settings for both new and
+retained guests. It passes `--overwrite-config` to Herdr's remote `--provision`
+operation, preserving Herdr's machine-local exclusions. An unchanged configuration
+is not rewritten. `sandbox attach` and ordinary reconnects do not transfer settings
+or ask configuration questions.
 
-The released Herdr Extended `2026.10.03.3` still excludes `ui.tab_bar_right` from
-Settings Sync. The fix above is a development candidate, not yet a public release;
-reloading that released binary does not add the corrected transfer behavior.
+Transferable settings include `ui.tab_bar_right` command and text entries and
+their separator. Configure usage displays in the selected host Herdr configuration
+rather than maintaining a separate setup in each disposable guest. Commands must
+use paths and tools available in the guest.
+
+This requires a Herdr Extended build supporting explicit configuration overwrite
+during provisioning. Released Herdr Extended `2026.10.03.3` lacks that contract;
+use a matching development candidate until a public release includes it. Sandbox
+checks the capability before launch and does not download an unreleased runtime.
 
 <details>
 <summary><strong>Agent configuration sync</strong></summary>

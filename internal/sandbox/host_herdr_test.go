@@ -65,7 +65,7 @@ func runHostHerdrFixtureProcess() {
 			_, _ = fmt.Sscanf(configured, "%d", &exitCode)
 		}
 		os.Exit(exitCode)
-	case len(arguments) == 5 && arguments[0] == "--remote" && arguments[2] == "--provision" && arguments[3] == "--yes" && arguments[4] == "--json":
+	case len(arguments) == 6 && arguments[0] == "--remote" && arguments[2] == "--provision" && arguments[3] == "--overwrite-config" && arguments[4] == "--yes" && arguments[5] == "--json":
 		if output := os.Getenv(hostHerdrRemoteOutputEnvironment); output != "" {
 			fmt.Fprintln(os.Stdout, output)
 		}
@@ -330,11 +330,11 @@ func TestRemoteProvisionResultIsStrictAndAcceptsHerdrManagedWindowsPath(t *testi
 	if err := result.validate(host, sshTargetName); err != nil {
 		t.Fatalf("validate remote provision result: %v", err)
 	}
-	for _, outcome := range []string{"applied", "no_source", "", "skipped"} {
+	for _, outcome := range []string{"applied", "unchanged", "no_source", "preserved", "", "skipped"} {
 		candidate := result
 		candidate.ConfigOutcome = outcome
 		err := candidate.validate(host, sshTargetName)
-		if (err == nil) != (outcome == "applied" || outcome == "no_source") {
+		if (err == nil) != (outcome == "applied" || outcome == "unchanged" || outcome == "no_source") {
 			t.Fatalf("configuration outcome %q: %v", outcome, err)
 		}
 	}
