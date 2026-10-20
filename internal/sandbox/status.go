@@ -171,7 +171,7 @@ func readOptionalStatus[T any](path string) (T, bool, error) {
 	if reparse || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxStatusFileBytes {
 		return value, false, errors.New("status file is not one bounded regular non-reparse file")
 	}
-	file, err := os.Open(path)
+	file, err := openStatusFile(path)
 	if err != nil {
 		return value, false, err
 	}
