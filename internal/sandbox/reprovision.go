@@ -20,7 +20,7 @@ import (
 var guestProvisioningScript string
 
 const (
-	reprovisionResultSchema        = 2
+	reprovisionResultSchema        = 3
 	explorerRestartStatusSchema    = 1
 	explorerRestartStatusPending   = "pending"
 	explorerRestartStatusSucceeded = "succeeded"
@@ -30,12 +30,21 @@ const (
 )
 
 type reprovisionResult struct {
-	SchemaVersion            int    `json:"schemaVersion"`
-	ArchiveSHA256            string `json:"archiveSha256"`
-	ProjectCount             int    `json:"projectCount"`
-	ExplorerRestartScheduled bool   `json:"explorerRestartScheduled"`
-	ExplorerRestartID        string `json:"explorerRestartId"`
-	ExplorerRestartTaskName  string `json:"explorerRestartTaskName"`
+	SchemaVersion            int      `json:"schemaVersion"`
+	ArchiveSHA256            string   `json:"archiveSha256"`
+	ProjectCount             int      `json:"projectCount"`
+	ExplorerRestartScheduled bool     `json:"explorerRestartScheduled"`
+	ExplorerRestartID        string   `json:"explorerRestartId"`
+	ExplorerRestartTaskName  string   `json:"explorerRestartTaskName"`
+	Failures                 []string `json:"failures"`
+}
+
+type developmentProvisioningError struct {
+	failures []string
+}
+
+func (err *developmentProvisioningError) Error() string {
+	return fmt.Sprintf("development provisioning incomplete: %d independent steps failed; see the reported failures", len(err.failures))
 }
 
 type explorerRestartStatus struct {
@@ -80,7 +89,9 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		}
 		operation = finished
 		if resultErr != nil {
-			if operation.Phase == "bootstrap" {
+			if operation.Phase == "development-incomplete" {
+				fmt.Fprintln(options.Output, "Sandbox terminal is ready, but development provisioning is incomplete. Use `sandbox attach` to work or repair failed projects, then retry `sandbox up`. Do not run `sandbox down`.")
+			} else if operation.Phase == "bootstrap" {
 				fmt.Fprintln(options.Output, "Sandbox preserved. If bootstrap failed, use its retry command in the guest console, then run `sandbox up` again. Do not run `sandbox down`.")
 			} else {
 				fmt.Fprintln(options.Output, "Sandbox preserved. Correct the reported error and run `sandbox up` again; do not run `sandbox down`.")
@@ -151,12 +162,22 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	if err := updateOperation("development-provisioning", "Running the current Base, user, and project provisioning."); err != nil {
 		return Connection{}, err
 	}
+	var developmentFailure *developmentProvisioningError
 	if err := runWithRetainedProgress(ctx, plan.StatusDirectory, options.Output, func(progress progressStatus) error {
 		return updateOperation(progress.Phase, progress.Message)
 	}, func(progressContext context.Context) error {
-		return runGuestProvisioning(progressContext, connection, snapshot, false)
+		err := runGuestProvisioning(progressContext, connection, snapshot, false)
+		if errors.As(err, &developmentFailure) {
+			return nil
+		}
+		return err
 	}); err != nil {
 		return Connection{}, err
+	}
+	if developmentFailure != nil {
+		for _, failure := range developmentFailure.failures {
+			fmt.Fprintf(options.Output, "Provisioning failed: %s\n", failure)
+		}
 	}
 	if plan.Tailscale {
 		if err := updateOperation("tailscale-identity", "Capturing and verifying the retained Tailscale identity."); err != nil {
@@ -266,6 +287,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		if err := writeReadyStatus(plan.StatusDirectory, ready); err != nil {
 			return Connection{}, err
 		}
+	}
+	if developmentFailure != nil {
+		if err := updateOperation("development-incomplete", "Terminal ready; independent development steps failed."); err != nil {
+			return Connection{}, err
+		}
+		return connection, developmentFailure
 	}
 	return connection, nil
 }
@@ -495,6 +522,15 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 	if result.SchemaVersion != reprovisionResultSchema || result.ArchiveSHA256 != digest || result.ProjectCount != projectCount {
 		return finishError(fmt.Errorf("verify retained provisioning result: schema=%d digest=%q projects=%d", result.SchemaVersion, result.ArchiveSHA256, result.ProjectCount))
 	}
+	if finalize && len(result.Failures) != 0 {
+		return finishError(errors.New("guest finalization returned development failures"))
+	}
+	developmentResult := func(restartErr error) error {
+		if restartErr != nil || len(result.Failures) == 0 {
+			return restartErr
+		}
+		return &developmentProvisioningError{failures: result.Failures}
+	}
 	if !result.ExplorerRestartScheduled {
 		if result.ExplorerRestartID != "" || result.ExplorerRestartTaskName != "" {
 			return finishError(errors.New("retained provisioning returned Explorer restart identity without scheduling a restart"))
@@ -503,13 +539,13 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 		if found {
 			return errors.Join(errors.New("retained provisioning published Explorer restart status without scheduling a restart"), finishErr)
 		}
-		return finishErr
+		return developmentResult(finishErr)
 	}
 	if result.ExplorerRestartID != restartID || result.ExplorerRestartTaskName != restartTaskName {
 		return finishError(errors.New("retained provisioning returned unexpected Explorer restart identity"))
 	}
 	_, err = finishRestart(true)
-	return err
+	return developmentResult(err)
 }
 
 func cleanupRetainedExplorerRestartTask(ctx context.Context, connection Connection, taskName string) error {
@@ -729,7 +765,7 @@ func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount
 func decodeReprovisionResult(data []byte) (reprovisionResult, error) {
 	data = bytes.TrimSpace(data)
 	if err := validateExactJSONObjectShape(data, "retained provisioning result", []string{
-		"schemaVersion", "archiveSha256", "projectCount", "explorerRestartScheduled", "explorerRestartId", "explorerRestartTaskName",
+		"schemaVersion", "archiveSha256", "projectCount", "explorerRestartScheduled", "explorerRestartId", "explorerRestartTaskName", "failures",
 	}); err != nil {
 		return reprovisionResult{}, err
 	}
@@ -741,6 +777,15 @@ func decodeReprovisionResult(data []byte) (reprovisionResult, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return reprovisionResult{}, errors.New("decode retained provisioning result: trailing JSON data")
+	}
+	if result.Failures == nil || len(result.Failures) > 128 {
+		return reprovisionResult{}, errors.New("retained provisioning failures must be a bounded array")
+	}
+	for index, failure := range result.Failures {
+		if strings.TrimSpace(failure) == "" || len(failure) > 4096 {
+			return reprovisionResult{}, errors.New("retained provisioning failure detail is empty or too large")
+		}
+		result.Failures[index] = sanitizeTerminalText(failure, 4096)
 	}
 	return result, nil
 }

@@ -7,7 +7,21 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Fixed
+
+- Provisioning registers GeistMono Nerd Font for the guest desktop, so Windows
+  Terminal can find it after SSH provisioning finishes. Retained provisioning
+  repairs missing registration without replacing the existing font files.
+- Retained Supertonic provisioning recreates its managed Python environment when
+  the selected Python major/minor version changes, rather than reusing incompatible
+  compiled dependencies.
+
 ### Changed
+
+- Independent development utilities and user/project scripts continue after a
+  failed step. Once required connection and configuration checks pass, the
+  Sandbox remains attachable for work and repairs while provisioning reports its
+  failures and returns a nonzero exit status.
 
 - Explicit `sandbox up` adopts transferable host Herdr settings through the
   dedicated provisioning overwrite permission. Ordinary attach and reconnects

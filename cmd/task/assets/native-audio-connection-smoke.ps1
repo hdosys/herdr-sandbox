@@ -509,7 +509,16 @@ try {
                     [string]$process.ExecutablePath -ine $serverExecutable) {
                     throw "Refuse to stop changed AudioGridder process identity: $([int]$process.ProcessId)"
                 }
-                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                try {
+                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                } catch {
+                    # Stopping the master can finish a worker already in this
+                    # snapshot. Only a confirmed absent PID is terminal success.
+                    if ($_.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenId,*' -or
+                        $null -ne (Get-Process -Id ([int]$process.ProcessId) -ErrorAction SilentlyContinue)) {
+                        throw
+                    }
+                }
             }
             if ([DateTime]::UtcNow -ge $serverCleanupDeadline) {
                 throw 'Timed out cleaning the task-owned AudioGridder process tree.'

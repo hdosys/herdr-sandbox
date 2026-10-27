@@ -3201,9 +3201,31 @@ function Install-StackHyperFramesSupertonic {
     $python = Wait-ProvisioningCommandAvailable -Role 'Supertonic Python' -Name 'python.exe'
     $uv = Wait-ProvisioningCommandAvailable -Role 'Supertonic uv' -Name 'uv.exe'
     $environmentPython = Join-Path $environmentRoot 'Scripts\python.exe'
-    if (-not (Test-Path -LiteralPath $environmentRoot)) {
+    $pythonSeries = ((Invoke-ProvisioningNative -Role 'Supertonic Python ABI selection' -FilePath $python `
+        -ArgumentList @('-I', '-c', 'import sys; print("%d.%d" % sys.version_info[:2])')) -join '').Trim()
+    if ($pythonSeries -notmatch '^3\.\d+$') { throw 'Supertonic Python ABI selection is invalid.' }
+    $createEnvironment = -not (Test-Path -LiteralPath $environmentRoot)
+    $venvArguments = @('venv', '--python', $python, '--no-python-downloads')
+    if (-not $createEnvironment) {
+        # The app-local Python can change beneath a retained venv. Its running
+        # interpreter then reports the new ABI, not the ABI of installed wheels.
+        $configuration = Join-Path $environmentRoot 'pyvenv.cfg'
+        $tree = @((Get-Item -LiteralPath $environmentRoot -Force)) + @(Get-ChildItem -LiteralPath $environmentRoot -Recurse -Force)
+        if (@($tree | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }).Count -ne 0) {
+            throw 'Supertonic Python environment contains a reparse point.'
+        }
+        $venvConfig = [IO.File]::ReadAllText($configuration)
+        if ($venvConfig -notmatch '(?m)^version_info = (3\.\d+)\.\d+\s*$') {
+            throw 'Supertonic Python environment has no valid creation version.'
+        }
+        if ($Matches[1] -cne $pythonSeries) {
+            $createEnvironment = $true
+            $venvArguments += '--clear'
+        }
+    }
+    if ($createEnvironment) {
         Invoke-ProvisioningNative -Role 'Supertonic Python environment' -FilePath $uv `
-            -ArgumentList @('venv', '--python', $python, '--no-python-downloads', $environmentRoot) -TimeoutSeconds 120 | Out-Null
+            -ArgumentList ($venvArguments + @($environmentRoot)) -TimeoutSeconds 120 | Out-Null
     }
     Invoke-ProvisioningNative -Role 'Supertonic locked CPU dependencies' -FilePath $uv `
         -ArgumentList @('pip', 'sync', '--python', $environmentPython, '--require-hashes', '--only-binary', ':all:',
@@ -3566,12 +3588,12 @@ function Assert-StackHyperFramesActivationSkills {
 
     $skills = @($Report.skills)
     $root = [IO.Path]::GetFullPath($SkillRoot)
-    if ($Report.updateAvailable -ne $false -or $Report.lockMissing -ne $false -or
+    if ($Report.updateAvailable -ne $false -or @($Report.foreign).Count -ne 0 -or
         [string]$Report.scope -cne 'global' -or [string]$Report.agent -cne 'claude-code' -or
         [string]::IsNullOrWhiteSpace([string]$Report.location) -or
         [IO.Path]::GetFullPath([string]$Report.location) -ine $root -or $null -eq $Report.summary -or
         [int]$Report.summary.outdated -ne 0 -or [int]$Report.summary.missing -ne 0 -or
-        [int]$Report.summary.removed -ne 0 -or $skills.Count -le 0) {
+        [int]$Report.summary.current -ne $skills.Count -or $skills.Count -le 0) {
         throw 'HyperFrames activation skills are not current and complete.'
     }
     $skillNames = @($skills | ForEach-Object {

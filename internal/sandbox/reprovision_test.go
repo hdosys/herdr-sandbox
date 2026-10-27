@@ -20,7 +20,8 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 	project := filepath.Join(workspaces, "project")
 	source := filepath.Join(root, "source")
 	projects := filepath.Join(source, "projects")
-	for _, directory := range []string{project, projects} {
+	workingProject := filepath.Join(workspaces, "working")
+	for _, directory := range []string{project, projects, workingProject} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -46,16 +47,26 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 		}
 	}
 	profile := filepath.Join(projects, "project.ps1")
+	workingProfile := filepath.Join(projects, "working.ps1")
+	if err := os.WriteFile(workingProfile, []byte("param($ProjectDirectory)\n[IO.File]::WriteAllText((Join-Path $ProjectDirectory 'accepted.txt'), 'working')"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := provisioningSnapshot{Directory: source, ProcessOwnerPath: filepath.Join(source, provisioningProcessName),
 		PackagePlanPath: filepath.Join(source, wingetPackagePlanFileName), ToolVersionPlanPath: filepath.Join(source, toolVersionPlanFileName),
 		WorkspaceManifestPath: filepath.Join(source, workspaceManifestName), ProjectScriptsDirectory: projects,
-		Workspaces: []workspacePlan{{Name: "project", ProvisioningPath: profile}}}
+		Workspaces: []workspacePlan{{Name: "project", ProvisioningPath: profile}, {Name: "working", ProvisioningPath: workingProfile}}}
 	for index, profileScript := range []string{
 		"param($ProjectDirectory)\nthrow 'intentional project failure'",
 		"param($ProjectDirectory)\n[IO.File]::WriteAllText((Join-Path $ProjectDirectory 'accepted.txt'), 'corrected')",
+		"param($ProjectDirectory)\nthrow 'intentional project failure'",
 	} {
 		if err := os.WriteFile(profile, []byte(profileScript), 0o600); err != nil {
 			t.Fatal(err)
+		}
+		if index == 2 {
+			if err := os.WriteFile(filepath.Join(source, userProvisioningName), []byte("throw 'intentional required failure'"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 		archive, err := buildReprovisionArchive(snapshot)
 		if err != nil {
@@ -63,21 +74,29 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 		}
 		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 		attempt := fmt.Sprintf("20261002-12000%d-abcdef12", index)
-		launcherScript := buildReprovisionLauncher(digest, len(archive), 1, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false)
+		launcherScript := buildReprovisionLauncher(digest, len(archive), 2, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false)
 		launcherScript = strings.ReplaceAll(launcherScript, guestWorkspacesDirectory, workspaces)
 		launcher := sshArchiveLauncherBytes(launcherScript)
 		command := buildSSHArchiveTransportCommand(digest, len(archive), launcher, 30*time.Second, attempt)
 		command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
 		output, runErr := runLocalSSHTransport(t, command, launcher, archive, nil)
+		result, err := decodeReprovisionResult(output)
+		if index == 2 {
+			if runErr == nil || !strings.Contains(string(output), "intentional project failure") || !strings.Contains(string(output), "intentional required failure") {
+				t.Fatalf("required failure lost earlier independent failure: %v: %s", runErr, output)
+			}
+		} else if runErr != nil || err != nil || result.ArchiveSHA256 != digest || result.ProjectCount != 2 {
+			t.Fatalf("same-guest provisioning result failed: run=%v decode=%v output=%s", runErr, err, output)
+		}
 		if index == 0 {
-			if runErr == nil || !strings.Contains(string(output), `workspace "project"`) || !strings.Contains(string(output), "intentional project failure") {
+			if len(result.Failures) != 1 || !strings.Contains(result.Failures[0], `workspace "project"`) || !strings.Contains(result.Failures[0], "intentional project failure") {
 				t.Fatalf("project failure not preserved: %v: %s", runErr, output)
 			}
-		} else {
-			result, err := decodeReprovisionResult(output)
-			if runErr != nil || err != nil || result.ArchiveSHA256 != digest || result.ProjectCount != 1 {
-				t.Fatalf("corrected same-guest retry failed: run=%v decode=%v output=%s", runErr, err, output)
-			}
+		} else if index == 1 && len(result.Failures) != 0 {
+			t.Fatalf("corrected same-guest retry retained failures: %v", result.Failures)
+		}
+		if data, err := os.ReadFile(filepath.Join(workingProject, "accepted.txt")); err != nil || string(data) != "working" {
+			t.Fatalf("independent project did not finish: %q %v", data, err)
 		}
 		entries, err := os.ReadDir(filepath.Join(guestRoot, "staging"))
 		if err != nil || len(entries) != 0 {
@@ -336,12 +355,15 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 }
 
 func TestDecodeReprovisionResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"20260801-080000-1234abcd","explorerRestartTaskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd"}`)
+	valid := []byte(`{"schemaVersion":3,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"20260801-080000-1234abcd","explorerRestartTaskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd","failures":[]}`)
 	result, err := decodeReprovisionResult(valid)
 	if err != nil || result.ProjectCount != 3 || !result.ExplorerRestartScheduled {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
+		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":null`), 1),
+		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":[""]`), 1),
+		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":[1]`), 1),
 		[]byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"id","explorerRestartTaskName":"task","extra":true}`),
 		[]byte(`{"schemaVersion":2,"archiveSha256":"abc","projectCount":3,"explorerRestartId":"id","explorerRestartTaskName":"task"}`),
 		append(append([]byte{}, valid...), []byte(` {}`)...),

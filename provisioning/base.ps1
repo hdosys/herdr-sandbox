@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 57
+# herdr-sandbox-base-contract: 58
 param(
     [ValidateSet('Registry', 'Core', 'Development')]
     [string]$Phase = 'Development',
@@ -11,7 +11,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ProcessOwnerPath,
     [switch]$AudioOutputEnabled,
-    [switch]$AudioInputEnabled
+    [switch]$AudioInputEnabled,
+    [AllowEmptyCollection()]
+    [Collections.Generic.List[string]]$DevelopmentFailures
 )
 
 $ErrorActionPreference = 'Stop'
@@ -641,7 +643,7 @@ function Invoke-ProvisioningNative {
             throw "$Role exceeded $TimeoutSeconds seconds. $details"
         }
         if ($result.Stopped) {
-            throw "$Role was stopped before completion. $details"
+            throw [OperationCanceledException]::new("$Role was stopped before completion. $details")
         }
         throw "$Role failed with exit code $($result.ExitCode). $details"
     }
@@ -666,10 +668,29 @@ function Invoke-ProvisioningExtensionScript {
         }
         & $Path
     } catch {
+        if ($_.Exception -is [OperationCanceledException]) { throw }
         if ($Kind -ceq 'Project') {
             throw "Custom project provisioning profile for workspace `"$WorkspaceName`" (<workspace>\.herdr-sandbox\provision.ps1) failed: $($_.Exception.Message)"
         }
         throw "Custom global user provisioning profile (%APPDATA%\herdr-sandbox\user.ps1) failed: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-ProvisioningIndependentStep {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[string]]$Failures
+    )
+
+    try {
+        & $Action
+    } catch {
+        if ($_.Exception -is [OperationCanceledException] -or
+            $_.Exception -is [Management.Automation.PipelineStoppedException]) { throw }
+        $message = Get-ProvisioningBoundedDiagnosticText -Text "$Name`: $($_.Exception.Message)" -MaximumBytes 3000
+        $Failures.Add($message)
+        Write-Warning "$message Independent provisioning will continue."
     }
 }
 
@@ -1750,6 +1771,12 @@ function Test-ProvisioningGeistMonoFontInstalled {
         return $false
     }
     try {
+        $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+        $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+        foreach ($name in @(Get-ProvisioningGeistMonoExpectedFontNames)) {
+            $registeredPath = Get-ItemPropertyValue -LiteralPath $fontRegistry -Name $name -ErrorAction Stop
+            if ($registeredPath -cne (Join-Path $toolRoot $name)) { return $false }
+        }
         Initialize-ProvisioningFontNativeMethods
         return [HerdrSandboxFontNativeMethods]::HasFamily('GeistMono NF')
     } catch {
@@ -1834,7 +1861,12 @@ function Install-ProvisioningGeistMonoFontPayload {
         throw "$Role selected font files do not match the GeistMono Nerd Font family contract."
     }
     Initialize-ProvisioningFontNativeMethods
+    # SSH provisioning and the desktop need the same installed font collection.
+    # AddFontResourceEx alone loads only the calling Windows session.
+    $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
     foreach ($font in $familyFonts) {
+        New-ItemProperty -LiteralPath $fontRegistry -Name $font.Name -Value $font.FullName `
+            -PropertyType String -Force | Out-Null
         $added = [HerdrSandboxFontNativeMethods]::AddFontResourceExW($font.FullName, 0, [IntPtr]::Zero)
         if ($added -le 0) {
             throw "$Role failed to add font resource: $($font.Name)"
@@ -1846,8 +1878,8 @@ function Install-ProvisioningGeistMonoFontPayload {
     if ($messageSent -eq [IntPtr]::Zero) {
         throw "$Role failed to broadcast WM_FONTCHANGE."
     }
-    if (-not [HerdrSandboxFontNativeMethods]::HasFamily('GeistMono NF')) {
-        throw "$Role GDI family read-back failed for GeistMono NF."
+    if (-not (Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata)) {
+        throw "$Role installed font registration or GDI family read-back failed."
     }
 }
 
@@ -3555,6 +3587,7 @@ Write-ProvisioningTiming -Role 'early registry customization' -Seconds $provisio
 return
 }
 
+Update-ProvisioningPath
 Write-Output 'Installing PowerShell 7...'
 Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell' `
     -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') `
@@ -3578,6 +3611,8 @@ if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparis
     -not $powerShellProfilePath.EndsWith('\PowerShell\profile.ps1', [StringComparison]::OrdinalIgnoreCase)) {
     throw "PowerShell 7 all-host profile path is outside the expected guest user profile: $powerShellProfilePath"
 }
+$returnDevelopmentFailures = $null -ne $DevelopmentFailures
+if (-not $returnDevelopmentFailures) { $DevelopmentFailures = New-Object 'Collections.Generic.List[string]' }
 $starshipInitialization = ''
 if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
     Write-Output 'Installing Starship...'
@@ -3621,6 +3656,7 @@ if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfi
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
+    Invoke-ProvisioningIndependentStep -Name 'fzf' -Failures $DevelopmentFailures -Action {
     Write-Output 'Installing fzf...'
     Install-ProvisioningWinGetPackage -Role 'fzf' -Id 'junegunn.fzf' `
         -Version (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') `
@@ -3628,9 +3664,11 @@ if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
     $fzfVersion = Assert-ProvisioningCommand -Role 'fzf' -Name 'fzf.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
     Write-Output "fzf ready: $fzfVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
+    Invoke-ProvisioningIndependentStep -Name 'ripgrep' -Failures $DevelopmentFailures -Action {
     Write-Output 'Installing ripgrep...'
     Install-ProvisioningWinGetPackage -Role 'ripgrep' -Id 'BurntSushi.ripgrep.MSVC' `
         -Version (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') `
@@ -3638,9 +3676,11 @@ if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
     $ripgrepVersion = Assert-ProvisioningCommand -Role 'ripgrep' -Name 'rg.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^ripgrep \d+\.\d+\.\d+'
     Write-Output "ripgrep ready: $ripgrepVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
+    Invoke-ProvisioningIndependentStep -Name 'actionlint' -Failures $DevelopmentFailures -Action {
     Write-Output 'Installing actionlint...'
     Install-ProvisioningWinGetPackage -Role 'actionlint' -Id 'rhysd.actionlint' `
         -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') `
@@ -3648,6 +3688,7 @@ if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
     $actionlintVersion = Assert-ProvisioningCommand -Role 'actionlint' -Name 'actionlint.exe' `
         -VersionArguments @('-version') -ExpectedPattern '^\d+\.\d+\.\d+'
     Write-Output "actionlint ready: $actionlintVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
@@ -3691,6 +3732,7 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
+    Invoke-ProvisioningIndependentStep -Name 'WinDirStat' -Failures $DevelopmentFailures -Action {
     Write-Output 'Installing WinDirStat...'
     Install-ProvisioningWinGetPackage -Role 'WinDirStat' -Id 'WinDirStat.WinDirStat' `
         -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') `
@@ -3701,14 +3743,17 @@ if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
         throw "WinDirStat executable is missing or unsafe: $winDirStatExecutable"
     }
     Write-Output "WinDirStat ready: $winDirStatExecutable"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
+    Invoke-ProvisioningIndependentStep -Name 'File Pilot' -Failures $DevelopmentFailures -Action {
     Write-Output 'Installing File Pilot...'
     Install-ProvisioningOnlineWinGetPackage -Role 'File Pilot' -Id 'Voidstar.FilePilot' `
         -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
     Ensure-ProvisioningFilePilotStartShortcut
     Write-Output 'File Pilot ready: FPilot.exe'
+    }
 }
 
 $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
@@ -3753,13 +3798,17 @@ foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     if ($packageID -ieq 'SST.opencode') {
         continue
     }
-    Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
-        -Id $packageID -Version ([string]$package.version)
+    Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -Action {
+        Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
+            -Id $packageID -Version ([string]$package.version)
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT') {
+    Invoke-ProvisioningIndependentStep -Name 'Vulkan capability' -Failures $DevelopmentFailures -Action {
     $vulkanDevices = @(Assert-ProvisioningVulkanDevice)
     Write-Output "Vulkan ready: $($vulkanDevices -join ', ')"
+    }
 }
 
 $workspaceManifestPath = Join-Path (Split-Path -Parent $ProjectProvisioningDirectory) 'workspaces.json'
@@ -3850,7 +3899,7 @@ if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     Write-Output "Git ready: $gitVersion"
 }
 
-Install-ProvisioningOpenSrc
+Invoke-ProvisioningIndependentStep -Name 'opensrc' -Failures $DevelopmentFailures -Action { Install-ProvisioningOpenSrc }
 
 if (-not (Test-Path -LiteralPath $ProjectProvisioningDirectory -PathType Container)) {
     throw "Project provisioning directory is missing: $ProjectProvisioningDirectory"
@@ -3869,7 +3918,9 @@ if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -an
         throw "User provisioning contract is invalid: $UserProvisioningPath"
     }
     Write-Output 'Running global user provisioning'
-    Invoke-ProvisioningExtensionScript -Kind 'User' -Path $userProvisioning.FullName
+    Invoke-ProvisioningIndependentStep -Name 'Global user provisioning' -Failures $DevelopmentFailures -Action {
+        Invoke-ProvisioningExtensionScript -Kind 'User' -Path $userProvisioning.FullName
+    }
 } else {
     throw "User provisioning script identity is invalid: $UserProvisioningPath"
 }
@@ -3882,8 +3933,10 @@ foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     }
     $projectScript = Get-Item -LiteralPath $projectScriptPath
     Write-Output "Running project provisioning for $workspaceName"
-    Invoke-ProvisioningExtensionScript -Kind 'Project' -Path $projectScript.FullName `
-        -WorkspaceName $workspaceName -ProjectDirectory $projectDirectory
+    Invoke-ProvisioningIndependentStep -Name "Project $workspaceName" -Failures $DevelopmentFailures -Action {
+        Invoke-ProvisioningExtensionScript -Kind 'Project' -Path $projectScript.FullName `
+            -WorkspaceName $workspaceName -ProjectDirectory $projectDirectory
+    }
 }
 
 $packageStageRoot = 'C:\HerdrSandbox\staging\packages'
@@ -3893,8 +3946,13 @@ if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
             -DelayMilliseconds 0 -BestEffort | Out-Null
     }
 }
-Install-ProvisioningAccessShortcut -Name 'apify-access' -DisplayName 'Apify access'
-Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
-    -TerminalPackageFamily $terminalPackageFamily
+Invoke-ProvisioningIndependentStep -Name 'Desktop shortcuts' -Failures $DevelopmentFailures -Action {
+    Install-ProvisioningAccessShortcut -Name 'apify-access' -DisplayName 'Apify access'
+    Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
+        -TerminalPackageFamily $terminalPackageFamily
+}
 $provisioningStopwatch.Stop()
 Write-ProvisioningTiming -Role 'complete development provisioning' -Seconds $provisioningStopwatch.Elapsed.TotalSeconds
+if (-not $returnDevelopmentFailures -and $DevelopmentFailures.Count -gt 0) {
+    throw ("Development provisioning incomplete:`n" + ($DevelopmentFailures -join "`n"))
+}

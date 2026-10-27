@@ -68,6 +68,17 @@ The current product contract is:
 
 ### Failure, retention, and cleanup
 
+- Independent development failures no longer discard otherwise usable work.
+  Base continues after a failed fzf, ripgrep, actionlint, WinDirStat, File Pilot,
+  additional WinGet package, Vulkan check, opensrc, desktop shortcut, global user
+  script, or project script, and reports every failed step. A failed script stops
+  at its error; subsequent independent project scripts still run. Core shell,
+  shared configuration prerequisites, archive integrity, credential transfer,
+  SSH and Herdr verification remain strict. After all required readiness checks
+  succeed, the guest is `ready` even when its provisioning operation is `failed`.
+  `sandbox up` returns nonzero and prints `sandbox attach` for work or repairs;
+  correcting the failed inputs and rerunning `sandbox up` reuses the same guest.
+
 - Failure names the failed phase and points to bounded, terminal-safe diagnostics. `up` has a four-hour launch-to-ready deadline by default; an explicit positive `--timeout` replaces it for that run, while caller cancellation and narrower external-operation timeouts remain enforced. Ctrl+C cancels retained provisioning, skips the terminal Explorer-restart wait, performs only bounded task cleanup, preserves Sandbox state, and exits with status 130; a second Ctrl+C restores the operating system's immediate termination behavior. Retained reprovisioning publishes live progress and one host-owned bounded current/latest operation result separately from guest readiness, so a failed refresh never erases or falsely downgrades an otherwise ready guest. If a retained operation exits without a terminal result, the next lifecycle-lock owner records it as interrupted before any close, replacement, or cleanup mutation; another operation cannot silently overwrite a still-running record.
 - Cancelled pre-launch preparation reports that no Sandbox was launched. After
   launch, the guest is preserved; minimal bootstrap may finish independently.

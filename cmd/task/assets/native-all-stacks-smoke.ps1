@@ -543,6 +543,14 @@ if ([string]$terminalSettings.theme -cne 'light' -or [string]$terminalSettings.d
     @($terminalSettings.schemes | Where-Object { [string]$_.name -ceq 'Herdr Native Light' }).Count -ne 1) {
     throw 'Windows Terminal theme, default profile, or font does not match the transferred configuration.'
 }
+Add-Type -AssemblyName PresentationCore
+$terminalFont = [string]$terminalSettings.profiles.defaults.font.face
+$installedFonts = @([Windows.Media.Fonts]::SystemFontFamilies | Where-Object {
+    @($_.FamilyNames.Values) -contains $terminalFont
+})
+if ($installedFonts.Count -ne 1) {
+    throw "Windows Terminal font is not available in the installed font collection: $terminalFont"
+}
 $starshipConfigPath = Join-Path $env:USERPROFILE '.config\starship.toml'
 if (-not (Test-Path -LiteralPath $starshipConfigPath -PathType Leaf)) { throw 'Starship configuration is missing.' }
 $starshipConfig = [IO.File]::ReadAllText($starshipConfigPath)

@@ -50,6 +50,7 @@ func TestHyperFramesOpenCodeLauncherUsesProcessScopedSkillsInWindowsPowerShell51
 	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
 	stackPath := defaultProvisioningPath(t, stackProvisioningName)
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
@@ -62,11 +63,11 @@ foreach ($name in @('Assert-StackHyperFramesSkillTree', 'Assert-StackHyperFrames
 $skillRoot = '%s'
 $report = [pscustomobject]@{
     updateAvailable = $false
-    lockMissing = $false
+    foreign = @()
     scope = 'global'
     agent = 'claude-code'
     location = $skillRoot
-    summary = [pscustomobject]@{ current = 2; outdated = 0; missing = 0; removed = 0 }
+    summary = [pscustomobject]@{ current = 2; outdated = 0; missing = 0; coreMissing = 0 }
     skills = @(
         [pscustomobject]@{ name = 'hyperframes'; status = 'current' },
         [pscustomobject]@{ name = 'hyperframes-core'; status = 'current' }
@@ -74,6 +75,13 @@ $report = [pscustomobject]@{
 }
 $names = @(Assert-StackHyperFramesActivationSkills -Report $report -SkillRoot $skillRoot)
 if (($names -join '|') -cne 'hyperframes|hyperframes-core') { throw "Unexpected skill names: $($names -join '|')" }
+$report.foreign = @('hyperframes-foreign')
+$rejected = $false
+try { Assert-StackHyperFramesActivationSkills -Report $report -SkillRoot $skillRoot } catch {
+    $rejected = $_.Exception.Message -eq 'HyperFrames activation skills are not current and complete.'
+}
+if (-not $rejected) { throw 'Activation accepted skills excluded from verification as foreign.' }
+$report.foreign = @()
 $launcher = '%s'
 Write-StackHyperFramesOpenCodeLauncher -Path $launcher -SkillRoot $skillRoot
 $env:Path = '%s;' + $env:Path
