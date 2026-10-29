@@ -9,9 +9,10 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
-- Audio provisioning accepts the official unsigned REAPER executable while
-  requiring the downloaded installer to match its WinGet hash and valid Cockos
-  publisher signature.
+- Audio provisioning accepts the official unsigned REAPER executable and uses
+  WinGet's package identity and installer hash without redundant signature or
+  URL-layout requirements. Audio acceptance treats unfamiliar file versions as
+  diagnostics rather than setup failures.
 - Incomplete development setup explicitly reports that the Sandbox is running,
   Herdr is ready through `sandbox attach`, and already provisioned tools remain
   usable while failed setup is repaired.
@@ -24,6 +25,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Cached WinGet downloads no longer pass through a second manifest parser or
+  duplicate download-file hash check. The executable copy and persistent cache
+  remain bound to the resolved WinGet SHA-256.
 - Detaching returns immediately without opening another SSH connection. Attachment
   avoids redundant SSH and provisioning-capability probes while retaining live
   host/guest identity checks.

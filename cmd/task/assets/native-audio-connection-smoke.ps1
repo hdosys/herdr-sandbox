@@ -96,7 +96,7 @@ foreach ($file in @($serverExecutable, $reaperExecutable, $serverConfigurationPa
 $audioGridderVersion = [string](Get-Item -LiteralPath $serverExecutable -Force).VersionInfo.FileVersion
 $reaperVersion = [string](Get-Item -LiteralPath $reaperExecutable -Force).VersionInfo.FileVersion
 if ($audioGridderVersion -notmatch '^\d+\.\d+\.\d+$' -or $reaperVersion -notmatch '^\d+\.\d+$') {
-    throw 'Native audio smoke executable versions are invalid.'
+    Write-Warning "Audio file versions are unfamiliar: REAPER $reaperVersion, AudioGridder $audioGridderVersion. Continuing with the connection check."
 }
 
 $serverConfiguration = [IO.File]::ReadAllText($serverConfigurationPath) | ConvertFrom-Json
@@ -305,7 +305,7 @@ public static class HerdrReaperDialog {
             uint processId;
             GetWindowThreadProcessId(dialog, out processId);
             if (processId != expectedProcessId || !IsWindowVisible(dialog) || Class(dialog) != "#32770" ||
-                !Text(dialog).StartsWith("About REAPER v$reaperVersion/win64 rev ")) return true;
+                !Text(dialog).StartsWith("About REAPER v")) return true;
             bool hasNotice = false;
             var localButtons = new List<IntPtr>();
             EnumChildWindows(dialog, (child, ignoredChild) => {

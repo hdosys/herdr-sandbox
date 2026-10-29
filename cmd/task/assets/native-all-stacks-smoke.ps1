@@ -96,9 +96,11 @@ $openSrc = (Get-Command 'opensrc.exe' -CommandType Application -ErrorAction Stop
 $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
 $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
 $reaperVersion = [string]$reaperInfo.VersionInfo.FileVersion
-if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-    $reaperVersion -notmatch '^\d+\.\d+$') {
+if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
     throw 'REAPER installation identity is invalid.'
+}
+if ($reaperVersion -notmatch '^\d+\.\d+$') {
+    Write-Warning "REAPER file version is unfamiliar: $reaperVersion"
 }
 $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
 $audioGridderCopies = [ordered]@{

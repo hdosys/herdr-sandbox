@@ -1134,77 +1134,6 @@ function Get-ProvisioningWinGetMetadata {
     }
 }
 
-function Assert-ProvisioningMergedManifestField {
-    param(
-        [Parameter(Mandatory = $true)]
-        [AllowEmptyString()]
-        [string[]]$Lines,
-        [Parameter(Mandatory = $true)]
-        [string]$Name,
-        [Parameter(Mandatory = $true)]
-        [string]$Expected,
-        [switch]$TopLevel
-    )
-
-    $prefix = $Name + ':'
-    $values = @()
-    foreach ($line in $Lines) {
-        if ($TopLevel -and $line.Length -ne $line.TrimStart().Length) {
-            continue
-        }
-        $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('- ', [StringComparison]::Ordinal)) {
-            $trimmed = $trimmed.Substring(2).TrimStart()
-        }
-        if ($trimmed.StartsWith($prefix, [StringComparison]::Ordinal)) {
-            $value = $trimmed.Substring($prefix.Length).Trim()
-            if (($value.StartsWith("'") -and $value.EndsWith("'")) -or
-                ($value.StartsWith('"') -and $value.EndsWith('"'))) {
-                $value = $value.Substring(1, $value.Length - 2)
-            }
-            $values += $value
-        }
-    }
-    if ($values.Count -ne 1 -or $values[0] -ine $Expected) {
-        throw "Downloaded WinGet manifest field $Name did not equal $Expected."
-    }
-}
-
-function Assert-ProvisioningDownloadedManifest {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [object]$Metadata
-    )
-
-    $lines = [IO.File]::ReadAllLines($Path)
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'ManifestType' -Expected 'merged' -TopLevel
-    $manifestVersions = @()
-    foreach ($line in $lines) {
-        if ($line.Length -ne $line.TrimStart().Length) {
-            continue
-        }
-        $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('ManifestVersion:', [StringComparison]::Ordinal)) {
-            $manifestVersions += $trimmed.Substring('ManifestVersion:'.Length).Trim().Trim("'").Trim('"')
-        }
-    }
-    $supportedManifestVersions = @('1.0.0', '1.1.0', '1.2.0', '1.4.0', '1.5.0', '1.6.0', '1.7.0', '1.9.0', '1.10.0', '1.12.0', '1.28.0')
-    if ($manifestVersions.Count -ne 1 -or $manifestVersions[0] -notin $supportedManifestVersions) {
-        throw "Downloaded WinGet manifest has an unsupported ManifestVersion: $($manifestVersions -join ', ')"
-    }
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'PackageIdentifier' -Expected $Metadata.Id -TopLevel
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'PackageVersion' -Expected $Metadata.Version -TopLevel
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'Architecture' -Expected $Metadata.Architecture
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'InstallerType' -Expected $Metadata.InstallerType
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'InstallerUrl' -Expected $Metadata.Url
-    Assert-ProvisioningMergedManifestField -Lines $lines -Name 'InstallerSha256' -Expected $Metadata.Sha256
-    if (-not [string]::IsNullOrWhiteSpace($Metadata.Scope)) {
-        Assert-ProvisioningMergedManifestField -Lines $lines -Name 'Scope' -Expected $Metadata.Scope
-    }
-}
-
 function Get-ProvisioningSafeCacheName {
     param(
         [Parameter(Mandatory = $true)]
@@ -1319,16 +1248,12 @@ function Get-ProvisioningDownloadedPackage {
         throw "$Role package download produced unexpected dependency directories."
     }
     $files = @(Get-ChildItem -LiteralPath $DownloadDirectory -File -Force)
-    $manifests = @($files | Where-Object { $_.Extension -ieq '.yaml' })
     $payloads = @($files | Where-Object { $_.Extension -ine '.yaml' })
-    if ($manifests.Count -ne 1 -or $payloads.Count -ne 1) {
-        throw "$Role package download produced $($manifests.Count) manifests and $($payloads.Count) payloads; expected one each."
+    if ($payloads.Count -ne 1) {
+        throw "$Role package download produced $($payloads.Count) payloads; expected one."
     }
-    Assert-ProvisioningDownloadedManifest -Path $manifests[0].FullName -Metadata $Metadata
-    $actualHash = (Get-FileHash -LiteralPath $payloads[0].FullName -Algorithm SHA256).Hash.ToUpperInvariant()
-    if ($actualHash -cne $Metadata.Sha256) {
-        throw "$Role downloaded package hash mismatch: $actualHash"
-    }
+    # WinGet owns its manifest and download verification. Bind the copy we execute
+    # to the resolved package hash, including when the download changes afterward.
     Copy-ProvisioningPackageToGuest -Source $payloads[0].FullName -Destination $GuestPayloadPath `
         -ExpectedSHA256 $Metadata.Sha256
 }
@@ -1440,19 +1365,12 @@ function Assert-ProvisioningAuthenticodeSignature {
         [Parameter(Mandatory = $true)]
         [string]$Role,
         [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [string]$ExpectedSignerOrganization = ''
+        [string]$Path
     )
 
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "$Role Authenticode signature is not valid: $($signature.Status)"
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerOrganization) -and
-        ($null -eq $signature.SignerCertificate -or
-            $signature.SignerCertificate.Subject -notmatch
-                ('(^|,\s*)O=' + [regex]::Escape($ExpectedSignerOrganization) + '(,|$)'))) {
-        throw "$Role signer is not $ExpectedSignerOrganization."
     }
 }
 
@@ -1906,13 +1824,11 @@ function Install-ProvisioningPackagePayload {
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
         [switch]$DeferCommandReadiness,
-        [switch]$RequireAuthenticodeSignature,
-        [string]$ExpectedSignerOrganization = ''
+        [switch]$RequireAuthenticodeSignature
     )
 
-    if ($RequireAuthenticodeSignature -or -not [string]::IsNullOrWhiteSpace($ExpectedSignerOrganization)) {
-        Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $PayloadPath `
-            -ExpectedSignerOrganization $ExpectedSignerOrganization
+    if ($RequireAuthenticodeSignature) {
+        Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $PayloadPath
     }
     switch ($Adapter) {
         'Exe' {
@@ -2078,7 +1994,6 @@ function Install-ProvisioningCachedPackage {
         [string]$PortableVersionSource = 'Command',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature,
-        [string]$ExpectedSignerOrganization = '',
         [string]$ResolvedDirectPayloadPath = ''
     )
 
@@ -2147,8 +2062,7 @@ function Install-ProvisioningCachedPackage {
             -InstallerSuccessExitCodes $InstallerSuccessExitCodes `
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
-            -RequireAuthenticodeSignature:$RequireAuthenticodeSignature `
-            -ExpectedSignerOrganization $ExpectedSignerOrganization
+            -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
         $installed = Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
             -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments `
             -PortableVersionSource $PortableVersionSource

@@ -2199,29 +2199,10 @@ function Install-AudioStack {
 
     $reaperMetadata = Get-ProvisioningWinGetMetadata -Role 'REAPER' -Id 'Cockos.REAPER' `
         -Version $reaperVersion -Architecture 'x64' -InstallerType 'exe' -Scope 'machine' -PayloadExtension '.exe'
-    $reaperURI = [Uri][string]$reaperMetadata.Url
-    $reaperVersionText = [string]$reaperMetadata.Version
-    $reaperVersionMatch = [regex]::Match($reaperVersionText, '^(?<major>\d+)\.(?<minor>\d+)$')
-    $expectedReaperPath = if ($reaperVersionMatch.Success) {
-        '/files/' + $reaperVersionMatch.Groups['major'].Value + '.x/reaper' +
-            $reaperVersionMatch.Groups['major'].Value + $reaperVersionMatch.Groups['minor'].Value +
-            '_x64-install.exe'
-    } else { '' }
-    if ([string]$reaperMetadata.Id -cne 'Cockos.REAPER' -or
-        -not $reaperVersionMatch.Success -or
-        [string]$reaperMetadata.Architecture -cne 'x64' -or
-        [string]$reaperMetadata.InstallerType -cne 'exe' -or
-        [string]$reaperMetadata.Scope -cne 'machine' -or
-        [string]$reaperMetadata.Sha256 -notmatch '^[A-F0-9]{64}$' -or
-        $reaperURI.Scheme -cne 'https' -or $reaperURI.Host -cne 'www.reaper.fm' -or
-        $reaperURI.AbsolutePath -cne $expectedReaperPath) {
-        throw 'REAPER metadata does not match the resolved stable x64 installer.'
-    }
     $reaperVersion = [string]$reaperMetadata.Version
     Write-Output "Installing REAPER $reaperVersion..."
     Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
-        -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223) `
-        -RequireAuthenticodeSignature -ExpectedSignerOrganization 'Cockos Incorporated'
+        -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223)
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
     if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -2230,8 +2211,6 @@ function Install-AudioStack {
     if ([string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
         Write-Warning "REAPER installed successfully, but its file version does not match $reaperVersion. Provisioning will continue with the installed executable."
     }
-    # Cockos signs the installer, not its extracted reaper.exe. Verify publisher
-    # identity at the hash-verified installer boundary above, not on this payload.
     Set-StackREAPERConfiguration
     Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
 

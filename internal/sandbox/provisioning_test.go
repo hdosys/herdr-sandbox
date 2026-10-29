@@ -1450,40 +1450,6 @@ if ($script:waitCount -ne 1) { throw "Default adapter readiness count: $script:w
 	}
 }
 
-func TestMergedManifestParserAcceptsBlankLinesInWindowsPowerShell51(t *testing.T) {
-	requireExternalBoundaryTest(t, "Windows PowerShell merged-manifest parsing")
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows PowerShell 5.1 regression")
-	}
-	baseScript := defaultProvisioningPath(t, baseProvisioningName)
-	manifest := filepath.Join(t.TempDir(), "package.yaml")
-	hash := strings.Repeat("A", 64)
-	contents := "PackageIdentifier: Fixture.Package\nPackageVersion: 1.2.3\n\nInstallers:\n- Architecture: x64\n  InstallerType: inno\n  Scope: machine\n  InstallerUrl: https://example.invalid/fixture.exe\n  InstallerSha256: " + hash + "\n  Dependencies:\n    PackageDependencies:\n    - PackageIdentifier: Nested.Dependency\nManifestType: merged\nManifestVersion: 1.10.0\n"
-	if err := os.WriteFile(manifest, []byte(contents), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	quote := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$tokens = $null
-$errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-foreach ($name in @('Assert-ProvisioningMergedManifestField', 'Assert-ProvisioningDownloadedManifest')) {
-    $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
-    Invoke-Expression $definition.Extent.Text
-}
-$metadata = [pscustomobject]@{ Id='Fixture.Package'; Version='1.2.3'; Architecture='x64'; InstallerType='inno'; Scope='machine'; Url='https://example.invalid/fixture.exe'; Sha256='%s' }
-Assert-ProvisioningDownloadedManifest -Path '%s' -Metadata $metadata
-`, quote(baseScript), hash, quote(manifest))
-	powerShell, err := windowsPowerShellExecutable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("blank-line manifest regression: %v: %s", err, output)
-	}
-}
-
 func TestGuestPackageStageCleanupRetriesSharingViolation(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")

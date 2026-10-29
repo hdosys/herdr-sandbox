@@ -329,7 +329,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 ### Specialized Application Stacks
 
 - The init-only `audio` selection writes one direct `Install-AudioStack` call, and the planner gives REAPER and AudioGridder separate current-release identities.
-- REAPER resolves the newest stable WinGet metadata and uses the shared digest, cache, silent EXE, and Authenticode path. The hash-verified installer must have a valid Cockos Incorporated signature before execution. Cockos ships an unsigned `reaper.exe` inside that signed installer, so installed-file validation checks its safe path and diagnostic version, not a separate Authenticode signature. Provisioning creates the Start shortcut without launching REAPER.
+- REAPER uses the shared WinGet metadata, digest, cache, and silent EXE path without a second publisher, URL-layout, or signature policy. WinGet's exact `Cockos.REAPER` package and installer SHA-256 own provenance. Installed-file validation checks its safe path and diagnostic version; native acceptance proves the audio connection. Provisioning creates the Start shortcut without launching REAPER.
 - The same stopped-process configuration owner atomically preserves unrelated `REAPER.ini` state while setting `verchk=0` before first launch, so the selected guest build never opens its own update prompt.
 - The official unsigned AudioGridder ZIP resolves from the latest stable GitHub release and is bound to GitHub's digest when published or to the exact once-downloaded payload otherwise.
 - Its installed release manifest binds source SHA-256 and every retained file hash.
@@ -441,7 +441,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - The default cache owner remains the complete `<system-temp>\herdr-sandbox` namespace.
 - WinGet v1.29 exposes no structured `show`/`search` output or direct cached-installer input.
 - Concrete WinGet package metadata therefore parses the exact English `show` labels, while latest package-family selection parses the exact English `search` table; both fail closed on label or shape drift.
-- The cached WinGet path treats the generated merged YAML plus trusted-source SHA as download authority, and online additions receive one resolved version before exact install and list read-back.
+- WinGet owns manifest interpretation and download integrity. The cached path selects an exact package from the `winget` source and binds the guest-local executable copy to that resolved SHA-256; it does not reparse WinGet's generated YAML or repeat the download-file hash before checking that copy. Cache-hit hashes, safe paths, and installer exit status remain mandatory because cached installers run directly, outside `winget install`. Online additions receive one resolved version before exact install and list read-back.
 - A failed installation remains terminal; an inconclusive exact ID/version read-back after installer success emits a warning and continues because WinGet correlation defects do not prove installation failure.
 - Package-specific functional verification remains strict.
 - No WinGet path falls back to a guessed package, localized label set, direct remote URL, or `install --manifest` pseudo-offline path.
