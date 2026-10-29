@@ -9,6 +9,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Audio provisioning accepts the official unsigned REAPER executable while
+  requiring the downloaded installer to match its WinGet hash and valid Cockos
+  publisher signature.
+- Incomplete development setup explicitly reports that the Sandbox is running,
+  Herdr is ready through `sandbox attach`, and already provisioned tools remain
+  usable while failed setup is repaired.
 - Provisioning registers GeistMono Nerd Font for the guest desktop, so Windows
   Terminal can find it after SSH provisioning finishes. Retained provisioning
   repairs missing registration without replacing the existing font files.

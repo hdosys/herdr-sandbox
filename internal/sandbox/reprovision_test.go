@@ -12,6 +12,27 @@ import (
 	"time"
 )
 
+func TestDevelopmentIncompleteGuidanceKeepsUsabilityAndFailureDistinct(t *testing.T) {
+	var output bytes.Buffer
+	writeDevelopmentIncompleteGuidance(&output)
+	for _, want := range []string{
+		"Sandbox is running", "Attach now with `sandbox attach` to use Herdr",
+		"Already provisioned tools remain usable", "failed or unfinished setup may be unavailable",
+		"retry `sandbox up` in this same Sandbox", "Do not run `sandbox down`",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing guidance %q in %q", want, output.String())
+		}
+	}
+	failure := &developmentProvisioningError{failures: []string{"project audio: REAPER failed"}}
+	for _, want := range []string{"development setup incomplete", "failed steps: 1", "Sandbox is running", "Herdr is ready", "`sandbox attach`"} {
+		if !strings.Contains(failure.Error(), want) {
+			t.Fatalf("final error hides failure or usability: %q", failure.Error())
+		}
+	}
+	t.Log(output.String() + "sandbox: " + failure.Error())
+}
+
 func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testing.T) {
 	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 provisioning retry")
 	root := t.TempDir()

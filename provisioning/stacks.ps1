@@ -2221,20 +2221,17 @@ function Install-AudioStack {
     Write-Output "Installing REAPER $reaperVersion..."
     Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
         -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223) `
-        -RequireAuthenticodeSignature
+        -RequireAuthenticodeSignature -ExpectedSignerOrganization 'Cockos Incorporated'
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
     if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "REAPER installation identity is invalid: $reaper"
     }
     if ([string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
-        Write-Warning "REAPER installed successfully, but its file version does not match $reaperVersion. Provisioning will continue with the signed executable."
+        Write-Warning "REAPER installed successfully, but its file version does not match $reaperVersion. Provisioning will continue with the installed executable."
     }
-    Assert-ProvisioningAuthenticodeSignature -Role 'REAPER executable' -Path $reaper
-    $reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
-    if ($reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
-        throw 'REAPER executable signer is not Cockos Incorporated.'
-    }
+    # Cockos signs the installer, not its extracted reaper.exe. Verify publisher
+    # identity at the hash-verified installer boundary above, not on this payload.
     Set-StackREAPERConfiguration
     Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
 

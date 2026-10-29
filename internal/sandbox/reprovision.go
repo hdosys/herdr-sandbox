@@ -44,7 +44,13 @@ type developmentProvisioningError struct {
 }
 
 func (err *developmentProvisioningError) Error() string {
-	return fmt.Sprintf("development provisioning incomplete: %d independent steps failed; see the reported failures", len(err.failures))
+	return fmt.Sprintf("development setup incomplete (failed steps: %d); Sandbox is running and Herdr is ready: use `sandbox attach`", len(err.failures))
+}
+
+func writeDevelopmentIncompleteGuidance(output io.Writer) {
+	fmt.Fprintln(output, "Sandbox is running. Attach now with `sandbox attach` to use Herdr.")
+	fmt.Fprintln(output, "Development setup is incomplete. Already provisioned tools remain usable; features depending on failed or unfinished setup may be unavailable.")
+	fmt.Fprintln(output, "Fix the reported failures, then retry `sandbox up` in this same Sandbox. Do not run `sandbox down`.")
 }
 
 type explorerRestartStatus struct {
@@ -90,7 +96,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		operation = finished
 		if resultErr != nil {
 			if operation.Phase == "development-incomplete" {
-				fmt.Fprintln(options.Output, "Sandbox terminal is ready, but development provisioning is incomplete. Use `sandbox attach` to work or repair failed projects, then retry `sandbox up`. Do not run `sandbox down`.")
+				writeDevelopmentIncompleteGuidance(options.Output)
 			} else if operation.Phase == "bootstrap" {
 				fmt.Fprintln(options.Output, "Sandbox preserved. If bootstrap failed, use its retry command in the guest console, then run `sandbox up` again. Do not run `sandbox down`.")
 			} else {

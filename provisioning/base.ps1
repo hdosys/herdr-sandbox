@@ -1440,12 +1440,19 @@ function Assert-ProvisioningAuthenticodeSignature {
         [Parameter(Mandatory = $true)]
         [string]$Role,
         [Parameter(Mandatory = $true)]
-        [string]$Path
+        [string]$Path,
+        [string]$ExpectedSignerOrganization = ''
     )
 
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "$Role Authenticode signature is not valid: $($signature.Status)"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSignerOrganization) -and
+        ($null -eq $signature.SignerCertificate -or
+            $signature.SignerCertificate.Subject -notmatch
+                ('(^|,\s*)O=' + [regex]::Escape($ExpectedSignerOrganization) + '(,|$)'))) {
+        throw "$Role signer is not $ExpectedSignerOrganization."
     }
 }
 
@@ -1899,11 +1906,13 @@ function Install-ProvisioningPackagePayload {
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
         [switch]$DeferCommandReadiness,
-        [switch]$RequireAuthenticodeSignature
+        [switch]$RequireAuthenticodeSignature,
+        [string]$ExpectedSignerOrganization = ''
     )
 
-    if ($RequireAuthenticodeSignature) {
-        Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $PayloadPath
+    if ($RequireAuthenticodeSignature -or -not [string]::IsNullOrWhiteSpace($ExpectedSignerOrganization)) {
+        Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $PayloadPath `
+            -ExpectedSignerOrganization $ExpectedSignerOrganization
     }
     switch ($Adapter) {
         'Exe' {
@@ -2069,6 +2078,7 @@ function Install-ProvisioningCachedPackage {
         [string]$PortableVersionSource = 'Command',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature,
+        [string]$ExpectedSignerOrganization = '',
         [string]$ResolvedDirectPayloadPath = ''
     )
 
@@ -2137,7 +2147,8 @@ function Install-ProvisioningCachedPackage {
             -InstallerSuccessExitCodes $InstallerSuccessExitCodes `
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
-            -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
+            -RequireAuthenticodeSignature:$RequireAuthenticodeSignature `
+            -ExpectedSignerOrganization $ExpectedSignerOrganization
         $installed = Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
             -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments `
             -PortableVersionSource $PortableVersionSource

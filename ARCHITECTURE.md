@@ -329,7 +329,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 ### Specialized Application Stacks
 
 - The init-only `audio` selection writes one direct `Install-AudioStack` call, and the planner gives REAPER and AudioGridder separate current-release identities.
-- REAPER resolves the newest stable WinGet metadata and uses the shared digest, cache, silent EXE, and Authenticode path; provisioning verifies the installed Cockos executable and Start shortcut without launching it.
+- REAPER resolves the newest stable WinGet metadata and uses the shared digest, cache, silent EXE, and Authenticode path. The hash-verified installer must have a valid Cockos Incorporated signature before execution. Cockos ships an unsigned `reaper.exe` inside that signed installer, so installed-file validation checks its safe path and diagnostic version, not a separate Authenticode signature. Provisioning creates the Start shortcut without launching REAPER.
 - The same stopped-process configuration owner atomically preserves unrelated `REAPER.ini` state while setting `verchk=0` before first launch, so the selected guest build never opens its own update prompt.
 - The official unsigned AudioGridder ZIP resolves from the latest stable GitHub release and is bound to GitHub's digest when published or to the exact once-downloaded payload otherwise.
 - Its installed release manifest binds source SHA-256 and every retained file hash.

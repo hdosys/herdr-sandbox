@@ -95,12 +95,9 @@ $openSrc = (Get-Command 'opensrc.exe' -CommandType Application -ErrorAction Stop
 
 $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
 $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
-$reaperSignature = Get-AuthenticodeSignature -LiteralPath $reaper
 $reaperVersion = [string]$reaperInfo.VersionInfo.FileVersion
 if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
-    $reaperVersion -notmatch '^\d+\.\d+$' -or
-    $reaperSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-    $reaperSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Cockos Incorporated(,|$)') {
+    $reaperVersion -notmatch '^\d+\.\d+$') {
     throw 'REAPER installation identity is invalid.'
 }
 $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
