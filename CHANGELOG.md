@@ -5,7 +5,7 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
-## Unreleased
+## v0.0.27
 
 ### Fixed
 
