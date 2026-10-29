@@ -171,6 +171,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if err := hostHerdr.validate(); err != nil {
 		return Connection{}, fmt.Errorf("validate compatible host Herdr: %w", err)
 	}
+	if err := verifyHostHerdrRemoteCapability(ctx, hostHerdr.commandPath); err != nil {
+		return Connection{}, err
+	}
 	runContext, cancelRun := withOptionalTimeout(ctx, options.Timeout)
 	defer cancelRun()
 
@@ -336,14 +339,18 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	if err := validateInteractiveAttachStreams(stdin, stdout, stderr); err != nil {
 		return err
 	}
-	currentHost, err := inspectCompatibleHostHerdr(ctx, connection.herdrExecutable)
+	commandPath, err := canonicalHostHerdrExecutable(connection.herdrExecutable, "host Herdr command")
 	if err != nil {
 		return fmt.Errorf("verify host Herdr before attach: %w", err)
 	}
-	if currentHost.version != connection.HerdrVersion || currentHost.runtimeVersion != connection.herdrRuntimeVersion || currentHost.protocol != connection.HerdrProtocol {
-		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `sandbox up` to reprovision the ready guest with the current host runtime", currentHost.version, currentHost.protocol, connection.HerdrVersion, connection.HerdrProtocol)
+	version, status, err := inspectHostHerdrClient(ctx, commandPath)
+	if err != nil {
+		return fmt.Errorf("verify host Herdr before attach: %w", err)
 	}
-	command := exec.CommandContext(ctx, currentHost.commandPath, "--remote", connection.SSHTarget)
+	if version != connection.HerdrVersion || status.Version != connection.herdrRuntimeVersion || status.Protocol != connection.HerdrProtocol {
+		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `sandbox up` to reprovision the ready guest with the current host runtime", version, status.Protocol, connection.HerdrVersion, connection.HerdrProtocol)
+	}
+	command := exec.CommandContext(ctx, commandPath, "--remote", connection.SSHTarget)
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -351,11 +358,7 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("attach to guest Herdr server: %w", err)
 	}
-	fmt.Fprintln(stdout, "Detached. Verifying that the guest Herdr server remains ready...")
-	if err := verifyGuestHerdr(ctx, connection); err != nil {
-		return fmt.Errorf("verify guest Herdr persistence after detach: %w", err)
-	}
-	fmt.Fprintln(stdout, "Guest Herdr server remains ready.")
+	fmt.Fprintln(stdout, "Detached.")
 	return nil
 }
 

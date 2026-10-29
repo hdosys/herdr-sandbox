@@ -96,30 +96,11 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr command is unsafe: %v", err)
 	}
-	cliVersion, err := inspectHostHerdrVersion(operationContext, commandPath)
+	cliVersion, status, err := inspectHostHerdrClient(operationContext, commandPath)
 	if err != nil {
-		return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr version could not be verified: %v", err)
-	}
-	if err := verifyHostHerdrRemoteCapability(operationContext, commandPath); err != nil {
 		return HostHerdr{}, err
 	}
-	statusCommand := hiddenCommandContext(operationContext, commandPath, "status", "client", "--json")
-	statusCommand.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
-	statusOutput, err := statusCommand.CombinedOutput()
-	if err != nil {
-		if remoteUnsupportedDiagnostic(statusOutput) {
-			return HostHerdr{}, hostHerdrCompatibilityError("the installed host Herdr build reports that remote use is unsupported: %s", boundedText(statusOutput))
-		}
-		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v: %s", err, boundedText(statusOutput))
-	}
-	status, err := parseHostHerdrClientStatus(statusOutput)
-	if err != nil {
-		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v", err)
-	}
-	runtimeExecutable, err := canonicalHostHerdrExecutable(status.Binary, "active host Herdr runtime")
-	if err != nil {
-		return HostHerdr{}, hostHerdrCompatibilityError("resolve the active host Herdr runtime: %v", err)
-	}
+	runtimeExecutable := status.Binary
 	runtimeFiles, err := inspectHostHerdrRuntimeFiles(runtimeExecutable)
 	if err != nil {
 		return HostHerdr{}, hostHerdrCompatibilityError("inspect the active host Herdr Windows runtime: %v", err)
@@ -145,6 +126,32 @@ func inspectCompatibleHostHerdr(ctx context.Context, commandPath string) (HostHe
 		return HostHerdr{}, hostHerdrCompatibilityError("validate the active host Herdr runtime: %v", err)
 	}
 	return host, nil
+}
+
+// inspectHostHerdrClient checks launch identity without provisioning probes or
+// hashing the distribution. Provisioning retains the full runtime fingerprint.
+func inspectHostHerdrClient(ctx context.Context, commandPath string) (string, hostHerdrClientStatus, error) {
+	ctx, cancel := context.WithTimeout(ctx, hostHerdrInspectionTimeout)
+	defer cancel()
+	version, err := inspectHostHerdrVersion(ctx, commandPath)
+	if err != nil {
+		return "", hostHerdrClientStatus{}, hostHerdrCompatibilityError("the installed host Herdr version could not be verified: %v", err)
+	}
+	command := hiddenCommandContext(ctx, commandPath, "status", "client", "--json")
+	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", hostHerdrClientStatus{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v: %s", err, boundedText(output))
+	}
+	status, err := parseHostHerdrClientStatus(output)
+	if err != nil {
+		return "", hostHerdrClientStatus{}, hostHerdrCompatibilityError("inspect the active host Herdr runtime: %v", err)
+	}
+	status.Binary, err = canonicalHostHerdrExecutable(status.Binary, "active host Herdr runtime")
+	if err != nil {
+		return "", hostHerdrClientStatus{}, hostHerdrCompatibilityError("resolve the active host Herdr runtime: %v", err)
+	}
+	return version, status, nil
 }
 
 func resolveInstalledHostHerdrCommand() (string, error) {
@@ -204,6 +211,8 @@ func inspectHostHerdrVersion(ctx context.Context, path string) (string, error) {
 }
 
 func verifyHostHerdrRemoteCapability(ctx context.Context, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, hostHerdrInspectionTimeout)
+	defer cancel()
 	remoteCommand := hiddenCommandContext(ctx, path, "--remote")
 	remoteCommand.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
 	output, err := remoteCommand.CombinedOutput()

@@ -93,9 +93,6 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 	if err := connection.validate(); err != nil {
 		return Connection{}, err
 	}
-	if err := verifySSH(ctx, connection); err != nil {
-		return Connection{}, err
-	}
 	if err := verifyGuestHerdr(ctx, connection); err != nil {
 		return Connection{}, err
 	}

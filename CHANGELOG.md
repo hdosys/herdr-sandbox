@@ -18,6 +18,13 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Detaching returns immediately without opening another SSH connection. Attachment
+  avoids redundant SSH and provisioning-capability probes while retaining live
+  host/guest identity checks.
+- Lifecycle cleanup collects the Sandbox process census and owned-process identity
+  together, reducing PowerShell launches while retaining both deletion-safety
+  checkpoints.
+
 - Independent development utilities and user/project scripts continue after a
   failed step. Once required connection and configuration checks pass, the
   Sandbox remains attachable for work and repairs while provisioning reports its

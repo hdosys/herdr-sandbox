@@ -639,21 +639,31 @@ func TestLoadActiveSessionRejectsUnknownAndTrailingJSON(t *testing.T) {
 	}
 }
 
-func TestParseRunningSandboxProcesses(t *testing.T) {
-	processes, err := parseRunningSandboxProcesses([]byte("WindowsSandbox:12:5\r\nWindowsSandboxClient:34:12\r\n"))
+func TestDecodeSandboxProcessInspection(t *testing.T) {
+	inspection, err := decodeSandboxProcessInspection([]byte(`{"processes":[{"name":"WindowsSandbox","pid":12,"parentPID":5},{"name":"WindowsSandboxClient","pid":34,"parentPID":12}],"snapshot":null}`), 0)
 	if err != nil {
-		t.Fatalf("parseRunningSandboxProcesses: %v", err)
+		t.Fatal(err)
 	}
+	processes := inspection.Processes
 	if len(processes) != 2 || processes[0].PID != 12 || processes[1].Name != "WindowsSandboxClient" || processes[1].ParentPID != 12 {
 		t.Fatalf("processes = %#v", processes)
 	}
-	for _, invalid := range []string{"other:12:5", "WindowsSandbox:0:5", "WindowsSandbox:not-a-pid:5", "WindowsSandbox:12:0", "WindowsSandbox:12"} {
-		if _, err := parseRunningSandboxProcesses([]byte(invalid)); err == nil {
+	for _, invalid := range []string{
+		`{"processes":[{"name":"other","pid":12,"parentPID":5}],"snapshot":null}`,
+		`{"processes":[{"name":"WindowsSandbox","pid":0,"parentPID":5}],"snapshot":null}`,
+		`{"processes":[{"name":"WindowsSandbox","pid":12}],"snapshot":null}`,
+		`{"processes":[],"snapshot":{"pid":12}}`,
+		`{"processes":[]}`,
+		`{"processes":null,"snapshot":null}`,
+		`{"processes":[],"snapshot":null,"snapshot":null}`,
+		`{"processes":[],"snapshot":null} {}`,
+	} {
+		if _, err := decodeSandboxProcessInspection([]byte(invalid), 12); err == nil {
 			t.Fatalf("invalid record unexpectedly parsed: %q", invalid)
 		}
 	}
-	if processes, err := parseRunningSandboxProcesses(nil); err != nil || len(processes) != 0 {
-		t.Fatalf("empty processes = %#v, %v", processes, err)
+	if inspection, err := decodeSandboxProcessInspection([]byte(`{"processes":[],"snapshot":null}`), 0); err != nil || len(inspection.Processes) != 0 {
+		t.Fatalf("empty inspection = %#v, %v", inspection, err)
 	}
 }
 
@@ -668,22 +678,41 @@ func TestInspectSandboxProcessReportsMissingPID(t *testing.T) {
 }
 
 func TestSandboxProcessInspectionHandlesProcessDisappearance(t *testing.T) {
-	script := sandboxProcessInspectionScript(1234)
-	for _, want := range []string{
-		"Get-CimInstance Win32_Process",
-		"$process = Get-Process -Id 1234 -ErrorAction Stop",
-		"if ($null -eq $process) {",
-		"$remaining = Get-CimInstance Win32_Process",
-		"if ($null -eq $remaining) { exit 3 }",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("process inspection script is missing %q: %s", want, script)
-		}
+	requireExternalBoundaryTest(t, "Windows process inspection")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows process boundary")
 	}
-	handleIndex := strings.Index(script, "$handle = $process.Handle")
-	startIndex := strings.Index(script, "$startedAtUTC = $process.StartTime")
-	if handleIndex < 0 || startIndex <= handleIndex {
-		t.Fatalf("process inspection must pin the process handle before reading StartTime: %s", script)
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stillRunning := range []string{"$false", "$true"} {
+		script := `$inspectPID = 1234; $includeRunning = $true; $script:calls = 0
+$stillRunning = ` + stillRunning + `
+function Get-CimInstance {
+    $script:calls++
+    if ($script:calls -eq 1 -or $stillRunning) {
+        [pscustomobject]@{ ProcessId = 1234; ParentProcessId = 12; Name = 'WindowsSandbox.exe' }
+    }
+}
+function Get-Process { throw 'inspection denied' }
+` + processInspectionScript
+		ctx, cancel := context.WithTimeout(context.Background(), sandboxProcessInspectionTimeout)
+		output, err := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script)).CombinedOutput()
+		cancel()
+		if stillRunning == "$true" {
+			if err == nil || !strings.Contains(string(output), "inspection denied") {
+				t.Fatalf("live process inspection failure was lost: %s, %v", output, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("disappeared process: %s, %v", output, err)
+		}
+		inspection, err := decodeSandboxProcessInspection(output, 1234)
+		if err != nil || inspection.Snapshot != nil || len(inspection.Processes) != 1 {
+			t.Fatalf("disappeared process must preserve the census for ownership validation: %#v, %v", inspection, err)
+		}
 	}
 }
 
@@ -695,6 +724,10 @@ func TestInspectSandboxProcessDecodesCurrentProcess(t *testing.T) {
 	snapshot, found, err := inspectSandboxProcess(context.Background(), os.Getpid())
 	if err != nil || !found || snapshot.PID != os.Getpid() || snapshot.Name == "" || snapshot.CommandLine == "" {
 		t.Fatalf("snapshot = %#v, found = %t, error = %v", snapshot, found, err)
+	}
+	inspection, err := inspectSandboxProcesses(context.Background(), os.Getpid(), true)
+	if err != nil || inspection.Snapshot == nil || *inspection.Snapshot != snapshot {
+		t.Fatalf("combined inspection changed the exact process identity: %#v, %v", inspection, err)
 	}
 }
 

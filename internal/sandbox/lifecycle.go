@@ -640,19 +640,21 @@ func inspectCleanupProtection(ctx context.Context, dataDirectory, executable str
 	if err != nil {
 		return cleanupProtection{}, err
 	}
-	processes, err := runningSandboxProcesses(ctx)
+	inspection, err := inspectSandboxProcesses(ctx, active.PID, true)
 	if err != nil {
 		return cleanupProtection{}, err
 	}
+	processes := inspection.Processes
 	if !found {
 		if len(processes) > 0 {
 			return cleanupProtection{}, fmt.Errorf("refusing to clean while unmanaged Windows Sandbox process(es) are running: %s", strings.Join(describeRunningSandboxProcesses(processes), ", "))
 		}
 		return cleanupProtection{SandboxGone: true}, nil
 	}
-	snapshot, running, err := inspectSandboxProcess(ctx, active.PID)
-	if err != nil {
-		return cleanupProtection{}, err
+	var snapshot sandboxProcessSnapshot
+	running := inspection.Snapshot != nil
+	if running {
+		snapshot = *inspection.Snapshot
 	}
 	if err := validateCleanupProcessOwnership(active, snapshot, running, processes); err != nil {
 		return cleanupProtection{}, err
@@ -1081,72 +1083,6 @@ func (active activeSession) matches(snapshot sandboxProcessSnapshot) error {
 		return errors.New("recorded Windows Sandbox process identity changed")
 	}
 	return nil
-}
-
-func inspectSandboxProcess(ctx context.Context, pid int) (sandboxProcessSnapshot, bool, error) {
-	powerShell, err := windowsPowerShellExecutable()
-	if err != nil {
-		return sandboxProcessSnapshot{}, false, err
-	}
-	inspectionContext, cancel := context.WithTimeout(ctx, sandboxProcessInspectionTimeout)
-	defer cancel()
-	script := sandboxProcessInspectionScript(pid)
-	command := hiddenCommandContext(inspectionContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
-	output, err := command.CombinedOutput()
-	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) && exitError.ExitCode() == 3 {
-			return sandboxProcessSnapshot{}, false, nil
-		}
-		return sandboxProcessSnapshot{}, false, fmt.Errorf("inspect Windows Sandbox process %d: %w: %s", pid, err, boundedText(output))
-	}
-	var snapshot sandboxProcessSnapshot
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&snapshot); err != nil {
-		return sandboxProcessSnapshot{}, false, fmt.Errorf("decode Windows Sandbox process %d: %w", pid, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return sandboxProcessSnapshot{}, false, fmt.Errorf("decode Windows Sandbox process %d: trailing JSON data", pid)
-	}
-	if snapshot.PID < 1 || snapshot.Name == "" || snapshot.ExecutablePath == "" || snapshot.StartedAtUTC == "" || snapshot.CommandLine == "" {
-		return sandboxProcessSnapshot{}, false, fmt.Errorf("inspect Windows Sandbox process %d: incomplete identity", pid)
-	}
-	return snapshot, true, nil
-}
-
-func sandboxProcessInspectionScript(pid int) string {
-	return fmt.Sprintf(`$ProgressPreference = 'SilentlyContinue'
-$item = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
-if ($null -eq $item) { exit 3 }
-try {
-    $process = Get-Process -Id %d -ErrorAction Stop
-} catch {
-    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
-    if ($null -eq $remaining) { exit 3 }
-    throw
-}
-if ($null -eq $process) {
-    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
-    if ($null -eq $remaining) { exit 3 }
-    throw 'Get-Process returned no process while CIM still reports the requested PID.'
-}
-try {
-    $handle = $process.Handle
-    $startedAtUTC = $process.StartTime.ToUniversalTime().ToString('O')
-} catch {
-    $remaining = Get-CimInstance Win32_Process -Filter 'ProcessId = %d' -ErrorAction Stop
-    if ($null -eq $remaining) { exit 3 }
-    throw
-}
-$process.Dispose()
-[ordered]@{
-    pid = [int]$item.ProcessId
-    name = [string]$item.Name
-    executablePath = [string]$item.ExecutablePath
-    startedAtUTC = $startedAtUTC
-    commandLine = [string]$item.CommandLine
-} | ConvertTo-Json -Compress`, pid, pid, pid, pid, pid)
 }
 
 func stopOwnedSandboxProcess(ctx context.Context, active activeSession) (bool, error) {

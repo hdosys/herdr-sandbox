@@ -88,6 +88,7 @@ func TestResolveHostHerdrUsesReportedPhysicalRuntime(t *testing.T) {
 		t.Skip("Windows executable fixture")
 	}
 	commandPath, runtimePath := prepareHostHerdrFixture(t)
+	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "provisioning must not be probed while resolving an attach identity")
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr: %v", err)
@@ -114,6 +115,10 @@ func TestResolveHostHerdrUsesReportedPhysicalRuntime(t *testing.T) {
 	}
 	if host.version != "herdr-ext local (Herdr 0.8.0, build 346411fa21af.f32339bad77e)" || host.runtimeVersion != "0.8.0-preview.346411fa21af.f32339bad77e" || host.protocol != 42 || len(host.commandSHA256) != 64 || host.commandSize <= 0 || len(host.files) != len(hostHerdrRuntimeLayout) {
 		t.Fatalf("host identity = %#v", host)
+	}
+	version, status, err := inspectHostHerdrClient(context.Background(), commandPath)
+	if err != nil || version != host.version || status.Version != host.runtimeVersion || status.Protocol != host.protocol {
+		t.Fatalf("attach identity = %q, %#v, %v", version, status, err)
 	}
 }
 
@@ -145,19 +150,19 @@ func TestResolveHostHerdrAcceptsMarkerOutsideVersionPrefix(t *testing.T) {
 	}
 }
 
-func TestResolveHostHerdrRejectsUnsupportedCaseInsensitivelyWithCapabilityAction(t *testing.T) {
+func TestProvisioningCapabilityRejectsUnsupportedWithAction(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
-	prepareHostHerdrFixture(t)
+	commandPath, _ := prepareHostHerdrFixture(t)
 	t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", "Remote mode is UnSuPpOrTeD on this Windows build")
-	_, err := ResolveHostHerdr(context.Background())
+	err := verifyHostHerdrRemoteCapability(context.Background(), commandPath)
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported") || !strings.Contains(err.Error(), hostHerdrCompatibilityAction) {
 		t.Fatalf("unsupported remote error = %v", err)
 	}
 }
 
-func TestResolveHostHerdrRejectsUnexpectedRemoteCapabilityFailures(t *testing.T) {
+func TestProvisioningCapabilityRejectsUnexpectedFailures(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows executable fixture")
 	}
@@ -175,10 +180,10 @@ func TestResolveHostHerdrRejectsUnexpectedRemoteCapabilityFailures(t *testing.T)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			prepareHostHerdrFixture(t)
+			commandPath, _ := prepareHostHerdrFixture(t)
 			t.Setenv("HERDR_SANDBOX_TEST_HOST_HERDR_REMOTE", test.diagnostic)
 			t.Setenv(hostHerdrRemoteExitCodeEnvironment, test.exitCode)
-			_, err := ResolveHostHerdr(context.Background())
+			err := verifyHostHerdrRemoteCapability(context.Background(), commandPath)
 			if err == nil || !strings.Contains(err.Error(), hostHerdrCompatibilityAction) {
 				t.Fatalf("unexpected remote capability error = %v", err)
 			}
@@ -243,6 +248,13 @@ func TestResolveHostHerdrAgainstInstalledRuntime(t *testing.T) {
 	host, err := ResolveHostHerdr(context.Background())
 	if err != nil {
 		t.Fatalf("ResolveHostHerdr installed boundary: %v", err)
+	}
+	version, client, err := inspectHostHerdrClient(context.Background(), host.commandPath)
+	if err != nil || version != host.version || client.Version != host.runtimeVersion || client.Protocol != host.protocol {
+		t.Fatalf("attach identity = %q, %#v, %v", version, client, err)
+	}
+	if err := verifyHostHerdrRemoteCapability(context.Background(), host.commandPath); err != nil {
+		t.Fatalf("provisioning capability: %v", err)
 	}
 	t.Logf("resolved %s protocol %d from %s", host.version, host.protocol, host.runtimeExecutable)
 }

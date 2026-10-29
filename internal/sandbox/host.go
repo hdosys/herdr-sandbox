@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -101,57 +100,14 @@ func ensureNoRunningSandbox(ctx context.Context) error {
 }
 
 type runningSandboxProcess struct {
-	Name      string
-	PID       int
-	ParentPID int
+	Name      string `json:"name"`
+	PID       int    `json:"pid"`
+	ParentPID int    `json:"parentPID"`
 }
 
 func runningSandboxProcesses(ctx context.Context) ([]runningSandboxProcess, error) {
-	powerShell, err := windowsPowerShellExecutable()
-	if err != nil {
-		return nil, err
-	}
-	inspectionContext, cancel := context.WithTimeout(ctx, sandboxProcessInspectionTimeout)
-	defer cancel()
-	script := `$processes = @(Get-CimInstance Win32_Process -Filter "Name = 'WindowsSandbox.exe' OR Name = 'WindowsSandboxClient.exe'" -ErrorAction Stop)
-$processes | ForEach-Object {
-    $name = [IO.Path]::GetFileNameWithoutExtension([string]$_.Name)
-    '{0}:{1}:{2}' -f $name,$_.ProcessId,$_.ParentProcessId
-}`
-	command := hiddenCommandContext(inspectionContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("check for an existing Windows Sandbox: %w: %s", err, boundedText(output))
-	}
-	return parseRunningSandboxProcesses(output)
-}
-
-func parseRunningSandboxProcesses(output []byte) ([]runningSandboxProcess, error) {
-	text := strings.ReplaceAll(strings.TrimSpace(string(output)), "\r\n", "\n")
-	if text == "" {
-		return nil, nil
-	}
-	lines := strings.Split(text, "\n")
-	if len(lines) > 8 {
-		return nil, fmt.Errorf("check for an existing Windows Sandbox: unexpected process count %d", len(lines))
-	}
-	processes := make([]runningSandboxProcess, 0, len(lines))
-	for _, line := range lines {
-		fields := strings.Split(strings.TrimSpace(line), ":")
-		if len(fields) != 3 || (fields[0] != "WindowsSandbox" && fields[0] != "WindowsSandboxClient") {
-			return nil, fmt.Errorf("check for an existing Windows Sandbox: unexpected process record %q", line)
-		}
-		pid, err := strconv.Atoi(fields[1])
-		if err != nil || pid < 1 {
-			return nil, fmt.Errorf("check for an existing Windows Sandbox: invalid process record %q", line)
-		}
-		parentPID, err := strconv.Atoi(fields[2])
-		if err != nil || parentPID < 1 {
-			return nil, fmt.Errorf("check for an existing Windows Sandbox: invalid parent process record %q", line)
-		}
-		processes = append(processes, runningSandboxProcess{Name: fields[0], PID: pid, ParentPID: parentPID})
-	}
-	return processes, nil
+	inspection, err := inspectSandboxProcesses(ctx, 0, true)
+	return inspection.Processes, err
 }
 
 func windowsPowerShellExecutable() (string, error) {
