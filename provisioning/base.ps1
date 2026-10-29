@@ -1147,12 +1147,14 @@ function Get-ProvisioningSafeCacheName {
     return $safe
 }
 
-function Test-ProvisioningPackageCacheEntry {
+function Copy-ProvisioningCachedPackage {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Directory,
         [Parameter(Mandatory = $true)]
-        [object]$Metadata
+        [object]$Metadata,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
     )
 
     try {
@@ -1196,11 +1198,14 @@ function Test-ProvisioningPackageCacheEntry {
             [string]$descriptor.payloadName -cne $Metadata.PayloadName) {
             return $false
         }
-        $actualHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToUpperInvariant()
-        return $actualHash -ceq $Metadata.Sha256
     } catch {
         return $false
     }
+    # Verify only the copy we will execute. A corrupt cache entry remains a miss;
+    # copy/read failures stay terminal rather than being hidden by a new download.
+    Copy-Item -LiteralPath $payloadPath -Destination $Destination -Force
+    $actualHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToUpperInvariant()
+    return $actualHash -ceq $Metadata.Sha256
 }
 
 function Copy-ProvisioningPackageToGuest {
@@ -1294,9 +1299,6 @@ function Publish-ProvisioningPackageCacheEntry {
             payloadName = $Metadata.PayloadName
         } | ConvertTo-Json -Compress
         [IO.File]::WriteAllText((Join-Path $staging 'complete.json'), $descriptor, (New-Object Text.UTF8Encoding($false)))
-        if (-not (Test-ProvisioningPackageCacheEntry -Directory $staging -Metadata $Metadata)) {
-            throw "Staged package cache validation failed: $staging"
-        }
         if (Test-Path -LiteralPath $EntryDirectory) {
             Assert-ProvisioningCachePath -Path $EntryDirectory
             $displaced = Join-Path $PackageRoot ('.invalid-' + [Guid]::NewGuid().ToString('N'))
@@ -1321,9 +1323,6 @@ function Publish-ProvisioningPackageCacheEntry {
                 Write-Warning "Package cache rollback also failed: $($rollbackFailure.Exception.Message)"
             }
             throw $promotionFailure
-        }
-        if (-not (Test-ProvisioningPackageCacheEntry -Directory $EntryDirectory -Metadata $Metadata)) {
-            throw "Published package cache validation failed: $EntryDirectory"
         }
         $promotionSucceeded = $true
     } catch {
@@ -2035,11 +2034,10 @@ function Install-ProvisioningCachedPackage {
         if (Test-Path -LiteralPath $entryDirectory) {
             Assert-ProvisioningCachePath -Path $entryDirectory
         }
-        $cacheHit = Test-ProvisioningPackageCacheEntry -Directory $entryDirectory -Metadata $metadata
+        $cacheHit = Copy-ProvisioningCachedPackage -Directory $entryDirectory -Metadata $metadata `
+            -Destination $guestPayload
         if ($cacheHit) {
             Write-Output "$Role package cache hit: $($metadata.Version)"
-            Copy-ProvisioningPackageToGuest -Source (Join-Path $entryDirectory $metadata.PayloadName) `
-                -Destination $guestPayload -ExpectedSHA256 $metadata.Sha256
         } else {
             Write-Output "$Role package cache miss: $($metadata.Version)"
             if ($DownloadSource -eq 'WinGet') {

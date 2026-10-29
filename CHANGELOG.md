@@ -28,6 +28,9 @@ represent failed tag attempts; this changelog does not recreate them.
 - Cached WinGet downloads no longer pass through a second manifest parser or
   duplicate download-file hash check. The executable copy and persistent cache
   remain bound to the resolved WinGet SHA-256.
+- Package-cache reuse hashes only the completed guest-local copy. Publishing
+  verifies the new cache copy once instead of rehashing it around the rename.
+  Persistent redeployment caching and repair of corrupt entries remain intact.
 - Detaching returns immediately without opening another SSH connection. Attachment
   avoids redundant SSH and provisioning-capability probes while retaining live
   host/guest identity checks.

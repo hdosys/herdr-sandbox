@@ -1400,11 +1400,10 @@ function Install-StackAndroidDirectArchive {
         if (Test-Path -LiteralPath $entryDirectory) {
             Assert-ProvisioningCachePath -Path $entryDirectory
         }
-        $cacheHit = Test-ProvisioningPackageCacheEntry -Directory $entryDirectory -Metadata $Metadata
+        $cacheHit = Copy-ProvisioningCachedPackage -Directory $entryDirectory -Metadata $Metadata `
+            -Destination $guestPayload
         if ($cacheHit) {
             Write-Output "$Role package cache hit: $($Metadata.Version)"
-            Copy-ProvisioningPackageToGuest -Source (Join-Path $entryDirectory $Metadata.PayloadName) `
-                -Destination $guestPayload -ExpectedSHA256 $Metadata.Sha256
         } else {
             Write-Output "$Role package cache miss: $($Metadata.Version)"
             Get-ProvisioningDirectPackage -Role $Role -Metadata $Metadata -GuestPayloadPath $guestPayload
