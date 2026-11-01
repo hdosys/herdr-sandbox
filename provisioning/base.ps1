@@ -312,7 +312,7 @@ function Read-ProvisioningPackagePlan {
         $plan.schemaVersion -isnot [int] -or $plan.windowsTerminalEdition -isnot [string] -or
         [int]$plan.schemaVersion -ne 1 -or
         [string]$plan.windowsTerminalEdition -notin @('stable', 'preview') -or
-        $defaults.Count -eq 0 -or $defaults.Count -gt 14 -or $additions.Count -gt 64) {
+        $defaults.Count -eq 0 -or $defaults.Count -gt 15 -or $additions.Count -gt 64) {
         throw 'WinGet package plan has an unsupported contract.'
     }
     $known = @{}
@@ -328,6 +328,7 @@ function Read-ProvisioningPackagePlan {
         'Tailscale.Tailscale',
         'WinDirStat.WinDirStat',
         'Voidstar.FilePilot',
+        'ZedIndustries.Zed',
         'Microsoft.UI.Xaml.2.8',
         'Microsoft.WindowsTerminal',
         'Microsoft.WindowsTerminal.Preview'
@@ -2155,6 +2156,16 @@ function Install-ProvisioningGeistMonoNerdFont {
         -DownloadSource 'Direct' -Adapter 'GeistMonoFont'
 }
 
+function Install-ProvisioningZed {
+    Write-Output 'Installing Zed...'
+    Install-ProvisioningWinGetPackage -Role 'Zed' -Id 'ZedIndustries.Zed' `
+        -Version (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed') `
+        -InstallerType 'inno' -Scope 'user' -Adapter 'Inno' -ExecutableName 'zed.exe'
+    $zedVersion = Assert-ProvisioningCommand -Role 'Zed' -Name 'zed.exe' `
+        -VersionArguments @('--version') -ExpectedPattern '^Zed \d+\.\d+\.\d+'
+    Write-Output "Zed ready: $zedVersion"
+}
+
 function Install-ProvisioningOpenSrc {
     $metadata = Get-ProvisioningGitHubLatestAssetMetadata -Role 'opensrc' `
         -Repository 'vercel-labs/opensrc' -AssetName 'opensrc-win32-x64.exe' -Id 'vercel-labs.opensrc' `
@@ -3652,6 +3663,12 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
     $openCodeVersion = Assert-ProvisioningCommand -Role 'OpenCode' -Name 'opencode.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
     Write-Output "OpenCode ready: $openCodeVersion"
+}
+
+if (Test-ProvisioningPackageEnabled -Id 'ZedIndustries.Zed') {
+    Invoke-ProvisioningIndependentStep -Name 'Zed' -Failures $DevelopmentFailures -Action {
+        Install-ProvisioningZed
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {

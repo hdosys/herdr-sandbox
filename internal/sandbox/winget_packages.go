@@ -29,6 +29,7 @@ const (
 	packageVulkanRuntime   = "KhronosGroup.VulkanRT"
 	packageWinDirStat      = "WinDirStat.WinDirStat"
 	packageFilePilot       = "Voidstar.FilePilot"
+	packageZed             = "ZedIndustries.Zed"
 	packageFFmpeg          = "Gyan.FFmpeg"
 	packageTerminalXAML    = "Microsoft.UI.Xaml.2.8"
 	packageTerminalStable  = "Microsoft.WindowsTerminal"
@@ -55,6 +56,7 @@ var basePackageIDs = []string{
 	packageTailscale,
 	packageWinDirStat,
 	packageFilePilot,
+	packageZed,
 	packageTerminalXAML,
 	packageTerminalStable,
 	packageTerminalPreview,
@@ -122,6 +124,7 @@ func resolveWingetPackagePlan(configuration wingetPackageConfiguration, terminal
 		packageTailscale,
 		packageWinDirStat,
 		packageFilePilot,
+		packageZed,
 		packageTerminalXAML,
 		terminalID,
 	} {

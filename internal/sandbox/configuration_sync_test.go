@@ -44,6 +44,14 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	writeTestFile(t, filepath.Join(githubCLI, "config.yml"), "git_protocol: https\n")
 	writeTestFile(t, filepath.Join(githubCLI, "hosts.yml"), "github.com:\n  user: fixture\n")
 	writeTestFile(t, filepath.Join(githubCLI, "extensions", "excluded.yml"), "excluded")
+	zed := filepath.Join(root, "Zed")
+	for _, name := range []string{"settings.json", "keymap.json", "tasks.json", "snippets/go.json", "themes/custom.json", "db/state.json", "extensions/installed.json", "conversations/private.json", "credentials.json", "snippets/backup.txt"} {
+		path := filepath.Join(zed, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, path, "// keep JSONC comments\n{}\n")
+	}
 	githubAuthentication := []byte(`{"schemaVersion":1,"accounts":[{"hostname":"github.com","login":"fixture","active":true,"gitProtocol":"https","token":"fixture-token"}]}`)
 	herdrConfigDirectory := filepath.Join(root, "herdr")
 	if err := os.MkdirAll(filepath.Join(herdrConfigDirectory, "nested"), 0o700); err != nil {
@@ -80,6 +88,7 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitConfig:               gitConfig,
 		GitHubCLIConfiguration:  githubCLI,
+		ZedConfiguration:        zed,
 		GitHubCLIAuthentication: githubAuthentication,
 		CodingAgents: codingAgentConfigurationSources{
 			Selection:              defaultCodingAgentSyncConfiguration(),
@@ -180,12 +189,22 @@ func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *t
 	if entries["github-cli/extensions/excluded.yml"] {
 		t.Fatal("archive contains GitHub CLI extensions")
 	}
+	for _, name := range []string{"settings.json", "keymap.json", "tasks.json", "snippets/go.json", "themes/custom.json"} {
+		if !entries["zed/"+name] {
+			t.Fatalf("archive is missing Zed configuration %s", name)
+		}
+	}
+	for _, name := range []string{"db/state.json", "extensions/installed.json", "conversations/private.json", "credentials.json", "snippets/backup.txt"} {
+		if entries["zed/"+name] {
+			t.Fatalf("archive contains excluded Zed state %s", name)
+		}
+	}
 	for _, excluded := range []string{"herdr/keys.toml", "herdr/herdr-client.log", "herdr/nested/excluded.toml"} {
 		if entries[excluded] {
 			t.Fatalf("archive contains excluded Herdr state %s", excluded)
 		}
 	}
-	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != 11 {
+	if count, err := configurationArchivePayloadFileCount(data); err != nil || count != 16 {
 		t.Fatalf("payload file count = %d, err = %v", count, err)
 	}
 	var patched map[string]any
@@ -400,7 +419,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	t.Setenv("GH_CONFIG_DIR", "relative-must-not-be-read")
 	terminal := testStableWindowsTerminalConfiguration()
 	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{
-		Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageTerminalStable},
+		Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageTerminalStable, packageZed},
 		Add:    []string{}, Versions: map[string]string{},
 	}, terminal)
 	if err != nil {
@@ -410,7 +429,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disabled integrations triggered host discovery: %v", err)
 	}
-	if sources.GitConfig != "" || sources.GitHubCLIConfiguration != "" || sources.CodingAgents.OpenCodeDirectory != "" ||
+	if sources.GitConfig != "" || sources.GitHubCLIConfiguration != "" || sources.ZedConfiguration != "" || sources.CodingAgents.OpenCodeDirectory != "" ||
 		sources.StarshipPreset != "" || sources.WindowsTerminalEdition != "" {
 		t.Fatalf("disabled integration sources = %#v", sources)
 	}
@@ -440,7 +459,7 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 		entries[file.Name] = true
 	}
 	for _, forbidden := range []string{
-		"git/.gitconfig", "github-cli/config.yml", "opencode/opencode.json",
+		"git/.gitconfig", "github-cli/config.yml", "opencode/opencode.json", "zed/settings.json",
 		windowsTerminalEditionArchivePath, starshipPresetArchivePath, configurationWorkspaceManifestPath,
 	} {
 		if entries[forbidden] {
@@ -701,6 +720,7 @@ func TestBuildDevelopmentConfigurationArchiveAllowsMissingGitConfiguration(t *te
 
 	data, err := buildDevelopmentConfigurationArchive(context.Background(), hostConfigurationSources{
 		GitConfig:          filepath.Join(root, "missing", ".gitconfig"),
+		ZedConfiguration:   filepath.Join(root, "missing", "Zed"),
 		GitConfigDirectory: filepath.Join(root, "missing", "config", "git"),
 		GitIgnore:          filepath.Join(root, "missing", ".gitignore_global"),
 		GitAttributes:      filepath.Join(root, "missing", ".gitattributes"),

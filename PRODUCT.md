@@ -165,6 +165,21 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 
 ### Configuration and credential sync
 
+- Zed (`ZedIndustries.Zed`) is a removable Base default. Provisioning resolves the
+  current stable user-scope package and verifies `zed --version` without opening
+  the editor. Each `up` copies host `%APPDATA%\Zed\settings.json`, `keymap.json`,
+  `tasks.json`, and JSON files under `snippets` and `themes` to the same guest
+  configuration root over verified SSH. Missing files are skipped; guest-only
+  files remain. JSONC comments and user settings are preserved byte-for-byte,
+  including host-specific paths that may need manual adjustment. Sessions,
+  databases, logs, installed extensions, Git metadata, and credential stores are
+  not copied. Secrets explicitly embedded in these authored settings travel with
+  the settings; no credential-store discovery or login is performed. Removing
+  `ZedIndustries.Zed` through `wingetPackages.remove` disables installation and
+  configuration discovery/transfer. The selected host Zed root also participates
+  in the existing optional host-configuration Git pulls, only when it is itself a
+  physical repository. Custom `--user-data-dir` profiles are not discovered.
+
 - Herdr's portable settings come from its selected host configuration, including `HERDR_CONFIG_PATH`. Explicit `sandbox up` adopts those settings for new and retained guests through Herdr's remote `--provision --overwrite-config` operation; ordinary `sandbox attach` and reconnects neither transfer configuration nor ask configuration questions. The dedicated flag, not general `--yes`, authorizes replacement of changed existing settings. Semantically unchanged settings are not rewritten. Sandbox uses the host configuration only to select the guest shell; it does not copy the full Herdr file or duplicate Herdr's merge rules. Tab-bar status commands and text are transferable; machine-local keybinding commands, agent arguments, working directories, and sound paths remain guest-owned. Agent configuration and explicitly enabled credentials continue through Sandbox's separate transfer. Missing host Herdr configuration leaves portable guest settings unchanged.
 
 - After guest verification, `up` reports each enabled credential provider as transferred and verified or skipped with a non-secret reason; it never prints credential paths or values.

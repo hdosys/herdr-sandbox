@@ -14,6 +14,7 @@ func TestHostConfigurationGitRootsUseOnlyExplicitTransferredRoots(t *testing.T) 
 		GitConfig:                filepath.Join(`C:\home`, ".gitconfig"),
 		GitConfigDirectory:       filepath.Join(`C:\home`, ".config", "git"),
 		GitHubCLIConfiguration:   filepath.Join(`C:\config`, "gh"),
+		ZedConfiguration:         filepath.Join(`C:\config`, "Zed"),
 		WindowsTerminalSettings:  filepath.Join(`C:\terminal`, "settings.json"),
 		WindowsTerminalFragments: filepath.Join(`C:\terminal`, "Fragments"),
 		CodingAgents: codingAgentConfigurationSources{
@@ -34,6 +35,7 @@ func TestHostConfigurationGitRootsUseOnlyExplicitTransferredRoots(t *testing.T) 
 		"shared agent skills":        filepath.Join(`C:\home`, ".agents", "skills"),
 		"Git configuration":          filepath.Join(`C:\home`, ".config", "git"),
 		"GitHub CLI configuration":   filepath.Join(`C:\config`, "gh"),
+		"Zed configuration":          filepath.Join(`C:\config`, "Zed"),
 		"Windows Terminal settings":  `C:\terminal`,
 		"Windows Terminal fragments": filepath.Join(`C:\terminal`, "Fragments"),
 	}

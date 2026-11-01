@@ -1104,6 +1104,11 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         }
     }
 
+    if ($enabledPackages.ContainsKey('ZedIndustries.Zed')) {
+        [Console]::Error.WriteLine('[config-sync] apply-zed')
+        Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'zed') -Destination (Join-Path $env:APPDATA 'Zed')
+    }
+
     if ($githubCLIEnabled) {
     [Console]::Error.WriteLine('[config-sync] apply-github-cli')
     $githubCLISource = Join-Path $expanded 'github-cli'

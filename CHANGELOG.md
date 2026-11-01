@@ -5,6 +5,15 @@ Notable user-visible changes are recorded here. Only published
 artifacts and exact publication times. Gaps between release identifiers may
 represent failed tag attempts; this changelog does not recreate them.
 
+## Unreleased
+
+### Added
+
+- Zed is provisioned by default and receives host settings, keybindings, tasks,
+  snippets, and themes on `sandbox up`. Its runtime state and credential stores
+  remain separate. Removing `ZedIndustries.Zed` from the Base package set disables
+  both provisioning and configuration transfer.
+
 ## v0.0.27
 
 ### Fixed

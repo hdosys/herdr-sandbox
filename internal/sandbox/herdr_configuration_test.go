@@ -218,7 +218,7 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 // This executes the production archive, launcher and apply script together.
 // Optional tools are absent from the child PATH, and every destination is a
 // synthetic profile. It covers metadata/count drift missed by helper tests.
-func TestHerdrConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
+func TestHerdrAndZedConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
 	requireExternalBoundaryTest(t, "isolated configuration archive application")
 	root := t.TempDir()
 	guestRoot := filepath.Join(root, "guest")
@@ -249,13 +249,26 @@ func TestHerdrConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
 	hostConfig := filepath.Join(root, "host.toml")
 	writeTestFile(t, hostConfig, "[terminal]\n'default_shell' = 'nu'\n[theme]\nname = 'host-only'\n")
 	writeTestFile(t, config, "['terminal']\n'default_shell' = 'old'\n[agent]\nargs = ['guest-only']\n")
+	zedHost := filepath.Join(root, "host-zed")
+	zedGuest := filepath.Join(appData, "Zed")
+	for _, directory := range []string{zedHost, filepath.Join(zedHost, "snippets"), filepath.Join(zedHost, "themes"), zedGuest} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(zedGuest, "guest-only.json"), "preserve")
+	writeTestFile(t, filepath.Join(zedHost, "credentials.json"), "do not transfer")
 	for attempt := range 2 {
+		zedContents := fmt.Sprintf("// JSONC stays unchanged\n{\"buffer_font_size\":%d}\n", 14+attempt)
+		for _, name := range []string{"settings.json", "keymap.json", "tasks.json", "snippets/go.json", "themes/custom.json"} {
+			writeTestFile(t, filepath.Join(zedHost, filepath.FromSlash(name)), zedContents)
+		}
 		snapshot, err := os.ReadFile(config)
 		if err != nil {
 			t.Fatal(err)
 		}
 		archive, err := buildDevelopmentConfigurationArchive(t.Context(), hostConfigurationSources{
-			HerdrConfig: hostConfig, GuestHerdrConfig: snapshot, PackagePlan: planPath,
+			HerdrConfig: hostConfig, GuestHerdrConfig: snapshot, PackagePlan: planPath, ZedConfiguration: zedHost,
 		}, configurationSyncScript)
 		if err != nil {
 			t.Fatal(err)
@@ -287,6 +300,18 @@ func TestHerdrConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
 		actual, err := os.ReadFile(config)
 		if err != nil || !bytes.Contains(actual, []byte("nu.exe")) || !bytes.Contains(actual, []byte("guest-only")) || bytes.Contains(actual, []byte("host-only")) {
 			t.Fatalf("guest configuration was not preserved: %q, %v", actual, err)
+		}
+		for _, name := range []string{"settings.json", "keymap.json", "tasks.json", "snippets/go.json", "themes/custom.json"} {
+			actual, err := os.ReadFile(filepath.Join(zedGuest, filepath.FromSlash(name)))
+			if err != nil || string(actual) != zedContents {
+				t.Fatalf("Zed configuration %s differs after sync %d: %v", name, attempt, err)
+			}
+		}
+		if actual, err := os.ReadFile(filepath.Join(zedGuest, "guest-only.json")); err != nil || string(actual) != "preserve" {
+			t.Fatalf("Zed guest-only state was changed: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(zedGuest, "credentials.json")); !os.IsNotExist(err) {
+			t.Fatalf("Zed credentials unexpectedly transferred: %v", err)
 		}
 	}
 }

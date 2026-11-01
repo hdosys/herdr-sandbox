@@ -16,7 +16,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	for _, id := range []string{
 		packagePowerShell, packageNushell, packageStarship, packageFZF, packageRipgrep, packageGit,
 		packageActionlint, packageGitHubCLI, packageTailscale, packageWinDirStat, packageFilePilot,
-		packageTerminalXAML, packageTerminalStable,
+		packageTerminalXAML, packageTerminalStable, packageZed,
 	} {
 		if !defaults.enabled(id) {
 			t.Fatalf("default plan is missing %s: %#v", id, defaults)
@@ -35,7 +35,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	}
 
 	configuration := wingetPackageConfiguration{
-		Remove: []string{packageTailscale, packageTerminalStable},
+		Remove: []string{packageTailscale, packageTerminalStable, packageZed},
 		Add:    []string{"7zip.7zip"},
 		Versions: map[string]string{
 			packageGit:  "2.55.0",
@@ -46,7 +46,7 @@ func TestResolveWingetPackagePlanDefaultsAndCustomization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve customization: %v", err)
 	}
-	for _, id := range []string{packageTailscale, packageTerminalXAML, packageTerminalStable} {
+	for _, id := range []string{packageTailscale, packageTerminalXAML, packageTerminalStable, packageZed} {
 		if custom.enabled(id) {
 			t.Fatalf("custom plan unexpectedly retained %s", id)
 		}

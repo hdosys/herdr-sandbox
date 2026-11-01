@@ -116,6 +116,7 @@ func hostConfigurationGitRoots(sources hostConfigurationSources) []hostConfigura
 		{Name: "shared agent skills", Directory: sources.CodingAgents.SharedSkillsDirectory},
 		{Name: "Git configuration", Directory: sources.GitConfigDirectory},
 		{Name: "GitHub CLI configuration", Directory: sources.GitHubCLIConfiguration},
+		{Name: "Zed configuration", Directory: sources.ZedConfiguration},
 		{Name: "Windows Terminal settings", Directory: configurationFileRoot(sources.WindowsTerminalSettings)},
 		{Name: "Windows Terminal fragments", Directory: sources.WindowsTerminalFragments},
 	}

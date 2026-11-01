@@ -309,6 +309,7 @@ type hostConfigurationSources struct {
 	GitIgnore                 string
 	GitAttributes             string
 	GitHubCLIConfiguration    string
+	ZedConfiguration          string
 	GitHubCLIAuthentication   []byte
 	TradingViewProfile        string
 	TradingViewAuthentication []byte
@@ -875,6 +876,9 @@ func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, pack
 		return hostConfigurationSources{}, fmt.Errorf("resolve host Herdr configuration: %w", err)
 	}
 	sources := hostConfigurationSources{HerdrConfig: herdrConfig}
+	if packages.enabled(packageZed) {
+		sources.ZedConfiguration = filepath.Join(roamingAppData, "Zed")
+	}
 	if tradingViewEnabled {
 		sources.TradingViewProfile, err = defaultTradingViewProfilePath()
 		if err != nil {
@@ -1097,6 +1101,11 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 		}
 	}
 
+	if sources.ZedConfiguration != "" {
+		if err := addZedConfiguration(sources.ZedConfiguration, add); err != nil {
+			return nil, fmt.Errorf("archive Zed configuration: %w", err)
+		}
+	}
 	if sources.GitHubCLIConfiguration != "" {
 		configPath := filepath.Join(sources.GitHubCLIConfiguration, "config.yml")
 		if err := add(configPath, filepath.Join("github-cli", "config.yml")); err != nil && !errors.Is(err, os.ErrNotExist) {

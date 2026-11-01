@@ -343,6 +343,18 @@ The first C/C++, Rust/MSVC, or Handy run may briefly show Microsoft Visual Studi
 Installer while Herdr Sandbox prepares a verified Build Tools layout in its cache.
 Nothing is installed into the host development environment.
 
+### Zed editor and settings
+
+Zed is installed by default. Each `sandbox up` copies `settings.json`,
+`keymap.json`, `tasks.json`, and JSON snippets/themes from the host's
+`%APPDATA%\Zed` into the guest. Missing host files are skipped and guest-only
+files are preserved. Sessions, installed extensions, and credential stores are
+not copied. Settings retain comments and values, so adjust host-only paths when
+needed and review any secrets embedded in settings before transfer.
+
+To disable both installation and sync, add `ZedIndustries.Zed` to
+`wingetPackages.remove`. Custom `--user-data-dir` profiles are not discovered.
+
 ### Herdr settings
 
 Herdr Extended transfers portable settings from its selected host configuration,
