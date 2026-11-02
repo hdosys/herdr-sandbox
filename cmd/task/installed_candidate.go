@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,7 +47,7 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := currentSandboxProvisioningPreflight(ctx, stdout, stderr); err != nil {
 		return err
 	}
-	retained := map[string]bool{canonicalLocalInstallerName: true}
+	retained := map[string]bool{canonicalLocalInstallerName: true, canonicalLocalEvidenceName: true}
 	if err := cleanBuildOutputs(".", retained); err != nil {
 		return err
 	}
@@ -81,16 +82,22 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	evidence, err := readLocalInstallerEvidence(".", version)
+	if err != nil {
+		return err
+	}
+	if err := validateLocalInstallerSource(ctx, evidence.Identity.Revision); err != nil {
+		return err
+	}
 	revision, err := sourceRevision(ctx)
 	if err != nil {
-		return fmt.Errorf("resolve installed-candidate source revision: %w", err)
+		return err
 	}
 	if err := validateWingetManifestProductCodes(); err != nil {
 		return err
 	}
-	freshness := productidentity.FormatBuildFreshness(time.Now())
-	identity := buildIdentity{Version: version.Display, Revision: revision, Freshness: freshness}
-	predecessorIdentity := buildIdentity{Version: predecessorVersion.Display, Revision: revision, Freshness: freshness}
+	identity := evidence.Identity
+	predecessorIdentity := buildIdentity{Version: predecessorVersion.Display, Revision: revision, Freshness: identity.Freshness}
 	predecessorRoot, err := os.MkdirTemp("", "herdr-sandbox-predecessor-*")
 	if err != nil {
 		return fmt.Errorf("create predecessor package workspace: %w", err)
@@ -100,24 +107,21 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove predecessor package workspace: %w", err))
 		}
 	}()
+	installer := filepath.Join(predecessorRoot, canonicalLocalInstallerName)
+	if err := snapshotLocalInstaller(".", installer, evidence); err != nil {
+		return err
+	}
 	predecessorPaths := releasePaths(predecessorRoot, predecessorVersion)
+	predecessorPaths.ZIP = ""
 	if _, err := fmt.Fprintf(stdout, "Building current-layout %s from source commit %s for immediate-predecessor upgrade acceptance.\n", predecessorVersion.Tag, revision); err != nil {
 		return err
 	}
-	if err := buildWindowsReleasePackage(ctx, predecessorVersion, predecessorIdentity, predecessorPaths, stdout, stderr); err != nil {
+	if err := buildWindowsPackage(ctx, predecessorVersion, predecessorIdentity, predecessorPaths, stdout, stderr); err != nil {
 		return err
 	}
-	paths := releasePaths(".", version)
-	if err := buildWindowsReleasePackage(ctx, version, identity, paths, stdout, stderr); err != nil {
-		return err
-	}
-	canonicalInstaller := canonicalLocalInstallerPath(".")
-	if err := replaceGeneratedFile(paths.Installer, canonicalInstaller); err != nil {
-		return fmt.Errorf("publish installed candidate as canonical local installer: %w", err)
-	}
-	installer, err := filepath.Abs(canonicalInstaller)
+	predecessorHashes, err := packagePayloadHashes(predecessorPaths.Stage)
 	if err != nil {
-		return fmt.Errorf("resolve current-Sandbox candidate installer: %w", err)
+		return err
 	}
 	predecessorInstaller, err := filepath.Abs(predecessorPaths.Installer)
 	if err != nil {
@@ -157,13 +161,13 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 		return err
 	}
 	preserved = seededConfiguration
-	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "fresh candidate install", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, evidence.PayloadSHA256, "fresh candidate install", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := install(installer); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "same-version repair", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, evidence.PayloadSHA256, "same-version repair", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := uninstallCurrentSandboxCandidate(ctx, installRoot, stdout, stderr); err != nil {
@@ -179,13 +183,13 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if err := install(predecessorInstaller); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, predecessorVersion, predecessorIdentity, installRoot, predecessorPaths.Stage, "immediate-predecessor current-layout install", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, predecessorVersion, predecessorIdentity, installRoot, predecessorHashes, "immediate-predecessor current-layout install", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := install(installer); err != nil {
 		return err
 	}
-	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, paths.Stage, "immediate-predecessor upgrade", preserved, stdout, stderr); err != nil {
+	if err := validateInstalledCandidateTransition(ctx, version, identity, installRoot, evidence.PayloadSHA256, "immediate-predecessor upgrade", preserved, stdout, stderr); err != nil {
 		return err
 	}
 	if err := nativeCurrentSandboxProvisioning(ctx, stdout, stderr, installRoot); err != nil {
@@ -207,15 +211,24 @@ func packageCurrentSandbox(ctx context.Context, tag string, stdout, stderr io.Wr
 	if _, err := fmt.Fprintln(stdout, "Installed candidate passed fresh install, same-version repair, immediate-predecessor upgrade, current-Sandbox provisioning, configuration preservation, and quiet uninstall cleanup."); err != nil {
 		return err
 	}
-	return writeArtifactEvidence(stdout, "accepted-local-installer", canonicalInstaller)
+	// This later boundary must not label a concurrently replaced candidate as accepted.
+	canonical := canonicalLocalInstallerPath(".")
+	hash, err := fileSHA256(canonical)
+	if err != nil {
+		return err
+	}
+	if hex.EncodeToString(hash) != evidence.InstallerSHA256 {
+		return errors.New("the accepted installer is no longer the canonical candidate")
+	}
+	return writeArtifactEvidenceWithHash(stdout, "accepted-local-installer", canonical, evidence.InstallerSHA256)
 }
 
-func validateInstalledCandidateTransition(ctx context.Context, version releaseVersion, identity buildIdentity, installRoot, stage, outcome string, preserved []preservedFile, stdout, stderr io.Writer) error {
+func validateInstalledCandidateTransition(ctx context.Context, version releaseVersion, identity buildIdentity, installRoot string, payloadHashes map[string]string, outcome string, preserved []preservedFile, stdout, stderr io.Writer) error {
 	state, err := inspectInstalledCandidate(ctx)
 	if err != nil {
 		return fmt.Errorf("validate %s: %w", outcome, err)
 	}
-	if err := validateInstalledCandidate(state, version, installRoot, stage); err != nil {
+	if err := validateInstalledCandidate(state, version, installRoot, payloadHashes); err != nil {
 		return fmt.Errorf("validate %s: %w", outcome, err)
 	}
 	if err := runInstalledCandidateVersion(ctx, filepath.Join(installRoot, productidentity.ExecutableName), identity, stdout, stderr); err != nil {
@@ -282,7 +295,7 @@ func runCurrentSandboxInstaller(ctx context.Context, installer string, stdout, s
 	return nil
 }
 
-func validateInstalledCandidate(state installedCandidateState, version releaseVersion, installRoot, stage string) error {
+func validateInstalledCandidate(state installedCandidateState, version releaseVersion, installRoot string, payloadHashes map[string]string) error {
 	if !state.Installed || state.DisplayName != productidentity.DisplayName || state.DisplayVersion != version.Display ||
 		!strings.EqualFold(filepath.Clean(state.InstallLocation), filepath.Clean(installRoot)) {
 		return fmt.Errorf("installed candidate identity is invalid: %+v", state)
@@ -294,7 +307,6 @@ func validateInstalledCandidate(state installedCandidateState, version releaseVe
 	}
 	for _, file := range releasePackageFiles {
 		installed := filepath.Join(installRoot, file.Name)
-		staged := filepath.Join(stage, file.Name)
 		info, err := os.Lstat(installed)
 		if err != nil {
 			return fmt.Errorf("inspect installed candidate payload %s: %w", file.Name, err)
@@ -306,11 +318,7 @@ func validateInstalledCandidate(state installedCandidateState, version releaseVe
 		if err != nil {
 			return fmt.Errorf("hash installed candidate file %s: %w", file.Name, err)
 		}
-		stagedHash, err := fileSHA256(staged)
-		if err != nil {
-			return fmt.Errorf("hash staged candidate file %s: %w", file.Name, err)
-		}
-		if !bytes.Equal(installedHash, stagedHash) {
+		if hex.EncodeToString(installedHash) != payloadHashes[file.Name] {
 			return fmt.Errorf("installed candidate file differs from staged payload: %s", file.Name)
 		}
 	}

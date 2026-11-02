@@ -7,6 +7,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Changed
+
+- Local packaging produces only the installer and its provenance sidecar.
+  Verification no longer rebuilds the application, and explicit installed
+  acceptance reuses the exact candidate instead of replacing it with a new build.
+
 ### Added
 
 - Zed is provisioned by default and receives host settings, keybindings, tasks,

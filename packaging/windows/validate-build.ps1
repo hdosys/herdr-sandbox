@@ -88,8 +88,8 @@ function Assert-SafeWindowsLeaf {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         throw "$Name must not be empty or whitespace."
     }
-    if ($Value.Length -gt 255) {
-        throw "$Name exceeds the Win32 leaf-name limit."
+    if ($Value.Length -gt 120) {
+        throw "$Name exceeds the installer leaf-name limit."
     }
     if ($Value -ne $Value.Trim()) {
         throw "$Name must not start or end with whitespace."
@@ -302,7 +302,8 @@ foreach ($entry in $payloadNames.GetEnumerator()) {
 }
 
 $parsedGuid = [Guid]::Empty
-if (-not [Guid]::TryParseExact($AppProductGuid, 'D', [ref]$parsedGuid)) {
+if ($AppProductGuid -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
+    -not [Guid]::TryParseExact($AppProductGuid, 'D', [ref]$parsedGuid)) {
     throw 'AppProductGuid must be a canonical D-format GUID.'
 }
 $canonicalGuid = $parsedGuid.ToString('D').ToLowerInvariant()
@@ -313,33 +314,18 @@ if ($AppUninstallKey -cne ('{' + $parsedGuid.ToString('D').ToUpperInvariant() + 
     throw 'AppUninstallKey must be the brace-wrapped uppercase product GUID.'
 }
 
-if ($FixedVersion -notmatch '^(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
-    throw 'FixedVersion must contain exactly four numeric components.'
+if ($Version -cnotmatch '^0\.0\.(0|[1-9][0-9]{0,4})$' -or [int]($Version.Split('.')[-1]) -gt 65535 -or
+    $FixedVersion -cne ($Version + '.0')) {
+    throw 'Version and FixedVersion must describe the same supported 0.0.RELEASE_ID release.'
 }
-$fixedParts = @()
-foreach ($part in $FixedVersion.Split('.')) {
-    $number = 0
-    if (-not [int]::TryParse($part, [ref]$number) -or $number -lt 0 -or $number -gt 65535) {
-        throw 'Every FixedVersion component must be between 0 and 65535.'
-    }
-    $fixedParts += $number
+if ($OutputFileName -cne ($AppApplicationName + '_v' + $Version + '_windows_amd64_setup.exe')) {
+    throw 'OutputFileName does not match the application and release identity.'
 }
-$versionCore = ($Version -split '[-+]')[0]
-$versionParts = $versionCore.Split('.')
-if ($versionParts.Count -lt 3 -or $versionParts.Count -gt 4) {
-    throw 'Version must start with a three- or four-component numeric version.'
+if ($AppInstallDirectory.Length -gt 80) { throw 'AppInstallDirectory exceeds the installer directory-name limit.' }
+foreach ($value in @($AppDisplayName, $AppPublisher, $AppProductUrl, $AppCopyright)) {
+    if ($value -cne $value.Trim() -or $value.Length -gt 200) { throw 'Installer presentation text is malformed or too long.' }
 }
-$normalizedVersion = @(0, 0, 0, 0)
-for ($index = 0; $index -lt $versionParts.Count; $index += 1) {
-    $number = 0
-    if (-not [int]::TryParse($versionParts[$index], [ref]$number) -or $number -lt 0 -or $number -gt 65535) {
-        throw 'Every numeric Version component must be between 0 and 65535.'
-    }
-    $normalizedVersion[$index] = $number
-}
-if ([string]::Join('.', $normalizedVersion) -ne [string]::Join('.', $fixedParts)) {
-    throw "Version '$Version' and FixedVersion '$FixedVersion' do not describe the same numeric release."
-}
+if ($AppDisplayName.Contains('&')) { throw 'AppDisplayName must not contain an unescaped ampersand.' }
 
 $installerPath = Get-CanonicalPath -Path $InstallerScript
 $installerText = [IO.File]::ReadAllText($installerPath)

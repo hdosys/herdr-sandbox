@@ -37,12 +37,12 @@ Tasks:
   build            build intermediate CLI output at build/bin/%s
   provisioning-preflight  validate current guest inputs before an expensive native or installed-candidate gate
   native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
-  package-current-sandbox VERSION  package and exercise fresh install, repair, upgrade, provisioning, and uninstall in this Sandbox
+  package-current-sandbox VERSION  exercise the existing local candidate through install, repair, upgrade, provisioning, and uninstall
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   release VERSION    validate and tag one clean pushed release commit
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION [--release]  build one canonical local installer or the versioned release pair
-  verify           verify format, modernization, analysis, tests, and the stable build
+  verify           verify format, modernization, analysis, and tests without rebuilding
   verify-integration run the full external-boundary verification
 `, productidentity.ExecutableName)
 
@@ -185,8 +185,7 @@ func verify(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 	if err := runCommand(ctx, stdout, stderr, "go", "vet", "./..."); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Building sandbox...")
-	return build(ctx, stdout, stderr)
+	return nil
 }
 
 func runGoTests(ctx context.Context, stdout, stderr io.Writer, fast bool, extra []string) error {
@@ -335,9 +334,9 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 }
 
 type buildIdentity struct {
-	Version   string
-	Revision  string
-	Freshness string
+	Version   string `json:"version"`
+	Revision  string `json:"revision"`
+	Freshness string `json:"freshness"`
 }
 
 func sourceRevision(ctx context.Context) (string, error) {

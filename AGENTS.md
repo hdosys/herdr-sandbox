@@ -176,7 +176,8 @@ Use repository-owned tasks and the smallest ladder covering the change:
 `go run ./cmd/task verify` is the normal iteration gate covering formatting, a
 clean Go modernization diff, pinned Staticcheck with all checks enabled, the
 pinned Go nilness analyzer, one batched PowerShell parse, fast product tests,
-`go vet`, and the stable build artifact. It must remain within a five-minute hard
+and `go vet`. It does not rebuild or replace an existing artifact; `build` or
+`package` owns compilation. It must remain within a five-minute hard
 deadline and should normally finish within three minutes. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
 the full nightly or explicitly requested assurance matrix. `native-current-sandbox` and
@@ -194,7 +195,8 @@ and does not replace installed or native
 acceptance.
 
 For installer work, `go run ./cmd/task package VERSION` owns the early
-user-testable candidate at `build/dist/herdr-sandbox_setup.exe`; it is the only
+user-testable candidate at `build/dist/herdr-sandbox_setup.exe` and its required
+`build/dist/herdr-sandbox_setup.json` provenance sidecar; it is the only
 routine local installable artifact. `go run ./cmd/task package VERSION --release`
 is reserved for the exact versioned ZIP and installer release pair. Run the local
 package task before `package-current-sandbox` and immediately report the canonical
@@ -202,8 +204,11 @@ installer path, content hash, build time, and status `candidate;
 user acceptance pending`. Do not delay that handoff for documentation,
 repository administration, private queue routing, or cleanup, and do not describe
 the candidate as accepted. Never run `package-current-sandbox` from a dirty or
-pre-commit checkout. Freeze production source, complete the focused gates, commit
-and push, then rebuild once from that immutable commit. Run exactly one
+pre-commit checkout. Build the candidate from clean committed source, complete
+the focused gates and push. The installed gate reuses that exact candidate and
+its original identity, validates source and hashes, and builds only the distinct
+immediate-predecessor fixture. Missing or stale evidence requires an explicit new
+`package` run, not an automatic rebuild or a skip flag. Run exactly one
 `package-current-sandbox VERSION` acceptance only when the current user explicitly
 requests that installed-candidate gate. Release never invokes it. A later
 production-relevant edit requires a new commit and candidate;

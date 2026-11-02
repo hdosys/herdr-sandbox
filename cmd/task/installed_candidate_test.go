@@ -41,13 +41,17 @@ func TestInstalledCandidateValidationBindsIdentityPayloadAndSourceVersion(t *tes
 		InstallLocation:      installRoot,
 		QuietUninstallString: fmt.Sprintf(`powershell -File "%s" -Uninstaller "%s"`, quietHelper, uninstaller),
 	}
-	if err := validateInstalledCandidate(state, version, installRoot, stage); err != nil {
+	hashes, err := packagePayloadHashes(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateInstalledCandidate(state, version, installRoot, hashes); err != nil {
 		t.Fatalf("validate exact installed candidate: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(installRoot, releasePackageFiles[0].Name), []byte("different"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateInstalledCandidate(state, version, installRoot, stage); err == nil || !strings.Contains(err.Error(), "differs from staged payload") {
+	if err := validateInstalledCandidate(state, version, installRoot, hashes); err == nil || !strings.Contains(err.Error(), "differs from staged payload") {
 		t.Fatalf("mismatched installed payload error = %v", err)
 	}
 

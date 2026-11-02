@@ -96,12 +96,12 @@ func TestCleanBuildOutputsRetainsCanonicalInstallerToolsAndPrivateMedia(t *testi
 		}
 	}
 	canonical := canonicalLocalInstallerPath(root)
-	for _, path := range []string{canonical, filepath.Join(buildRoot, "dist", "old.zip"), filepath.Join(buildRoot, "installer-welcome-finish-preview.png")} {
+	for _, path := range []string{canonical, filepath.Join(buildRoot, "dist", canonicalLocalEvidenceName), filepath.Join(buildRoot, "dist", "old.zip"), filepath.Join(buildRoot, "installer-welcome-finish-preview.png")} {
 		if err := os.WriteFile(path, []byte("generated"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := cleanBuildOutputs(root, map[string]bool{filepath.Base(canonical): true}); err != nil {
+	if err := cleanBuildOutputs(root, map[string]bool{canonicalLocalInstallerName: true, canonicalLocalEvidenceName: true}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(buildRoot)
@@ -115,7 +115,7 @@ func TestCleanBuildOutputsRetainsCanonicalInstallerToolsAndPrivateMedia(t *testi
 		t.Fatalf("retained build roots = %v", names)
 	}
 	distEntries, err := os.ReadDir(filepath.Dir(canonical))
-	if err != nil || len(distEntries) != 1 || distEntries[0].Name() != filepath.Base(canonical) {
+	if err != nil || len(distEntries) != 2 || distEntries[0].Name() != canonicalLocalInstallerName || distEntries[1].Name() != canonicalLocalEvidenceName {
 		t.Fatalf("retained dist entries = %v, %v", distEntries, err)
 	}
 }
@@ -134,85 +134,6 @@ func TestCleanBuildOutputsRejectsUnknownRootBeforeMutation(t *testing.T) {
 	}
 	if _, err := os.Stat(known); err != nil {
 		t.Fatalf("known output changed before unknown-root rejection: %v", err)
-	}
-}
-
-func TestReplaceGeneratedFileReplacesCanonicalArtifact(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "candidate.exe")
-	destination := filepath.Join(root, canonicalLocalInstallerName)
-	if err := os.WriteFile(source, []byte("new"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(destination, []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := replaceGeneratedFile(source, destination); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(destination)
-	if err != nil || string(data) != "new" {
-		t.Fatalf("canonical artifact = %q, %v", data, err)
-	}
-	if _, err := os.Stat(source); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("candidate remains after replacement: %v", err)
-	}
-}
-
-func TestInstallerBuildInputsBindSafeCurrentIdentity(t *testing.T) {
-	version, err := parseReleaseVersion("v0.0.13")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	output := filepath.Join(root, productidentity.ApplicationName+"_"+version.Tag+"_windows_amd64_setup.exe")
-	if err := validateInstallerBuildInputs(version, output); err != nil {
-		t.Fatalf("validateInstallerBuildInputs: %v", err)
-	}
-	if productidentity.QuietUninstallHelperName != "uninstall.ps1" {
-		t.Fatalf("quiet uninstall helper = %q, want uninstall.ps1", productidentity.QuietUninstallHelperName)
-	}
-	if productidentity.InstallDirectoryName != productidentity.DisplayName {
-		t.Fatalf("install directory = %q, want display name %q", productidentity.InstallDirectoryName, productidentity.DisplayName)
-	}
-	wantOwned := []string{
-		productidentity.BaseScriptName,
-		productidentity.LicenseName,
-		productidentity.StackScriptName,
-		productidentity.QuietUninstallHelperName,
-		installerUninstallerName,
-		productidentity.ExecutableName,
-	}
-	if !slices.Equal(installerOwnedFiles(), wantOwned) {
-		t.Fatalf("installer owned files = %v, want %v", installerOwnedFiles(), wantOwned)
-	}
-	if err := validateInstallerBuildInputs(version, filepath.Join(root, "wrong.exe")); err == nil {
-		t.Fatal("mismatched installer output name unexpectedly passed")
-	}
-	for _, value := range []string{"", ".", "..", `folder\file.exe`, "file:name", "CON.txt", "NUL.anything", `quote".exe`, " name.exe", "name.exe ", "name.", "a/b", "bad\x01.exe"} {
-		if err := validateInstallerLeaf("fixture", value); err == nil {
-			t.Fatalf("unsafe installer leaf unexpectedly passed: %q", value)
-		}
-	}
-}
-
-func TestInstallerLeafCanonicalizationRejectsWin32Aliases(t *testing.T) {
-	for _, test := range []struct {
-		left  string
-		right string
-	}{
-		{left: "app.exe", right: "APP.EXE"},
-		{left: "app.exe", right: "app.exe."},
-		{left: "app.exe", right: "app.exe "},
-	} {
-		if canonicalInstallerLeaf(test.left) != canonicalInstallerLeaf(test.right) {
-			t.Fatalf("canonicalInstallerLeaf(%q) != canonicalInstallerLeaf(%q)", test.left, test.right)
-		}
-	}
-	for _, reserved := range []string{"CON", "con.txt", "NUL.anything", "COM1.log", "lpt9"} {
-		if err := validateInstallerLeaf("fixture", reserved); err == nil {
-			t.Fatalf("reserved Windows leaf unexpectedly passed: %q", reserved)
-		}
 	}
 }
 
@@ -331,14 +252,8 @@ func TestPublishReleaseArtifactSetNeverLeavesMixedOutputs(t *testing.T) {
 	destination := pathsAt(filepath.Join(root, "destination"))
 	writeSet(t, generated, "new:")
 	writeSet(t, destination, "old:")
-	if err := verifyReleaseArtifactSet(generated); err != nil {
-		t.Fatalf("verify generated set: %v", err)
-	}
 	if err := publishReleaseArtifactSet(generated, destination); err != nil {
 		t.Fatalf("publish generated set: %v", err)
-	}
-	if err := verifyReleaseArtifactSet(destination); err != nil {
-		t.Fatalf("verify published set: %v", err)
 	}
 	for _, path := range []string{destination.ZIP, destination.Installer} {
 		data, err := os.ReadFile(path)
@@ -396,6 +311,24 @@ func TestWriteReleaseArtifactEvidenceIsStructuredAndComplete(t *testing.T) {
 	var extra releaseArtifactEvidence
 	if err := decoder.Decode(&extra); err != io.EOF {
 		t.Fatalf("unexpected trailing artifact evidence: %#v, %v", extra, err)
+	}
+}
+
+func TestInstallerBuildMetadataInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell installer build validation")
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell 5.1 boundary")
+	}
+	validator, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "validate-build.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filepath.Join("assets", "installer-build-validation-test.ps1"), "-Validator", validator)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("installer metadata validation: %v: %s", err, output)
 	}
 }
 

@@ -180,6 +180,7 @@ From the repository root:
 
 ```powershell
 go run ./cmd/task verify
+go run ./cmd/task build
 ```
 
 The checked build writes the same four files to `build\bin`. Use that executable directly or add the directory to user `PATH`.
@@ -800,7 +801,8 @@ vGPU or Vulkan. Empty `modelsDirectory` disables this integration.
 The repository uses one Go task runner for formatting, tests, stable builds, real
 Windows Sandbox checks, and release packaging.
 
-Local packaging writes one installer to `build\dist\herdr-sandbox_setup.exe`.
+Local packaging writes one installer to `build\dist\herdr-sandbox_setup.exe`
+with `herdr-sandbox_setup.json` beside it as provenance for later acceptance.
 Release packaging produces the versioned installer and portable ZIP instead.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full verification architecture.
 
@@ -819,11 +821,12 @@ go run ./cmd/task native-all-stacks
 ```
 
 - `verify` is the fast local check: formatting, Go modernization, Staticcheck,
-  nilness analysis, PowerShell parsing, focused tests, `go vet`, and the stable
-  `build\bin` artifact.
+  nilness analysis, PowerShell parsing, focused tests and `go vet`. It does not
+  rebuild. Use `build` for a CLI binary or `package` for an installer.
 - `verify-integration` adds external PowerShell and Git behavior for nightly or
   explicitly requested assurance.
-- `package VERSION` builds the canonical local installer. `package VERSION --release`
+- `package VERSION` requires clean committed source and builds only the canonical
+  local installer plus its provenance sidecar. `package VERSION --release`
   builds the public versioned installer and ZIP pair for release automation.
 - `release VERSION` accepts only a clean committed checkout contained in its
   configured upstream. It validates the matching changelog section, confirms the
@@ -842,7 +845,9 @@ go run ./cmd/task native-all-stacks
 - `package-current-sandbox` covers fresh install, same-version repair, a
   current-layout immediate-predecessor upgrade, installed-payload provisioning,
   configuration and development-environment preservation, and quiet uninstall
-  cleanup.
+  cleanup. It reuses the existing canonical installer and its original build
+  identity, building only the distinct predecessor fixture. Keep the JSON sidecar
+  with the installer. Missing or stale evidence requires a new `package` run.
 - `native-all-stacks` provisions a fresh real Windows Sandbox and exercises the
   complete toolchain, managed SSH, REAPER-to-AudioGridder connection, and a real
   NSIS compile without installing a release candidate.
