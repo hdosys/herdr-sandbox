@@ -9,6 +9,11 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Supertonic readiness checks include the native audio-output library, so a
+  missing SoundFile DLL is reported before TTS activation rather than at WAV export.
+- Normal verification runs the isolated PowerShell continuation/profile checks
+  and uses analyzers compatible with the current Go 1.27 compiler.
+
 - After incomplete provisioning, `sandbox up` resumes unfinished or changed steps
   instead of repeating successful unchanged setup. `--refresh` requests a full
   refresh. An unavailable Supertonic CPU runtime leaves the Sandbox and HyperFrames

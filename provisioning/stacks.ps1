@@ -3157,7 +3157,7 @@ function Assert-StackSupertonicRuntime {
     param([Parameter(Mandatory = $true)][string]$Python)
     try {
         Invoke-ProvisioningNative -Role 'Supertonic CPU runtime import' -FilePath $Python `
-            -ArgumentList @('-I', '-c', 'import numpy, supertonic, onnxruntime; assert "CPUExecutionProvider" in onnxruntime.get_available_providers()') `
+            -ArgumentList @('-I', '-c', 'import numpy, supertonic, onnxruntime, soundfile; assert "CPUExecutionProvider" in onnxruntime.get_available_providers()') `
             -TimeoutSeconds 30 | Out-Null
     } catch {
         if (Test-ProvisioningTerminalError -Exception $_.Exception) { throw }

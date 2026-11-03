@@ -18,15 +18,6 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
-- **Status: proposed. Select an analyzer-compatible Go toolchain for verification.**
-  Evidence: `go run ./cmd/task verify` under Go 1.27.3 failed in pinned
-  Staticcheck v0.7.0 because standard-library export data version 5 exceeded its
-  supported version 4. The unchanged gate passed with `GOTOOLCHAIN=go1.26.7`,
-  matching `go.mod`. Make the existing verification entrypoint's supported
-  toolchain explicit, or update the analyzer after compatibility is established.
-  Expected benefit: avoid repeat failed analysis runs when guest Go advances
-  ahead of repository-owned analyzer support, without disabling checks.
-
 - **Status: proposed. Establish a bounded real SSH smoke before lifecycle rewrites.**
   Evidence: local PowerShell receiver tests passed while the real SSH check
   stalled; inherited Win32-OpenSSH descriptor metadata was isolated only after
