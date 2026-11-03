@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +165,10 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	command.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, "PSModulePath")
+	})
 	if output, err := command.CombinedOutput(); err != nil || !strings.Contains(string(output), "verified selective continuation") {
 		t.Fatalf("selective continuation failed: %v: %s", err, output)
 	}

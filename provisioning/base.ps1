@@ -759,7 +759,7 @@ function Save-ProvisioningSteps {
         [IO.File]::WriteAllText($temporary, ([ordered]@{ schemaVersion = 1; steps = $steps } |
             ConvertTo-Json -Depth 4 -Compress), (New-Object Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $global:HerdrSandboxStepState.Path) {
-            [IO.File]::Replace($temporary, $global:HerdrSandboxStepState.Path, $null)
+            [IO.File]::Replace($temporary, $global:HerdrSandboxStepState.Path, [NullString]::Value)
         } else { [IO.File]::Move($temporary, $global:HerdrSandboxStepState.Path) }
     } catch {
         $_.Exception.Data['ProvisioningTerminal'] = $true
