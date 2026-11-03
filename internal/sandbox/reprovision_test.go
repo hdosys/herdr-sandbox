@@ -150,7 +150,7 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 selective continuation")
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
-		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep"},
+		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningExtensionScript"},
 	}, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
 		names: []string{"Install-HyperFramesStack", "Assert-StackSupertonicRuntime"},

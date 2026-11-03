@@ -710,9 +710,13 @@ function Get-ProvisioningStepFingerprint {
 
 function Initialize-ProvisioningSteps {
     param([string]$Path, [bool]$Resume, [string[]]$ImplementationFiles)
-    $script:ProvisioningStepPath = $Path
-    $script:ProvisioningSteps = @{}
-    $script:ProvisioningImplementation = Get-ProvisioningStepFingerprint -Files $ImplementationFiles
+    # Profiles execute in separate script scopes in this same provisioning process.
+    $global:HerdrSandboxStepState = @{
+        Path = $Path
+        Steps = @{}
+        Implementation = Get-ProvisioningStepFingerprint -Files $ImplementationFiles
+        StackImplementation = ''
+    }
     if ([string]::IsNullOrEmpty($Path)) { return }
     if (-not [IO.Path]::IsPathRooted($Path)) { throw 'Provisioning step state path must be absolute.' }
     for ($parent = Split-Path -Parent $Path; $parent; $parent = Split-Path -Parent $parent) {
@@ -740,23 +744,23 @@ function Initialize-ProvisioningSteps {
             throw 'Provisioning step state contains an invalid or duplicate entry.'
         }
         $seen[[string]$step.name] = $true
-        if ($Resume) { $script:ProvisioningSteps[[string]$step.name] = [string]$step.fingerprint }
+        if ($Resume) { $global:HerdrSandboxStepState.Steps[[string]$step.name] = [string]$step.fingerprint }
     }
 }
 
 function Save-ProvisioningSteps {
-    if ([string]::IsNullOrEmpty($script:ProvisioningStepPath)) { return }
-    $steps = @($script:ProvisioningSteps.Keys | Sort-Object | ForEach-Object {
-        [ordered]@{ name = $_; fingerprint = $script:ProvisioningSteps[$_] }
+    if ([string]::IsNullOrEmpty($global:HerdrSandboxStepState.Path)) { return }
+    $steps = @($global:HerdrSandboxStepState.Steps.Keys | Sort-Object | ForEach-Object {
+        [ordered]@{ name = $_; fingerprint = $global:HerdrSandboxStepState.Steps[$_] }
     })
     if ($steps.Count -gt 128) { throw 'Provisioning step state exceeds its bounded contract.' }
-    $temporary = $script:ProvisioningStepPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $temporary = $global:HerdrSandboxStepState.Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
         [IO.File]::WriteAllText($temporary, ([ordered]@{ schemaVersion = 1; steps = $steps } |
             ConvertTo-Json -Depth 4 -Compress), (New-Object Text.UTF8Encoding($false)))
-        if (Test-Path -LiteralPath $script:ProvisioningStepPath) {
-            [IO.File]::Replace($temporary, $script:ProvisioningStepPath, $null)
-        } else { [IO.File]::Move($temporary, $script:ProvisioningStepPath) }
+        if (Test-Path -LiteralPath $global:HerdrSandboxStepState.Path) {
+            [IO.File]::Replace($temporary, $global:HerdrSandboxStepState.Path, $null)
+        } else { [IO.File]::Move($temporary, $global:HerdrSandboxStepState.Path) }
     } catch {
         $_.Exception.Data['ProvisioningTerminal'] = $true
         throw
@@ -773,18 +777,18 @@ function Invoke-ProvisioningStep {
         [string[]]$InputValues = @()
     )
     $fingerprint = Get-ProvisioningStepFingerprint -Files $InputFiles `
-        -Values (@($script:ProvisioningImplementation) + $InputValues)
-    if ($script:ProvisioningSteps[$Name] -ceq $fingerprint) {
+        -Values (@($global:HerdrSandboxStepState.Implementation) + $InputValues)
+    if ($global:HerdrSandboxStepState.Steps[$Name] -ceq $fingerprint) {
         Write-ProvisioningProgress -Message "Keeping completed step: $Name"
         return
     }
     # Invalidate before execution, so interruption cannot retain old success.
-    $script:ProvisioningSteps.Remove($Name)
+    $global:HerdrSandboxStepState.Steps.Remove($Name)
     Save-ProvisioningSteps
     $optionalCount = $OptionalFailures.Count
     & $Action
     if ($OptionalFailures.Count -eq $optionalCount) {
-        $script:ProvisioningSteps[$Name] = $fingerprint
+        $global:HerdrSandboxStepState.Steps[$Name] = $fingerprint
         Save-ProvisioningSteps
     }
 }
@@ -3828,7 +3832,9 @@ $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
 $terminalPackageFamily = ''
 if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     $terminalPackageFamily = if ($WindowsTerminalEdition -eq 'preview') { 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe' } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe' }
-    Invoke-ProvisioningStep -Name 'Windows Terminal' -InputValues @($terminalPackageID, (Get-ProvisioningPackageVersion -Id $terminalPackageID)) -Action {
+    Invoke-ProvisioningStep -Name 'Windows Terminal' -InputValues @($terminalPackageID,
+        (Get-ProvisioningPackageVersion -Id $terminalPackageID),
+        (Get-ProvisioningPackageVersion -Id 'Microsoft.UI.Xaml.2.8')) -Action {
     Write-Output 'Installing GeistMono Nerd Font...'
     Install-ProvisioningGeistMonoNerdFont
 
@@ -3982,6 +3988,7 @@ if (-not (Test-Path -LiteralPath $stackProvisioning -PathType Leaf)) {
     throw "App-owned stack provisioning library is missing: $stackProvisioning"
 }
 . $stackProvisioning
+$global:HerdrSandboxStepState.StackImplementation = Get-ProvisioningStepFingerprint -Files @($stackProvisioning)
 $profileInputs = @($stackProvisioning, $PackagePlanPath, (Join-Path $PSScriptRoot 'tool-versions.json'), $workspaceManifestPath)
 $userProvisioning = Get-Item -LiteralPath $UserProvisioningPath -Force
 if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -and

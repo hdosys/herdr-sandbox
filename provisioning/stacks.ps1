@@ -3429,7 +3429,7 @@ function Install-StackHyperFramesVoxCPM2 {
         }
     }
 
-    Invoke-ProvisioningStep -Name 'TTS Python and uv' -InputFiles @($PSCommandPath) -InputValues @(
+    Invoke-ProvisioningStep -Name 'TTS Python and uv' -InputValues @($global:HerdrSandboxStepState.StackImplementation,
         (Get-ProvisioningToolVersion -Tool 'Python' -Requested ''),
         (Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested '')) -Action {
         Install-PythonStack
@@ -3677,8 +3677,8 @@ function Install-HyperFramesStack {
     [CmdletBinding()]
     param([string]$NodeVersion = '', [string]$FFmpegVersion = '', [string]$Version = '')
 
-    Invoke-ProvisioningStep -Name 'HyperFrames rendering' -InputFiles @($PSCommandPath) `
-        -InputValues @($NodeVersion, $FFmpegVersion, $Version,
+    Invoke-ProvisioningStep -Name 'HyperFrames rendering' `
+        -InputValues @($global:HerdrSandboxStepState.StackImplementation, $NodeVersion, $FFmpegVersion, $Version,
             (Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion),
             (Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion),
             (Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version)) -Action {
@@ -3745,7 +3745,7 @@ function Install-StackHyperFramesRendering {
         [string]$ffmpegMetadata.InstallerType -cne 'zip' -or
         $ffmpegURI.Scheme -cne 'https' -or $ffmpegURI.Host -cne 'github.com' -or
         $ffmpegURI.AbsolutePath -cne $expectedFFmpegPath) {
-        throw 'Gyan.FFmpeg metadata does not describe the current stable x64 full build.'
+        throw [Security.SecurityException]::new('Gyan.FFmpeg metadata does not describe the current stable x64 full build.')
     }
     $null = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion
     Install-ProvisioningCachedPackage -Role 'HyperFrames FFmpeg full build' -Metadata $ffmpegMetadata `
@@ -3754,7 +3754,7 @@ function Install-StackHyperFramesRendering {
     $ffmpeg = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $ffprobe = Get-Command 'ffprobe.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     if ((Split-Path -Parent $ffmpeg.Source) -ine (Split-Path -Parent $ffprobe.Source)) {
-        throw 'HyperFrames FFmpeg and FFprobe resolved from different distributions.'
+        throw [Security.SecurityException]::new('HyperFrames FFmpeg and FFprobe resolved from different distributions.')
     }
     $ffmpegSuffix = '(?:[-+][^ ]*)? Copyright \(c\) \d{4}-\d{4} the FFmpeg developers'
     $ffmpegVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFmpeg' -Name 'ffmpeg.exe' `
@@ -3777,7 +3777,7 @@ function Install-StackHyperFramesRendering {
         $directoryInfo = Get-Item -LiteralPath $directory -Force
         if (-not $directoryInfo.PSIsContainer -or
             ($directoryInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "HyperFrames guest-local directory is unsafe: $directory"
+            throw [Security.SecurityException]::new("HyperFrames guest-local directory is unsafe: $directory")
         }
     }
 
@@ -3820,7 +3820,7 @@ function Install-StackHyperFramesRendering {
                 @($rootItems | Where-Object {
                         ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
                     }).Count -ne 0) {
-                throw "HyperFrames tool root is unsafe: $toolRoot"
+                throw [Security.SecurityException]::new("HyperFrames tool root is unsafe: $toolRoot")
             }
         } else {
             New-Item -ItemType Directory -Path $toolRoot | Out-Null
@@ -3845,7 +3845,7 @@ function Install-StackHyperFramesRendering {
         foreach ($path in @($packagePath, $cliCommand)) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
                 ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "HyperFrames package command is missing or unsafe: $path"
+                throw [Security.SecurityException]::new("HyperFrames package command is missing or unsafe: $path")
             }
         }
         try {
@@ -3867,7 +3867,7 @@ function Install-StackHyperFramesRendering {
             $minimumNodeMajor -lt 22 -or [string]::IsNullOrWhiteSpace($binRelative) -or
             [IO.Path]::IsPathRooted($binRelative) -or
             @($binRelative -split '[/\\]' | Where-Object { $_ -ceq '.' -or $_ -ceq '..' }).Count -ne 0) {
-            throw 'HyperFrames package identity or Node.js 22+ readiness is invalid.'
+            throw [Security.SecurityException]::new('HyperFrames package identity or Node.js 22+ readiness is invalid.')
         }
         if ([string]$package.version -cne $Version) {
             Write-Warning "HyperFrames installed successfully, but its package version does not match $Version. Provisioning will continue to command and browser smokes."
@@ -3877,21 +3877,21 @@ function Install-StackHyperFramesRendering {
         if (-not $cliEntry.StartsWith($packageRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
             -not (Test-Path -LiteralPath $cliEntry -PathType Leaf) -or
             ((Get-Item -LiteralPath $cliEntry -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "HyperFrames CLI entry is missing or unsafe: $cliEntry"
+            throw [Security.SecurityException]::new("HyperFrames CLI entry is missing or unsafe: $cliEntry")
         }
         $powerShellShim = Join-Path $toolRoot 'hyperframes.ps1'
         if (Test-Path -LiteralPath $powerShellShim) {
             $powerShellShimInfo = Get-Item -LiteralPath $powerShellShim -Force
             if ($powerShellShimInfo.PSIsContainer -or
                 ($powerShellShimInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "HyperFrames PowerShell shim is unsafe: $powerShellShim"
+                throw [Security.SecurityException]::new("HyperFrames PowerShell shim is unsafe: $powerShellShim")
             }
             Remove-Item -LiteralPath $powerShellShim -Force
         }
         Add-ProvisioningMachinePath -Directory $toolRoot
         $resolvedCLI = Wait-ProvisioningCommandAvailable -Role 'HyperFrames CLI command' -Name 'hyperframes.cmd'
         if ([IO.Path]::GetFullPath($resolvedCLI) -ine [IO.Path]::GetFullPath($cliCommand)) {
-            throw "HyperFrames CLI command resolved from an unexpected path: $resolvedCLI"
+            throw [Security.SecurityException]::new("HyperFrames CLI command resolved from an unexpected path: $resolvedCLI")
         }
         Invoke-ProvisioningNative -Role 'HyperFrames managed Chrome Headless Shell installation' `
             -FilePath $node -ArgumentList @($cliEntry, 'browser', 'ensure') `
@@ -3901,14 +3901,14 @@ function Install-StackHyperFramesRendering {
             -WorkingDirectory $stagingRoot -TimeoutSeconds 60) -join [Environment]::NewLine).Trim()
         $browserRoot = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.cache\hyperframes\chrome')).TrimEnd('\')
         if ([string]::IsNullOrWhiteSpace($browserPath) -or -not [IO.Path]::IsPathRooted($browserPath)) {
-            throw "HyperFrames managed browser path is invalid: $browserPath"
+            throw [Security.SecurityException]::new("HyperFrames managed browser path is invalid: $browserPath")
         }
         $browserPath = [IO.Path]::GetFullPath($browserPath)
         if (-not $browserPath.StartsWith($browserRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
             [IO.Path]::GetFileName($browserPath) -ine 'chrome-headless-shell.exe' -or
             -not (Test-Path -LiteralPath $browserPath -PathType Leaf) -or
             ((Get-Item -LiteralPath $browserPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "HyperFrames did not prepare its managed Chrome Headless Shell: $browserPath"
+            throw [Security.SecurityException]::new("HyperFrames did not prepare its managed Chrome Headless Shell: $browserPath")
         }
         $browserVersion = ((Invoke-ProvisioningNative -Role 'HyperFrames managed browser launch check' `
             -FilePath $browserPath -ArgumentList @('--version') -WorkingDirectory $stagingRoot `
@@ -3961,7 +3961,7 @@ function Install-StackHyperFramesRendering {
                     @($activationItems | Where-Object {
                             ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
                         }).Count -ne 0) {
-                    throw "HyperFrames OpenCode activation root is unsafe: $activationRoot"
+                    throw [Security.SecurityException]::new("HyperFrames OpenCode activation root is unsafe: $activationRoot")
                 }
                 Remove-Item -LiteralPath $activationRoot -Recurse -Force
             }
@@ -3986,7 +3986,7 @@ function Install-StackHyperFramesRendering {
             -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1
         if ([IO.Path]::GetFullPath([string]$resolvedActivationLauncher.Source) -ine
             [IO.Path]::GetFullPath($activationLauncher)) {
-            throw "HyperFrames OpenCode launcher resolved from an unexpected path: $($resolvedActivationLauncher.Source)"
+            throw [Security.SecurityException]::new("HyperFrames OpenCode launcher resolved from an unexpected path: $($resolvedActivationLauncher.Source)")
         }
 
         $doctorLines = @(Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
