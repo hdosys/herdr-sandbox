@@ -184,6 +184,9 @@ This file owns stable technical design: command ownership, host/guest boundaries
   reprovisioning the server or synchronizing unrelated configuration/credentials.
   An incomplete core attempt still runs normal finalization. `--refresh` owns
   adoption of changed host configuration, TTS selection and Herdr runtime.
+- The normal fast gate executes the isolated PowerShell continuation and
+  transport/profile tests. These checks use real script boundaries and atomic
+  state publication without provisioning packages or touching live services.
 - Retained reprovision verifies SSH without rejecting stale ready Herdr metadata, provisions and verifies the current runtime, then atomically replaces ready identity before later mobile and unchanged-host checks, so a partial post-provision failure remains retryable.
 - No Sandbox-owned binary copy, wrapper, temporary config, direct server start, duplicate reload, alternate executable discovery, or compatibility bridge remains.
 - The Herdr thin client remains on the host and attaches through the untouched PATH command with `herdr --remote <app-owned-ssh-target>`.

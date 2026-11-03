@@ -191,7 +191,7 @@ func verify(ctx context.Context, stdout, stderr io.Writer, fast bool) error {
 func runGoTests(ctx context.Context, stdout, stderr io.Writer, fast bool, extra []string) error {
 	if fast {
 		fmt.Fprintln(stdout, "Running fast product Go tests...")
-		fmt.Fprintln(stdout, "External Windows PowerShell and Git test processes are skipped; use `verify-integration` for that matrix.")
+		fmt.Fprintln(stdout, "Includes isolated PowerShell provisioning continuation checks; use `verify-integration` for the full external PowerShell/Git matrix.")
 	} else {
 		fmt.Fprintln(stdout, "Running the full Go test matrix, including external Windows PowerShell and Git processes...")
 	}

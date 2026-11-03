@@ -178,7 +178,10 @@ clean Go modernization diff, pinned Staticcheck with all checks enabled, the
 pinned Go nilness analyzer, one batched PowerShell parse, fast product tests,
 and `go vet`. It does not rebuild or replace an existing artifact; `build` or
 `package` owns compilation. It must remain within a five-minute hard
-deadline and should normally finish within three minutes. `go run ./cmd/task test-integration` and
+deadline and should normally finish within three minutes. The fast tests include
+the bounded, isolated PowerShell 5.1 continuation and transport/profile checks;
+their real script scopes and atomic state publication are normal iteration gates,
+not deferred external-integration coverage. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
 the full nightly or explicitly requested assurance matrix. `native-current-sandbox` and
 `package-current-sandbox` are also explicit and never part of normal iteration.

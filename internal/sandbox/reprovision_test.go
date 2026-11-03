@@ -35,7 +35,8 @@ func TestDevelopmentIncompleteGuidanceKeepsUsabilityAndFailureDistinct(t *testin
 }
 
 func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testing.T) {
-	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 provisioning retry")
+	// This isolated production transport/profile boundary is part of the fast gate.
+	t.Setenv(fastTestsEnvironment, "")
 	root := t.TempDir()
 	guestRoot := filepath.Join(root, "guest")
 	workspaces := filepath.Join(root, "workspaces")
@@ -148,7 +149,8 @@ func TestOptionalProvisioningDoesNotBlockReadyConnection(t *testing.T) {
 }
 
 func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
-	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 selective continuation")
+	// Real script scopes and atomic state publication cannot be proved by Go-only tests.
+	t.Setenv(fastTestsEnvironment, "")
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
 		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningExtensionScript"},
