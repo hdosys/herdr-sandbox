@@ -24,7 +24,7 @@ const usage = `Usage:
   sandbox --version
   sandbox plan
   sandbox init [--stack android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|playwright-cli|python|python-ai|rust|tradingview|zig|all|handy|herdr]...
-  sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]
+  sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]
   sandbox attach
   sandbox status
   sandbox mobile
@@ -341,6 +341,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout (default 4h)")
 	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
+	flags.BoolVar(&options.Refresh, "refresh", false, "run a full provisioning refresh instead of resuming incomplete steps")
 	flags.Usage = func() {}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

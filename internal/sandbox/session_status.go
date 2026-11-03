@@ -259,6 +259,9 @@ func sessionNextAction(status SessionStatus) string {
 		if status.Operation != nil && status.Operation.State == operationStateRunning {
 			return "Wait for retained reprovisioning to finish, then run `sandbox attach`."
 		}
+		if status.Operation != nil && status.Operation.State == operationStateFailed {
+			return "Run `sandbox attach` to work now, or correct the reported failure and run `sandbox up` to resume unfinished steps."
+		}
 		return "Run `sandbox attach` to connect without reprovisioning."
 	case SessionFailed:
 		if status.GuestIP != "" {

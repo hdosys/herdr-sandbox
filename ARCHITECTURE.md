@@ -157,16 +157,33 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - Because the already running server cannot inherit a later machine-environment update, SSH finalization passes that resolved machine/user PATH and `HERDR_SANDBOX_HERDR_EXE` through Herdr's existing workspace launch environment for every initial mapped-project root.
 - Bootstrap uses the exact executable through the same bounded Job Object process owner for required client identity and initial workspace/pane creation, Base uses it only for the TCP 2222 mobile profile, and independent SSH verification parses only bounded stdout as `status server --json` evidence for running, compatible, no restart needed, matching runtime/protocol/binary, and detached-server capability. Both Herdr-owned status parsers allow additive fields while preserving required values and duplicate-key rejection at the Go boundary; PowerShell/SSH stderr remains diagnostic and cannot corrupt JSON.
 - Ready schema 3 records distribution and runtime versions, protocol, and the exact returned executable path.
-- Development result schema 3 adds a bounded failure array for independent Base
-  utilities and user/project scripts. Only a successful, integrity-checked SSH
-  result can carry these partial failures. Host provisioning completes the normal
-  configuration, Herdr and workspace verification before publishing ready, then
-  records the operation as failed and returns a nonzero outcome with attach
-  guidance. No new lifecycle state or persistent failure registry is introduced.
+- Development result schema 4 separates bounded required-development and optional
+  availability failure arrays. Only a successful, integrity-checked SSH result can
+  carry partial failures. Initial provisioning completes required configuration,
+  Herdr and workspace verification before publishing ready. Required development
+  failures return nonzero; optional runtime unavailability permits attach while
+  retaining a failed optional operation separately from guest readiness.
   Cancellation, failed transport, invalid results and required readiness checks
   remain terminal. Direct Base invocation aggregates failures after independent
   work and exits unsuccessfully; the SSH caller receives them through the existing
   result object instead.
+- The existing Base step owner writes successful input fingerprints atomically to
+  `status/development-steps.json`, inside the current run. Each step invalidates its
+  old record before execution. An incomplete operation reuses those records;
+  explicit `--refresh` or a previously successful operation starts a fresh set.
+  Base implementation/process changes invalidate Base evidence; profile evidence
+  additionally binds stack implementation, package/tool selections, workspace
+  manifest and profile bytes. Arbitrary profiles remain atomic steps. This is
+  ephemeral execution evidence, not a second installer, scheduler or service.
+- HyperFrames checkpoints rendering independently. TTS clears activation before
+  validation and on failure, and publishes it only after all checks succeed.
+  Only the explicit CPU import/capability boundary marks optional unavailability;
+  transport, hashes, unsafe paths, cancellation and other TTS failures are not
+  converted to warnings. No package repair loop or provider fallback is added.
+- A ready guest's targeted development repair verifies SSH and Herdr without
+  reprovisioning the server or synchronizing unrelated configuration/credentials.
+  An incomplete core attempt still runs normal finalization. `--refresh` owns
+  adoption of changed host configuration, TTS selection and Herdr runtime.
 - Retained reprovision verifies SSH without rejecting stale ready Herdr metadata, provisions and verifies the current runtime, then atomically replaces ready identity before later mobile and unchanged-host checks, so a partial post-provision failure remains retryable.
 - No Sandbox-owned binary copy, wrapper, temporary config, direct server start, duplicate reload, alternate executable discovery, or compatibility bridge remains.
 - The Herdr thin client remains on the host and attaches through the untouched PATH command with `herdr --remote <app-owned-ssh-target>`.

@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 27
+# herdr-sandbox-stacks-contract: 28
 
 function Get-StackWebResponseText {
     param(
@@ -3153,6 +3153,20 @@ function Assert-StackSupertonicModels {
     }
 }
 
+function Assert-StackSupertonicRuntime {
+    param([Parameter(Mandatory = $true)][string]$Python)
+    try {
+        Invoke-ProvisioningNative -Role 'Supertonic CPU runtime import' -FilePath $Python `
+            -ArgumentList @('-I', '-c', 'import numpy, supertonic, onnxruntime; assert "CPUExecutionProvider" in onnxruntime.get_available_providers()') `
+            -TimeoutSeconds 30 | Out-Null
+    } catch {
+        if (Test-ProvisioningTerminalError -Exception $_.Exception) { throw }
+        $failure = [InvalidOperationException]::new("Supertonic CPU runtime is unavailable: $($_.Exception.Message)", $_.Exception)
+        $failure.Data['OptionalTTSUnavailable'] = $true
+        throw $failure
+    }
+}
+
 function Install-StackHyperFramesSupertonic {
     param(
         [Parameter(Mandatory = $true)][string]$BundleRoot,
@@ -3205,13 +3219,11 @@ function Install-StackHyperFramesSupertonic {
     Invoke-ProvisioningNative -Role 'Supertonic locked CPU dependencies' -FilePath $uv `
         -ArgumentList @('pip', 'sync', '--python', $environmentPython, '--require-hashes', '--only-binary', ':all:',
             (Join-Path $BundleRoot 'requirements.txt')) -TimeoutSeconds 600 | Out-Null
+    Assert-StackSupertonicRuntime -Python $environmentPython
     Invoke-ProvisioningNative -Role 'Supertonic model admission' -FilePath $environmentPython `
         -ArgumentList @((Join-Path $BundleRoot 'bin\download-supertonic.py'), '--model-dir', $directory) `
         -TimeoutSeconds 900 | Out-Null
     Assert-StackSupertonicModels -Directory $directory -Model $model
-    Invoke-ProvisioningNative -Role 'Supertonic CPU runtime import' -FilePath $environmentPython `
-        -ArgumentList @('-c', 'import supertonic, onnxruntime; assert "CPUExecutionProvider" in onnxruntime.get_available_providers()') `
-        -TimeoutSeconds 30 | Out-Null
     return @{ Python = $environmentPython; ModelDirectory = $directory }
 }
 
@@ -3417,8 +3429,12 @@ function Install-StackHyperFramesVoxCPM2 {
         }
     }
 
-    Install-PythonStack
-    Install-Uv
+    Invoke-ProvisioningStep -Name 'TTS Python and uv' -InputFiles @($PSCommandPath) -InputValues @(
+        (Get-ProvisioningToolVersion -Tool 'Python' -Requested ''),
+        (Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested '')) -Action {
+        Install-PythonStack
+        Install-Uv
+    }
     $supertonic = Install-StackHyperFramesSupertonic -BundleRoot $destination -ModelRoot $modelRoot
     $qwen3 = Install-StackHyperFramesQwen3 -BundleRoot $destination -ModelRoot $modelRoot -Python $supertonic.Python
     $engine = Join-Path $destination 'engine\audio'
@@ -3641,7 +3657,55 @@ if ($openCodeExitCode -ne 0) {
     }
 }
 
+function Disable-StackHyperFramesTTS {
+    foreach ($name in @('HF_MEDIA_ENGINE', 'HF_SUPERTONIC_PYTHON', 'HF_SUPERTONIC_MODEL_DIR',
+            'HF_QWEN3_TTS_CLI', 'HF_QWEN3_TTS_MODEL_DIR', 'HF_VOXCPM2_BASE_LM', 'HF_VOXCPM2_ACOUSTIC',
+            'HF_VOXCPM2_SERVER_CPU', 'HF_VOXCPM2_MODEL_ID', 'HF_VOXCPM2_REFERENCE_AUDIO', 'HF_VOXCPM2_STATE_DIR',
+            'HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
+    }
+    $cliDirectory = 'C:\HerdrSandbox\tools\hyperframes-voxcpm2\bin'
+    foreach ($scope in @('Machine', 'Process')) {
+        $path = [Environment]::GetEnvironmentVariable('Path', $scope)
+        $parts = @($path -split ';' | Where-Object { $_.Trim().TrimEnd('\') -ine $cliDirectory })
+        [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), $scope)
+    }
+}
+
 function Install-HyperFramesStack {
+    [CmdletBinding()]
+    param([string]$NodeVersion = '', [string]$FFmpegVersion = '', [string]$Version = '')
+
+    Invoke-ProvisioningStep -Name 'HyperFrames rendering' -InputFiles @($PSCommandPath) `
+        -InputValues @($NodeVersion, $FFmpegVersion, $Version,
+            (Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion),
+            (Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion),
+            (Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version)) -Action {
+        Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
+    }
+    # Never retain activation from a previous attempt while validating this one.
+    Disable-StackHyperFramesTTS
+    try {
+        $node = (Get-StackNodeTools).Node
+        Install-StackHyperFramesVoxCPM2 -Node $node
+    } catch {
+        Disable-StackHyperFramesTTS
+        $optional = $false
+        for ($cause = $_.Exception; $null -ne $cause; $cause = $cause.InnerException) {
+            if ($cause.Data['OptionalTTSUnavailable'] -eq $true) { $optional = $true }
+        }
+        if (-not $optional -or (Test-ProvisioningTerminalError -Exception $_.Exception)) {
+            $_.Exception.Data['ProvisioningTerminal'] = $true
+            throw
+        }
+        $message = Get-ProvisioningBoundedDiagnosticText -Text "TTS unavailable: $($_.Exception.Message)" -MaximumBytes 3000
+        $OptionalFailures.Add($message)
+        Write-Warning "$message Rendering remains ready. Correct the runtime fault, then run sandbox up to resume only unfinished setup. No automatic reinstall or cache retry was attempted."
+    }
+}
+
+function Install-StackHyperFramesRendering {
     [CmdletBinding()]
     param(
         [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
@@ -3951,7 +4015,6 @@ function Install-HyperFramesStack {
             }
         }
 
-        Install-StackHyperFramesVoxCPM2 -Node $node
         Assert-StackHyperFramesSoftwareEncode -FFmpeg ([string]$ffmpeg.Source) `
             -FFprobe ([string]$ffprobe.Source)
         Write-Output "HyperFrames CLI ready: $Version"

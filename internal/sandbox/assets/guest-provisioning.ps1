@@ -37,11 +37,12 @@ try {
     Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ErrorAction SilentlyContinue
     $captured = @()
     $developmentFailures = New-Object 'Collections.Generic.List[string]'
+    $optionalFailures = New-Object 'Collections.Generic.List[string]'
     try {
         if ($provisioningPhase -ceq 'Finalize') {
             $captured = @(& (Join-Path $expanded 'finalize-provisioning.ps1') -WorkspaceManifestPath (Join-Path $expanded 'workspaces.json') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') *>&1)
         } else {
-            $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') -DevelopmentFailures $developmentFailures *>&1)
+            $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') -DevelopmentFailures $developmentFailures -OptionalFailures $optionalFailures -StepStatePath 'C:\SandboxStatus\development-steps.json' -Resume:$resumeProvisioning *>&1)
         }
     } catch {
         $detail = @($developmentFailures.ToArray())
@@ -52,7 +53,7 @@ try {
     $explorerRestartScheduled = [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ceq '1'
     $restartID = if ($explorerRestartScheduled) { [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_ID } else { '' }
     $restartTaskName = if ($explorerRestartScheduled) { [string]$env:HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME } else { '' }
-    Write-Output ([ordered]@{ schemaVersion = 3; archiveSha256 = $digest; projectCount = $projects.Count; explorerRestartScheduled = $explorerRestartScheduled; explorerRestartId = $restartID; explorerRestartTaskName = $restartTaskName; failures = @($developmentFailures.ToArray()) } | ConvertTo-Json -Compress)
+    Write-Output ([ordered]@{ schemaVersion = 4; archiveSha256 = $digest; projectCount = $projects.Count; explorerRestartScheduled = $explorerRestartScheduled; explorerRestartId = $restartID; explorerRestartTaskName = $restartTaskName; failures = @($developmentFailures.ToArray()); optionalFailures = @($optionalFailures.ToArray()) } | ConvertTo-Json -Compress)
 } finally {
     Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_SCHEDULED -ErrorAction SilentlyContinue
     Remove-Item Env:HERDR_SANDBOX_EXPLORER_RESTART_ID -ErrorAction SilentlyContinue

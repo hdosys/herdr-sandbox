@@ -53,6 +53,9 @@ type Options struct {
 	MemoryMB      int
 	Timeout       time.Duration
 	Output        io.Writer
+	Refresh       bool
+	resume        bool
+	repairReady   bool
 }
 
 type Connection struct {
@@ -99,6 +102,7 @@ type runPlan struct {
 }
 
 type provisioningSnapshot struct {
+	Resume                     bool
 	Directory                  string
 	ProcessOwnerPath           string
 	ProjectScriptsDirectory    string
@@ -229,6 +233,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	var ready readyStatus
 	var tailscaleBootstrap tailscaleBootstrap
 	retained := sessionStatus.State != SessionStopped
+	options.resume = retained && !options.Refresh && sessionStatus.Operation != nil && sessionStatus.Operation.State != operationStateSucceeded
+	options.repairReady = options.resume && sessionStatus.State == SessionReady &&
+		(sessionStatus.Operation.Phase == "development-incomplete" || sessionStatus.Operation.Phase == "optional-unavailable")
 	if retained {
 		if !canResumeSession(sessionStatus) {
 			return Connection{}, fmt.Errorf("existing Windows Sandbox state is %s; %s", sessionStatus.State, sessionNextAction(sessionStatus))
@@ -278,7 +285,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	} else {
 		fmt.Fprintln(options.Output, "Mode: starting and provisioning a new Sandbox")
 	}
-	if provisioning.ModelsDirectory != "" {
+	if provisioning.ModelsDirectory != "" && !options.resume {
 		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
 		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, provisioning.TTSBundle, options.Output); err != nil {
 			return Connection{}, err

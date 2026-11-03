@@ -1,4 +1,4 @@
-# herdr-sandbox-base-contract: 58
+# herdr-sandbox-base-contract: 59
 param(
     [ValidateSet('Registry', 'Core', 'Development')]
     [string]$Phase = 'Development',
@@ -13,7 +13,11 @@ param(
     [switch]$AudioOutputEnabled,
     [switch]$AudioInputEnabled,
     [AllowEmptyCollection()]
-    [Collections.Generic.List[string]]$DevelopmentFailures
+    [Collections.Generic.List[string]]$DevelopmentFailures,
+    [AllowEmptyCollection()]
+    [Collections.Generic.List[string]]$OptionalFailures,
+    [string]$StepStatePath = '',
+    [switch]$Resume
 )
 
 $ErrorActionPreference = 'Stop'
@@ -671,9 +675,117 @@ function Invoke-ProvisioningExtensionScript {
     } catch {
         if ($_.Exception -is [OperationCanceledException]) { throw }
         if ($Kind -ceq 'Project') {
-            throw "Custom project provisioning profile for workspace `"$WorkspaceName`" (<workspace>\.herdr-sandbox\provision.ps1) failed: $($_.Exception.Message)"
+            throw [InvalidOperationException]::new("Custom project provisioning profile for workspace `"$WorkspaceName`" (<workspace>\.herdr-sandbox\provision.ps1) failed: $($_.Exception.Message)", $_.Exception)
         }
-        throw "Custom global user provisioning profile (%APPDATA%\herdr-sandbox\user.ps1) failed: $($_.Exception.Message)"
+        throw [InvalidOperationException]::new("Custom global user provisioning profile (%APPDATA%\herdr-sandbox\user.ps1) failed: $($_.Exception.Message)", $_.Exception)
+    }
+}
+
+function Test-ProvisioningTerminalError {
+    param([Parameter(Mandatory = $true)][Exception]$Exception)
+    for ($cause = $Exception; $null -ne $cause; $cause = $cause.InnerException) {
+        if ($cause -is [OperationCanceledException] -or
+            $cause -is [Management.Automation.PipelineStoppedException] -or
+            $cause -is [Security.SecurityException] -or $cause.Data['ProvisioningTerminal'] -eq $true) { return $true }
+    }
+    return $false
+}
+
+function Get-ProvisioningStepFingerprint {
+    param([string[]]$Files = @(), [string[]]$Values = @())
+    $parts = @($Values)
+    foreach ($path in $Files) {
+        $item = Get-Item -LiteralPath $path -Force
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw [Security.SecurityException]::new("Provisioning step input is unsafe: $path")
+        }
+        $parts += (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes(
+            (ConvertTo-Json -InputObject @($parts) -Compress)))).Replace('-', '').ToLowerInvariant()
+    } finally { $hash.Dispose() }
+}
+
+function Initialize-ProvisioningSteps {
+    param([string]$Path, [bool]$Resume, [string[]]$ImplementationFiles)
+    $script:ProvisioningStepPath = $Path
+    $script:ProvisioningSteps = @{}
+    $script:ProvisioningImplementation = Get-ProvisioningStepFingerprint -Files $ImplementationFiles
+    if ([string]::IsNullOrEmpty($Path)) { return }
+    if (-not [IO.Path]::IsPathRooted($Path)) { throw 'Provisioning step state path must be absolute.' }
+    for ($parent = Split-Path -Parent $Path; $parent; $parent = Split-Path -Parent $parent) {
+        $item = Get-Item -LiteralPath $parent -Force
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw [Security.SecurityException]::new('Provisioning step state parent is unsafe.')
+        }
+    }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSIsContainer -or $item.Length -gt 65536 -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw [Security.SecurityException]::new('Provisioning step state is unsafe or oversized.')
+    }
+    $state = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    if ((@($state.PSObject.Properties.Name | Sort-Object) -join '|') -cne 'schemaVersion|steps' -or
+        $state.schemaVersion -ne 1 -or $null -eq $state.steps -or @($state.steps).Count -gt 128) {
+        throw 'Provisioning step state has an unsupported contract.'
+    }
+    $seen = @{}
+    foreach ($step in @($state.steps)) {
+        if ((@($step.PSObject.Properties.Name | Sort-Object) -join '|') -cne 'fingerprint|name' -or
+            [string]$step.name -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,255}$' -or
+            [string]$step.fingerprint -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey([string]$step.name)) {
+            throw 'Provisioning step state contains an invalid or duplicate entry.'
+        }
+        $seen[[string]$step.name] = $true
+        if ($Resume) { $script:ProvisioningSteps[[string]$step.name] = [string]$step.fingerprint }
+    }
+}
+
+function Save-ProvisioningSteps {
+    if ([string]::IsNullOrEmpty($script:ProvisioningStepPath)) { return }
+    $steps = @($script:ProvisioningSteps.Keys | Sort-Object | ForEach-Object {
+        [ordered]@{ name = $_; fingerprint = $script:ProvisioningSteps[$_] }
+    })
+    if ($steps.Count -gt 128) { throw 'Provisioning step state exceeds its bounded contract.' }
+    $temporary = $script:ProvisioningStepPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary, ([ordered]@{ schemaVersion = 1; steps = $steps } |
+            ConvertTo-Json -Depth 4 -Compress), (New-Object Text.UTF8Encoding($false)))
+        if (Test-Path -LiteralPath $script:ProvisioningStepPath) {
+            [IO.File]::Replace($temporary, $script:ProvisioningStepPath, $null)
+        } else { [IO.File]::Move($temporary, $script:ProvisioningStepPath) }
+    } catch {
+        $_.Exception.Data['ProvisioningTerminal'] = $true
+        throw
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Invoke-ProvisioningStep {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$Action,
+        [string[]]$InputFiles = @(),
+        [string[]]$InputValues = @()
+    )
+    $fingerprint = Get-ProvisioningStepFingerprint -Files $InputFiles `
+        -Values (@($script:ProvisioningImplementation) + $InputValues)
+    if ($script:ProvisioningSteps[$Name] -ceq $fingerprint) {
+        Write-ProvisioningProgress -Message "Keeping completed step: $Name"
+        return
+    }
+    # Invalidate before execution, so interruption cannot retain old success.
+    $script:ProvisioningSteps.Remove($Name)
+    Save-ProvisioningSteps
+    $optionalCount = $OptionalFailures.Count
+    & $Action
+    if ($OptionalFailures.Count -eq $optionalCount) {
+        $script:ProvisioningSteps[$Name] = $fingerprint
+        Save-ProvisioningSteps
     }
 }
 
@@ -681,14 +793,15 @@ function Invoke-ProvisioningIndependentStep {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Action,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[string]]$Failures
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[string]]$Failures,
+        [string[]]$InputFiles = @(),
+        [string[]]$InputValues = @()
     )
 
     try {
-        & $Action
+        Invoke-ProvisioningStep -Name $Name -Action $Action -InputFiles $InputFiles -InputValues $InputValues
     } catch {
-        if ($_.Exception -is [OperationCanceledException] -or
-            $_.Exception -is [Management.Automation.PipelineStoppedException]) { throw }
+        if (Test-ProvisioningTerminalError -Exception $_.Exception) { throw }
         $message = Get-ProvisioningBoundedDiagnosticText -Text "$Name`: $($_.Exception.Message)" -MaximumBytes 3000
         $Failures.Add($message)
         Write-Warning "$message Independent provisioning will continue."
@@ -870,7 +983,7 @@ function Assert-ProvisioningCachePath {
         if (Test-Path -LiteralPath $current) {
             $item = Get-Item -LiteralPath $current -Force
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Cache path contains a reparse point: $current"
+                throw [Security.SecurityException]::new("Cache path contains a reparse point: $current")
             }
         }
         if ($current -ieq $cacheRoot) {
@@ -903,7 +1016,7 @@ function Assert-ProvisioningCacheTree {
         foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force)) {
             Assert-ProvisioningCachePath -Path $item.FullName
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Cache tree contains a reparse point: $($item.FullName)"
+                throw [Security.SecurityException]::new("Cache tree contains a reparse point: $($item.FullName)")
             }
             if ($item.PSIsContainer) {
                 $pending.Add($item.FullName) | Out-Null
@@ -1222,7 +1335,7 @@ function Copy-ProvisioningPackageToGuest {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
     $actualHash = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToUpperInvariant()
     if ($actualHash -cne $ExpectedSHA256) {
-        throw "Guest-local package copy hash mismatch: $Destination"
+        throw [Security.SecurityException]::new("Guest-local package copy hash mismatch: $Destination")
     }
 }
 
@@ -1370,7 +1483,7 @@ function Assert-ProvisioningAuthenticodeSignature {
 
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "$Role Authenticode signature is not valid: $($signature.Status)"
+        throw [Security.SecurityException]::new("$Role Authenticode signature is not valid: $($signature.Status)")
     }
 }
 
@@ -1768,7 +1881,7 @@ function Install-ProvisioningGeistMonoFontPayload {
         $extractedItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
         foreach ($item in $extractedItems) {
             if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "$Role archive produced a reparse point: $($item.FullName)"
+                throw [Security.SecurityException]::new("$Role archive produced a reparse point: $($item.FullName)")
             }
             if ($item.PSIsContainer -or $item.DirectoryName -cne $toolRoot) {
                 throw "$Role archive produced a non-flat entry: $($item.FullName)"
@@ -1881,7 +1994,7 @@ function Install-ProvisioningPackagePayload {
                     @($existingItems | Where-Object {
                             ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
                         }).Count -ne 0) {
-                    throw "$Role portable executable root contains a reparse point: $toolRoot"
+                    throw [Security.SecurityException]::new("$Role portable executable root contains a reparse point: $toolRoot")
                 }
                 Remove-Item -LiteralPath $toolRoot -Recurse -Force
             }
@@ -1911,7 +2024,7 @@ function Install-ProvisioningPackagePayload {
                 -ArgumentList @('-xf', $PayloadPath, '-C', $toolRoot) | Out-Null
             foreach ($item in @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)) {
                 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                    throw "$Role archive produced a reparse point: $($item.FullName)"
+                    throw [Security.SecurityException]::new("$Role archive produced a reparse point: $($item.FullName)")
                 }
             }
             $commands = @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse -Filter $ExecutableName)
@@ -1919,7 +2032,7 @@ function Install-ProvisioningPackagePayload {
                 throw "$Role archive contains $($commands.Count) $ExecutableName files; expected one."
             }
             if (($commands[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "$Role executable is a reparse point: $($commands[0].FullName)"
+                throw [Security.SecurityException]::new("$Role executable is a reparse point: $($commands[0].FullName)")
             }
             Add-ProvisioningMachinePath -Directory $commands[0].Directory.FullName
         }
@@ -1932,7 +2045,7 @@ function Install-ProvisioningPackagePayload {
                 Copy-Item -LiteralPath $PayloadPath -Destination $rustupInstaller
                 $rustupInstallerHash = (Get-FileHash -LiteralPath $rustupInstaller -Algorithm SHA256).Hash.ToUpperInvariant()
                 if ($rustupInstallerHash -cne [string]$Metadata.Sha256) {
-                    throw "$Role guest installer copy hash mismatch: $rustupInstallerHash"
+                    throw [Security.SecurityException]::new("$Role guest installer copy hash mismatch: $rustupInstallerHash")
                 }
             }
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $rustupInstaller `
@@ -1969,7 +2082,7 @@ function Get-ProvisioningDirectPackage {
     }
     $actualHash = (Get-FileHash -LiteralPath $GuestPayloadPath -Algorithm SHA256).Hash.ToUpperInvariant()
     if ($actualHash -cne [string]$Metadata.Sha256) {
-        throw "$Role downloaded package hash mismatch: $actualHash"
+        throw [Security.SecurityException]::new("$Role downloaded package hash mismatch: $actualHash")
     }
 }
 
@@ -3522,6 +3635,12 @@ return
 }
 
 Update-ProvisioningPath
+$returnDevelopmentFailures = $null -ne $DevelopmentFailures
+if (-not $returnDevelopmentFailures) { $DevelopmentFailures = New-Object 'Collections.Generic.List[string]' }
+if ($null -eq $OptionalFailures) { $OptionalFailures = New-Object 'Collections.Generic.List[string]' }
+Initialize-ProvisioningSteps -Path $StepStatePath -Resume $Resume.IsPresent `
+    -ImplementationFiles @($PSCommandPath, $ProcessOwnerPath)
+Invoke-ProvisioningStep -Name 'PowerShell' -InputValues (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') -Action {
 Write-Output 'Installing PowerShell 7...'
 Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell' `
     -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') `
@@ -3529,8 +3648,10 @@ Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell
 $powerShell7 = Get-ProvisioningPowerShell7Installation
 $powerShellVersion = "PowerShell $($powerShell7.DisplayVersion)"
 Write-Output "PowerShell 7 ready: $powerShellVersion"
+}
 if ($Phase -eq 'Core') { return }
 
+Invoke-ProvisioningStep -Name 'Shell configuration' -InputFiles @($PackagePlanPath) -Action {
 $openCodeCopyOnSelectEnvironment = 'OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT'
 [Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Machine')
 [Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Process')
@@ -3545,8 +3666,6 @@ if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparis
     -not $powerShellProfilePath.EndsWith('\PowerShell\profile.ps1', [StringComparison]::OrdinalIgnoreCase)) {
     throw "PowerShell 7 all-host profile path is outside the expected guest user profile: $powerShellProfilePath"
 }
-$returnDevelopmentFailures = $null -ne $DevelopmentFailures
-if (-not $returnDevelopmentFailures) { $DevelopmentFailures = New-Object 'Collections.Generic.List[string]' }
 $starshipInitialization = ''
 if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
     Write-Output 'Installing Starship...'
@@ -3588,9 +3707,10 @@ if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
 if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
     throw 'PowerShell 7 PATH, mobile SSH, and Starship profile verification failed.'
 }
+}
 
 if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
-    Invoke-ProvisioningIndependentStep -Name 'fzf' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'fzf' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') -Action {
     Write-Output 'Installing fzf...'
     Install-ProvisioningWinGetPackage -Role 'fzf' -Id 'junegunn.fzf' `
         -Version (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') `
@@ -3602,7 +3722,7 @@ if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
-    Invoke-ProvisioningIndependentStep -Name 'ripgrep' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'ripgrep' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') -Action {
     Write-Output 'Installing ripgrep...'
     Install-ProvisioningWinGetPackage -Role 'ripgrep' -Id 'BurntSushi.ripgrep.MSVC' `
         -Version (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') `
@@ -3614,7 +3734,7 @@ if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
-    Invoke-ProvisioningIndependentStep -Name 'actionlint' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'actionlint' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') -Action {
     Write-Output 'Installing actionlint...'
     Install-ProvisioningWinGetPackage -Role 'actionlint' -Id 'rhysd.actionlint' `
         -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') `
@@ -3626,14 +3746,17 @@ if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
+    Invoke-ProvisioningStep -Name 'Git' -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
     Write-Output 'Installing Git...'
     Install-ProvisioningWinGetPackage -Role 'Git' -Id 'Git.Git' `
         -Version (Get-ProvisioningPackageVersion -Id 'Git.Git') -InstallerType 'inno' `
         -Scope 'machine' -Adapter 'Inno' -ExecutableName 'git.exe' -DeferCommandReadiness `
         -RequireAuthenticodeSignature
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'GitHub.cli') {
+    Invoke-ProvisioningStep -Name 'GitHub CLI' -InputValues (Get-ProvisioningPackageVersion -Id 'GitHub.cli') -Action {
     Write-Output 'Installing GitHub CLI...'
     Install-ProvisioningWinGetPackage -Role 'GitHub CLI' -Id 'GitHub.cli' `
         -Version (Get-ProvisioningPackageVersion -Id 'GitHub.cli') `
@@ -3642,9 +3765,11 @@ if (Test-ProvisioningPackageEnabled -Id 'GitHub.cli') {
         -VersionArguments @('--version') `
         -ExpectedPattern '^gh version (?<v>\d+\.\d+\.\d+(?:-[\w.]+)?) \(\d{4}-\d{2}-\d{2}\)\r?\nhttps://github\.com/cli/cli/releases/tag/v\k<v>$'
     Write-Output "GitHub CLI ready: $githubCLIVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Tailscale.Tailscale') {
+    Invoke-ProvisioningStep -Name 'Tailscale' -InputValues (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale') -Action {
     Write-Output 'Installing Tailscale...'
     Install-ProvisioningWinGetPackage -Role 'Tailscale' -Id 'Tailscale.Tailscale' `
         -Version (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale') `
@@ -3653,9 +3778,11 @@ if (Test-ProvisioningPackageEnabled -Id 'Tailscale.Tailscale') {
     $tailscaleVersion = Assert-ProvisioningCommand -Role 'Tailscale' -Name 'tailscale.exe' `
         -VersionArguments @('version') -ExpectedPattern '^\d+\.\d+\.\d+(?:-[\w.]+)?'
     Write-Output "Tailscale ready: $tailscaleVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
+    Invoke-ProvisioningStep -Name 'OpenCode' -InputValues (Get-ProvisioningPackageVersion -Id 'SST.opencode') -Action {
     Write-Output 'Installing OpenCode...'
     Install-ProvisioningWinGetPackage -Role 'OpenCode' -Id 'SST.opencode' `
         -Version (Get-ProvisioningPackageVersion -Id 'SST.opencode') `
@@ -3663,16 +3790,17 @@ if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
     $openCodeVersion = Assert-ProvisioningCommand -Role 'OpenCode' -Name 'opencode.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
     Write-Output "OpenCode ready: $openCodeVersion"
+    }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'ZedIndustries.Zed') {
-    Invoke-ProvisioningIndependentStep -Name 'Zed' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'Zed' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed') -Action {
         Install-ProvisioningZed
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
-    Invoke-ProvisioningIndependentStep -Name 'WinDirStat' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'WinDirStat' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') -Action {
     Write-Output 'Installing WinDirStat...'
     Install-ProvisioningWinGetPackage -Role 'WinDirStat' -Id 'WinDirStat.WinDirStat' `
         -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') `
@@ -3687,7 +3815,7 @@ if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
-    Invoke-ProvisioningIndependentStep -Name 'File Pilot' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'File Pilot' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot') -Action {
     Write-Output 'Installing File Pilot...'
     Install-ProvisioningOnlineWinGetPackage -Role 'File Pilot' -Id 'Voidstar.FilePilot' `
         -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
@@ -3699,6 +3827,8 @@ if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
 $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
 $terminalPackageFamily = ''
 if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
+    $terminalPackageFamily = if ($WindowsTerminalEdition -eq 'preview') { 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe' } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe' }
+    Invoke-ProvisioningStep -Name 'Windows Terminal' -InputValues @($terminalPackageID, (Get-ProvisioningPackageVersion -Id $terminalPackageID)) -Action {
     Write-Output 'Installing GeistMono Nerd Font...'
     Install-ProvisioningGeistMonoNerdFont
 
@@ -3731,6 +3861,7 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     }
     Write-Output 'GeistMono Nerd Font ready: GeistMono Nerd Font'
     Write-Output "Windows Terminal $WindowsTerminalEdition ready: $($terminalCommand.Source)"
+    }
 }
 
 foreach ($package in @($provisioningPackagePlan.Data.additions)) {
@@ -3738,14 +3869,14 @@ foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     if ($packageID -ieq 'SST.opencode') {
         continue
     }
-    Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -InputValues ([string]$package.version) -Action {
         Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
             -Id $packageID -Version ([string]$package.version)
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT') {
-    Invoke-ProvisioningIndependentStep -Name 'Vulkan capability' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'Vulkan capability' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'KhronosGroup.VulkanRT') -Action {
     $vulkanDevices = @(Assert-ProvisioningVulkanDevice)
     Write-Output "Vulkan ready: $($vulkanDevices -join ', ')"
     }
@@ -3788,6 +3919,7 @@ if ($activeWorkspaceMatches -ne 1) {
     throw 'Workspace manifest active workspace is invalid for Base provisioning.'
 }
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
+    Invoke-ProvisioningStep -Name 'Git configuration' -InputFiles @($workspaceManifestPath) -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
     Wait-ProvisioningCommandAvailable -Role 'Git' -Name 'git.exe' | Out-Null
     $gitVersion = Assert-ProvisioningCommand -Role 'Git' -Name 'git.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^git version '
@@ -3837,6 +3969,7 @@ if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
         throw "Git safe-directory verification failed: $($verifiedSafeDirectories -join ', ')"
     }
     Write-Output "Git ready: $gitVersion"
+    }
 }
 
 Invoke-ProvisioningIndependentStep -Name 'opensrc' -Failures $DevelopmentFailures -Action { Install-ProvisioningOpenSrc }
@@ -3849,6 +3982,7 @@ if (-not (Test-Path -LiteralPath $stackProvisioning -PathType Leaf)) {
     throw "App-owned stack provisioning library is missing: $stackProvisioning"
 }
 . $stackProvisioning
+$profileInputs = @($stackProvisioning, $PackagePlanPath, (Join-Path $PSScriptRoot 'tool-versions.json'), $workspaceManifestPath)
 $userProvisioning = Get-Item -LiteralPath $UserProvisioningPath -Force
 if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -and
     $userProvisioning.Length -le 1048576) {
@@ -3858,7 +3992,7 @@ if (-not $userProvisioning.PSIsContainer -and $userProvisioning.Length -gt 0 -an
         throw "User provisioning contract is invalid: $UserProvisioningPath"
     }
     Write-Output 'Running global user provisioning'
-    Invoke-ProvisioningIndependentStep -Name 'Global user provisioning' -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name 'Global user provisioning' -Failures $DevelopmentFailures -InputFiles ($profileInputs + @($userProvisioning.FullName)) -Action {
         Invoke-ProvisioningExtensionScript -Kind 'User' -Path $userProvisioning.FullName
     }
 } else {
@@ -3873,7 +4007,7 @@ foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     }
     $projectScript = Get-Item -LiteralPath $projectScriptPath
     Write-Output "Running project provisioning for $workspaceName"
-    Invoke-ProvisioningIndependentStep -Name "Project $workspaceName" -Failures $DevelopmentFailures -Action {
+    Invoke-ProvisioningIndependentStep -Name "Project $workspaceName" -Failures $DevelopmentFailures -InputFiles ($profileInputs + @($projectScript.FullName, $userProvisioning.FullName)) -Action {
         Invoke-ProvisioningExtensionScript -Kind 'Project' -Path $projectScript.FullName `
             -WorkspaceName $workspaceName -ProjectDirectory $projectDirectory
     }
@@ -3886,7 +4020,7 @@ if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
             -DelayMilliseconds 0 -BestEffort | Out-Null
     }
 }
-Invoke-ProvisioningIndependentStep -Name 'Desktop shortcuts' -Failures $DevelopmentFailures -Action {
+Invoke-ProvisioningIndependentStep -Name 'Desktop shortcuts' -Failures $DevelopmentFailures -InputFiles @($PackagePlanPath) -Action {
     Install-ProvisioningAccessShortcut -Name 'apify-access' -DisplayName 'Apify access'
     Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
         -TerminalPackageFamily $terminalPackageFamily

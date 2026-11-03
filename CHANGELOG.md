@@ -9,6 +9,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- After incomplete provisioning, `sandbox up` resumes unfinished or changed steps
+  instead of repeating successful unchanged setup. `--refresh` requests a full
+  refresh. An unavailable Supertonic CPU runtime leaves the Sandbox and HyperFrames
+  rendering ready, reports TTS unavailable, and does not trigger package-cache
+  retries. Integrity and required connection failures remain errors.
+
 - Local packaging produces only the installer and its provenance sidecar.
   Verification no longer rebuilds the application, and explicit installed
   acceptance reuses the exact candidate instead of replacing it with a new build.

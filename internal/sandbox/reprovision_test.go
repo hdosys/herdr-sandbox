@@ -42,7 +42,8 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 	source := filepath.Join(root, "source")
 	projects := filepath.Join(source, "projects")
 	workingProject := filepath.Join(workspaces, "working")
-	for _, directory := range []string{project, projects, workingProject} {
+	statusRoot := filepath.Join(root, "status")
+	for _, directory := range []string{project, projects, workingProject, statusRoot} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +70,7 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 	}
 	profile := filepath.Join(projects, "project.ps1")
 	workingProfile := filepath.Join(projects, "working.ps1")
-	if err := os.WriteFile(workingProfile, []byte("param($ProjectDirectory)\n[IO.File]::WriteAllText((Join-Path $ProjectDirectory 'accepted.txt'), 'working')"), 0o600); err != nil {
+	if err := os.WriteFile(workingProfile, []byte("param($ProjectDirectory)\n[IO.File]::AppendAllText((Join-Path $ProjectDirectory 'accepted.txt'), 'working')"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	snapshot := provisioningSnapshot{Directory: source, ProcessOwnerPath: filepath.Join(source, provisioningProcessName),
@@ -95,8 +96,9 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 		}
 		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 		attempt := fmt.Sprintf("20261002-12000%d-abcdef12", index)
-		launcherScript := buildReprovisionLauncher(digest, len(archive), 2, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false)
+		launcherScript := buildReprovisionLauncher(digest, len(archive), 2, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false, index > 0)
 		launcherScript = strings.ReplaceAll(launcherScript, guestWorkspacesDirectory, workspaces)
+		launcherScript = strings.ReplaceAll(launcherScript, `C:\SandboxStatus`, statusRoot)
 		launcher := sshArchiveLauncherBytes(launcherScript)
 		command := buildSSHArchiveTransportCommand(digest, len(archive), launcher, 30*time.Second, attempt)
 		command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)
@@ -126,6 +128,44 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 	}
 	if data, err := os.ReadFile(filepath.Join(project, "accepted.txt")); err != nil || string(data) != "corrected" {
 		t.Fatalf("corrected profile did not execute in the same project: %q %v", data, err)
+	}
+}
+
+func TestOptionalProvisioningDoesNotBlockReadyConnection(t *testing.T) {
+	connection := Connection{GuestIP: "192.0.2.1", HerdrVersion: "test"}
+	var output bytes.Buffer
+	var phase string
+	update := func(value, _ string) error { phase = value; return nil }
+	got, err := finishDevelopmentProvisioning(connection, &developmentProvisioningError{optional: []string{"TTS unavailable"}}, update, &output)
+	if err != nil || got.GuestIP != connection.GuestIP || phase != "" || !strings.Contains(output.String(), "optional features unavailable") {
+		t.Fatalf("optional failure blocked ready connection: %#v %v %s", got, err, output.String())
+	}
+	_, err = finishDevelopmentProvisioning(connection, &developmentProvisioningError{failures: []string{"project failed"}}, update, &output)
+	if err == nil || phase != "development-incomplete" {
+		t.Fatalf("required failure was hidden: %v %q", err, phase)
+	}
+}
+
+func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
+	requireExternalBoundaryTest(t, "Windows PowerShell 5.1 selective continuation")
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
+		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep"},
+	}, provisioningPowerShellFunctionSource{
+		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
+		names: []string{"Install-HyperFramesStack", "Assert-StackSupertonicRuntime"},
+	})
+	fixture, err := os.ReadFile(filepath.Join("testdata", "provisioning-continuation.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "continuation.ps1")
+	if err := os.WriteFile(path, []byte("$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version 2.0\n"+setup+string(fixture)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil || !strings.Contains(string(output), "verified selective continuation") {
+		t.Fatalf("selective continuation failed: %v: %s", err, output)
 	}
 }
 
@@ -376,12 +416,13 @@ func TestBuildReprovisionArchiveContainsOnlyCurrentProvisioningSnapshot(t *testi
 }
 
 func TestDecodeReprovisionResultIsStrict(t *testing.T) {
-	valid := []byte(`{"schemaVersion":3,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"20260801-080000-1234abcd","explorerRestartTaskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd","failures":[]}`)
+	valid := []byte(`{"schemaVersion":4,"archiveSha256":"abc","projectCount":3,"explorerRestartScheduled":true,"explorerRestartId":"20260801-080000-1234abcd","explorerRestartTaskName":"HerdrSandbox-ExplorerRestart-20260801-080000-1234abcd","failures":[],"optionalFailures":[]}`)
 	result, err := decodeReprovisionResult(valid)
 	if err != nil || result.ProjectCount != 3 || !result.ExplorerRestartScheduled {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
 	for _, invalid := range [][]byte{
+		bytes.Replace(valid, []byte(`"optionalFailures":[]`), []byte(`"optionalFailures":null`), 1),
 		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":null`), 1),
 		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":[""]`), 1),
 		bytes.Replace(valid, []byte(`"failures":[]`), []byte(`"failures":[1]`), 1),
@@ -436,7 +477,7 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 	digest := strings.Repeat("a", 64)
 	restartID := "20260801-080000-1234abcd"
 	taskName := "HerdrSandbox-ExplorerRestart-" + restartID
-	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName, false)
+	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName, false, false)
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedArchiveLength = [long]1234",

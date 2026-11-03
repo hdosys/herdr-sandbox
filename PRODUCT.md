@@ -11,8 +11,10 @@ The current product contract is:
 - The host `sandbox` command starts, provisions, inspects, and stops an app-owned Windows Sandbox while Herdr keeps the interactive terminal on the host.
 - Selected projects and explicit cache, mount, worktree, and model roots can persist on the host. Unselected host data is not mapped, and guest tools and processes remain disposable.
 - `sandbox up` reports whether it will create a guest or provision an existing
-  compatible app-owned guest. Failed development provisioning can be retried in
-  the same guest after correcting the profile. Fixed mappings must still match;
+  compatible app-owned guest. After incomplete provisioning, `up` automatically
+  resumes unfinished steps and steps whose recorded inputs changed. Successful
+  unchanged steps are retained. `up --refresh` explicitly starts a full refresh;
+  a normal `up` after a completely successful operation also refreshes. Fixed mappings must still match;
   `up` never replaces the guest automatically.
 - Windows PowerShell 5.1 provisions selected tools and verifies their integrity, ownership, and real capabilities. Omitted external-tool versions resolve to current stable releases; explicit project versions remain exact.
 - Herdr Sandbox is pre-1.0. Only the latest published release is supported, breaking changes may occur, and no backward-compatibility promise applies.
@@ -76,8 +78,29 @@ The current product contract is:
   shared configuration prerequisites, archive integrity, credential transfer,
   SSH and Herdr verification remain strict. After all required readiness checks
   succeed, the guest is `ready` even when its provisioning operation is `failed`.
-  `sandbox up` returns nonzero and prints `sandbox attach` for work or repairs;
-  correcting the failed inputs and rerunning `sandbox up` reuses the same guest.
+  Required development failures return nonzero and print `sandbox attach` for work.
+  An unavailable Supertonic CPU runtime instead leaves the Sandbox and rendering
+  ready, reports TTS unavailable, and allows normal attach. The latest operation
+  retains that incomplete optional outcome, so `up` resumes it after correction.
+  Integrity, unsafe input, SSH, Herdr, cancellation and unclassified TTS failures
+  remain errors; failed TTS validation removes its environment and command-path
+  activation rather than selecting another provider. Existing processes may retain
+  their inherited environment until restarted.
+
+- Continuation reuses input-bound successful Base steps and complete user/project
+  profiles. Free-form profiles are indivisible steps; their arbitrary internal
+  effects and dependencies are not inferred. HyperFrames rendering is a separate
+  checkpoint from TTS. A corrected profile is rerun, while unchanged successful
+  profiles are skipped. Changed shared profile inputs invalidate their dependants.
+  Missing completion evidence never implies success. A guest provisioned by an
+  older build therefore needs one current run to establish these records.
+- When repairing incomplete development on an already verified ready guest, `up`
+  does not refresh host configuration, credentials, the selected TTS bundle or the
+  Herdr server. It still verifies SSH and the ready Herdr identity. Use `--refresh`
+  to adopt changed configuration, bundle selections or a changed Herdr runtime.
+  Failed or interrupted core setup still follows its required finalization path.
+  Continuation performs one attempt per selected step. It neither clears a package
+  cache nor forces dependency reinstallation to conceal incomplete package files.
 
 - Failure names the failed phase and points to bounded, terminal-safe diagnostics. `up` has a four-hour launch-to-ready deadline by default; an explicit positive `--timeout` replaces it for that run, while caller cancellation and narrower external-operation timeouts remain enforced. Ctrl+C cancels retained provisioning, skips the terminal Explorer-restart wait, performs only bounded task cleanup, preserves Sandbox state, and exits with status 130; a second Ctrl+C restores the operating system's immediate termination behavior. Retained reprovisioning publishes live progress and one host-owned bounded current/latest operation result separately from guest readiness, so a failed refresh never erases or falsely downgrades an otherwise ready guest. If a retained operation exits without a terminal result, the next lifecycle-lock owner records it as interrupted before any close, replacement, or cleanup mutation; another operation cannot silently overwrite a still-running record.
 - Cancelled pre-launch preparation reports that no Sandbox was launched. After

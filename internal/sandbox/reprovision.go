@@ -20,7 +20,7 @@ import (
 var guestProvisioningScript string
 
 const (
-	reprovisionResultSchema        = 3
+	reprovisionResultSchema        = 4
 	explorerRestartStatusSchema    = 1
 	explorerRestartStatusPending   = "pending"
 	explorerRestartStatusSucceeded = "succeeded"
@@ -37,10 +37,12 @@ type reprovisionResult struct {
 	ExplorerRestartID        string   `json:"explorerRestartId"`
 	ExplorerRestartTaskName  string   `json:"explorerRestartTaskName"`
 	Failures                 []string `json:"failures"`
+	OptionalFailures         []string `json:"optionalFailures"`
 }
 
 type developmentProvisioningError struct {
 	failures []string
+	optional []string
 }
 
 func (err *developmentProvisioningError) Error() string {
@@ -50,7 +52,7 @@ func (err *developmentProvisioningError) Error() string {
 func writeDevelopmentIncompleteGuidance(output io.Writer) {
 	fmt.Fprintln(output, "Sandbox is running. Attach now with `sandbox attach` to use Herdr.")
 	fmt.Fprintln(output, "Development setup is incomplete. Already provisioned tools remain usable; features depending on failed or unfinished setup may be unavailable.")
-	fmt.Fprintln(output, "Fix the reported failures, then retry `sandbox up` in this same Sandbox. Do not run `sandbox down`.")
+	fmt.Fprintln(output, "Fix the reported failures, then retry `sandbox up` in this same Sandbox. Completed unchanged steps are preserved; use `sandbox up --refresh` only for a full refresh. Do not run `sandbox down`.")
 }
 
 type explorerRestartStatus struct {
@@ -66,6 +68,7 @@ type explorerRestartStatus struct {
 
 func provisionSession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, hostHerdr HostHerdr, tailscaleBootstrap tailscaleBootstrap) (connection Connection, resultErr error) {
 	wasReady := ready.SchemaVersion != 0
+	var developmentFailure *developmentProvisioningError
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
 	fmt.Fprintf(options.Output, "Provisioning Sandbox run %s; matching installed tools will be reused...\n", plan.ID)
@@ -78,6 +81,11 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		state := operationStateSucceeded
 		phase := "completed"
 		message := "Provisioning and configuration verification succeeded."
+		if developmentFailure != nil && len(developmentFailure.optional) > 0 {
+			state = operationStateFailed
+			phase = "optional-unavailable"
+			message = "Sandbox ready; optional features unavailable: " + strings.Join(developmentFailure.optional, "; ") + ". Run sandbox up to resume."
+		}
 		if resultErr != nil {
 			state = operationFailureState(ctx, resultErr)
 			phase = operation.Phase
@@ -138,11 +146,15 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		return Connection{}, err
 	}
 	defer cleanupSnapshot()
+	snapshot.Resume = options.resume
+	if options.resume {
+		fmt.Fprintln(options.Output, "Resuming incomplete setup; completed unchanged steps are preserved. Use `sandbox up --refresh` for a full refresh.")
+	}
 	plan.Workspaces = snapshot.Workspaces
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace
 	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
 	plan.TradingViewEnabled = snapshot.TradingViewEnabled
-	if plan.RequiresVisualStudioLayout {
+	if plan.RequiresVisualStudioLayout && !options.repairReady {
 		if err := updateOperation("visual-studio-layout", "Preparing the required Visual Studio Build Tools layout on the host."); err != nil {
 			return Connection{}, err
 		}
@@ -152,7 +164,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		}
 	}
 
-	credentialsSyncedEarly := wasReady && shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, provisioning.CredentialSync)
+	credentialsSyncedEarly := wasReady && !options.repairReady && shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, provisioning.CredentialSync)
 	if credentialsSyncedEarly {
 		if err := updateOperation("credential-sync", "Applying selected credentials before retained provisioning."); err != nil {
 			return Connection{}, err
@@ -168,7 +180,6 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	if err := updateOperation("development-provisioning", "Running the current Base, user, and project provisioning."); err != nil {
 		return Connection{}, err
 	}
-	var developmentFailure *developmentProvisioningError
 	if err := runWithRetainedProgress(ctx, plan.StatusDirectory, options.Output, func(progress progressStatus) error {
 		return updateOperation(progress.Phase, progress.Message)
 	}, func(progressContext context.Context) error {
@@ -184,6 +195,30 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		for _, failure := range developmentFailure.failures {
 			fmt.Fprintf(options.Output, "Provisioning failed: %s\n", failure)
 		}
+		for _, failure := range developmentFailure.optional {
+			fmt.Fprintf(options.Output, "Warning: %s\n", failure)
+		}
+	}
+	if options.repairReady {
+		// A repair must not reload a usable Herdr server or refresh unrelated configuration.
+		connection.guestHerdrPath = ready.HerdrBinary
+		connection.HerdrVersion = hostHerdr.version
+		connection.HerdrProtocol = hostHerdr.protocol
+		connection.herdrRuntimeVersion = hostHerdr.runtimeVersion
+		if err := verifyGuestHerdr(ctx, connection); err != nil {
+			return Connection{}, fmt.Errorf("verify ready guest during continuation (use --refresh if its runtime changed): %w", err)
+		}
+		if err := hostHerdr.verifyUnchanged(ctx); err != nil {
+			return Connection{}, err
+		}
+		if len(plan.MobileSSHAuthorizedKeys) > 0 {
+			access, err := verifyMobileSSH(ctx, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
+			if err != nil {
+				return Connection{}, err
+			}
+			connection.MobileAccess = &access
+		}
+		return finishDevelopmentProvisioning(connection, developmentFailure, updateOperation, options.Output)
 	}
 	if plan.Tailscale {
 		if err := updateOperation("tailscale-identity", "Capturing and verifying the retained Tailscale identity."); err != nil {
@@ -294,11 +329,18 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			return Connection{}, err
 		}
 	}
-	if developmentFailure != nil {
-		if err := updateOperation("development-incomplete", "Terminal ready; independent development steps failed."); err != nil {
+	return finishDevelopmentProvisioning(connection, developmentFailure, updateOperation, options.Output)
+}
+
+func finishDevelopmentProvisioning(connection Connection, failure *developmentProvisioningError, update func(string, string) error, output io.Writer) (Connection, error) {
+	if failure != nil && len(failure.failures) > 0 {
+		if err := update("development-incomplete", "Terminal ready; independent development steps failed."); err != nil {
 			return Connection{}, err
 		}
-		return connection, developmentFailure
+		return connection, failure
+	}
+	if failure != nil && len(failure.optional) > 0 {
+		fmt.Fprintln(output, "Sandbox ready; optional features unavailable. Correct the reported runtime fault, then run `sandbox up` to resume. No automatic package-cache repair was attempted.")
 	}
 	return connection, nil
 }
@@ -516,7 +558,7 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 	defer clear(archive)
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	projectCount := workspaceProvisioningProfileCount(snapshot.Workspaces)
-	launcher := buildReprovisionLauncher(digest, len(archive), projectCount, restartID, restartTaskName, finalize)
+	launcher := buildReprovisionLauncher(digest, len(archive), projectCount, restartID, restartTaskName, finalize, snapshot.Resume)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcher, "run guest provisioning")
 	if err != nil {
 		return finishError(err)
@@ -528,14 +570,14 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 	if result.SchemaVersion != reprovisionResultSchema || result.ArchiveSHA256 != digest || result.ProjectCount != projectCount {
 		return finishError(fmt.Errorf("verify retained provisioning result: schema=%d digest=%q projects=%d", result.SchemaVersion, result.ArchiveSHA256, result.ProjectCount))
 	}
-	if finalize && len(result.Failures) != 0 {
+	if finalize && (len(result.Failures) != 0 || len(result.OptionalFailures) != 0) {
 		return finishError(errors.New("guest finalization returned development failures"))
 	}
 	developmentResult := func(restartErr error) error {
-		if restartErr != nil || len(result.Failures) == 0 {
+		if restartErr != nil || (len(result.Failures) == 0 && len(result.OptionalFailures) == 0) {
 			return restartErr
 		}
-		return &developmentProvisioningError{failures: result.Failures}
+		return &developmentProvisioningError{failures: result.Failures, optional: result.OptionalFailures}
 	}
 	if !result.ExplorerRestartScheduled {
 		if result.ExplorerRestartID != "" || result.ExplorerRestartTaskName != "" {
@@ -758,20 +800,21 @@ func workspaceProvisioningProfileCount(workspaces []workspacePlan) int {
 	return count
 }
 
-func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int, explorerRestartID, explorerRestartTaskName string, finalize bool) string {
+func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int, explorerRestartID, explorerRestartTaskName string, finalize, resume bool) string {
 	staging := guestArchiveStagingPowerShell("provisioning-"+explorerRestartID, "Guest provisioning", true)
 	phase := "Development"
 	if finalize {
 		phase = "Finalize"
 	}
 	return fmt.Sprintf("%s\n$expectedArchiveLength = [long]%d\n$expectedArchiveDigest = '%s'\n$expectedProjectCount = %d\n$explorerRestartID = '%s'\n$explorerRestartTaskName = '%s'\n$provisioningPhase = '%s'\n%s",
-		staging, archiveLength, expectedDigest, projectCount, explorerRestartID, explorerRestartTaskName, phase, guestProvisioningScript)
+		staging, archiveLength, expectedDigest, projectCount, explorerRestartID, explorerRestartTaskName, phase,
+		fmt.Sprintf("$resumeProvisioning = $%t\n", resume)+guestProvisioningScript)
 }
 
 func decodeReprovisionResult(data []byte) (reprovisionResult, error) {
 	data = bytes.TrimSpace(data)
 	if err := validateExactJSONObjectShape(data, "retained provisioning result", []string{
-		"schemaVersion", "archiveSha256", "projectCount", "explorerRestartScheduled", "explorerRestartId", "explorerRestartTaskName", "failures",
+		"schemaVersion", "archiveSha256", "projectCount", "explorerRestartScheduled", "explorerRestartId", "explorerRestartTaskName", "failures", "optionalFailures",
 	}); err != nil {
 		return reprovisionResult{}, err
 	}
@@ -784,14 +827,16 @@ func decodeReprovisionResult(data []byte) (reprovisionResult, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return reprovisionResult{}, errors.New("decode retained provisioning result: trailing JSON data")
 	}
-	if result.Failures == nil || len(result.Failures) > 128 {
+	if result.Failures == nil || result.OptionalFailures == nil || len(result.Failures)+len(result.OptionalFailures) > 128 {
 		return reprovisionResult{}, errors.New("retained provisioning failures must be a bounded array")
 	}
-	for index, failure := range result.Failures {
-		if strings.TrimSpace(failure) == "" || len(failure) > 4096 {
-			return reprovisionResult{}, errors.New("retained provisioning failure detail is empty or too large")
+	for _, failures := range [][]string{result.Failures, result.OptionalFailures} {
+		for index, failure := range failures {
+			if strings.TrimSpace(failure) == "" || len(failure) > 4096 {
+				return reprovisionResult{}, errors.New("retained provisioning failure detail is empty or too large")
+			}
+			failures[index] = sanitizeTerminalText(failure, 4096)
 		}
-		result.Failures[index] = sanitizeTerminalText(failure, 4096)
 	}
 	return result, nil
 }

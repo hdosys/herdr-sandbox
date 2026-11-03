@@ -121,7 +121,7 @@ func TestSSHArchiveTransportCommandsFitWindowsCommandLine(t *testing.T) {
 		"configuration": buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345),
 		"reprovision": buildReprovisionLauncher(
 			strings.Repeat("a", 64), 12345, 1,
-			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12", false,
+			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12", false, false,
 		),
 		"large launcher": strings.Repeat("# Larger than a Windows command line.\n", 4096),
 	}
