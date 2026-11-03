@@ -50,7 +50,7 @@ the normal terminal.
 - **Confidence in real Windows behavior:** compile, test, package, and automate GUI applications in Windows Sandbox instead of a compatibility layer.
 - **Your normal terminal:** Herdr attaches from the host, so routine work does not require RDP or a second desktop workflow.
 - **Repeatable setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
-- **Retry without starting over:** correct a failed project profile and rerun `sandbox up` in the same compatible guest, preserving installed tools.
+- **Retry without starting over:** correct a failed project profile and rerun `sandbox up`. It resumes unfinished or changed steps in the same compatible guest, preserving successful unchanged setup. Use `--refresh` for a full refresh.
 - **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
 - **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
@@ -484,7 +484,7 @@ and errors go to stderr.
 | `sandbox version` or `sandbox --version` | Prints the release, sortable UTC build freshness, and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Starts or reprovisions a compatible guest and normally attaches. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]` | Starts a guest, resumes incomplete setup, or refreshes a completed setup, then normally attaches. `--refresh` explicitly requests full provisioning. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. Returns zero only when the state is `ready`. |
@@ -589,7 +589,8 @@ when it is safe, and reports the next action.
 | Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
 | Guest Herdr provisioning fails | Update Herdr Extended, confirm host `ssh.exe` and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
 | A profile calls `Install-NushellStack` | Remove that call. Nushell is mandatory Base tooling; select an exact version through `wingetPackages.versions` instead. |
-| Project provisioning fails | Correct the named profile and rerun `sandbox up`. Keep the Sandbox open; installed tools and matching workspaces are reused. |
+| Project provisioning fails | Correct the named profile and rerun `sandbox up`. Successful unchanged steps are skipped when completion evidence exists. Free-form profiles remain indivisible steps. Keep the Sandbox open. |
+| Supertonic CPU runtime is unavailable | The Sandbox and HyperFrames rendering remain ready; TTS stays deactivated. Correct the reported runtime fault, then run `sandbox up` to resume. No automatic cache clearing or forced reinstallation is attempted. Use `--refresh` to adopt changed host configuration, TTS bundle selection or Herdr runtime. |
 | Minimal bootstrap fails before SSH | Use the retry command shown in the existing Sandbox console, then rerun `sandbox up` on the host. |
 | Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
 

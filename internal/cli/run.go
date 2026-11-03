@@ -58,6 +58,8 @@ Configuration:
 
 Behavior:
   - up has a four-hour launch-to-terminal-ready timeout; --timeout replaces it for one run
+  - after incomplete setup, up resumes unfinished or changed steps; --refresh requests a full refresh
+  - optional TTS unavailability does not block a verified ready Sandbox or automatic attach
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
