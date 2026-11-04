@@ -220,15 +220,25 @@ command = [
 	if bytes.Contains(saved, []byte("host-local")) || bytes.Contains(saved, []byte("D:/Host")) {
 		t.Fatal("native import overwrote Sandbox-owned or guest-local settings")
 	}
-	var source, target map[string]any
+	// Inline table arrays and array-of-table syntax decode to different generic
+	// slice types. Compare typed bindings, not the serializer's TOML formatting.
+	var source, target struct {
+		Keys struct {
+			Command []struct {
+				Key         string `toml:"key"`
+				Command     string `toml:"command"`
+				Description string `toml:"description"`
+			} `toml:"command"`
+		} `toml:"keys"`
+	}
 	if _, err := toml.Decode(incoming, &source); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := toml.Decode(string(saved), &target); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(target["keys"], source["keys"]) {
-		t.Fatal("native import dropped or rewrote host command bindings")
+	if !reflect.DeepEqual(target.Keys.Command, source.Keys.Command) {
+		t.Fatalf("native import dropped or rewrote host command bindings: got %#v, want %#v", target.Keys.Command, source.Keys.Command)
 	}
 }
 
