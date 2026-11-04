@@ -358,18 +358,26 @@ To disable both installation and sync, add `ZedIndustries.Zed` to
 
 ### Herdr settings
 
-Herdr Extended transfers portable settings from its selected host configuration,
-including a custom `HERDR_CONFIG_PATH`. Sandbox applies only its guest shell and
-mapped worktree overrides. Custom keybinding commands (`keys.command`), agent
-arguments, working directories, and sound paths remain guest-owned. This requires
-a current Herdr Extended build with configuration provisioning support, not just
-the `herdr-ext` version marker.
+Herdr Extended transfers settings from its selected host configuration, including
+a custom `HERDR_CONFIG_PATH` and custom keybinding commands (`keys.command`). Keep
+your shortcut definitions in that host configuration rather than recreating them
+in each disposable guest. Commands transfer unchanged, so their tools and scripts
+must also be available in the guest; Sandbox does not invent or rewrite shortcuts.
 
-Explicit `sandbox up` adopts transferable host Herdr settings for both new and
-retained guests. It passes `--overwrite-config` to Herdr's remote `--provision`
-operation, preserving Herdr's machine-local exclusions. An unchanged configuration
-is not rewritten. `sandbox attach` and ordinary reconnects do not transfer settings
-or ask configuration questions.
+Sandbox applies only its guest shell and mapped worktree overrides. Herdr preserves
+the target's shell, starting directory, worktree directory, onboarding state,
+sound-file paths, and free-form agent arguments, which may contain machine-local
+paths or credentials. Other settings, including command bindings, transfer from
+the host. Both the host exporter and guest importer need a matching Herdr Extended
+build with this contract; the `herdr-ext` version marker alone does not prove it.
+
+A full `sandbox up` adopts transferable host Herdr settings for both new and
+retained guests. Use `sandbox up --refresh` to request adoption when `up` would
+otherwise resume incomplete development setup without refreshing configuration.
+Full provisioning passes `--overwrite-config` to Herdr's remote `--provision`
+operation, preserving only those environment-specific exclusions. An unchanged
+configuration is not rewritten. `sandbox attach` and ordinary reconnects do not
+transfer settings or ask configuration questions.
 
 Transferable settings include `ui.tab_bar_right` command and text entries and
 their separator. Configure usage displays in the selected host Herdr configuration

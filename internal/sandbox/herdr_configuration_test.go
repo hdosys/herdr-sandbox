@@ -187,8 +187,15 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	writeTestFile(t, path, string(guest))
 	t.Setenv("HERDR_CONFIG_PATH", path)
 	// Native import receives the same encoding as Herdr's export owner. It must
-	// preserve our overlay even when incoming machine-local values are present.
+	// preserve our overlay and explicit exclusions, but not discard command keys.
+	// These are isolated config fixtures, not installed user shortcut assignments.
 	incoming := "[terminal]\ndefault_shell = 'host-shell'\n[worktrees]\ndirectory = 'D:/Host'\n[agent]\nargs = ['host-local']\n[theme]\nname = 'dracula'\n"
+	incoming += `[keys]
+command = [
+  { key = "ctrl+y", command = 'nu --no-config-file "%USERPROFILE%\.config\opencode\commands\work-mode.nu" interactive', description = "OpenCode interactive" },
+  { key = "ctrl+j", command = 'nu --no-config-file "%USERPROFILE%\.config\opencode\commands\work-mode.nu" autonomous', description = "OpenCode autonomous" },
+]
+`
 	command := hiddenCommandContext(ctx, executable, "config", "provision-import", "--overwrite")
 	command.Env = attachEnvironment(childProcessEnvironment(os.Environ()))
 	command.Env = slices.DeleteFunc(command.Env, func(entry string) bool {
@@ -212,6 +219,16 @@ func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	}
 	if bytes.Contains(saved, []byte("host-local")) || bytes.Contains(saved, []byte("D:/Host")) {
 		t.Fatal("native import overwrote Sandbox-owned or guest-local settings")
+	}
+	var source, target map[string]any
+	if _, err := toml.Decode(incoming, &source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toml.Decode(string(saved), &target); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(target["keys"], source["keys"]) {
+		t.Fatal("native import dropped or rewrote host command bindings")
 	}
 }
 
