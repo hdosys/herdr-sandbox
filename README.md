@@ -637,6 +637,10 @@ security changes, audio disabling, SSH setup, firewall rules and the OpenCode
 Sandbox allow-all policy are not applied. Existing Herdr is retained without an
 automatic update or live-session restart.
 
+Advanced automation can select a distinct protected control-state directory with
+`/ROOT=C:\ProgramData\<owned-directory>` (CLI: `--root`). This changes only setup
+state/cache ownership; it does not isolate the installed Windows applications.
+
 For source builds, the canonical candidate is produced with
 `go run ./cmd/task package-workstation v0.0.28` at
 `build/dist/herdr-workstation_setup.exe`, with its provenance JSON beside it.

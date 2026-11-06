@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -266,5 +268,174 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 	dependencyChanged := readPlan()
 	if fingerprint(changed, "C and C++") == fingerprint(dependencyChanged, "C and C++") {
 		t.Fatal("dependent C++ step retained stale prerequisite evidence")
+	}
+}
+
+// Opt-in real installer boundary. It installs only a previously absent small
+// selected utility, then removes that exact task-owned registration. No existing
+// Herdr, Sandbox, user configuration or tool installation is replaced.
+func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
+	installer := os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER")
+	if installer == "" {
+		t.Skip("set HERDR_WORKSTATION_TEST_INSTALLER and its SHA256 for native acceptance")
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows installer boundary")
+	}
+	expectedHash := os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER_SHA256")
+	data, err := os.ReadFile(installer)
+	if err != nil || expectedHash == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+		t.Fatalf("installer identity not established: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Minute)
+	defer cancel()
+	winget, err := exec.LookPath("winget.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommandContext(ctx, winget, "list", "--id", "rhysd.actionlint", "--exact", "--source", "winget", "--accept-source-agreements", "--disable-interactivity")
+	output, err := command.CombinedOutput()
+	var exit *exec.ExitError
+	noApplicationCode := uint32(0x8A150014)
+	if !errors.As(err, &exit) || exit.ExitCode() != int(int32(noApplicationCode)) {
+		t.Fatalf("actionlint is not proven absent; preserving existing installation: %v %s", err, output)
+	}
+	packagePatterns := []string{
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "WinGet", "Packages", "rhysd.actionlint_*", "actionlint.exe"),
+		filepath.Join(os.Getenv("ProgramFiles"), "WinGet", "Packages", "rhysd.actionlint_*", "actionlint.exe"),
+	}
+	installedFiles := func() []string {
+		t.Helper()
+		var files []string
+		for _, pattern := range packagePatterns {
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files = append(files, matches...)
+		}
+		return files
+	}
+	if len(installedFiles()) != 0 {
+		t.Fatal("unregistered actionlint payload exists; preserved as unknown state")
+	}
+	root, err := os.MkdirTemp(os.Getenv("ProgramData"), "herdr-workstation-acceptance-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	private := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(private, "config"))
+	profilePath := filepath.Join(private, "profile.json")
+	settings := []byte("{\"theme\":\"system\"}\n")
+	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{
+		{ID: "HerdrWorkstation.NonexistentAcceptancePackage"}, {ID: "rhysd.actionlint"},
+	}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "opencode", Path: "opencode.json", Data: settings, SHA256: fmt.Sprintf("%x", sha256.Sum256(settings))}}}
+	writeProfile := func() {
+		t.Helper()
+		encoded, err := json.Marshal(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(profilePath, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeProfile()
+	var installedHash string
+	t.Cleanup(func() {
+		files := installedFiles()
+		if len(files) == 1 {
+			contents, readErr := os.ReadFile(files[0])
+			if readErr != nil || (installedHash != "" && fmt.Sprintf("%x", sha256.Sum256(contents)) != installedHash) {
+				t.Errorf("task package changed externally; cleanup preserved it")
+				return
+			}
+			cleanupContext, stop := context.WithTimeout(context.Background(), 90*time.Second)
+			defer stop()
+			cleanup := hiddenCommandContext(cleanupContext, winget, "uninstall", "--id", "rhysd.actionlint", "--exact", "--source", "winget", "--silent", "--disable-interactivity")
+			if out, err := cleanup.CombinedOutput(); err != nil {
+				t.Errorf("task package cleanup: %v %s", err, out)
+				return
+			}
+		}
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("task state cleanup: %v", err)
+		}
+	})
+	runInstaller := func(want int) {
+		t.Helper()
+		command := hiddenCommandContext(ctx, installer, "/S", "/PROFILE="+profilePath, "/ROOT="+root)
+		output, err := command.CombinedOutput()
+		actual := 0
+		if err != nil {
+			var status *exec.ExitError
+			if !errors.As(err, &status) {
+				t.Fatalf("installer invocation: %v %s", err, output)
+			}
+			actual = status.ExitCode()
+		}
+		if actual != want {
+			t.Fatalf("installer exit=%d, want%d: %s", actual, want, output)
+		}
+	}
+	readReport := func() WorkstationReport {
+		t.Helper()
+		contents, err := os.ReadFile(filepath.Join(root, "report.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report WorkstationReport
+		if err := json.Unmarshal(contents, &report); err != nil {
+			t.Fatal(err)
+		}
+		return report
+	}
+	runInstaller(1)
+	first := readReport()
+	if first.Complete {
+		t.Fatal("failed package was reported complete")
+	}
+	statuses := map[string]string{}
+	for _, step := range first.Steps {
+		statuses[step.Name] = step.Status
+	}
+	if statuses["Package HerdrWorkstation.NonexistentAcceptancePackage"] != "failed" || statuses["Package rhysd.actionlint"] != "succeeded" || statuses["Configuration opencode/opencode.json"] != "succeeded" {
+		t.Fatalf("independent work was not completed: %+v", first.Steps)
+	}
+	files := installedFiles()
+	if len(files) != 1 {
+		t.Fatalf("new actionlint payload not unique: %v", files)
+	}
+	contents, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	installedHash = fmt.Sprintf("%x", sha256.Sum256(contents))
+	probe := hiddenCommandContext(ctx, files[0], "--version")
+	if output, err := probe.CombinedOutput(); err != nil || !strings.Contains(string(output), "actionlint") {
+		t.Fatalf("installed utility capability: %v %s", err, output)
+	}
+	imported, err := os.ReadFile(filepath.Join(private, "config", "opencode", "opencode.json"))
+	if err != nil || !bytes.Equal(imported, settings) {
+		t.Fatalf("actual configuration import: %v", err)
+	}
+	profile.Packages = profile.Packages[1:]
+	writeProfile()
+	runInstaller(0)
+	second := readReport()
+	if !second.Complete {
+		t.Fatalf("corrected setup incomplete: %+v", second.Steps)
+	}
+	if !slices.ContainsFunc(second.Steps, func(step WorkstationStep) bool {
+		return step.Name == "Package rhysd.actionlint" && step.Status == "retained"
+	}) {
+		t.Fatal("completed utility was not retained")
+	}
+	after, err := os.ReadFile(files[0])
+	if err != nil || fmt.Sprintf("%x", sha256.Sum256(after)) != installedHash {
+		t.Fatal("retained executable changed")
 	}
 }

@@ -58,6 +58,8 @@ Function .onInit
   ${GetParameters} $0
   ${GetOptions} $0 "/PROFILE=" $ProfilePath
   ClearErrors
+  ${GetOptions} $0 "/ROOT=" $StateRoot
+  ClearErrors
   ${GetOptions} $0 "/EXPORTPROFILE=" $ExportPath
   ClearErrors
   ${GetOptions} $0 "/REFRESH" $1
@@ -148,14 +150,16 @@ Section "Workstation setup"
     ${EndIf}
     Goto setup_finished
   ${EndIf}
-  nsExec::ExecToStack '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation root'
-  Pop $SetupExit
-  Pop $StateRoot
-  ${TrimNewLines} $StateRoot $StateRoot
-  ${If} $SetupExit != "0"
-    StrCpy $FinishText "The intended Windows user or setup-state directory could not be resolved. No provisioning was run."
-    SetErrorLevel 2
-    Goto setup_finished
+  ${If} $StateRoot == ""
+    nsExec::ExecToStack '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation root'
+    Pop $SetupExit
+    Pop $StateRoot
+    ${TrimNewLines} $StateRoot $StateRoot
+    ${If} $SetupExit != "0"
+      StrCpy $FinishText "The intended Windows user or setup-state directory could not be resolved. No provisioning was run."
+      SetErrorLevel 2
+      Goto setup_finished
+    ${EndIf}
   ${EndIf}
   DetailPrint "Running bounded setup. Independent steps continue after errors."
   ${If} $ProfilePath == ""
