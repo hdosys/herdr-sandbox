@@ -603,10 +603,11 @@ trap { Write-Output ($_ | Out-String); exit 1 }
 $tokens = $null
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
-foreach ($name in @('Assert-ProvisioningCachePath', 'Assert-ProvisioningCacheTree')) {
+$env:HERDR_PROVISIONING_ROOT = '%s'
+foreach ($name in @('Get-ProvisioningPath', 'Assert-ProvisioningPathAncestors', 'Assert-ProvisioningCachePath', 'Assert-ProvisioningCacheTree')) {
     $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing function $name" }
-    Invoke-Expression $definition.Extent.Text.Replace('C:\HerdrSandbox\cache', '%s')
+    Invoke-Expression $definition.Extent.Text
 }
 $accepted = $false
 try {
@@ -617,7 +618,7 @@ try {
 }
 if ($accepted) { throw 'Nested cache alias was accepted.' }
 exit 0
-`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(cacheRoot), quote(candidate))
+`, quote(defaultProvisioningPath(t, baseProvisioningName)), quote(filepath.Dir(cacheRoot)), quote(candidate))
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script))
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("cache-tree regression: %v: %s", err, output)
