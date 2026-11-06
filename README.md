@@ -583,13 +583,15 @@ On the previous computer, use the new setup program to explicitly export the
 existing Sandbox tool selection and supported authored configuration:
 
 ```powershell
-.\herdr-workstation_setup.exe /S "/EXPORTPROFILE=$env:USERPROFILE\Desktop\workstation.profile.json" /INCLUDESETTINGS
+$profile = Join-Path $env:USERPROFILE 'workstation.profile.json'
+$arguments = @('/S', '/INCLUDESETTINGS', "/EXPORTPROFILE=`"$profile`"")
+(Start-Process .\herdr-workstation_setup.exe -ArgumentList $arguments -Wait -PassThru).ExitCode
 ```
 
 An updated `sandbox` CLI provides the same export:
 
 ```powershell
-sandbox workstation export --output "$env:USERPROFILE\Desktop\workstation.profile.json" --include-settings
+sandbox workstation export --output "$env:USERPROFILE\workstation.profile.json" --include-settings
 ```
 
 Without `--include-settings` or `/INCLUDESETTINGS`, export contains tool selection
@@ -609,7 +611,8 @@ Copy the installer and private profile separately to the new computer. Start the
 installer and select the profile, or run the same flow without interactive pages:
 
 ```powershell
-.\herdr-workstation_setup.exe /S "/PROFILE=C:\Transfer\workstation.profile.json"
+$arguments = @('/S', '/PROFILE="C:\Transfer\workstation.profile.json"')
+(Start-Process .\herdr-workstation_setup.exe -ArgumentList $arguments -Wait -PassThru).ExitCode
 ```
 
 Without a profile, a new machine receives the generic full development selection;
