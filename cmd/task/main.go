@@ -42,6 +42,7 @@ Tasks:
   release VERSION    validate and tag one clean pushed release commit
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION [--release]  build one canonical local installer or the versioned release pair
+  package-workstation VERSION  build the separate direct Windows setup installer
   verify           verify format, modernization, analysis, and tests without rebuilding
   verify-integration run the full external-boundary verification
 `, productidentity.ExecutableName)
@@ -69,6 +70,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "package-workstation":
+		if len(args) != 2 {
+			return errors.New("usage: go run ./cmd/task package-workstation VERSION")
+		}
+		return packageWorkstation(ctx, args[1], stdout, stderr)
 	case "fmt":
 		if len(args) != 1 {
 			return errors.New("fmt accepts no arguments")

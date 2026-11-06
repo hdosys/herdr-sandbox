@@ -1,0 +1,549 @@
+package sandbox
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"io"
+	"os"
+	"os/user"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+
+	"herdr-sandbox/internal/productidentity"
+)
+
+const workstationProfileLimit = 64 * 1024 * 1024
+
+//go:embed assets/workstation.ps1
+var workstationScript []byte
+
+//go:embed assets/workstation-winget.ps1
+var workstationWinGetScript []byte
+
+//go:embed assets/workstation-action.ps1
+var workstationActionScript []byte
+
+//go:embed assets/workstation-root.cs
+var workstationRootSource []byte
+
+func ensureWorkstationSecurity(ctx context.Context, root string) error {
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		return err
+	}
+	checkContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	script := `$ErrorActionPreference = 'Stop'; $env:PSModulePath = $PSHOME + '\Modules'; Add-Type -TypeDefinition ([Console]::In.ReadToEnd()); [HerdrWorkstation.Directories]::Ensure($env:HERDR_WORKSTATION_SETUP_ROOT)`
+	command := hiddenCommandContext(checkContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	command.Env = append(os.Environ(), "HERDR_WORKSTATION_SETUP_ROOT="+root)
+	command.Stdin = bytes.NewReader(workstationRootSource)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("secure direct setup state: %w: %s", err, sanitizeTerminalText(string(output), 2000))
+	}
+	return nil
+}
+
+// WorkstationProfile is an explicit portable selection, not a machine backup.
+// Files are private authored configuration; dedicated authentication files are forbidden.
+type WorkstationProfile struct {
+	SchemaVersion int                      `json:"schemaVersion"`
+	Packages      []wingetPackagePlanEntry `json:"packages"`
+	Stacks        []string                 `json:"stacks"`
+	Tools         []resolvedToolVersion    `json:"tools"`
+	Files         []WorkstationFile        `json:"files"`
+}
+
+type WorkstationFile struct {
+	Kind   string `json:"kind"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Data   []byte `json:"data"`
+}
+
+type WorkstationOptions struct {
+	Profile string
+	Root    string
+	Refresh bool
+	Timeout time.Duration
+	Output  io.Writer
+}
+
+type WorkstationStep struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type WorkstationReport struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	ProfileSHA256 string            `json:"profileSha256"`
+	StartedAtUTC  string            `json:"startedAtUTC"`
+	FinishedAtUTC string            `json:"finishedAtUTC"`
+	Complete      bool              `json:"complete"`
+	Steps         []WorkstationStep `json:"steps"`
+}
+
+type workstationSelection struct {
+	Profile        WorkstationProfile `json:"profile"`
+	SettingsSource string             `json:"settingsSource"`
+	SettingsSHA256 string             `json:"settingsSha256"`
+	SettingsOwner  string             `json:"settingsOwner"`
+}
+
+// WorkstationStateRoot keeps resumable machine state separate for each intended user.
+func WorkstationStateRoot() (string, error) {
+	current, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	if !windowsSIDPattern.MatchString(current.Uid) || slices.Contains([]string{"S-1-5-18", "S-1-5-19", "S-1-5-20"}, current.Uid) {
+		return "", errors.New("workstation setup requires an intended Windows user, not a service account")
+	}
+	root := os.Getenv("ProgramData")
+	if !filepath.IsAbs(root) {
+		return "", errors.New("ProgramData is not an absolute directory")
+	}
+	return filepath.Join(root, productidentity.WorkstationApplicationName, current.Uid), nil
+}
+
+func resolveWorkstationSelection(root, requested string) (WorkstationProfile, []byte, string, error) {
+	selectionPath := filepath.Join(root, "selection.json")
+	if err := validateWorkstationLocalPath(selectionPath); err != nil {
+		return WorkstationProfile{}, nil, "", err
+	}
+	if requested == "" {
+		stored, found, err := readBoundedRegularFile(selectionPath, 1024*1024)
+		if err != nil {
+			return WorkstationProfile{}, nil, "", err
+		}
+		if found {
+			var selection workstationSelection
+			if err := decodeStrictJSON(stored, &selection); err != nil {
+				return WorkstationProfile{}, nil, "", fmt.Errorf("saved selection is invalid; supply --profile explicitly: %w", err)
+			}
+			data, err := json.Marshal(selection.Profile)
+			if err != nil {
+				return WorkstationProfile{}, nil, "", err
+			}
+			profile, err := decodeWorkstationProfile(data)
+			if err != nil || len(profile.Files) != 0 {
+				return WorkstationProfile{}, nil, "", errors.New("saved selection is invalid or contains private file data")
+			}
+			if selection.SettingsSource != "" {
+				current, identityErr := user.Current()
+				if identityErr != nil || current.Uid != selection.SettingsOwner {
+					return profile, data, "Saved private configuration belongs to another Windows user. Tool setup continued; supply your own profile explicitly.", nil
+				}
+				original, originalData, err := readWorkstationProfile(selection.SettingsSource)
+				if err != nil || fmt.Sprintf("%x", sha256.Sum256(originalData)) != selection.SettingsSHA256 {
+					clear(originalData)
+					return profile, data, "Original private configuration profile is missing or changed. Tool setup continued from its saved selection; supply --profile explicitly to restore configuration.", nil
+				}
+				clear(data)
+				return original, originalData, "", nil
+			}
+			return profile, data, "", nil
+		}
+	}
+	profile, data, err := readWorkstationProfile(requested)
+	if err != nil {
+		return profile, data, "", err
+	}
+	selection := workstationSelection{Profile: profile}
+	selection.Profile.Files = []WorkstationFile{}
+	if len(profile.Files) != 0 {
+		current, err := user.Current()
+		if err != nil {
+			return profile, data, "", err
+		}
+		selection.SettingsOwner = current.Uid
+		selection.SettingsSource, err = filepath.Abs(requested)
+		if err != nil {
+			return profile, data, "", err
+		}
+		selection.SettingsSHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
+	}
+	if err := writeVoxCPM2JSONAtomically(selectionPath, selection); err != nil {
+		return profile, data, "", err
+	}
+	return profile, data, "", nil
+}
+
+func DefaultWorkstationProfile() WorkstationProfile {
+	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{}}
+	for _, id := range append(slices.Clone(basePackageIDs), defaultCodingAgentPackageIDs()...) {
+		if id != packageTerminalPreview {
+			profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: id})
+		}
+	}
+	for _, stack := range allProjectInitStacks {
+		profile.Stacks = append(profile.Stacks, string(stack))
+	}
+	profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "hdosys.herdr-win"})
+	profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "Microsoft.VCRedist.2015+.x64"})
+	profile.Stacks = append(profile.Stacks, "opensrc")
+	profile.Stacks = append(profile.Stacks, "font")
+	return profile
+}
+
+func decodeWorkstationProfile(data []byte) (WorkstationProfile, error) {
+	var result WorkstationProfile
+	if len(data) > workstationProfileLimit {
+		return result, errors.New("workstation profile exceeds 64 MiB")
+	}
+	if err := validateExactJSONObjectShape(data, "workstation profile", []string{"schemaVersion", "packages", "stacks", "tools", "files"}); err != nil {
+		return result, err
+	}
+	if err := decodeStrictJSON(data, &result); err != nil {
+		return result, fmt.Errorf("decode workstation profile: %w", err)
+	}
+	if result.SchemaVersion != 1 || result.Packages == nil || result.Stacks == nil || result.Tools == nil || result.Files == nil || len(result.Packages) > 64 || len(result.Stacks) > 32 || len(result.Tools) > 64 || len(result.Files) > 512 {
+		return result, errors.New("unsupported or oversized workstation profile")
+	}
+	// Reject ambiguous objects before crossing into PowerShell's JSON decoder.
+	var raw struct {
+		Packages []json.RawMessage `json:"packages"`
+		Tools    []json.RawMessage `json:"tools"`
+		Files    []json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return result, err
+	}
+	for _, entry := range raw.Packages {
+		if err := validateExactJSONObjectShape(entry, "package", []string{"id", "version"}); err != nil {
+			return result, err
+		}
+	}
+	for _, entry := range raw.Tools {
+		if err := validateExactJSONObjectShape(entry, "tool", []string{"tool", "version", "series", "source", "owners"}); err != nil {
+			return result, err
+		}
+	}
+	for _, entry := range raw.Files {
+		if err := validateExactJSONObjectShape(entry, "configuration file", []string{"kind", "path", "sha256", "data"}); err != nil {
+			return result, err
+		}
+	}
+	seen := map[string]bool{}
+	for _, entry := range result.Packages {
+		key := strings.ToLower(entry.ID)
+		if !validWingetPackageID(entry.ID) || (entry.Version != "" && !validWingetPackageVersion(entry.Version)) || seen[key] {
+			return result, errors.New("invalid or duplicate workstation package")
+		}
+		seen[key] = true
+	}
+	allowedStacks := []string{"android", "audio", "bun", "cargo-nextest", "cpp", "dotnet", "font", "git-sh", "go", "handy", "herdr", "hyperframes", "java", "just", "node", "nsis", "opensrc", "playwright-cli", "python", "python-ai", "rust-msvc", "tradingview", "uv", "zig"}
+	seen = map[string]bool{}
+	for _, stack := range result.Stacks {
+		if !slices.Contains(allowedStacks, stack) || seen[stack] {
+			return result, errors.New("invalid or duplicate workstation stack")
+		}
+		seen[stack] = true
+	}
+	seen = map[string]bool{}
+	for _, tool := range result.Tools {
+		key := strings.ToLower(tool.Tool)
+		if !projectToolTokenPattern.MatchString(tool.Tool) || (tool.Version != "" && !projectToolValuePattern.MatchString(tool.Version)) || (tool.Series != "" && !projectToolValuePattern.MatchString(tool.Series)) || seen[key] {
+			return result, errors.New("invalid or duplicate workstation tool selection")
+		}
+		seen[key] = true
+	}
+	seen = map[string]bool{}
+	total := 0
+	for _, file := range result.Files {
+		key := strings.ToLower(file.Kind + "/" + file.Path)
+		if !allowedWorkstationFile(file.Kind, file.Path) || len(file.Data) > 4*1024*1024 || seen[key] || fmt.Sprintf("%x", sha256.Sum256(file.Data)) != file.SHA256 {
+			return result, errors.New("invalid, unsafe, duplicate or hash-mismatched workstation configuration file")
+		}
+		seen[key] = true
+		total += len(file.Data)
+	}
+	if total > 32*1024*1024 {
+		return result, errors.New("workstation configuration exceeds 32 MiB")
+	}
+	return result, nil
+}
+
+func readWorkstationProfile(path string) (WorkstationProfile, []byte, error) {
+	if path == "" {
+		profile := DefaultWorkstationProfile()
+		data, err := json.MarshalIndent(profile, "", "  ")
+		return profile, data, err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return WorkstationProfile{}, nil, err
+	}
+	if err := validateWorkstationLocalPath(absolute); err != nil {
+		return WorkstationProfile{}, nil, err
+	}
+	data, found, err := readBoundedRegularFile(absolute, workstationProfileLimit)
+	if err != nil {
+		return WorkstationProfile{}, nil, err
+	}
+	if !found {
+		return WorkstationProfile{}, nil, fmt.Errorf("read workstation profile: %w", os.ErrNotExist)
+	}
+	profile, err := decodeWorkstationProfile(data)
+	return profile, data, err
+}
+
+func validateWorkstationLocalPath(path string) error {
+	if !filepath.IsAbs(path) || strings.HasPrefix(path, `\\`) || filepath.Dir(path) == path {
+		return errors.New("workstation path must be an absolute local directory, not a drive root or network share")
+	}
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err == nil {
+			reparse, reparseErr := fileInfoIsReparsePoint(info)
+			if reparseErr != nil {
+				return reparseErr
+			}
+			if reparse || (!info.IsDir() && current != path) {
+				return errors.New("workstation path contains a reparse point or non-directory ancestor")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	return nil
+}
+
+func ensureWorkstationRoot(root string) error {
+	if err := validateWorkstationLocalPath(root); err != nil {
+		return err
+	}
+	marker := filepath.Join(root, "workstation-owner.json")
+	if err := validateWorkstationLocalPath(marker); err != nil {
+		return err
+	}
+	if data, found, err := readBoundedRegularFile(marker, 1024); err == nil && found {
+		if string(data) != "{\"product\":\"herdr-workstation\",\"schemaVersion\":1}\n" {
+			return errors.New("workstation root has an unknown owner")
+		}
+		return rejectMappedPathReparsePoints(marker)
+	} else if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if len(entries) != 0 {
+		return errors.New("workstation root is nonempty and unowned; existing files were preserved")
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.WriteString(file, "{\"product\":\"herdr-workstation\",\"schemaVersion\":1}\n")
+	return errors.Join(writeErr, file.Close())
+}
+
+// SetupWorkstation runs trusted shared provisioning against this Windows machine.
+// It never enters the Sandbox lifecycle or applies the Sandbox security profile.
+func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, error) {
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		return "", errors.New("direct setup requires Windows x64")
+	}
+	if options.Output == nil {
+		options.Output = io.Discard
+	}
+	if options.Timeout == 0 {
+		options.Timeout = 4 * time.Hour
+	}
+	if options.Timeout < time.Minute || options.Timeout > 12*time.Hour {
+		return "", errors.New("setup timeout must be between one minute and twelve hours")
+	}
+	if options.Root == "" {
+		var err error
+		options.Root, err = WorkstationStateRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	root, err := filepath.Abs(options.Root)
+	if err != nil {
+		return "", err
+	}
+	if err := validateWorkstationLocalPath(root); err != nil {
+		return "", err
+	}
+	if err := ensureWorkstationSecurity(ctx, root); err != nil {
+		return "", err
+	}
+	root, err = canonicalMappedDirectory(root)
+	if err != nil {
+		return "", err
+	}
+	lockContext, stopLock := context.WithTimeout(ctx, 5*time.Second)
+	defer stopLock()
+	release, err := acquireNamedLifecycleLock(lockContext, fmt.Sprintf(`Global\HerdrWorkstation-%x`, sha256.Sum256([]byte(strings.ToLower(root)))))
+	if err != nil {
+		return "", fmt.Errorf("another setup may be using this root: %w", err)
+	}
+	defer release()
+	if err := ensureWorkstationRoot(root); err != nil {
+		return "", err
+	}
+	profile, data, configurationProblem, err := resolveWorkstationSelection(root, options.Profile)
+	if err != nil {
+		return "", err
+	}
+	defer clear(data)
+	defer func() {
+		for _, file := range profile.Files {
+			clear(file.Data)
+		}
+	}()
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Join(filepath.Dir(executable), baseProvisioningName)
+	stacks := filepath.Join(filepath.Dir(executable), stackProvisioningName)
+	if err := validateBaseProvisioningContract(base); err != nil {
+		return "", err
+	}
+	if err := validateStackProvisioningContract(stacks); err != nil {
+		return "", err
+	}
+	input := filepath.Join(root, "input")
+	if err := os.MkdirAll(input, 0o700); err != nil {
+		return "", err
+	}
+	if err := rejectMappedPathReparsePoints(input); err != nil {
+		return "", err
+	}
+	baseData, err := readProvisioningScript(base, "base", maximumBaseScriptSize)
+	if err != nil {
+		return "", err
+	}
+	stackData, err := readProvisioningScript(stacks, "stacks", maximumStackScriptSize)
+	if err != nil {
+		return "", err
+	}
+	// Do not stage personal settings into the elevated tool runner's input.
+	selection := profile
+	selection.Files = []WorkstationFile{}
+	selectionData, err := json.Marshal(selection)
+	if err != nil {
+		return "", err
+	}
+	for name, contents := range map[string][]byte{
+		baseProvisioningName: baseData, stackProvisioningName: stackData,
+		playwrightAccessName: playwrightAccessScript, apifyAccessName: apifyAccessScript,
+		"profile.json": selectionData, "workstation.ps1": workstationScript,
+		"workstation-winget.ps1": workstationWinGetScript, "workstation-action.ps1": workstationActionScript, provisioningProcessName: provisioningProcessSource,
+		visualStudioLayoutScriptName: visualStudioLayoutScript,
+	} {
+		path := filepath.Join(input, name)
+		if err := validateWorkstationLocalPath(path); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			return "", err
+		}
+	}
+	base, stacks = filepath.Join(input, baseProvisioningName), filepath.Join(input, stackProvisioningName)
+	started := time.Now().UTC().Format(time.RFC3339)
+	profileHash := fmt.Sprintf("%x", sha256.Sum256(data))
+	reportPath := filepath.Join(root, "report.json")
+	if err := validateWorkstationLocalPath(reportPath); err != nil {
+		return "", err
+	}
+	// An old successful report must never stand in for a failed new invocation.
+	if err := os.WriteFile(reportPath, []byte("{}\n"), 0o600); err != nil {
+		return "", err
+	}
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		return "", err
+	}
+	runContext, stop := context.WithTimeout(ctx, options.Timeout)
+	defer stop()
+	arguments := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(input, "workstation.ps1"), "-NativeProfilePath", filepath.Join(input, "profile.json"), "-NativeRoot", root, "-BasePath", base, "-StacksPath", stacks, "-RunnerPath", executable}
+	if options.Refresh {
+		arguments = append(arguments, "-Refresh")
+	}
+	command := hiddenCommandContext(runContext, powerShell, arguments...)
+	command.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, "PSModulePath") || strings.HasPrefix(strings.ToUpper(name), "HERDR_")
+	})
+	command.Stdout, command.Stderr = options.Output, options.Output
+	runErr := command.Run()
+	report := WorkstationReport{SchemaVersion: 1, StartedAtUTC: started, ProfileSHA256: profileHash, Steps: []WorkstationStep{}}
+	resultData, found, readErr := readBoundedRegularFile(reportPath, 1024*1024)
+	var native struct {
+		SchemaVersion int               `json:"schemaVersion"`
+		Steps         []WorkstationStep `json:"steps"`
+	}
+	if readErr == nil && found {
+		readErr = decodeStrictJSON(resultData, &native)
+	}
+	if readErr != nil || native.SchemaVersion != 1 || len(native.Steps) == 0 || len(native.Steps) > 128 {
+		report.Steps = append(report.Steps, WorkstationStep{"Provisioning runtime", "failed", "The provisioning process did not produce a complete report. See the setup log."})
+	} else {
+		report.Steps = native.Steps
+	}
+	if runErr != nil && !slices.ContainsFunc(report.Steps, func(step WorkstationStep) bool { return step.Status != "succeeded" && step.Status != "retained" }) {
+		report.Steps = append(report.Steps, WorkstationStep{"Provisioning process", "failed", "The provisioning process exited unsuccessfully."})
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		report.Steps = append(report.Steps, importWorkstationSettings(profile.Files)...)
+	}
+	if configurationProblem != "" {
+		report.Steps = append(report.Steps, WorkstationStep{"Configuration source", "failed", configurationProblem})
+	}
+	report.FinishedAtUTC = time.Now().UTC().Format(time.RFC3339)
+	report.Complete = len(report.Steps) > 0 && !slices.ContainsFunc(report.Steps, func(step WorkstationStep) bool { return step.Status != "succeeded" && step.Status != "retained" })
+	if err := writeVoxCPM2JSONAtomically(reportPath, report); err != nil {
+		return reportPath, err
+	}
+	htmlPath := filepath.Join(root, "report.html")
+	if err := validateWorkstationLocalPath(htmlPath); err != nil {
+		return reportPath, err
+	}
+	var html bytes.Buffer
+	if err := workstationReportTemplate.Execute(&html, report); err != nil {
+		return reportPath, err
+	}
+	if err := os.WriteFile(htmlPath, html.Bytes(), 0o600); err != nil {
+		return reportPath, err
+	}
+	fmt.Fprintf(options.Output, "Setup report: %s\n", htmlPath)
+	if !report.Complete {
+		return htmlPath, errors.New("setup finished with incomplete steps; independent steps were attempted; rerun to resume")
+	}
+	return htmlPath, nil
+}
+
+var workstationReportTemplate = template.Must(template.New("report").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Herdr Workstation setup</title><style>body{font:16px system-ui;background:#fafafa;color:#222;max-width:1000px;margin:3rem auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.6rem;text-align:left}pre{white-space:pre-wrap}h1{font-size:1.6rem}</style><h1>Herdr Workstation setup: {{if .Complete}}complete{{else}}incomplete{{end}}</h1><p>Finished {{.FinishedAtUTC}}. Re-run the installer to resume unfinished steps. Existing successful unchanged steps are retained. Applications requiring accounts or licences need your separate sign-in.</p><table><tr><th>Step</th><th>Result</th><th>Details</th></tr>{{range .Steps}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td><pre>{{.Message}}</pre></td></tr>{{end}}</table></html>`))
+
+// PrepareWorkstationTTS reuses the existing public bundle preparation owner.
+func PrepareWorkstationTTS(ctx context.Context, root string, output io.Writer) error {
+	if err := ensureWorkstationRoot(root); err != nil {
+		return err
+	}
+	models := filepath.Join(root, "models")
+	if err := os.MkdirAll(models, 0o700); err != nil {
+		return err
+	}
+	return prepareHyperFramesVoxCPM2(ctx, models, "", output)
+}

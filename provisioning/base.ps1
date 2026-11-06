@@ -1,13 +1,11 @@
-# herdr-sandbox-base-contract: 59
+# herdr-sandbox-base-contract: 60
 param(
-    [ValidateSet('Registry', 'Core', 'Development')]
+    [ValidateSet('Registry', 'Core', 'Development', 'Library')]
     [string]$Phase = 'Development',
     [string]$ProjectProvisioningDirectory = '',
     [string]$WorkspacesDirectory = 'C:\Workspaces',
-    [Parameter(Mandatory = $true)]
-    [string]$PackagePlanPath,
-    [Parameter(Mandatory = $true)]
-    [string]$UserProvisioningPath,
+    [string]$PackagePlanPath = '',
+    [string]$UserProvisioningPath = '',
     [Parameter(Mandatory = $true)]
     [string]$ProcessOwnerPath,
     [switch]$AudioOutputEnabled,
@@ -176,6 +174,7 @@ function Write-ProvisioningTiming {
     }
 }
 
+if ($Phase -ne 'Library') {
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -186,6 +185,7 @@ foreach ($requiredPath in @($ProjectProvisioningDirectory, $WorkspacesDirectory,
     if ([string]::IsNullOrWhiteSpace($requiredPath)) {
         throw 'Provisioning requires ProjectProvisioningDirectory and WorkspacesDirectory.'
     }
+}
 }
 
 function Read-ProvisioningToolVersionPlan {
@@ -248,7 +248,11 @@ function Read-ProvisioningToolVersionPlan {
     return [pscustomobject]@{ Versions = $versions; Series = $series; Sources = $sources; Owners = $owners }
 }
 
-$global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
+if ($Phase -ne 'Library') {
+    $global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
+} else {
+    $global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Sources = @{}; Owners = @{} }
+}
 
 function Get-ProvisioningToolVersion {
     param(
@@ -397,8 +401,10 @@ function Read-ProvisioningPackagePlan {
     }
 }
 
-$provisioningPackagePlan = Read-ProvisioningPackagePlan -Path $PackagePlanPath
-$WindowsTerminalEdition = [string]$provisioningPackagePlan.Data.windowsTerminalEdition
+if ($Phase -ne 'Library') {
+    $provisioningPackagePlan = Read-ProvisioningPackagePlan -Path $PackagePlanPath
+    $WindowsTerminalEdition = [string]$provisioningPackagePlan.Data.windowsTerminalEdition
+}
 
 function Test-ProvisioningPackageEnabled {
     param([Parameter(Mandatory = $true)][string]$Id)
@@ -428,6 +434,12 @@ function Install-ProvisioningNushell {
     Write-Output "Installing Nushell $Version..."
     Install-ProvisioningCachedPackage -Role 'Nushell' -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter 'MSI' -ExecutableName 'nu.exe' -InstallerArguments @('ALLUSERS=1')
+
+    Initialize-ProvisioningNushell -Version $Version
+}
+
+function Initialize-ProvisioningNushell {
+    param([string]$Version = '')
 
     $expectedCommand = Join-Path $env:ProgramFiles 'nu\bin\nu.exe'
     if (-not (Test-Path -LiteralPath $expectedCommand -PathType Leaf) -or
@@ -478,7 +490,8 @@ function Install-ProvisioningNushell {
         [Environment]::NewLine,
         [string[]]$nushellInitializationLines.ToArray()
     ) + [Environment]::NewLine
-    $nushellInitializationPath = Join-Path $nushellAutoloadDirectory 'herdr-sandbox.nu'
+    $initializationName = if (Test-ProvisioningWorkstation) { 'herdr-workstation.nu' } else { 'herdr-sandbox.nu' }
+    $nushellInitializationPath = Join-Path $nushellAutoloadDirectory $initializationName
     if (Test-Path -LiteralPath $nushellInitializationPath) {
         $initializationInfo = Get-Item -LiteralPath $nushellInitializationPath -Force
         if ($initializationInfo.PSIsContainer -or
@@ -501,7 +514,7 @@ function Install-ProvisioningNushell {
         -FilePath $expectedCommand -ArgumentList @(
             '--no-config-file',
             '--commands',
-            'source ($nu.data-dir | path join "vendor/autoload/herdr-sandbox.nu"); [$nu.data-dir, $env.config.show_banner, ($env.STARSHIP_SHELL? | default "")] | to json --raw'
+            ('source ($nu.data-dir | path join "vendor/autoload/' + $initializationName + '"); [$nu.data-dir, $env.config.show_banner, ($env.STARSHIP_SHELL? | default "")] | to json --raw')
         ) -TimeoutSeconds 30)
     try {
         $nushellProbe = @((($nushellProbeOutput -join [Environment]::NewLine) | ConvertFrom-Json))
@@ -774,11 +787,13 @@ function Invoke-ProvisioningStep {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Action,
         [string[]]$InputFiles = @(),
-        [string[]]$InputValues = @()
+        [string[]]$InputValues = @(),
+        [ref]$Disposition
     )
     $fingerprint = Get-ProvisioningStepFingerprint -Files $InputFiles `
         -Values (@($global:HerdrSandboxStepState.Implementation) + $InputValues)
     if ($global:HerdrSandboxStepState.Steps[$Name] -ceq $fingerprint) {
+        if ($null -ne $Disposition) { $Disposition.Value = 'retained' }
         Write-ProvisioningProgress -Message "Keeping completed step: $Name"
         return
     }
@@ -790,6 +805,9 @@ function Invoke-ProvisioningStep {
     if ($OptionalFailures.Count -eq $optionalCount) {
         $global:HerdrSandboxStepState.Steps[$Name] = $fingerprint
         Save-ProvisioningSteps
+        if ($null -ne $Disposition) { $Disposition.Value = 'succeeded' }
+    } elseif ($null -ne $Disposition) {
+        $Disposition.Value = 'unavailable'
     }
 }
 
@@ -799,15 +817,32 @@ function Invoke-ProvisioningIndependentStep {
         [Parameter(Mandatory = $true)][scriptblock]$Action,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][Collections.Generic.List[string]]$Failures,
         [string[]]$InputFiles = @(),
-        [string[]]$InputValues = @()
+        [string[]]$InputValues = @(),
+        [System.Collections.IDictionary]$Results,
+        [string[]]$Requires = @(),
+        [switch]$ContinueTerminalFailures
     )
 
+    if ($null -ne $Results) {
+        $blocked = @($Requires | Where-Object { -not $Results.Contains($_) -or $Results[$_].status -notin @('succeeded', 'retained') })
+        if ($blocked.Count -gt 0) {
+            $message = 'Required steps did not succeed: ' + ($blocked -join ', ')
+            $Results[$Name] = [ordered]@{ status = 'blocked'; message = $message }
+            $Failures.Add("${Name}: $message")
+            Write-Warning "${Name}: $message"
+            return
+        }
+    }
     try {
-        Invoke-ProvisioningStep -Name $Name -Action $Action -InputFiles $InputFiles -InputValues $InputValues
+        $disposition = 'succeeded'
+        Invoke-ProvisioningStep -Name $Name -Action $Action -InputFiles $InputFiles -InputValues $InputValues -Disposition ([ref]$disposition)
+        if ($null -ne $Results) { $Results[$Name] = [ordered]@{ status = $disposition; message = '' } }
     } catch {
-        if (Test-ProvisioningTerminalError -Exception $_.Exception) { throw }
+        if ((Test-ProvisioningTerminalError -Exception $_.Exception) -and -not $ContinueTerminalFailures) { throw }
+        if ($_.Exception -is [OperationCanceledException] -or $_.Exception -is [Management.Automation.PipelineStoppedException]) { throw }
         $message = Get-ProvisioningBoundedDiagnosticText -Text "$Name`: $($_.Exception.Message)" -MaximumBytes 3000
         $Failures.Add($message)
+        if ($null -ne $Results) { $Results[$Name] = [ordered]@{ status = 'failed'; message = $message } }
         Write-Warning "$message Independent provisioning will continue."
     }
 }
@@ -957,7 +992,8 @@ function Add-ProvisioningMachinePath {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
         throw "PATH directory is missing: $Directory"
     }
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $target = Get-ProvisioningEnvironmentTarget
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', $target)
     $entries = @($machinePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $directoryPath = $Directory.TrimEnd('\')
     $otherEntries = @($entries | Where-Object {
@@ -965,9 +1001,64 @@ function Add-ProvisioningMachinePath {
         })
     $updatedPath = (@($Directory) + $otherEntries) -join ';'
     if (-not [string]::Equals([string]$machinePath, $updatedPath, [StringComparison]::Ordinal)) {
-        [Environment]::SetEnvironmentVariable('Path', $updatedPath, 'Machine')
+        [Environment]::SetEnvironmentVariable('Path', $updatedPath, $target)
     }
     Update-ProvisioningPath
+}
+
+function Get-ProvisioningPath {
+    param([string]$RelativePath = '')
+    $root = [Environment]::GetEnvironmentVariable('HERDR_PROVISIONING_ROOT', 'Process')
+    if ([string]::IsNullOrEmpty($root)) { $root = 'C:\HerdrSandbox' }
+    if ($root -notmatch '^[A-Za-z]:\\') { throw [Security.SecurityException]::new('Provisioning root must be an absolute local drive path.') }
+    $root = [IO.Path]::GetFullPath($root).TrimEnd('\')
+    if ($root.Length -le 2) { throw [Security.SecurityException]::new('Provisioning root must not be a drive root.') }
+    $result = $root
+    if (-not [string]::IsNullOrEmpty($RelativePath)) {
+        $result = [IO.Path]::GetFullPath((Join-Path $root $RelativePath))
+        if (-not $result.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw [Security.SecurityException]::new('Provisioning path escapes its selected root.') }
+    }
+    Assert-ProvisioningPathAncestors $result
+    return $result
+}
+
+function Assert-ProvisioningPathAncestors {
+    param([string]$Path)
+    for ($current = $Path; $current; $current = Split-Path -Parent $current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($current -ine $Path -and -not $item.PSIsContainer)) {
+                throw [Security.SecurityException]::new("Provisioning path has an unsafe ancestor: $current")
+            }
+        }
+    }
+}
+
+function Get-ProvisioningEnvironmentTarget {
+    if (Test-ProvisioningWorkstation) { return 'User' }
+    return 'Machine'
+}
+
+function Get-ProvisioningUserPath {
+    param([string]$RelativePath)
+    if (-not (Test-ProvisioningWorkstation)) { return Get-ProvisioningPath $RelativePath }
+    if (-not [IO.Path]::IsPathRooted($env:LOCALAPPDATA)) { throw 'Local application data is not absolute.' }
+    $root = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'herdr-workstation')).TrimEnd('\')
+    $result = [IO.Path]::GetFullPath((Join-Path $root $RelativePath))
+    if (-not $result.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw [Security.SecurityException]::new('User runtime path escapes its selected root.') }
+    Assert-ProvisioningPathAncestors $result
+    return $result
+}
+
+function Test-ProvisioningWorkstation {
+    return $env:HERDR_PROVISIONING_TARGET -ceq 'workstation'
+}
+
+function Test-ProvisioningDependencyReady {
+    param([string]$Name)
+    if (-not (Test-ProvisioningWorkstation)) { return $false }
+    $ready = Get-Variable -Name HerdrWorkstationReadySteps -Scope Global -ErrorAction SilentlyContinue
+    return $null -ne $ready -and $Name -in @($ready.Value)
 }
 
 function Assert-ProvisioningCachePath {
@@ -976,11 +1067,11 @@ function Assert-ProvisioningCachePath {
         [string]$Path
     )
 
-    $cacheRoot = [IO.Path]::GetFullPath('C:\HerdrSandbox\cache').TrimEnd('\')
+    $cacheRoot = Get-ProvisioningPath 'cache'
     $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\')
     if ($fullPath -ine $cacheRoot -and
         -not $fullPath.StartsWith($cacheRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Cache path escapes C:\HerdrSandbox\cache: $fullPath"
+        throw "Cache path escapes ${cacheRoot}: $fullPath"
     }
     $current = $fullPath
     while ($current.Length -ge $cacheRoot.Length) {
@@ -1035,7 +1126,7 @@ function Remove-ProvisioningGuestPackageStage {
         [string]$Path,
         [int]$Attempts = 20,
         [int]$DelayMilliseconds = 500,
-        [string]$StageRoot = 'C:\HerdrSandbox\staging\packages',
+        [string]$StageRoot = (Get-ProvisioningPath 'staging\packages'),
         [switch]$BestEffort
     )
 
@@ -1197,6 +1288,15 @@ function Get-ProvisioningWinGetMetadata {
         [string]$PayloadExtension = ''
     )
 
+    if ($Id -ceq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
+    if (Test-ProvisioningWorkstation) {
+        $metadata = Get-ProvisioningDownloadedMetadata -Role $Role -Id $Id -Version $Version -Architecture $Architecture `
+            -InstallerType $InstallerType -Scope $Scope -PayloadExtension $PayloadExtension
+        $tool = if ([string]::IsNullOrWhiteSpace($VersionTool)) { $Id } else { $VersionTool }
+        $null = Get-ProvisioningToolVersion -Tool $tool -Requested ([string]$metadata.Version)
+        return $metadata
+    }
+
     $arguments = @(
         'show', '--id', $Id, '--exact', '--source', 'winget',
         '--architecture', $Architecture, '--installer-type', $InstallerType,
@@ -1263,6 +1363,55 @@ function Get-ProvisioningSafeCacheName {
         throw "Cache identity is empty after normalization: $Value"
     }
     return $safe
+}
+
+function Get-ProvisioningDownloadedMetadata {
+    param([string]$Role, [string]$Id, [string]$Version, [string]$Architecture, [string]$InstallerType, [string]$Scope, [string]$PayloadExtension)
+    $runner = [string]$env:HERDR_PROVISIONING_RUNNER
+    if ([string]::IsNullOrEmpty($runner) -or -not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw 'Native metadata inspector is unavailable.' }
+    $stage = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    $lock = $null
+    try {
+        # WinGet publishes invariant selected-installer YAML after its verified
+        # download. Do not parse localized console labels or download twice.
+        $arguments = @('download','--id',$Id,'--exact','--source','winget','--architecture',$Architecture,
+            '--installer-type',$InstallerType,'--skip-dependencies','--download-directory',$stage,
+            '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
+        if ($Version) { $arguments += @('--version',$Version) }
+        if ($Scope) { $arguments += @('--scope',$Scope) }
+        Invoke-ProvisioningNative -Role "$Role selected installer download" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 | Out-Null
+        $arguments = @('workstation','inspect-download','--directory',$stage,'--id',$Id,'--architecture',$Architecture,'--type',$InstallerType)
+        if ($Version) { $arguments += @('--version',$Version) }
+        if ($Scope) { $arguments += @('--scope',$Scope) }
+        if ($PayloadExtension) { $arguments += @('--extension',$PayloadExtension) }
+        $json = (Invoke-ProvisioningNative -Role "$Role selected manifest inspection" -FilePath $runner -ArgumentList $arguments -TimeoutSeconds 120) -join "`n"
+        $metadata = $json | ConvertFrom-Json
+        $packageRoot = Join-Path (Get-ProvisioningPath 'cache\packages') (Get-ProvisioningSafeCacheName -Value $metadata.Id)
+        Assert-ProvisioningCachePath -Path $packageRoot
+        New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+        $lock = [IO.File]::Open((Join-Path $packageRoot '.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $entry = (Get-ProvisioningSafeCacheName -Value $metadata.Version) + '-' + $metadata.Sha256.Substring(0,16).ToLowerInvariant()
+        Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory (Join-Path $packageRoot $entry) -GuestPayloadPath $metadata.PayloadPath -Metadata $metadata
+        $metadata.PSObject.Properties.Remove('PayloadPath')
+        return $metadata
+    } finally {
+        if ($null -ne $lock) { $lock.Dispose() }
+        if (Test-Path -LiteralPath $stage) { Remove-ProvisioningGuestPackageStage -Path $stage -Attempts 1 -DelayMilliseconds 0 | Out-Null }
+    }
+}
+
+function Resolve-ProvisioningOpenCodeVersion {
+    param([AllowEmptyString()][string]$Requested = '')
+    if ($Requested) {
+        if ($Requested -notmatch '^1\.\d+\.\d+$') { throw 'OpenCode provisioning supports stable 1.x only; the requested major/version was not installed.' }
+        return $Requested
+    }
+    $lines = @(Invoke-ProvisioningNative -Role 'OpenCode stable 1.x version selection' -FilePath 'winget.exe' -ArgumentList @(
+        'show','--id','SST.opencode','--exact','--source','winget','--versions','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120)
+    $versions = @($lines | ForEach-Object { if ([string]$_ -match '^\s*(1\.\d+\.\d+)\s*$') { [Version]$Matches[1] } } | Sort-Object -Descending)
+    if ($versions.Count -eq 0) { throw 'WinGet did not publish a stable OpenCode 1.x version.' }
+    return $versions[0].ToString()
 }
 
 function Copy-ProvisioningCachedPackage {
@@ -1594,7 +1743,7 @@ function Test-ProvisioningPortablePackageInstalled {
     if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
         return $false
     }
-    $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+    $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
     try {
         if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) {
             return $false
@@ -1780,7 +1929,7 @@ function Test-ProvisioningGeistMonoFontPayload {
         [string]$Metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
         return $false
     }
-    $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+    $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
     try {
         if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) {
             return $false
@@ -1813,7 +1962,7 @@ function Test-ProvisioningGeistMonoFontInstalled {
         return $false
     }
     try {
-        $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+        $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
         $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
         foreach ($name in @(Get-ProvisioningGeistMonoExpectedFontNames)) {
             $registeredPath = Get-ItemPropertyValue -LiteralPath $fontRegistry -Name $name -ErrorAction Stop
@@ -1872,7 +2021,7 @@ function Install-ProvisioningGeistMonoFontPayload {
         [string]$Metadata.Architecture -cne 'neutral' -or [string]$Metadata.InstallerType -cne 'zip') {
         throw "$Role metadata does not match the resolved GeistMono Nerd Font contract."
     }
-    $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+    $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
     $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
     if (-not (Test-ProvisioningGeistMonoFontPayload -Metadata $Metadata)) {
         if (Test-Path -LiteralPath $toolRoot) {
@@ -1990,7 +2139,7 @@ function Install-ProvisioningPackagePayload {
                 [IO.Path]::GetExtension($ExecutableName) -ine '.exe') {
                 throw "$Role portable executable adapter requires one .exe file name."
             }
-            $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+            $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
             if (Test-Path -LiteralPath $toolRoot) {
                 $existingRoot = Get-Item -LiteralPath $toolRoot -Force
                 $existingItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
@@ -2018,7 +2167,7 @@ function Install-ProvisioningPackagePayload {
             if ([string]::IsNullOrWhiteSpace($ExecutableName)) {
                 throw "$Role portable adapter requires ExecutableName."
             }
-            $toolRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+            $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
             if (Test-Path -LiteralPath $toolRoot) {
                 Remove-Item -LiteralPath $toolRoot -Recurse -Force
             }
@@ -2127,11 +2276,12 @@ function Install-ProvisioningCachedPackage {
         Write-ProvisioningTiming -Role "$Role package total" -Seconds $packageStopwatch.Elapsed.TotalSeconds
         return
     }
-    $cacheRoot = 'C:\HerdrSandbox\cache\packages'
-    if (-not (Test-Path -LiteralPath 'C:\HerdrSandbox\cache' -PathType Container)) {
-        throw 'The writable guest package cache mapping is missing: C:\HerdrSandbox\cache'
+    $cacheOwner = Get-ProvisioningPath 'cache'
+    $cacheRoot = Join-Path $cacheOwner 'packages'
+    if (-not (Test-Path -LiteralPath $cacheOwner -PathType Container)) {
+        throw "The writable package cache directory is missing: $cacheOwner"
     }
-    Assert-ProvisioningCachePath -Path 'C:\HerdrSandbox\cache'
+    Assert-ProvisioningCachePath -Path $cacheOwner
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
     Assert-ProvisioningCachePath -Path $cacheRoot
     $packageRoot = Join-Path $cacheRoot (Get-ProvisioningSafeCacheName -Value $metadata.Id)
@@ -2141,7 +2291,7 @@ function Install-ProvisioningCachedPackage {
     $entryDirectory = Join-Path $packageRoot $entryName
     $lockPath = Join-Path $packageRoot '.lock'
     $lock = $null
-    $guestStage = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
+    $guestStage = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $guestStage -Force | Out-Null
     $guestPayload = Join-Path $guestStage $metadata.PayloadName
     $primaryFailure = $null
@@ -2292,12 +2442,13 @@ function Install-ProvisioningOpenSrc {
     Install-ProvisioningCachedPackage -Role 'opensrc' -Metadata $metadata `
         -DownloadSource 'Direct' -Adapter 'PortableExecutable' -ExecutableName 'opensrc.exe'
 
-    $openSrcHome = 'C:\HerdrSandbox\cache\opensrc'
+    $openSrcHome = Get-ProvisioningUserPath 'cache\opensrc'
     New-Item -ItemType Directory -Path $openSrcHome -Force | Out-Null
-    Assert-ProvisioningCachePath -Path $openSrcHome
+    if (Test-ProvisioningWorkstation) { Assert-ProvisioningPathAncestors $openSrcHome }
+    else { Assert-ProvisioningCachePath -Path $openSrcHome }
     $env:OPENSRC_HOME = $openSrcHome
-    [Environment]::SetEnvironmentVariable('OPENSRC_HOME', $openSrcHome, 'Machine')
-    if ([Environment]::GetEnvironmentVariable('OPENSRC_HOME', 'Machine') -cne $openSrcHome) {
+    [Environment]::SetEnvironmentVariable('OPENSRC_HOME', $openSrcHome, (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('OPENSRC_HOME', (Get-ProvisioningEnvironmentTarget)) -cne $openSrcHome) {
         throw 'opensrc cache environment verification failed.'
     }
     $openSrcVersion = Assert-ProvisioningCommand -Role 'opensrc' -Name 'opensrc.exe' `
@@ -2315,11 +2466,37 @@ function Install-ProvisioningOnlineWinGetPackage {
         [string]$Override = ''
     )
 
+    if ($Id -ceq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
+    if (Test-ProvisioningWorkstation) {
+        # The package manager owns latest-version selection and verification.
+        # No translated Version label is consumed on physical Windows.
+        $arguments = @('install','--id',$Id,'--exact','--source','winget','--silent',
+            '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
+        if ($Version) { $arguments += @('--version',$Version) }
+        if ($Override) { $arguments += @('--override',$Override) }
+        # Official APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, not a generic
+        # error suppression. Presence is independently checked below.
+        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600
+        if ($installation.Stopped) { throw [OperationCanceledException]::new("$Role installation was cancelled.") }
+        if (-not $installation.Succeeded -and ($installation.TimedOut -or $installation.ExitCode -ne [int]0x8A15002B)) {
+            $diagnostic = Get-ProvisioningBoundedDiagnosticText -Text ([string]$installation.Output) -MaximumBytes 3000
+            throw "$Role installation failed (exit $($installation.ExitCode), timeout $($installation.TimedOut)). $diagnostic"
+        }
+        Invoke-ProvisioningNative -Role "$Role installed-package verification" -FilePath 'winget.exe' -ArgumentList @(
+            'list','--id',$Id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120 | Out-Null
+        Update-ProvisioningPath
+        if ($Id -ceq 'SST.opencode') {
+            $versionText = (Invoke-ProvisioningNative -Role 'OpenCode major-version verification' -FilePath 'opencode.exe' -ArgumentList @('--version') -TimeoutSeconds 30) -join ' '
+            if ($versionText -notmatch '^1\.\d+\.\d+$') { throw 'Installed OpenCode is not stable 1.x; it was not force-downgraded.' }
+        }
+        return
+    }
+
     if ([string]::IsNullOrWhiteSpace($Version)) {
         $lines = @(Invoke-ProvisioningNative -Role "$Role metadata resolution" -FilePath 'winget.exe' -ArgumentList @(
                 'show', '--id', $Id, '--exact', '--source', 'winget',
                 '--accept-source-agreements', '--disable-interactivity'
-            ) | ForEach-Object { [string]$_ })
+            ) -TimeoutSeconds 120 | ForEach-Object { [string]$_ })
         $Version = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
             -Pattern '^Version:\s*(\S(?:.*\S)?)\s*$'
     }
@@ -2858,13 +3035,15 @@ function Install-ProvisioningAccessShortcut {
         [ValidateSet('Playwright browser access', 'Apify access')][string]$DisplayName
     )
     $source = Join-Path $PSScriptRoot ($Name + '.ps1')
-    $directory = Join-Path 'C:\HerdrSandbox\tools' $Name
+    $installationRoot = Get-ProvisioningPath
+    $toolsRoot = Join-Path $installationRoot 'tools'
+    $directory = Join-Path $toolsRoot $Name
     $destination = Join-Path $directory ($Name + '.ps1')
     if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
         ((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "$DisplayName script is missing or unsafe."
     }
-    foreach ($path in @('C:\HerdrSandbox', 'C:\HerdrSandbox\tools', $directory, $destination)) {
+    foreach ($path in @($installationRoot, $toolsRoot, $directory, $destination)) {
         if ((Test-Path -LiteralPath $path) -and
             ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "$DisplayName path is unsafe: $path"
@@ -2883,8 +3062,10 @@ function Install-ProvisioningAccessShortcut {
         throw "$DisplayName script verification failed."
     }
     $powerShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $accessArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "' + $destination + '" -ShowDialog'
+    if ((Test-ProvisioningWorkstation) -and $Name -ceq 'playwright-access') { $accessArguments += ' -UserScope' }
     Ensure-ProvisioningStartShortcut -DisplayName $DisplayName -Executable $powerShell `
-        -ShortcutArguments ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -STA -File "' + $destination + '" -ShowDialog') `
+        -ShortcutArguments $accessArguments `
         -IconLocation ((Join-Path $env:WINDIR 'System32\shell32.dll') + ',44')
 }
 
@@ -3242,6 +3423,7 @@ function Disable-ProvisioningAudioPlayback {
     return [bool]$schemeChanged
 }
 
+if ($Phase -eq 'Library') { return }
 $provisioningStopwatch = [Diagnostics.Stopwatch]::StartNew()
 if ($Phase -eq 'Registry') {
 $registryStateChanged = $false
@@ -4020,7 +4202,7 @@ foreach ($workspace in @($provisioningWorkspaces | Sort-Object name)) {
     }
 }
 
-$packageStageRoot = 'C:\HerdrSandbox\staging\packages'
+$packageStageRoot = Get-ProvisioningPath 'staging\packages'
 if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
     foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $packageStageRoot -Directory -Force)) {
         Remove-ProvisioningGuestPackageStage -Path $stageDirectory.FullName -Attempts 1 `

@@ -4,8 +4,13 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
+
+func acquireNamedLifecycleLock(context.Context, string) (func() error, error) {
+	return nil, errors.New("named setup locks require Windows")
+}
 
 var lifecycleLockToken = func() chan struct{} {
 	token := make(chan struct{}, 1)

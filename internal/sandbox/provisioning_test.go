@@ -1592,6 +1592,10 @@ type provisioningPowerShellFunctionSource struct {
 
 func provisioningPowerShellFunctionSetup(t *testing.T, sources ...provisioningPowerShellFunctionSource) string {
 	t.Helper()
+	sources = append([]provisioningPowerShellFunctionSource{{
+		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
+		names: []string{"Get-ProvisioningPath", "Get-ProvisioningUserPath", "Get-ProvisioningEnvironmentTarget", "Assert-ProvisioningPathAncestors", "Test-ProvisioningWorkstation", "Test-ProvisioningDependencyReady", "Initialize-ProvisioningNushell"},
+	}}, sources...)
 	if len(sources) == 0 {
 		t.Fatal("PowerShell function setup requires at least one source")
 	}

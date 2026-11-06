@@ -20,6 +20,8 @@ import (
 const usage = `Usage:
   sandbox config
   sandbox pull-host-config
+  sandbox workstation setup [--profile FILE] [--refresh] [--timeout DURATION]
+  sandbox workstation export --output FILE [--include-settings] [--defaults]
   sandbox version
   sandbox --version
   sandbox plan
@@ -34,6 +36,7 @@ const usage = `Usage:
 Commands:
   config  create the global config when absent and open it with the registered .json application
   pull-host-config  fast-forward transferred Git-backed configuration roots on the host
+  workstation  provision this Windows installation directly, or explicitly export its configuration
   version, --version  print version, UTC build freshness, and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
@@ -138,6 +141,8 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		return 0
 	}
 	switch args[0] {
+	case "workstation":
+		return runWorkstation(ctx, args[1:], stdout, stderr)
 	case "version", "--version":
 		if len(args) != 1 {
 			fmt.Fprintf(stderr, "sandbox: version does not accept arguments\n\n%s", usage)

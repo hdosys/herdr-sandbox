@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 28
+# herdr-sandbox-stacks-contract: 29
 
 function Get-StackWebResponseText {
     param(
@@ -438,7 +438,7 @@ function Get-StackVisualStudioInstallation {
     }
     $installationPath = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$pathResult.Output)) -join ' ').Trim()
     $installationVersion = (@(ConvertFrom-ProvisioningNativeOutput -Text ([string]$versionResult.Output)) -join ' ').Trim()
-    if ($installationPath -ine 'C:\HerdrSandbox\toolchains\visual-studio') {
+    if ($installationPath -ine (Get-ProvisioningPath 'toolchains\visual-studio')) {
         return ''
     }
     if ($installationVersion -cne [string]$Target.BuildVersion) {
@@ -583,8 +583,8 @@ function Install-StackVisualStudioBuildTools {
     )
 
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $cacheRoot = 'C:\HerdrSandbox\cache\vsbt'
-    $guestLayout = 'C:\HerdrSandbox\visual-studio\layout'
+    $cacheRoot = Get-ProvisioningPath 'cache\vsbt'
+    $guestLayout = Get-ProvisioningPath 'visual-studio\layout'
     if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) {
         throw 'The host-prepared Visual Studio Build Tools cache is missing.'
     }
@@ -658,7 +658,7 @@ function Install-StackVisualStudioBuildTools {
             $channelManifest = Join-Path $guestLayout 'ChannelManifest.json'
             $catalog = Join-Path $guestLayout 'Catalog.json'
             $installationArguments = @('--noWeb', '--noUpdateInstaller', '--wait', '--quiet', '--norestart',
-                '--installPath', 'C:\HerdrSandbox\toolchains\visual-studio', '--channelId', $target.ChannelID,
+                '--installPath', (Get-ProvisioningPath 'toolchains\visual-studio'), '--channelId', $target.ChannelID,
                 '--productId', 'Microsoft.VisualStudio.Product.BuildTools', '--channelUri', $channelManifest,
                 '--installChannelUri', $channelManifest, '--installCatalogUri', $catalog)
             foreach ($componentID in @($target.ComponentIDs)) {
@@ -666,6 +666,7 @@ function Install-StackVisualStudioBuildTools {
             }
             $installationArguments += @('--addProductLang', 'en-US')
             $installerEngine = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
+            if (-not (Test-ProvisioningWorkstation)) {
             foreach ($rule in @(
                 @{ Name = 'HerdrSandbox-VSBootstrapper-In'; Direction = 'Inbound'; Program = $guestLayoutBootstrapper },
                 @{ Name = 'HerdrSandbox-VSBootstrapper-Out'; Direction = 'Outbound'; Program = $guestLayoutBootstrapper },
@@ -674,6 +675,7 @@ function Install-StackVisualStudioBuildTools {
             )) {
                 Set-StackVisualStudioFirewallRule -Name $rule.Name -Direction $rule.Direction `
                     -Program $rule.Program
+            }
             }
             if ($null -eq $RustToolchainTask) {
                 Invoke-ProvisioningNative -Role 'Visual Studio Build Tools offline installation' `
@@ -728,7 +730,7 @@ function Install-StackVisualStudioBuildTools {
 }
 
 function Enable-StackVisualStudioDeveloperEnvironment {
-    $installationRoot = 'C:\HerdrSandbox\toolchains\visual-studio'
+    $installationRoot = Get-ProvisioningPath 'toolchains\visual-studio'
     $developerShell = Join-Path $installationRoot 'Common7\Tools\Launch-VsDevShell.ps1'
     foreach ($path in @($installationRoot, $developerShell)) {
         if (-not (Test-Path -LiteralPath $path)) {
@@ -758,8 +760,8 @@ function Enable-StackVisualStudioDeveloperEnvironment {
         if ([string]::IsNullOrWhiteSpace($value)) {
             throw "Visual Studio developer environment did not define $name."
         }
-        [Environment]::SetEnvironmentVariable($name, $value, 'Machine')
-        if ([Environment]::GetEnvironmentVariable($name, 'Machine') -cne $value) {
+        [Environment]::SetEnvironmentVariable($name, $value, (Get-ProvisioningEnvironmentTarget))
+        if ([Environment]::GetEnvironmentVariable($name, (Get-ProvisioningEnvironmentTarget)) -cne $value) {
             throw "Visual Studio developer environment did not persist $name."
         }
     }
@@ -839,7 +841,7 @@ function Assert-StackCppToolchain {
         [string]$Linker
     )
 
-    $stage = Join-Path 'C:\HerdrSandbox\staging' ('cpp-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    $stage = Join-Path (Get-ProvisioningPath 'staging') ('cpp-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     try {
         $cSource = Join-Path $stage 'probe.c'
@@ -1372,11 +1374,12 @@ function Install-StackAndroidDirectArchive {
         [string]$SignedRelativePath = ''
     )
 
-    $cacheRoot = 'C:\HerdrSandbox\cache\packages'
-    if (-not (Test-Path -LiteralPath 'C:\HerdrSandbox\cache' -PathType Container)) {
-        throw 'The writable guest package cache mapping is missing: C:\HerdrSandbox\cache'
+    $cacheOwner = Get-ProvisioningPath 'cache'
+    $cacheRoot = Join-Path $cacheOwner 'packages'
+    if (-not (Test-Path -LiteralPath $cacheOwner -PathType Container)) {
+        throw "The writable package cache directory is missing: $cacheOwner"
     }
-    Assert-ProvisioningCachePath -Path 'C:\HerdrSandbox\cache'
+    Assert-ProvisioningCachePath -Path $cacheOwner
     New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
     Assert-ProvisioningCachePath -Path $cacheRoot
     $packageRoot = Join-Path $cacheRoot (Get-ProvisioningSafeCacheName -Value ([string]$Metadata.Id))
@@ -1388,7 +1391,7 @@ function Install-StackAndroidDirectArchive {
     $lockPath = Join-Path $packageRoot '.lock'
     Assert-ProvisioningCachePath -Path $lockPath
     $lock = $null
-    $guestStage = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
+    $guestStage = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $guestStage -Force | Out-Null
     $guestPayload = Join-Path $guestStage $Metadata.PayloadName
     $extracted = Join-Path $guestStage 'extracted'
@@ -1563,7 +1566,7 @@ function Install-AndroidStack {
         throw 'Android Platform Tools package metadata is invalid.'
     }
 
-    Install-JavaStack
+    if (-not (Test-ProvisioningDependencyReady 'Java')) { Install-JavaStack }
     $jdkRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
     if ([string]::IsNullOrWhiteSpace($jdkRoot)) { throw 'Android Java stack did not publish JAVA_HOME.' }
     $jdkReleasePath = Join-Path $jdkRoot 'release'
@@ -1577,13 +1580,13 @@ function Install-AndroidStack {
         Write-Warning 'Android Java did not report a recognized release version; provisioning will continue after executable smoke checks.'
     }
 
-    $androidSDK = 'C:\HerdrSandbox\tools\android-sdk'
+    $androidSDK = Get-ProvisioningUserPath 'tools\android-sdk'
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
     $androidCLIBin = Join-Path $androidCLIRoot 'bin'
     $androidSDKManager = Join-Path $androidCLIBin 'sdkmanager.bat'
     $platformTools = Join-Path $androidSDK 'platform-tools'
     $adb = Join-Path $platformTools 'adb.exe'
-    $androidUserHome = 'C:\HerdrSandbox\build\android-user'
+    $androidUserHome = Get-ProvisioningUserPath 'build\android-user'
     Write-Output "Installing Android SDK Command-line Tools $androidCLIRevision and Microsoft OpenJDK $jdkVersion..."
     Install-StackAndroidDirectArchive -Role 'Android SDK Command-line Tools' -Metadata $androidCLIMetadata `
         -Destination $androidCLIRoot -ArchiveRoot 'cmdline-tools' `
@@ -1618,8 +1621,8 @@ function Install-AndroidStack {
         ANDROID_JAVA_HOME = $jdkRoot
     }
     foreach ($entry in $androidEnvironment.GetEnumerator()) {
-        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
-        if ([Environment]::GetEnvironmentVariable([string]$entry.Key, 'Machine') -cne [string]$entry.Value) {
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, (Get-ProvisioningEnvironmentTarget))
+        if ([Environment]::GetEnvironmentVariable([string]$entry.Key, (Get-ProvisioningEnvironmentTarget)) -cne [string]$entry.Value) {
             throw "Android environment read-back failed: $($entry.Key)"
         }
     }
@@ -1786,7 +1789,7 @@ function Remove-StackAudioGridderRoot {
         [string]$Root
     )
 
-    $expectedRoot = 'C:\HerdrSandbox\tools\AudioGridder'
+    $expectedRoot = Get-ProvisioningPath 'tools\AudioGridder'
     if ([IO.Path]::GetFullPath($Root).TrimEnd('\') -ine $expectedRoot) {
         throw "AudioGridder root is not app-owned: $Root"
     }
@@ -2193,8 +2196,13 @@ function Install-AudioStack {
     [CmdletBinding()]
     param()
 
+    Install-StackREAPER
+    Install-StackAudioGridder
+}
+
+function Install-StackREAPER {
+
     $reaperVersion = Get-ProvisioningToolVersion -Tool 'Cockos.REAPER'
-    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder'
 
     $reaperMetadata = Get-ProvisioningWinGetMetadata -Role 'REAPER' -Id 'Cockos.REAPER' `
         -Version $reaperVersion -Architecture 'x64' -InstallerType 'exe' -Scope 'machine' -PayloadExtension '.exe'
@@ -2210,8 +2218,14 @@ function Install-AudioStack {
     if ([string]$reaperInfo.VersionInfo.FileVersion -cne $reaperVersion) {
         Write-Warning "REAPER installed successfully, but its file version does not match $reaperVersion. Provisioning will continue with the installed executable."
     }
-    Set-StackREAPERConfiguration
+    if (-not (Test-ProvisioningWorkstation)) { Set-StackREAPERConfiguration }
     Ensure-ProvisioningStartShortcut -DisplayName 'REAPER' -Executable $reaper
+
+    Write-Output "REAPER ready: $reaper"
+}
+
+function Install-StackAudioGridder {
+    $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder'
 
     $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/apohl79/audiogridder/releases/latest' `
         -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
@@ -2235,7 +2249,7 @@ function Install-AudioStack {
         [long]$assets[0].size -le 0) {
         throw 'AudioGridder metadata does not match the resolved official Windows release.'
     }
-    $audioGridderRoot = 'C:\HerdrSandbox\tools\AudioGridder'
+    $audioGridderRoot = Get-ProvisioningPath 'tools\AudioGridder'
     $resolvedPayload = ''
     try {
         $digest = [string]$assets[0].digest
@@ -2291,6 +2305,10 @@ function Install-AudioStack {
     Install-StackAudioGridderClientFiles -SourceRoot $audioGridderRoot
     $server = Join-Path $audioGridderRoot 'bin\AudioGridderServer.exe'
     Ensure-ProvisioningStartShortcut -DisplayName 'AudioGridder Server' -Executable $server -ShortcutArguments '-id 0'
+    if (Test-ProvisioningWorkstation) {
+        Write-Output 'AudioGridder installed. Existing audio configuration and firewall rules were preserved.'
+        return
+    }
     Set-StackAudioGridderServerConfiguration
     Set-StackAudioGridderClientConfiguration
     $network = Get-StackAudioGridderNetwork
@@ -2299,7 +2317,6 @@ function Install-AudioStack {
     Set-StackAudioGridderFirewallRule -Name 'HerdrSandbox-AudioGridder-Workers' -Program $server `
         -LocalPort '55088-56088' -RemoteAddress $network.HostGateway
 
-    Write-Output "REAPER ready: $reaper"
     Write-Output "AudioGridder server 0 and local REAPER clients ready; start the server from the guest Start menu."
     Write-Output "Manual host client endpoint: $($network.GuestAddress):0"
     Write-Output 'Install production VST2/VST3 payloads through project or user provisioning in the guest.'
@@ -2422,7 +2439,7 @@ function Install-JavaStack {
     }
     $Version = [string]$metadata.Version
     Write-Output "Installing Microsoft OpenJDK $Version..."
-    Remove-StackJavaPreviousInstallation -Metadata $metadata
+    if (-not (Test-ProvisioningWorkstation)) { Remove-StackJavaPreviousInstallation -Metadata $metadata }
     Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK' -Metadata $metadata `
         -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe' `
         -InstallerArguments @('ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome') `
@@ -2462,8 +2479,8 @@ function Install-JavaStack {
         }
     }
     $env:JAVA_HOME = $javaHome
-    [Environment]::SetEnvironmentVariable('JAVA_HOME', $javaHome, 'Machine')
-    if ([Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine') -cne $javaHome) {
+    [Environment]::SetEnvironmentVariable('JAVA_HOME', $javaHome, (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('JAVA_HOME', (Get-ProvisioningEnvironmentTarget)) -cne $javaHome) {
         throw 'Microsoft OpenJDK JAVA_HOME read-back failed.'
     }
     Add-ProvisioningMachinePath -Directory $javaBin
@@ -2474,7 +2491,7 @@ function Install-JavaStack {
         }
     }
 
-    $stage = Join-Path 'C:\HerdrSandbox\staging' ('java-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    $stage = Join-Path (Get-ProvisioningPath 'staging') ('java-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     try {
         $source = Join-Path $stage 'HerdrJavaStackProbe.java'
@@ -2543,7 +2560,7 @@ function Install-NSISStack {
     if ([IO.Path]::GetFullPath([string]$resolvedCompiler.Source) -ine [IO.Path]::GetFullPath($compiler)) {
         throw "NSIS compiler PATH read-back failed: $($resolvedCompiler.Source)"
     }
-    $stage = Join-Path 'C:\HerdrSandbox\staging' ('nsis-stack-probe-' + [Guid]::NewGuid().ToString('N'))
+    $stage = Join-Path (Get-ProvisioningPath 'staging') ('nsis-stack-probe-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     try {
         $scriptPath = Join-Path $stage 'probe.nsi'
@@ -2608,10 +2625,12 @@ function Install-NodeRuntime {
     )
 
     $Version = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $Version
+    if (-not (Test-ProvisioningDependencyReady 'Node.js')) {
     Write-Output 'Installing Node.js...'
     Install-ProvisioningWinGetPackage -Role 'Node.js' -Id 'OpenJS.NodeJS' -Version $Version `
         -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
         -RequireAuthenticodeSignature
+    }
     $nodePattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^v\d+\.\d+\.\d+$'
     } else {
@@ -2648,11 +2667,12 @@ function Install-PlaywrightChromium {
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
 
-    $playwrightRoot = 'C:\HerdrSandbox\tools\playwright'
-    $browserRoot = 'C:\HerdrSandbox\tools\playwright-browsers'
-    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
-    $stagingRoot = 'C:\HerdrSandbox\staging'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $playwrightRoot, $browserRoot, $npmCache, $stagingRoot)) {
+    $toolsRoot = Get-ProvisioningPath 'tools'
+    $playwrightRoot = Join-Path $toolsRoot 'playwright'
+    $browserRoot = Join-Path $toolsRoot 'playwright-browsers'
+    $npmCache = Join-Path $toolsRoot 'npm-cache'
+    $stagingRoot = Get-ProvisioningPath 'staging'
+    foreach ($directory in @($toolsRoot, $playwrightRoot, $browserRoot, $npmCache, $stagingRoot)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -2745,8 +2765,8 @@ function Install-PlaywrightChromium {
     }
     $env:PLAYWRIGHT_BROWSERS_PATH = $browserRoot
     $env:PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT = '120000'
-    [Environment]::SetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', $browserRoot, 'Machine')
-    if ([Environment]::GetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', 'Machine') -cne $browserRoot) {
+    [Environment]::SetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', $browserRoot, (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('PLAYWRIGHT_BROWSERS_PATH', (Get-ProvisioningEnvironmentTarget)) -cne $browserRoot) {
         throw 'Playwright browser path machine environment verification failed.'
     }
     Invoke-ProvisioningNative -Role 'Playwright Chromium installation' -FilePath $node `
@@ -2807,9 +2827,10 @@ function Install-PlaywrightCLIStack {
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
 
-    $cliRoot = 'C:\HerdrSandbox\tools\playwright-cli'
-    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $cliRoot, $npmCache)) {
+    $toolsRoot = Get-ProvisioningPath 'tools'
+    $cliRoot = Join-Path $toolsRoot 'playwright-cli'
+    $npmCache = Join-Path $toolsRoot 'npm-cache'
+    foreach ($directory in @($toolsRoot, $cliRoot, $npmCache)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -2822,8 +2843,8 @@ function Install-PlaywrightCLIStack {
     $env:npm_config_cache = $npmCache
     $env:npm_config_update_notifier = 'false'
     $env:NO_UPDATE_NOTIFIER = '1'
-    [Environment]::SetEnvironmentVariable('NO_UPDATE_NOTIFIER', '1', 'Machine')
-    if ([Environment]::GetEnvironmentVariable('NO_UPDATE_NOTIFIER', 'Machine') -cne '1') {
+    [Environment]::SetEnvironmentVariable('NO_UPDATE_NOTIFIER', '1', (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('NO_UPDATE_NOTIFIER', (Get-ProvisioningEnvironmentTarget)) -cne '1') {
         throw 'Playwright CLI update-notifier environment was not persisted.'
     }
 
@@ -3178,7 +3199,11 @@ function Install-StackHyperFramesSupertonic {
     if ([string]$model.repository -cne 'supertone-oss-archive/supertonic-3' -or
         [string]$model.revision -cnotmatch '^[0-9a-f]{40}$') { throw 'Supertonic model identity is invalid.' }
     $directory = Join-Path $ModelRoot ('supertonic-3-' + ([string]$model.revision).Substring(0, 7))
-    $environmentRoot = 'C:\HerdrSandbox\tools\supertonic-python'
+    if (Test-ProvisioningWorkstation) {
+        $env:UV_CACHE_DIR = Get-ProvisioningPath 'cache\uv-installer'
+        New-Item -ItemType Directory -Path $env:UV_CACHE_DIR -Force | Out-Null
+    }
+    $environmentRoot = Get-ProvisioningPath 'tools\supertonic-python'
     foreach ($path in @($ModelRoot, $directory, $environmentRoot)) {
         if (Test-Path -LiteralPath $path) {
             $info = Get-Item -LiteralPath $path -Force
@@ -3290,7 +3315,7 @@ function Install-StackHyperFramesVoxCPM2 {
         [Parameter(Mandatory = $true)][string]$Node
     )
 
-    $modelRoot = 'C:\Models'
+    $modelRoot = if (Test-ProvisioningWorkstation) { Get-ProvisioningPath 'models' } else { 'C:\Models' }
     if (-not (Test-Path -LiteralPath $modelRoot -PathType Container)) {
         Write-Output 'HyperFrames TTS disabled: set modelsDirectory in the host configuration to enable it.'
         return
@@ -3329,8 +3354,8 @@ function Install-StackHyperFramesVoxCPM2 {
     }
     foreach ($entry in $entries) { Test-StackHyperFramesVoxCPM2ArchiveEntry -Entry $entry }
 
-    $staging = Join-Path 'C:\HerdrSandbox\staging' ('hyperframes-voxcpm2-' + [Guid]::NewGuid().ToString('N'))
-    $destination = 'C:\HerdrSandbox\tools\hyperframes-voxcpm2'
+    $staging = Join-Path (Get-ProvisioningPath 'staging') ('hyperframes-voxcpm2-' + [Guid]::NewGuid().ToString('N'))
+    $destination = Get-ProvisioningPath 'tools\hyperframes-voxcpm2'
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     $promoted = $false
     try {
@@ -3429,11 +3454,13 @@ function Install-StackHyperFramesVoxCPM2 {
         }
     }
 
+    if (-not ((Test-ProvisioningDependencyReady 'Python') -and (Test-ProvisioningDependencyReady 'uv'))) {
     Invoke-ProvisioningStep -Name 'TTS Python and uv' -InputValues @($global:HerdrSandboxStepState.StackImplementation,
         (Get-ProvisioningToolVersion -Tool 'Python' -Requested ''),
         (Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested '')) -Action {
         Install-PythonStack
         Install-Uv
+    }
     }
     $supertonic = Install-StackHyperFramesSupertonic -BundleRoot $destination -ModelRoot $modelRoot
     $qwen3 = Install-StackHyperFramesQwen3 -BundleRoot $destination -ModelRoot $modelRoot -Python $supertonic.Python
@@ -3462,7 +3489,7 @@ function Install-StackHyperFramesVoxCPM2 {
     Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 CPU server smoke' `
         -FilePath $cpuServer -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
 
-    $stateRoot = 'C:\HerdrSandbox\state\hyperframes-voxcpm2'
+    $stateRoot = Get-ProvisioningUserPath 'state\hyperframes-voxcpm2'
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     $settings = [ordered]@{
         'HF_MEDIA_ENGINE' = $engine
@@ -3479,7 +3506,7 @@ function Install-StackHyperFramesVoxCPM2 {
     }
     foreach ($name in @('HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
         Remove-Item -LiteralPath ('Env:\' + $name) -ErrorAction SilentlyContinue
-        [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
+        [Environment]::SetEnvironmentVariable($name, $null, (Get-ProvisioningEnvironmentTarget))
     }
     foreach ($entry in $settings.GetEnumerator()) {
         [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Process')
@@ -3495,7 +3522,7 @@ function Install-StackHyperFramesVoxCPM2 {
     Invoke-ProvisioningNative -Role 'HyperFrames VoxCPM2 provider availability' -FilePath $Node `
         -ArgumentList @('--input-type=module', '--eval', $availabilityScript) -TimeoutSeconds 30 | Out-Null
     foreach ($entry in $settings.GetEnumerator()) {
-        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
+        [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, (Get-ProvisioningEnvironmentTarget))
     }
     Write-Output "HyperFrames TTS CPU ready: $($descriptor.tag); Supertonic 3 default, VoxCPM2 via --provider voxcpm2."
     if ($null -ne $qwen3) { Write-Output 'Qwen3 CustomVoice is available for local use via --provider qwen3; it is not the default.' }
@@ -3508,7 +3535,7 @@ function Assert-StackHyperFramesSoftwareEncode {
         [Parameter(Mandatory = $true)][string]$FFprobe
     )
 
-    $probeRoot = Join-Path 'C:\HerdrSandbox\staging' ('hyperframes-encode-' + [Guid]::NewGuid().ToString('N'))
+    $probeRoot = Join-Path (Get-ProvisioningPath 'staging') ('hyperframes-encode-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
     try {
         $outputPath = Join-Path $probeRoot 'software-h264.mp4'
@@ -3663,10 +3690,10 @@ function Disable-StackHyperFramesTTS {
             'HF_VOXCPM2_SERVER_CPU', 'HF_VOXCPM2_MODEL_ID', 'HF_VOXCPM2_REFERENCE_AUDIO', 'HF_VOXCPM2_STATE_DIR',
             'HF_VOXCPM2_ENDPOINT', 'HF_VOXCPM2_SERVER_VULKAN', 'HF_VOXCPM2_BACKEND')) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
-        [Environment]::SetEnvironmentVariable($name, $null, 'Machine')
+        [Environment]::SetEnvironmentVariable($name, $null, (Get-ProvisioningEnvironmentTarget))
     }
-    $cliDirectory = 'C:\HerdrSandbox\tools\hyperframes-voxcpm2\bin'
-    foreach ($scope in @('Machine', 'Process')) {
+    $cliDirectory = Get-ProvisioningPath 'tools\hyperframes-voxcpm2\bin'
+    foreach ($scope in @((Get-ProvisioningEnvironmentTarget), 'Process')) {
         $path = [Environment]::GetEnvironmentVariable('Path', $scope)
         $parts = @($path -split ';' | Where-Object { $_.Trim().TrimEnd('\') -ine $cliDirectory })
         [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), $scope)
@@ -3684,6 +3711,10 @@ function Install-HyperFramesStack {
             (Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version)) -Action {
         Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
     }
+    Install-StackHyperFramesOptionalTTS
+}
+
+function Install-StackHyperFramesOptionalTTS {
     # Never retain activation from a previous attempt while validating this one.
     Disable-StackHyperFramesTTS
     try {
@@ -3764,13 +3795,14 @@ function Install-StackHyperFramesRendering {
         -VersionArguments @('-version') `
         -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
 
-    $toolRoot = 'C:\HerdrSandbox\tools\hyperframes'
-    $activationRoot = 'C:\HerdrSandbox\tools\hyperframes-opencode'
+    $toolsRoot = Get-ProvisioningPath 'tools'
+    $toolRoot = Join-Path $toolsRoot 'hyperframes'
+    $activationRoot = Join-Path $toolsRoot 'hyperframes-opencode'
     $activationSkillsRoot = Join-Path $activationRoot 'skills'
     $activationLauncher = Join-Path $toolRoot 'hyperframes-opencode.ps1'
-    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
-    $stagingRoot = 'C:\HerdrSandbox\staging'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $npmCache, $stagingRoot)) {
+    $npmCache = Join-Path $toolsRoot 'npm-cache'
+    $stagingRoot = Get-ProvisioningPath 'staging'
+    foreach ($directory in @($toolsRoot, $npmCache, $stagingRoot)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -4105,7 +4137,7 @@ function Get-TradingViewDesktopPackageMetadata {
 
 function Get-TradingViewDesktopPortablePackage {
     $packageURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
-    $downloadDirectory = Join-Path 'C:\HerdrSandbox\staging\packages' ([Guid]::NewGuid().ToString('N'))
+    $downloadDirectory = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
     $payloadPath = Join-Path $downloadDirectory 'TradingView.msix'
     try {
@@ -4256,7 +4288,7 @@ function Install-TradingViewStack {
     if ($null -ne $desktopInstallFailure) { throw $desktopInstallFailure }
     if ($null -ne $desktopCleanupFailure) { throw $desktopCleanupFailure }
 
-    $desktopRoot = Join-Path 'C:\HerdrSandbox\tools' (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
+    $desktopRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
     $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')
     $desktopManifestPath = Join-Path $desktopRoot 'AppxManifest.xml'
     if ($desktopExecutables.Count -ne 1 -or -not (Test-Path -LiteralPath $desktopManifestPath -PathType Leaf)) {
@@ -4290,9 +4322,10 @@ function Install-TradingViewStack {
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
-    $tvControlRoot = 'C:\HerdrSandbox\tools\tvcontrol'
-    $npmCache = 'C:\HerdrSandbox\tools\npm-cache'
-    foreach ($directory in @('C:\HerdrSandbox\tools', $tvControlRoot, $npmCache)) {
+    $toolsRoot = Get-ProvisioningPath 'tools'
+    $tvControlRoot = Join-Path $toolsRoot 'tvcontrol'
+    $npmCache = Join-Path $toolsRoot 'npm-cache'
+    foreach ($directory in @($toolsRoot, $tvControlRoot, $npmCache)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -4463,7 +4496,9 @@ function Install-PythonStack {
         $Series = $packageID.Substring('Python.Python.'.Length)
         $null = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
     }
-    $pythonAliasDirectory = 'C:\HerdrSandbox\tools\python\bin'
+    $toolsRoot = Get-ProvisioningPath 'tools'
+    $pythonRoot = Join-Path $toolsRoot 'python'
+    $pythonAliasDirectory = Join-Path $pythonRoot 'bin'
     $pythonAlias = Join-Path $pythonAliasDirectory 'python.exe'
     $python3 = Join-Path $pythonAliasDirectory 'python3.exe'
     $pythonSourceExclusions = @('*\Microsoft\WindowsApps\python.exe', $pythonAlias)
@@ -4491,7 +4526,7 @@ function Install-PythonStack {
     if (($pythonInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Python command is a reparse point: $pythonPath"
     }
-    foreach ($directory in @('C:\HerdrSandbox\tools', 'C:\HerdrSandbox\tools\python', $pythonAliasDirectory)) {
+    foreach ($directory in @($toolsRoot, $pythonRoot, $pythonAliasDirectory)) {
         if (-not (Test-Path -LiteralPath $directory)) {
             New-Item -ItemType Directory -Path $directory -Force | Out-Null
         }
@@ -4578,8 +4613,9 @@ function Install-Uv {
     $uvVersion = Assert-ProvisioningCommand -Role 'uv' -Name 'uv.exe' `
         -VersionArguments @('--version') -ExpectedPattern $uvPattern
 
-    $uvCacheRoot = 'C:\HerdrSandbox\cache\uv'
-    Assert-ProvisioningCachePath -Path $uvCacheRoot
+    $uvCacheRoot = Get-ProvisioningUserPath 'cache\uv'
+    if (Test-ProvisioningWorkstation) { Assert-ProvisioningPathAncestors $uvCacheRoot }
+    else { Assert-ProvisioningCachePath -Path $uvCacheRoot }
     if (-not (Test-Path -LiteralPath $uvCacheRoot)) {
         New-Item -ItemType Directory -Path $uvCacheRoot -Force | Out-Null
     }
@@ -4592,10 +4628,10 @@ function Install-Uv {
 
     $env:UV_CACHE_DIR = $uvCacheRoot
     $env:UV_NO_MANAGED_PYTHON = '1'
-    [Environment]::SetEnvironmentVariable('UV_CACHE_DIR', $uvCacheRoot, 'Machine')
-    [Environment]::SetEnvironmentVariable('UV_NO_MANAGED_PYTHON', '1', 'Machine')
-    if ([Environment]::GetEnvironmentVariable('UV_CACHE_DIR', 'Machine') -cne $uvCacheRoot -or
-        [Environment]::GetEnvironmentVariable('UV_NO_MANAGED_PYTHON', 'Machine') -cne '1') {
+    [Environment]::SetEnvironmentVariable('UV_CACHE_DIR', $uvCacheRoot, (Get-ProvisioningEnvironmentTarget))
+    [Environment]::SetEnvironmentVariable('UV_NO_MANAGED_PYTHON', '1', (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('UV_CACHE_DIR', (Get-ProvisioningEnvironmentTarget)) -cne $uvCacheRoot -or
+        [Environment]::GetEnvironmentVariable('UV_NO_MANAGED_PYTHON', (Get-ProvisioningEnvironmentTarget)) -cne '1') {
         throw 'uv environment verification failed.'
     }
 
@@ -4637,14 +4673,14 @@ function Install-ZigStack {
     }
     $zigVersion = Assert-ProvisioningCommand -Role 'Zig' -Name 'zig.exe' `
         -VersionArguments @('version') -ExpectedPattern $zigPattern
-    $zigBuildRoot = 'C:\HerdrSandbox\build\zig'
+    $zigBuildRoot = Get-ProvisioningUserPath 'build\zig'
     $env:ZIG_LOCAL_CACHE_DIR = Join-Path $zigBuildRoot 'local-cache'
     $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $zigBuildRoot 'global-cache'
     foreach ($directory in @($env:ZIG_LOCAL_CACHE_DIR, $env:ZIG_GLOBAL_CACHE_DIR)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
-    [Environment]::SetEnvironmentVariable('ZIG_LOCAL_CACHE_DIR', $env:ZIG_LOCAL_CACHE_DIR, 'Machine')
-    [Environment]::SetEnvironmentVariable('ZIG_GLOBAL_CACHE_DIR', $env:ZIG_GLOBAL_CACHE_DIR, 'Machine')
+    [Environment]::SetEnvironmentVariable('ZIG_LOCAL_CACHE_DIR', $env:ZIG_LOCAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
+    [Environment]::SetEnvironmentVariable('ZIG_GLOBAL_CACHE_DIR', $env:ZIG_GLOBAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
     Write-Output "Zig ready: $zigVersion"
 }
 
@@ -4689,9 +4725,9 @@ $Toolchain = [string]$rustDistribution.Toolchain
 $null = Get-ProvisioningToolVersion -Tool 'rust-toolchain' -Requested $Toolchain
 $rustToolchain = "$Toolchain-$rustTriple"
 Write-Output "Installing Rust $Toolchain for MSVC..."
-$env:RUSTUP_HOME = 'C:\HerdrSandbox\toolchains\rustup'
-$env:CARGO_HOME = 'C:\HerdrSandbox\toolchains\cargo'
-$env:CARGO_TARGET_DIR = 'C:\HerdrSandbox\build\cargo-target'
+$env:RUSTUP_HOME = Get-ProvisioningUserPath 'toolchains\rustup'
+$env:CARGO_HOME = Get-ProvisioningUserPath 'toolchains\cargo'
+$env:CARGO_TARGET_DIR = Get-ProvisioningUserPath 'build\cargo-target'
 $env:RUSTUP_AUTO_INSTALL = '0'
 foreach ($directory in @($env:RUSTUP_HOME, $env:CARGO_HOME, $env:CARGO_TARGET_DIR)) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -4703,7 +4739,8 @@ $machineEnvironment = [ordered]@{
     RUSTUP_AUTO_INSTALL = $env:RUSTUP_AUTO_INSTALL
 }
 foreach ($entry in $machineEnvironment.GetEnumerator()) {
-    [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, 'Machine')
+    if ((Test-ProvisioningWorkstation) -and [string]$entry.Key -ceq 'CARGO_TARGET_DIR') { continue }
+    [Environment]::SetEnvironmentVariable([string]$entry.Key, [string]$entry.Value, (Get-ProvisioningEnvironmentTarget))
 }
 Install-ProvisioningWinGetPackage -Role 'Rustup' -Id 'Rustlang.Rustup' -InstallerType 'exe' `
     -Adapter 'Rustup' -InstallerArguments @('-y', '-q', '--no-modify-path', '--default-host', $rustTriple,
@@ -4714,10 +4751,10 @@ $rustupVersion = Assert-ProvisioningCommand -Role 'Rustup' -Name 'rustup.exe' `
     -VersionArguments @('--version') -ExpectedPattern '^rustup \d+\.\d+\.\d+ '
 $rustPayloads = @($rustDistribution.Payloads)
 $rustCacheMetadata = $rustDistribution.Metadata
-$rustCacheRoot = 'C:\HerdrSandbox\cache\rust'
+$rustCacheRoot = Get-ProvisioningPath 'cache\rust'
 $rustEntryName = [string]$rustDistribution.CacheEntryName
 $rustEntryDirectory = Join-Path $rustCacheRoot $rustEntryName
-$rustGuestStage = Join-Path 'C:\HerdrSandbox\staging\rust-mirror' ([Guid]::NewGuid().ToString('N'))
+$rustGuestStage = Join-Path (Get-ProvisioningPath 'staging\rust-mirror') ([Guid]::NewGuid().ToString('N'))
 $rustGuestMirror = Join-Path $rustGuestStage 'mirror'
 $rustLock = $null
 $rustSetupSucceeded = $false
@@ -5013,9 +5050,9 @@ function Write-HandySPIRVHeadersPackage {
         ((Get-Item -LiteralPath $header -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Handy Vulkan SDK SPIRV headers are missing or unsafe: $header"
     }
-    $toolsOwner = 'C:\HerdrSandbox'
+    $toolsOwner = Get-ProvisioningPath
     $toolsRoot = Join-Path $toolsOwner 'tools'
-    $prefix = 'C:\HerdrSandbox\tools\handy-cmake-prefix'
+    $prefix = Join-Path $toolsRoot 'handy-cmake-prefix'
     $configDirectory = Join-Path $prefix 'share\cmake\SPIRV-Headers'
     foreach ($directory in @($toolsOwner, $toolsRoot, $prefix, (Join-Path $prefix 'share'), (Join-Path $prefix 'share\cmake'), $configDirectory)) {
         if (-not (Test-Path -LiteralPath $directory)) {
@@ -5054,15 +5091,15 @@ endif()
         throw "Handy SPIRV-Headers CMake package verification failed: $config"
     }
 
-    $existing = [string][Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', 'Machine')
+    $existing = [string][Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', (Get-ProvisioningEnvironmentTarget))
     $entries = @($existing -split ';' | Where-Object {
             -not [string]::IsNullOrWhiteSpace($_) -and
             [IO.Path]::GetFullPath($_).TrimEnd('\') -ine $prefix
         })
     $combined = (@($prefix) + $entries) -join ';'
     $env:CMAKE_PREFIX_PATH = $combined
-    [Environment]::SetEnvironmentVariable('CMAKE_PREFIX_PATH', $combined, 'Machine')
-    if ([Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', 'Machine') -cne $combined) {
+    [Environment]::SetEnvironmentVariable('CMAKE_PREFIX_PATH', $combined, (Get-ProvisioningEnvironmentTarget))
+    if ([Environment]::GetEnvironmentVariable('CMAKE_PREFIX_PATH', (Get-ProvisioningEnvironmentTarget)) -cne $combined) {
         throw 'Handy CMAKE_PREFIX_PATH verification failed.'
     }
     return $prefix
@@ -5077,7 +5114,7 @@ function Assert-HandyNativeToolchain {
     )
 
     $cmake = Get-Command 'cmake.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
-    $stage = Join-Path 'C:\HerdrSandbox\staging' ('handy-cmake-probe-' + [Guid]::NewGuid().ToString('N'))
+    $stage = Join-Path (Get-ProvisioningPath 'staging') ('handy-cmake-probe-' + [Guid]::NewGuid().ToString('N'))
     $source = Join-Path $stage 'source'
     $build = Join-Path $stage 'build'
     New-Item -ItemType Directory -Path $source -Force | Out-Null
@@ -5256,7 +5293,7 @@ function Install-HerdrStack {
     Install-ZigStack
     Install-RustMSVCStack -ProjectDirectory $projectRoot
 
-    $expectedCargoTarget = 'C:\HerdrSandbox\build\cargo-target'
+    $expectedCargoTarget = Get-ProvisioningPath 'build\cargo-target'
     if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR) -or
         [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR).TrimEnd('\') -cne $expectedCargoTarget) {
         throw "Herdr Rust stack returned an unexpected CARGO_TARGET_DIR: $env:CARGO_TARGET_DIR"

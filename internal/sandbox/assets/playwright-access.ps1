@@ -1,4 +1,4 @@
-param([switch]$ShowDialog)
+param([switch]$ShowDialog, [switch]$UserScope)
 
 function ConvertFrom-PlaywrightExtensionTokenInput {
     param([AllowEmptyString()][string]$Value)
@@ -16,16 +16,17 @@ function ConvertFrom-PlaywrightExtensionTokenInput {
 }
 
 function Set-PlaywrightExtensionToken {
-    param([Parameter(Mandatory = $true)][string]$Value)
+    param([Parameter(Mandatory = $true)][string]$Value,
+        [ValidateSet('Machine', 'User')][string]$EnvironmentTarget = 'Machine')
 
     $token = ConvertFrom-PlaywrightExtensionTokenInput -Value $Value
     if ([string]::IsNullOrWhiteSpace($token)) {
         throw 'Paste the token value or the complete PLAYWRIGHT_MCP_EXTENSION_TOKEN assignment.'
     }
     $variableName = 'PLAYWRIGHT_MCP_EXTENSION_TOKEN'
-    [Environment]::SetEnvironmentVariable($variableName, $token, 'Machine')
+    [Environment]::SetEnvironmentVariable($variableName, $token, $EnvironmentTarget)
     [Environment]::SetEnvironmentVariable($variableName, $token, 'Process')
-    if ([Environment]::GetEnvironmentVariable($variableName, 'Machine') -cne $token -or
+    if ([Environment]::GetEnvironmentVariable($variableName, $EnvironmentTarget) -cne $token -or
         [Environment]::GetEnvironmentVariable($variableName, 'Process') -cne $token) {
         throw 'Playwright Extension token environment publication failed.'
     }
@@ -51,6 +52,7 @@ function Initialize-PlaywrightExtensionToken {
 }
 
 function Show-PlaywrightAccessDialog {
+    param([switch]$UserScope)
     Add-Type -AssemblyName Microsoft.VisualBasic
     Add-Type -AssemblyName System.Windows.Forms
     $title = 'Playwright browser access'
@@ -59,9 +61,15 @@ function Show-PlaywrightAccessDialog {
         $title, '')
     if ([string]::IsNullOrWhiteSpace($inputValue)) { return }
     try {
-        Set-PlaywrightExtensionToken -Value $inputValue
+        $target = if ($UserScope) { 'User' } else { 'Machine' }
+        Set-PlaywrightExtensionToken -Value $inputValue -EnvironmentTarget $target
+        $message = if ($UserScope) {
+            'Token saved only for this Windows user. Start the agent from a new standalone terminal application. Existing Herdr servers and agents keep their previous environment; they were not restarted.'
+        } else {
+            'Token saved for this Sandbox. Open a new Herdr terminal tab before starting your agent. Already-running agents keep their previous token.'
+        }
         [Windows.Forms.MessageBox]::Show(
-            'Token saved for this Sandbox. Open a new Herdr terminal tab before starting your agent. Already-running agents keep their previous token. You can reopen this dialog from the taskbar at any time.',
+            $message,
             $title, [Windows.Forms.MessageBoxButtons]::OK, [Windows.Forms.MessageBoxIcon]::Information) | Out-Null
     } catch {
         [Windows.Forms.MessageBox]::Show(
@@ -70,4 +78,4 @@ function Show-PlaywrightAccessDialog {
     }
 }
 
-if ($ShowDialog) { Show-PlaywrightAccessDialog }
+if ($ShowDialog) { Show-PlaywrightAccessDialog -UserScope:$UserScope }

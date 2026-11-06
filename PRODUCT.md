@@ -8,6 +8,32 @@ Herdr Sandbox exposes the `sandbox` Windows command for running development and 
 
 The current product contract is:
 
+### Direct Windows workstation setup
+
+- A separate NSIS installer provisions the current Windows installation without
+  creating a Sandbox. It requires Windows x64 build 19041 or newer, under the
+  intended user's elevated account; Windows 11 is recommended. The existing
+  Sandbox product remains intact. Protected control state is separate from
+  user-writable runtime caches and toolchain homes.
+- Every selected independent provisioning step is attempted even after another
+  step fails. Only dependent steps are skipped when their prerequisites fail.
+  Integrity failures never activate a component and never become success, but
+  unrelated safe steps continue. Explicit cancellation and inability to trust
+  the installer/input boundary remain run-level stop conditions.
+- The installer reaches a final report rather than aborting on a package error.
+  The report distinguishes successful, retained, failed, unavailable and
+  dependency-blocked steps. An incomplete run remains a nonzero CLI outcome,
+  not a false successful installation. Re-running resumes unfinished/changed work.
+- The shared package/stack implementations remain canonical. Direct setup never
+  applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
+  mapped-repository trust replacement or live Herdr lifecycle changes.
+- Personal configuration travels only through an explicit, separate export/import
+  file, never embedded in the distributable installer. Dedicated credential files,
+  private keys, project data and Git history are excluded. Free-form settings may
+  contain private values; their export requires explicit selection and the output
+  must remain private. Existing different target settings are preserved and
+  reported as conflicts, not silently overwritten.
+
 - The host `sandbox` command starts, provisions, inspects, and stops an app-owned Windows Sandbox while Herdr keeps the interactive terminal on the host.
 - Selected projects and explicit cache, mount, worktree, and model roots can persist on the host. Unselected host data is not mapped, and guest tools and processes remain disposable.
 - `sandbox up` reports whether it will create a guest or provision an existing

@@ -71,7 +71,7 @@ function Show-ApifyAccessDialog {
     $form.MinimizeBox = $false
     $label = New-Object Windows.Forms.Label
     $label.SetBounds(16, 16, 438, 80)
-    $label.Text = 'Paste your Apify API token. This saves it only in this Sandbox. For reuse after Sandbox replacement, keep the token on the host and enable credentialSync.apify. A later host transfer replaces this guest value.'
+    $label.Text = 'Paste your Apify API token. This saves it for this Windows user, not into an installer or portable configuration profile. Keep your credentials separately for another machine.'
     $inputBox = New-Object Windows.Forms.TextBox
     $inputBox.SetBounds(16, 100, 438, 24)
     $inputBox.UseSystemPasswordChar = $true

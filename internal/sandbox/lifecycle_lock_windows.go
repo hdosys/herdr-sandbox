@@ -18,8 +18,12 @@ var (
 )
 
 func acquireLifecycleLock(ctx context.Context) (func() error, error) {
+	return acquireNamedLifecycleLock(ctx, lifecycleMutexName)
+}
+
+func acquireNamedLifecycleLock(ctx context.Context, mutexName string) (func() error, error) {
 	runtime.LockOSThread()
-	name, err := syscall.UTF16PtrFromString(lifecycleMutexName)
+	name, err := syscall.UTF16PtrFromString(mutexName)
 	if err != nil {
 		runtime.UnlockOSThread()
 		return nil, fmt.Errorf("encode lifecycle mutex name: %w", err)

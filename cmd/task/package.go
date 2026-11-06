@@ -397,7 +397,7 @@ func cleanDistributionOutputs(directory string, retained map[string]bool) error 
 	}
 	for _, entry := range entries {
 		path := filepath.Join(directory, entry.Name())
-		if retained[entry.Name()] {
+		if retained[entry.Name()] || entry.Name() == workstationInstallerName || entry.Name() == workstationEvidenceName {
 			info, err := os.Lstat(path)
 			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 				return fmt.Errorf("retained local artifact is not a regular file: %s", path)
