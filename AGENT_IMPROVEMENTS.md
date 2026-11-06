@@ -18,6 +18,16 @@ cross-project workflow in the global OpenCode configuration repository.
 
 ## Proposals
 
+- **Status: proposed. Preflight native UI input and capture diagnostics inside the checker.**
+  Evidence: the workstation wizard rendered correctly, but Session 1/Default
+  returned no foreground window and refused activation. A Task Scheduler attempt
+  returned exit 1 without child diagnostics; in-child transcription exposed the
+  actual input-route failure. Reuse the bounded native interactive adapter with
+  explicit child logging and an input-desktop/owned-focus check before keyboard
+  assertions. Distinguish message-level dialog checks from physical SendInput.
+  Expected benefit: avoid repeated blocked GUI attempts and unsupported input
+  acceptance claims without adding another launcher or background service.
+
 - **Status: proposed. Establish a bounded real SSH smoke before lifecycle rewrites.**
   Evidence: local PowerShell receiver tests passed while the real SSH check
   stalled; inherited Win32-OpenSSH descriptor metadata was isolated only after
