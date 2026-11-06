@@ -493,9 +493,10 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, 
 		Seconds       int `json:"seconds"`
 		Steps         int `json:"steps"`
 		Jobs          []struct {
-			Name        string `json:"name"`
-			Seconds     int    `json:"seconds"`
-			Fingerprint string `json:"fingerprint"`
+			Name        string   `json:"name"`
+			Seconds     int      `json:"seconds"`
+			Fingerprint string   `json:"fingerprint"`
+			Requires    []string `json:"requires"`
 		} `json:"jobs"`
 	}
 	if planErr == nil {

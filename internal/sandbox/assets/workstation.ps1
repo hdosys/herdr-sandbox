@@ -179,14 +179,14 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     if ($selected.ContainsKey('handy')) {
         Add-WorkstationJob 'Vulkan SDK' 'vulkan-sdk' -Requires @('WinGet') -Tools @('KhronosGroup.VulkanSDK') -Seconds 1200
         Add-WorkstationJob 'WebView2' 'webview2' -Requires @('WinGet') -Tools @('Microsoft.EdgeWebView2Runtime')
-        Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','C and C++','Rust MSVC','Stack bun','WebView2')
+        Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','C and C++')
     }
 
 if ($PlanOnly) {
     $seconds = 120 + $nativeJobs.Count * 30
     foreach ($job in $nativeJobs) { $seconds += $job.Seconds }
     $jobs = @($nativeJobs | ForEach-Object {
-        [ordered]@{ name=$_.Name; seconds=$_.Seconds; fingerprint=(Get-ProvisioningStepFingerprint -Values (@($global:HerdrSandboxStepState.Implementation) + @(Get-WorkstationJobInputs $_))) }
+        [ordered]@{ name=$_.Name; seconds=$_.Seconds; requires=@($_.Requires); fingerprint=(Get-ProvisioningStepFingerprint -Values (@($global:HerdrSandboxStepState.Implementation) + @(Get-WorkstationJobInputs $_))) }
     })
     Write-Output ([ordered]@{ schemaVersion=1; seconds=$seconds; steps=$nativeJobs.Count; jobs=$jobs } | ConvertTo-Json -Depth 4 -Compress)
     exit 0

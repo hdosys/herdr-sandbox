@@ -207,9 +207,10 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		Seconds       int `json:"seconds"`
 		Steps         int `json:"steps"`
 		Jobs          []struct {
-			Name        string `json:"name"`
-			Seconds     int    `json:"seconds"`
-			Fingerprint string `json:"fingerprint"`
+			Name        string   `json:"name"`
+			Seconds     int      `json:"seconds"`
+			Fingerprint string   `json:"fingerprint"`
+			Requires    []string `json:"requires"`
 		} `json:"jobs"`
 	}
 	readPlan := func() actualPlan {
@@ -239,6 +240,35 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 	}
 	if plan.SchemaVersion != 1 || len(plan.Jobs) != plan.Steps || plan.Seconds != seconds {
 		t.Fatalf("deadline does not cover the whole actual plan: %+v", plan)
+	}
+	for _, job := range plan.Jobs {
+		if job.Name == "Handy native headers" && (!slices.Equal(job.Requires, []string{"Vulkan SDK", "C and C++"})) {
+			t.Fatalf("unrelated tools can suppress Handy header preparation: %v", job.Requires)
+		}
+		if job.Name == "Handy native headers" {
+			dependencies, err := json.Marshal(job.Requires)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("WORKSTATION_TEST_DEPENDENCIES", string(dependencies))
+		}
+	}
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{path: base, names: []string{"Get-ProvisioningBoundedDiagnosticText", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Test-ProvisioningTerminalError"}})
+	fixture, err := os.ReadFile(filepath.Join("testdata", "workstation-dependencies.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixturePath := filepath.Join(root, "dependencies.ps1")
+	if err := os.WriteFile(fixturePath, []byte("$ErrorActionPreference = 'Stop'\n"+setup+string(fixture)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dependencyCheck := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", fixturePath)
+	dependencyCheck.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, "PSModulePath")
+	})
+	if output, err := dependencyCheck.CombinedOutput(); err != nil || !strings.Contains(string(output), "verified actual Handy dependency effects") {
+		t.Fatalf("dependency effects: %v %s", err, output)
 	}
 	fingerprint := func(plan actualPlan, name string) string {
 		t.Helper()
@@ -329,6 +359,19 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	}
 	private := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(private, "config"))
+	defaultExport := filepath.Join(private, "generic-profile.json")
+	exportCommand := hiddenCommandContext(ctx, installer, "/S", "/EXPORTPROFILE="+defaultExport, "/DEFAULTS")
+	if output, err := exportCommand.CombinedOutput(); err != nil {
+		t.Fatalf("real installer export: %v %s", err, output)
+	}
+	exported, err := os.ReadFile(defaultExport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultProfile, err := decodeWorkstationProfile(exported)
+	if err != nil || len(defaultProfile.Packages) == 0 || len(defaultProfile.Files) != 0 {
+		t.Fatalf("real default export is invalid or captured settings: %v", err)
+	}
 	profilePath := filepath.Join(private, "profile.json")
 	settings := []byte("{\"theme\":\"system\"}\n")
 	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{
