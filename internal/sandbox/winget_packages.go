@@ -444,7 +444,7 @@ func validWingetPackageID(value string) bool {
 	}
 	for index, character := range value {
 		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-			(character >= '0' && character <= '9') || (index > 0 && (character == '.' || character == '_' || character == '-')) {
+			(character >= '0' && character <= '9') || (index > 0 && strings.ContainsRune("._+-", character)) {
 			continue
 		}
 		return false

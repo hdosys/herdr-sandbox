@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$BasePath,
     [Parameter(Mandatory = $true)][string]$StacksPath,
     [Parameter(Mandatory = $true)][string]$RunnerPath,
-    [switch]$Refresh
+    [switch]$Refresh,
+    [switch]$PlanOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -92,6 +93,19 @@ function Add-WorkstationJob {
     $nativeResults[$Name] = [ordered]@{ status='pending'; message='Not attempted yet.' }
 }
 
+function Get-WorkstationJobInputs {
+    param($Job)
+    $inputs = @($NativeRoot, $nativeUserSID, $Job.Action, $Job.PackageID, $Job.Version)
+    foreach ($tool in $Job.Tools) {
+        $inputs += @($tool, [string]$global:HerdrSandboxToolVersionPlan.Versions[$tool],
+            [string]$global:HerdrSandboxToolVersionPlan.Series[$tool], [string]$global:HerdrSandboxToolVersionPlan.Sources[$tool])
+    }
+    foreach ($dependency in $Job.Requires) {
+        $inputs += @($dependency, [string]$global:HerdrSandboxStepState.Steps[$dependency])
+    }
+    return $inputs
+}
+
 $selected = @{}
 foreach ($stack in @($nativeProfile.stacks)) { $selected[[string]$stack] = $true }
 if ($selected.ContainsKey('python-ai')) { $selected['python'] = $true; $selected['uv'] = $true }
@@ -111,9 +125,9 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         Add-WorkstationJob -Name ('Package ' + $vcRuntimeID) -Action package -Requires @('WinGet') -PackageID $vcRuntimeID -Version $vcVersion -Seconds 600
     }
     foreach ($package in @($nativeProfile.packages)) {
-        if ([string]$package.id -ceq $vcRuntimeID) { continue }
+        if ([string]$package.id -ieq $vcRuntimeID) { continue }
         $packageRequirements = @('WinGet')
-        if ([string]$package.id -ceq 'hdosys.herdr-win') { $packageRequirements += 'Package ' + $vcRuntimeID }
+        if ([string]$package.id -ieq 'hdosys.herdr-win') { $packageRequirements += 'Package ' + $vcRuntimeID }
         Add-WorkstationJob -Name ('Package ' + [string]$package.id) -Action package -Requires $packageRequirements -PackageID ([string]$package.id) -Version ([string]$package.version) -Seconds 600
     }
     if ($provisioningPackagePlan.Enabled.ContainsKey('Microsoft.PowerShell')) {
@@ -144,9 +158,9 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         }
     }
     if ($selected.ContainsKey('cpp')) { Add-WorkstationJob 'C and C++' 'cpp' -Requires @('WinGet','Visual Studio Build Tools') -Tools @('Kitware.CMake') }
-    if ($selected.ContainsKey('rust-msvc')) { Add-WorkstationJob 'Rust MSVC' 'rust-msvc' -Requires @('WinGet','Visual Studio Build Tools') -Tools @('Rustlang.Rustup','Rust') -Seconds 1800 }
+    if ($selected.ContainsKey('rust-msvc')) { Add-WorkstationJob 'Rust MSVC' 'rust-msvc' -Requires @('WinGet','Visual Studio Build Tools') -Tools @('Rustlang.Rustup','rust-toolchain') -Seconds 1800 }
     if ($selected.ContainsKey('cargo-nextest')) { Add-WorkstationJob 'Cargo Nextest' 'cargo-nextest' -Requires @('WinGet','Rust MSVC') -Tools @('nextest.cargo-nextest') }
-    if ($selected.ContainsKey('android')) { Add-WorkstationJob 'Android' 'android' -Requires @('WinGet','Java') }
+    if ($selected.ContainsKey('android')) { Add-WorkstationJob 'Android' 'android' -Requires @('WinGet','Java') -Tools @('Google.AndroidCommandLineTools','Google.PlatformTools') }
     if ($selected.ContainsKey('audio')) {
         Add-WorkstationJob 'REAPER' 'reaper' -Requires @('WinGet') -Tools @('Cockos.REAPER')
         Add-WorkstationJob 'AudioGridder' 'audiogridder' -Tools @('AudioGridder')
@@ -162,14 +176,25 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     if ($selected.ContainsKey('git-sh')) {
         Add-WorkstationJob 'Git shell' 'git-sh' -Requires @('Package Git.Git') -Seconds 60
     }
+    if ($selected.ContainsKey('handy')) {
+        Add-WorkstationJob 'Vulkan SDK' 'vulkan-sdk' -Requires @('WinGet') -Tools @('KhronosGroup.VulkanSDK') -Seconds 1200
+        Add-WorkstationJob 'WebView2' 'webview2' -Requires @('WinGet') -Tools @('Microsoft.EdgeWebView2Runtime')
+        Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','C and C++','Rust MSVC','Stack bun','WebView2')
+    }
 
+if ($PlanOnly) {
+    $seconds = 120 + $nativeJobs.Count * 30
+    foreach ($job in $nativeJobs) { $seconds += $job.Seconds }
+    $jobs = @($nativeJobs | ForEach-Object {
+        [ordered]@{ name=$_.Name; seconds=$_.Seconds; fingerprint=(Get-ProvisioningStepFingerprint -Values (@($global:HerdrSandboxStepState.Implementation) + @(Get-WorkstationJobInputs $_))) }
+    })
+    Write-Output ([ordered]@{ schemaVersion=1; seconds=$seconds; steps=$nativeJobs.Count; jobs=$jobs } | ConvertTo-Json -Depth 4 -Compress)
+    exit 0
+}
 Save-WorkstationReport
 try {
     foreach ($job in $nativeJobs) {
-        $inputs = @($NativeRoot, $nativeUserSID, $job.Action, $job.PackageID, $job.Version)
-        foreach ($tool in $job.Tools) {
-            $inputs += @($tool, [string]$global:HerdrSandboxToolVersionPlan.Versions[$tool], [string]$global:HerdrSandboxToolVersionPlan.Series[$tool])
-        }
+        $inputs = @(Get-WorkstationJobInputs $job)
         $nativeResults[$job.Name] = [ordered]@{ status='running'; message=('Started at ' + [DateTime]::UtcNow.ToString('o') + '; deadline ' + $job.Seconds + ' seconds.') }
         Save-WorkstationReport
         Invoke-ProvisioningIndependentStep -Name $job.Name -Requires $job.Requires -Results $nativeResults -Failures $nativeFailures -ContinueTerminalFailures -InputValues $inputs -Action {

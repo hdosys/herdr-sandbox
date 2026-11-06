@@ -112,7 +112,7 @@ func inspectDownloadedPackage(selection DownloadedPackageSelection) (downloadedP
 	if err != nil {
 		return metadata, err
 	}
-	if manifest.PackageIdentifier != selection.ID || !validWingetPackageVersion(manifest.PackageVersion) || (selection.Version != "" && manifest.PackageVersion != selection.Version) || len(manifest.Installers) != 1 {
+	if !strings.EqualFold(manifest.PackageIdentifier, selection.ID) || !validWingetPackageVersion(manifest.PackageVersion) || (selection.Version != "" && manifest.PackageVersion != selection.Version) || len(manifest.Installers) != 1 {
 		return metadata, errors.New("downloaded manifest does not match the selected package/version or unique installer")
 	}
 	installer := manifest.Installers[0]

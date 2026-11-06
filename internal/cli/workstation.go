@@ -12,7 +12,7 @@ import (
 )
 
 const workstationUsage = `Usage:
-  sandbox workstation setup [--profile FILE] [--root DIRECTORY] [--refresh] [--timeout 4h]
+  sandbox workstation setup [--profile FILE] [--root DIRECTORY] [--refresh]
   sandbox workstation export --output FILE [--include-settings] [--defaults]
 
 setup provisions Windows x64 build 19041 or newer without creating a Sandbox.
@@ -20,6 +20,7 @@ Windows 11 is recommended. Setup state stays below ProgramData.
 Run elevated as the intended Windows user. Independent steps continue after errors;
 the final report and nonzero exit distinguish incomplete setup from success.
 Re-run to resume successful unchanged work; --refresh intentionally reruns it.
+The total safety deadline includes every selected step's bounded execution budget.
 
 export reads the existing Sandbox tool selection without executing project scripts.
 --defaults selects the generic full development profile instead.
@@ -53,7 +54,6 @@ func runWorkstation(ctx context.Context, args []string, stdout, stderr io.Writer
 		flags.StringVar(&options.Profile, "profile", "", "explicit portable profile; otherwise generic development setup")
 		flags.StringVar(&options.Root, "root", "", "owned local installation-state root")
 		flags.BoolVar(&options.Refresh, "refresh", false, "rerun completed steps intentionally")
-		flags.DurationVar(&options.Timeout, "timeout", 4*time.Hour, "bounded total setup deadline")
 		execute = func() error {
 			report, err := sandbox.SetupWorkstation(ctx, options)
 			if err != nil && report == "" {

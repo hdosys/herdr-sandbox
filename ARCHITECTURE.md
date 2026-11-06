@@ -8,7 +8,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 - **Product path:** `cmd/sandbox` owns OS process wiring and exit status, `internal/cli` owns command flow and dependency composition, and `internal/sandbox` owns Windows Sandbox planning and the concrete native workflow.
 - **Host and guest split:** Go owns host contracts and direct process control. Windows PowerShell 5.1 is the exclusive provisioning interpreter. Installed PowerShell 7 is interactive guest tooling.
-- **Data boundary:** Host mappings are explicit and narrow. Personal configuration and credentials cross only the verified SSH transfer path; host and mobile private keys are never mapped.
+- **Data boundary:** Sandbox host mappings are explicit and narrow; its configuration/credential transfer uses verified SSH. Direct workstation migration instead uses an explicitly selected private configuration profile, excluding authentication stores, private keys and Git history.
 - **State boundary:** Per-run state is ephemeral and app-owned. Only the optional Tailscale and mobile SSH identities are durable credential state, encrypted for the current host user with Windows DPAPI.
 - **Provisioning boundary:** Built-in Base and stack scripts, one global `user.ps1`, and the nearest project `.herdr-sandbox\provision.ps1` are the direct provisioning surfaces. No generic provider or plugin system exists.
 - **Delivery and evidence:** `cmd/task` owns recurring build and verification commands, `packaging/windows/installer.nsi` owns installer lifecycle, and native Windows Sandbox gates own environment-sensitive acceptance.
@@ -20,7 +20,34 @@ This file owns stable technical design: command ownership, host/guest boundaries
 - `internal/sandbox` owns Windows Sandbox planning, generated configuration, guest bootstrap assets, terminal status handling, Herdr/SSH connection material, and the concrete native workflow.
 - Read-only effective planning and exclusive project-profile initialization reuse those same configuration, workspace, package, and direct-stack owners. They do not introduce another config model, profile DSL, or host provisioner.
 - `cmd/task` is a small Go-only repository task runner for recurring test, verification, and build commands.
-- There is one concrete Windows happy path. No provider/plugin framework, compatibility adapter, persistence service, daemon, frontend, or alternate provisioner exists in the current product.
+- There are two explicit Windows targets: a managed Sandbox and direct workstation setup. They share the concrete package/stack owners; neither adds a provider framework, repair daemon or independent package manager.
+
+### Direct Workstation Target
+
+- `internal/sandbox/workstation*.go` owns profile validation, explicit export/import,
+  protected per-user control-state ownership, the bounded runner and final reports.
+  `workstation-root.cs` atomically creates administrator/System-owned directories
+  below ProgramData with protected access rules and OWNER RIGHTS restrictions;
+  unrelated or weakened existing roots are rejected without adoption.
+- Base's `Library` phase imports existing package/process/step functions without
+  executing Sandbox registry, SSH, shell or workspace lifecycle setup.
+  `workstation.ps1` creates the actual job graph, fingerprints each job's tool
+  inputs and prerequisite evidence, and uses the shared step executor. Every action
+  runs through `workstation-action.ps1` in a separately deadline-bound process tree.
+  The overall deadline is derived from that same graph, not a competing time cap.
+- Direct package operations do not consume translated WinGet UI headings. The
+  cached-install path consumes WinGet's selected-installer YAML after its verified
+  download, checks identity/selection and payload SHA-256 through the genuine YAML
+  parser, and publishes the bytes into the existing package cache before use.
+  There is no second download, locale-setting mutation or preview-tool requirement.
+- Runtime data that ordinary users must write uses their LocalAppData namespace;
+  direct setup publishes its tool environment at User scope. Sandbox keeps its
+  existing machine-scoped deployment behavior. Browser-token UI uses User scope
+  on the direct target. Existing Herdr is never upgraded or restarted by setup.
+- `packaging/windows/workstation.nsi` is a temporary-payload bootstrapper, not an
+  installed background application. `package-workstation` owns the distinct
+  canonical installer and provenance JSON; packaging preserves both products'
+  canonical candidates. Existing Sandbox installer lifecycle remains unchanged.
 
 ### Go And PowerShell Ownership
 

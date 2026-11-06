@@ -21,6 +21,35 @@ Tailscale state, or `.agent` session directory.
 
 ## Trust model
 
+### Direct Windows setup
+
+The workstation installer runs selected software installation with the intended
+Windows user's elevated authority. **It does not provide the Windows Sandbox
+security boundary.** Use it on a trusted machine, review the selected software,
+and do not treat it as recovery from a compromised operating system.
+
+Native setup does not apply Sandbox Defender/SmartScreen/update-policy relaxation,
+guest audio disabling, SSH/firewall bootstrap, or the Sandbox OpenCode allow-all
+policy. Failed package integrity never activates that component; unrelated safe
+steps still continue. Packages, compiler tools and applications retain their own
+normal operating-system permissions and uninstall mechanisms.
+
+Configuration migration is a separate, explicit private-file operation. Dedicated
+known authentication stores, SSH keys, project trees and Git history are excluded.
+Authored configuration and scripts can contain inline private values; no universal
+secret-scrubbing claim is made. Keep the profile private, use only a profile you
+trust, and review its settings before importing. The importer does not execute an
+exported apply script, rejects unsafe destinations and hash mismatches, and preserves
+different existing target files. Credentials and account sign-in remain separate.
+
+Resumable control state below ProgramData is bound to the current Windows user and
+uses protected administrator/System write access. Ordinary-user runtime caches and
+toolchain homes are separate. Reports contain step outcomes and bounded diagnostics,
+not copied configuration contents. A failed current report is never replaced by an
+older successful report in the installer UI.
+
+### Managed Sandbox
+
 Herdr Sandbox treats coding agents, project scripts, package installers, and all
 other guest processes as untrusted workloads with guest-administrator power. The
 security boundary is Windows Sandbox plus the exact host resources deliberately

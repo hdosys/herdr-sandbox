@@ -100,7 +100,7 @@ switch ($Action) {
         if ($LASTEXITCODE -ne 0) { throw 'WinGet prerequisite failed.' }
     }
     'package' {
-        if ($PackageID -ceq 'hdosys.herdr-win') { Install-WorkstationHerdr }
+        if ($PackageID -ieq 'hdosys.herdr-win') { Install-WorkstationHerdr }
         else { Install-ProvisioningOnlineWinGetPackage -Role $PackageID -Id $PackageID -Version $PackageVersion }
     }
     'shell' { Set-WorkstationShell }
@@ -139,6 +139,14 @@ switch ($Action) {
         $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
         $bash = Join-Path (Split-Path (Split-Path $git -Parent) -Parent) 'bin\bash.exe'
         Invoke-ProvisioningNative -Role 'Git shell verification' -FilePath $bash -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
+    }
+    'vulkan-sdk' { Install-StackVulkanSDK }
+    'webview2' { Install-StackWebView2 }
+    'handy-headers' {
+        Enable-StackVisualStudioDeveloperEnvironment
+        $vulkanRoot = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+        $prefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
+        Assert-HandyNativeToolchain -CMakePrefix $prefix -VulkanRoot $vulkanRoot
     }
     default { throw 'Unsupported workstation action.' }
 }

@@ -20,7 +20,7 @@ func allowedWorkstationFile(kind, relative string) bool {
 	if relative == "" || len(relative) > 240 || path.Clean(relative) != relative || strings.HasPrefix(relative, "/") || strings.ContainsAny(relative, `\:`+"\x00\r\n") {
 		return false
 	}
-	for _, component := range strings.Split(strings.ToLower(relative), "/") {
+	for component := range strings.SplitSeq(strings.ToLower(relative), "/") {
 		if component == ".." || component == "." || strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
 			return false
 		}
@@ -40,6 +40,9 @@ func allowedWorkstationFile(kind, relative string) bool {
 		return relative == "config.toml"
 	case "git":
 		return slices.Contains([]string{".gitconfig", ".gitignore_global", ".gitattributes"}, relative)
+	case "git-config":
+		return slices.Contains([]string{"config", "ignore", "attributes"}, path.Base(relative)) ||
+			slices.Contains([]string{".gitconfig", ".conf", ".ini", ".txt", ".md", ".sh", ".nu", ".ps1", ".json", ".yaml", ".yml"}, strings.ToLower(path.Ext(relative)))
 	case "terminal", "terminal-preview":
 		return relative == "settings.json"
 	case "starship":
@@ -76,7 +79,8 @@ func workstationSettingsRoots() (map[string]string, error) {
 		"herdr": filepath.Join(appData, "herdr"), "opencode": openCode,
 		"claude": filepath.Join(home, ".claude"), "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
 		"git": home, "zed": filepath.Join(appData, "Zed"),
-		"starship": filepath.Join(home, ".config"), "nushell": filepath.Join(appData, "nushell"),
+		"git-config": filepath.Join(home, ".config", "git"),
+		"starship":   filepath.Join(home, ".config"), "nushell": filepath.Join(appData, "nushell"),
 		"terminal":           filepath.Join(local, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState"),
 		"terminal-preview":   filepath.Join(local, "Packages", "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe", "LocalState"),
 		"terminal-fragments": filepath.Join(local, "Microsoft", "Windows Terminal", "Fragments"),
@@ -263,7 +267,14 @@ func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, erro
 			relative = filepath.ToSlash(relative)
 			if entry.IsDir() {
 				// A synthetic extension checks directory exclusions without reading data.
-				if !allowedWorkstationFile(kind, relative+"/selection.json") {
+				syntheticLeaf := "/selection.json"
+				if kind == "nushell" {
+					syntheticLeaf = "/selection.nu"
+				}
+				if kind == "git-config" {
+					syntheticLeaf = "/config"
+				}
+				if !allowedWorkstationFile(kind, relative+syntheticLeaf) {
 					return filepath.SkipDir
 				}
 				if err := validateWorkstationLocalPath(source); err != nil {

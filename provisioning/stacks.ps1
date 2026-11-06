@@ -5206,6 +5206,24 @@ function Install-HandyStack {
 
     $cmakeVersion = Install-StackCMake
 
+    $vulkanRoot = ''
+    $vulkanVersion = ''
+    $webView = $null
+    Install-StackVulkanSDK -InstalledRoot ([ref]$vulkanRoot) -InstalledVersion ([ref]$vulkanVersion)
+    Install-StackWebView2 -InstalledRuntime ([ref]$webView)
+    Install-BunStack
+    Install-RustMSVCStack -ProjectDirectory $rustRoot
+    $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
+    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
+
+    Write-Output "Handy CMake ready: $cmakeVersion"
+    Write-Output "Handy Vulkan SDK ready: $vulkanVersion"
+    Write-Output "Handy WebView2 ready: $($webView.Version)"
+    Write-Output 'Handy development toolchain ready.'
+}
+
+function Install-StackVulkanSDK {
+    param([ref]$InstalledRoot, [ref]$InstalledVersion)
     $vulkanVersion = Get-ProvisioningToolVersion -Tool 'KhronosGroup.VulkanSDK'
     $vulkanMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy Vulkan SDK' `
         -Id 'KhronosGroup.VulkanSDK' -Version $vulkanVersion -InstallerType 'exe' -Scope 'machine'
@@ -5243,6 +5261,12 @@ function Install-HandyStack {
             -FilePath $command -ArgumentList @('--version') | Out-Null
     }
 
+    if ($null -ne $InstalledRoot) { $InstalledRoot.Value = $vulkanRoot }
+    if ($null -ne $InstalledVersion) { $InstalledVersion.Value = $vulkanVersion }
+}
+
+function Install-StackWebView2 {
+    param([ref]$InstalledRuntime)
     $webViewVersionRequest = Get-ProvisioningToolVersion -Tool 'Microsoft.EdgeWebView2Runtime'
     $webViewMetadata = Get-ProvisioningWinGetMetadata -Role 'Handy WebView2 Runtime' `
         -Id 'Microsoft.EdgeWebView2Runtime' -Version $webViewVersionRequest -InstallerType 'exe' -Scope 'machine'
@@ -5262,15 +5286,7 @@ function Install-HandyStack {
         throw "Handy WebView2 Runtime $minimumWebViewVersion or newer is unavailable after installation."
     }
 
-    Install-BunStack
-    Install-RustMSVCStack -ProjectDirectory $rustRoot
-    $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
-    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
-
-    Write-Output "Handy CMake ready: $cmakeVersion"
-    Write-Output "Handy Vulkan SDK ready: $vulkanVersion"
-    Write-Output "Handy WebView2 ready: $($webView.Version)"
-    Write-Output 'Handy development toolchain ready.'
+    if ($null -ne $InstalledRuntime) { $InstalledRuntime.Value = $webView }
 }
 
 function Install-HerdrStack {

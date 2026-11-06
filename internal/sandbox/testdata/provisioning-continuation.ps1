@@ -29,6 +29,8 @@ $profilePath = Join-Path $PSScriptRoot 'project.ps1'
 
 Initialize-ProvisioningSteps -Path $statePath -Resume $false -ImplementationFiles @($PSCommandPath)
 Invoke-ProvisioningStep -Name 'Good' -Action { $script:goodRuns++ }
+Invoke-ProvisioningStep -Name 'Package Microsoft.VCRedist.2015+.x64' -Action {}
+Invoke-ProvisioningStep -Name 'C and C++' -Action {}
 Invoke-ProvisioningStep -Name 'Changed' -InputFiles @($inputPath) -Action { $script:changedRuns++ }
 Invoke-ProvisioningIndependentStep -Name 'Failed' -Failures $failures -Action { throw 'repair me' }
 Invoke-ProvisioningIndependentStep -Name 'Profile' -Failures $failures -Action {
@@ -40,6 +42,8 @@ if ($global:activated -or $OptionalFailures.Count -ne 1 -or $failures.Count -ne 
 
 # Reload persisted evidence as a new invocation; do not rely on in-memory reuse.
 Initialize-ProvisioningSteps -Path $statePath -Resume $true -ImplementationFiles @($PSCommandPath)
+Invoke-ProvisioningStep -Name 'Package Microsoft.VCRedist.2015+.x64' -Action { throw 'Completed VC++ runtime was repeated.' }
+Invoke-ProvisioningStep -Name 'C and C++' -Action { throw 'Completed C++ step was repeated.' }
 $OptionalFailures.Clear()
 $failures.Clear()
 [IO.File]::WriteAllText($inputPath, 'corrected')

@@ -73,7 +73,6 @@ type WorkstationOptions struct {
 	Profile string
 	Root    string
 	Refresh bool
-	Timeout time.Duration
 	Output  io.Writer
 }
 
@@ -364,12 +363,6 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, 
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
-	if options.Timeout == 0 {
-		options.Timeout = 4 * time.Hour
-	}
-	if options.Timeout < time.Minute || options.Timeout > 12*time.Hour {
-		return "", errors.New("setup timeout must be between one minute and twelve hours")
-	}
 	if options.Root == "" {
 		var err error
 		options.Root, err = WorkstationStateRoot()
@@ -471,21 +464,51 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, 
 	if err := os.WriteFile(reportPath, []byte("{}\n"), 0o600); err != nil {
 		return "", err
 	}
+	htmlPath := filepath.Join(root, "report.html")
+	if err := validateWorkstationLocalPath(htmlPath); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(htmlPath, []byte("<!doctype html><meta charset=utf-8><title>Setup in progress</title><h1>Setup has not completed</h1><p>This run is starting. No successful result is claimed.</p>"), 0o600); err != nil {
+		return "", err
+	}
 	powerShell, err := windowsPowerShellExecutable()
 	if err != nil {
 		return "", err
 	}
-	runContext, stop := context.WithTimeout(ctx, options.Timeout)
-	defer stop()
 	arguments := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(input, "workstation.ps1"), "-NativeProfilePath", filepath.Join(input, "profile.json"), "-NativeRoot", root, "-BasePath", base, "-StacksPath", stacks, "-RunnerPath", executable}
 	if options.Refresh {
 		arguments = append(arguments, "-Refresh")
 	}
-	command := hiddenCommandContext(runContext, powerShell, arguments...)
-	command.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+	environment := slices.DeleteFunc(os.Environ(), func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
 		return strings.EqualFold(name, "PSModulePath") || strings.HasPrefix(strings.ToUpper(name), "HERDR_")
 	})
+	planContext, stopPlan := context.WithTimeout(ctx, time.Minute)
+	planCommand := hiddenCommandContext(planContext, powerShell, append(slices.Clone(arguments), "-PlanOnly")...)
+	planCommand.Env = environment
+	planData, planErr := planCommand.CombinedOutput()
+	stopPlan()
+	var budget struct {
+		SchemaVersion int `json:"schemaVersion"`
+		Seconds       int `json:"seconds"`
+		Steps         int `json:"steps"`
+		Jobs          []struct {
+			Name        string `json:"name"`
+			Seconds     int    `json:"seconds"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"jobs"`
+	}
+	if planErr == nil {
+		planErr = decodeStrictJSON(planData, &budget)
+	}
+	if planErr != nil || budget.SchemaVersion != 1 || budget.Seconds < 1 || budget.Seconds > 48*60*60 || budget.Steps < 1 || budget.Steps > 128 {
+		return "", fmt.Errorf("cannot establish the complete bounded setup plan: %v; %s", planErr, sanitizeTerminalText(string(planData), 2000))
+	}
+	fmt.Fprintf(options.Output, "Attempting %d steps; total safety deadline %s includes every step deadline and cleanup allowance.\n", budget.Steps, time.Duration(budget.Seconds)*time.Second)
+	runContext, stop := context.WithTimeout(ctx, time.Duration(budget.Seconds)*time.Second)
+	defer stop()
+	command := hiddenCommandContext(runContext, powerShell, arguments...)
+	command.Env = environment
 	command.Stdout, command.Stderr = options.Output, options.Output
 	runErr := command.Run()
 	report := WorkstationReport{SchemaVersion: 1, StartedAtUTC: started, ProfileSHA256: profileHash, Steps: []WorkstationStep{}}
@@ -513,21 +536,29 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, 
 	}
 	report.FinishedAtUTC = time.Now().UTC().Format(time.RFC3339)
 	report.Complete = len(report.Steps) > 0 && !slices.ContainsFunc(report.Steps, func(step WorkstationStep) bool { return step.Status != "succeeded" && step.Status != "retained" })
+	return publishWorkstationReport(root, report, options.Output)
+}
+
+func publishWorkstationReport(root string, report WorkstationReport, output io.Writer) (string, error) {
+	reportPath := filepath.Join(root, "report.json")
+	if err := validateWorkstationLocalPath(reportPath); err != nil {
+		return "", err
+	}
 	if err := writeVoxCPM2JSONAtomically(reportPath, report); err != nil {
-		return reportPath, err
+		return "", err
 	}
 	htmlPath := filepath.Join(root, "report.html")
 	if err := validateWorkstationLocalPath(htmlPath); err != nil {
-		return reportPath, err
+		return "", err
 	}
 	var html bytes.Buffer
 	if err := workstationReportTemplate.Execute(&html, report); err != nil {
-		return reportPath, err
+		return "", err
 	}
 	if err := os.WriteFile(htmlPath, html.Bytes(), 0o600); err != nil {
-		return reportPath, err
+		return "", err
 	}
-	fmt.Fprintf(options.Output, "Setup report: %s\n", htmlPath)
+	fmt.Fprintf(output, "Setup report: %s\n", htmlPath)
 	if !report.Complete {
 		return htmlPath, errors.New("setup finished with incomplete steps; independent steps were attempted; rerun to resume")
 	}

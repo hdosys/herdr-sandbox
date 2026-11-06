@@ -7,6 +7,14 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Added
+
+- A separate direct Windows workstation setup candidate for physical PCs and VMs,
+  with explicit private configuration export/import, per-step deadlines, complete
+  failure reporting and targeted resume. Independent selected work continues after
+  a failed step; failed prerequisites block only their dependants. The existing
+  Sandbox setup remains available and unchanged as an installation target.
+
 ### Changed
 
 - Supertonic readiness checks include the native audio-output library, so a

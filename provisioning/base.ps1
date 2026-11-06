@@ -362,7 +362,7 @@ function Read-ProvisioningPackagePlan {
             $version = [string]$entry.version
             if (($entryProperties -join '|') -cne 'id|version' -or
                 $entry.id -isnot [string] -or $entry.version -isnot [string] -or
-                $id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
+                $id -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$' -or
                 (-not [string]::IsNullOrEmpty($version) -and
                     $version -notmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') -or
                 $enabled.ContainsKey($id) -or $known.ContainsKey($id) -ne [bool]$group.Defaults -or
@@ -501,6 +501,9 @@ function Initialize-ProvisioningNushell {
     }
     if (-not (Test-Path -LiteralPath $nushellInitializationPath -PathType Leaf) -or
         [IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
+        if ((Test-ProvisioningWorkstation) -and (Test-Path -LiteralPath $nushellInitializationPath)) {
+            throw 'Existing different Nushell initialization was preserved. Reconcile the configuration explicitly before retrying.'
+        }
         [IO.File]::WriteAllText(
             $nushellInitializationPath,
             $nushellInitialization,
@@ -752,7 +755,7 @@ function Initialize-ProvisioningSteps {
     $seen = @{}
     foreach ($step in @($state.steps)) {
         if ((@($step.PSObject.Properties.Name | Sort-Object) -join '|') -cne 'fingerprint|name' -or
-            [string]$step.name -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,255}$' -or
+            [string]$step.name -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,255}$' -or
             [string]$step.fingerprint -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey([string]$step.name)) {
             throw 'Provisioning step state contains an invalid or duplicate entry.'
         }
@@ -1288,7 +1291,7 @@ function Get-ProvisioningWinGetMetadata {
         [string]$PayloadExtension = ''
     )
 
-    if ($Id -ceq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
+    if ($Id -ieq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
     if (Test-ProvisioningWorkstation) {
         $metadata = Get-ProvisioningDownloadedMetadata -Role $Role -Id $Id -Version $Version -Architecture $Architecture `
             -InstallerType $InstallerType -Scope $Scope -PayloadExtension $PayloadExtension
@@ -1311,7 +1314,7 @@ function Get-ProvisioningWinGetMetadata {
     $lines = @(Invoke-ProvisioningNative -Role "$Role metadata resolution" -FilePath 'winget.exe' -ArgumentList $arguments |
         ForEach-Object { [string]$_ })
     $resolvedID = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageIdentifier' `
-        -Pattern '^Found .+ \[([A-Za-z0-9._-]+)\](?: Version .+)?$'
+        -Pattern '^Found .+ \[([A-Za-z0-9._+-]+)\](?: Version .+)?$'
     $resolvedVersion = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageVersion' `
         -Pattern '^Version:\s*(\S(?:.*\S)?)\s*$'
     $installerURL = Get-ProvisioningMetadataValue -Lines $lines -Name 'InstallerUrl' `
@@ -2466,7 +2469,7 @@ function Install-ProvisioningOnlineWinGetPackage {
         [string]$Override = ''
     )
 
-    if ($Id -ceq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
+    if ($Id -ieq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
     if (Test-ProvisioningWorkstation) {
         # The package manager owns latest-version selection and verification.
         # No translated Version label is consumed on physical Windows.
@@ -2485,7 +2488,7 @@ function Install-ProvisioningOnlineWinGetPackage {
         Invoke-ProvisioningNative -Role "$Role installed-package verification" -FilePath 'winget.exe' -ArgumentList @(
             'list','--id',$Id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120 | Out-Null
         Update-ProvisioningPath
-        if ($Id -ceq 'SST.opencode') {
+        if ($Id -ieq 'SST.opencode') {
             $versionText = (Invoke-ProvisioningNative -Role 'OpenCode major-version verification' -FilePath 'opencode.exe' -ArgumentList @('--version') -TimeoutSeconds 30) -join ' '
             if ($versionText -notmatch '^1\.\d+\.\d+$') { throw 'Installed OpenCode is not stable 1.x; it was not force-downgraded.' }
         }

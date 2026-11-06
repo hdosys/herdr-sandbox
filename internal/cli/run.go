@@ -20,7 +20,7 @@ import (
 const usage = `Usage:
   sandbox config
   sandbox pull-host-config
-  sandbox workstation setup [--profile FILE] [--refresh] [--timeout DURATION]
+  sandbox workstation setup [--profile FILE] [--refresh]
   sandbox workstation export --output FILE [--include-settings] [--defaults]
   sandbox version
   sandbox --version

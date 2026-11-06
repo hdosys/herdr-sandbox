@@ -13,6 +13,10 @@ Start a Sandbox from a project and keep working in your normal host terminal.
 Reuse that guest while it is productive, or recreate it when you want a clean
 workstation again.
 
+For a physical Windows computer or VM, the separate
+[direct Windows setup](#direct-windows-setup-development-candidate) uses the same
+package and stack implementations without creating a Sandbox.
+
 [Why](#why-disposable-workstations) · [Engineering](#engineering-approach) · [How it works](#how-it-works) · [Get started](#get-started) · [Configuration](#configuration) · [Commands](#commands) · [Stacks](#supported-stacks) · [Security](#security-boundaries) · [Troubleshooting](#troubleshooting) · [Optional workflows](#optional-workflows) · [Development](#development) · [Docs](#documentation)
 
 ## See it in action
@@ -560,6 +564,85 @@ If custom project provisioning fails, the error names the workspace and its
 `.herdr-sandbox\provision.ps1` profile before preserving the original cause.
 
 </details>
+
+## Direct Windows setup (development candidate)
+
+`herdr-workstation_setup.exe` prepares the current computer instead of launching
+Windows Sandbox. Windows 11 x64 is recommended; the native runtime requires
+Windows x64 build 19041 or newer and Windows PowerShell 5.1. Run it elevated as
+the Windows user who will use the tools. Elevating with a different administrator
+account configures that account, not the signed-in user's profile.
+
+This is a self-contained setup program, not another background service or a
+second installed administration application. It extracts its executable payload
+temporarily. Installed tools retain their own normal uninstallers.
+
+### Move your existing configuration
+
+On the previous computer, use the new setup program to explicitly export the
+existing Sandbox tool selection and supported authored configuration:
+
+```powershell
+.\herdr-workstation_setup.exe /S "/EXPORTPROFILE=$env:USERPROFILE\Desktop\workstation.profile.json" /INCLUDESETTINGS
+```
+
+An updated `sandbox` CLI provides the same export:
+
+```powershell
+sandbox workstation export --output "$env:USERPROFILE\Desktop\workstation.profile.json" --include-settings
+```
+
+Without `--include-settings` or `/INCLUDESETTINGS`, export contains tool selection
+only. `--defaults` or `/DEFAULTS` explicitly selects the generic development
+selection instead of reading the previous Sandbox selection. Existing output
+files are never overwritten.
+
+**Keep this profile private.** Supported settings include Herdr, OpenCode,
+Claude Code, Codex, Pi, Zed, Windows Terminal, Nushell, Starship and common Git
+configuration. Known authentication files, environment-secret files, SSH keys,
+Git history, caches, sessions and project trees are excluded. Arbitrary authored
+settings or scripts can still contain inline private values; this is not a
+universal secret scrubber. Review the export before transferring it. Commands and
+custom paths remain authored configuration, not guessed or rewritten bindings.
+
+Copy the installer and private profile separately to the new computer. Start the
+installer and select the profile, or run the same flow without interactive pages:
+
+```powershell
+.\herdr-workstation_setup.exe /S "/PROFILE=C:\Transfer\workstation.profile.json"
+```
+
+Without a profile, a new machine receives the generic full development selection;
+an existing setup resumes its saved selection. The generic selection is large:
+Visual Studio, SDKs, browsers and model downloads need substantial free disk space
+and internet access. Accounts, API tokens and licensed applications require
+separate sign-in after installation. No model-provider credentials are embedded.
+
+### Completion, failures and resume
+
+Every independent selected step is attempted. Failed prerequisites block only
+their dependants, not unrelated tools. Each step runs in a bounded process tree;
+the overall safety deadline covers the complete selected plan. Integrity failure
+never activates a component. Explicit cancellation can still interrupt setup.
+
+The final HTML/JSON report lives below
+`%ProgramData%\herdr-workstation\<Windows-user-SID>`. It distinguishes successful,
+retained, failed, unavailable, blocked and interrupted/pending work. An incomplete
+run returns nonzero and is not presented as a fully successful setup.
+
+Run the installer again to resume. Keep the private input profile available for
+configuration repair. `/REFRESH` deliberately repeats completed work. Existing
+different target settings are preserved and reported as conflicts. Sandbox-only
+security changes, audio disabling, SSH setup, firewall rules and the OpenCode
+Sandbox allow-all policy are not applied. Existing Herdr is retained without an
+automatic update or live-session restart.
+
+For source builds, the canonical candidate is produced with
+`go run ./cmd/task package-workstation v0.0.28` at
+`build/dist/herdr-workstation_setup.exe`, with its provenance JSON beside it.
+This target is separate from `herdr-sandbox_setup.exe`; neither package task
+removes the other product's canonical candidate. No public workstation release
+is implied by a local development build.
 
 ## Security boundaries
 
