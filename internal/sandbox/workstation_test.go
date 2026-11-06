@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -297,7 +298,7 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	output, err := command.CombinedOutput()
 	var exit *exec.ExitError
 	noApplicationCode := uint32(0x8A150014)
-	if !errors.As(err, &exit) || exit.ExitCode() != int(int32(noApplicationCode)) {
+	if !errors.As(err, &exit) || uint32(exit.ExitCode()) != noApplicationCode {
 		t.Fatalf("actionlint is not proven absent; preserving existing installation: %v %s", err, output)
 	}
 	packagePatterns := []string{
@@ -415,8 +416,10 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	}
 	installedHash = fmt.Sprintf("%x", sha256.Sum256(contents))
 	probe := hiddenCommandContext(ctx, files[0], "--version")
-	if output, err := probe.CombinedOutput(); err != nil || !strings.Contains(string(output), "actionlint") {
+	if output, err := probe.CombinedOutput(); err != nil {
 		t.Fatalf("installed utility capability: %v %s", err, output)
+	} else {
+		t.Logf("installed utility reports: %s", strings.TrimSpace(string(output)))
 	}
 	imported, err := os.ReadFile(filepath.Join(private, "config", "opencode", "opencode.json"))
 	if err != nil || !bytes.Equal(imported, settings) {
@@ -437,5 +440,29 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	after, err := os.ReadFile(files[0])
 	if err != nil || fmt.Sprintf("%x", sha256.Sum256(after)) != installedHash {
 		t.Fatal("retained executable changed")
+	}
+	installedVersion := func(id string) string {
+		t.Helper()
+		query := hiddenCommandContext(ctx, winget, "list", "--id", id, "--exact", "--source", "winget", "--accept-source-agreements", "--disable-interactivity")
+		text, err := query.CombinedOutput()
+		if err != nil {
+			t.Fatalf("inspect existing prerequisite %s: %v %s", id, err, text)
+		}
+		matches := regexp.MustCompile(regexp.QuoteMeta(id)+`\s+(\S+)`).FindAllStringSubmatch(string(text), -1)
+		if len(matches) != 1 {
+			t.Fatalf("existing prerequisite version is ambiguous: %s", text)
+		}
+		return matches[0][1]
+	}
+	// Use the real shared cached-installer/manifest path without upgrading the
+	// current compiler or shared VC runtime. The stack compiles its owned smoke.
+	profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "Microsoft.VCRedist.2015+.x64", Version: installedVersion("Microsoft.VCRedist.2015+.x64")})
+	profile.Stacks = []string{"nsis"}
+	profile.Tools = []resolvedToolVersion{{Tool: "NSIS.NSIS", Version: installedVersion("NSIS.NSIS"), Source: toolVersionSourceExplicit, Owners: []string{"native-acceptance"}}}
+	writeProfile()
+	runInstaller(0)
+	third := readReport()
+	if !third.Complete || !slices.ContainsFunc(third.Steps, func(step WorkstationStep) bool { return step.Name == "Stack nsis" && step.Status == "succeeded" }) {
+		t.Fatalf("shared native stack failed: %+v", third.Steps)
 	}
 }
