@@ -80,6 +80,7 @@ Function .onInit
 FunctionEnd
 
 Function SelectProfile
+  !insertmacro MUI_HEADER_TEXT "Configuration and resume" "Choose a private profile or resume this computer's saved selection."
   nsDialogs::Create 1018
   Pop $0
   ${NSD_CreateLabel} 0 0 100% 42u "Optional: select the private profile exported on your previous computer. Otherwise setup resumes its saved selection, or uses the full development selection on a new machine. Existing different configuration is preserved."
