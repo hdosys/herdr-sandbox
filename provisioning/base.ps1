@@ -988,6 +988,9 @@ function Stop-ProvisioningNativeGroup {
 }
 
 function Update-ProvisioningPath {
+    # Preparation exposes its private tools only to this process. Replacing that
+    # PATH with registry values would discard the just-prepared command directory.
+    if (Test-ProvisioningPreparation) { return }
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $entries = @($machinePath, $userPath)
