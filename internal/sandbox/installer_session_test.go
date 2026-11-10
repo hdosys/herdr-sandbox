@@ -120,6 +120,35 @@ func TestInstallerSettingsCaptureOnlyAuthoredAgentFilesAndPortableMCP(t *testing
 	}
 }
 
+func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("APPDATA", filepath.Join(root, "roaming"))
+	t.Setenv("HERDR_CONFIG_PATH", filepath.Join(root, "herdr.toml"))
+	terminal := testStableWindowsTerminalConfiguration()
+	terminal.SettingsPath = filepath.Join(root, "unpackaged", "settings.json")
+	terminal.FragmentsPath = filepath.Join(root, "fragments")
+	writeTestFile(t, terminal.SettingsPath, `{"defaultProfile":"fixture"}`)
+	writeTestFile(t, filepath.Join(terminal.FragmentsPath, "fixture.json"), "{}")
+	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageZed, packageNushell}, Add: []string{}, Versions: map[string]string{}}, terminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := selectedInstallerSettings(provisioningPlan{Packages: packages, WindowsTerminal: terminal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("resolved Terminal files missing: %d", len(files))
+	}
+	seen := map[string]bool{}
+	for _, file := range files {
+		seen[file.Kind+"/"+file.Path] = true
+	}
+	if !seen["terminal/settings.json"] || !seen["terminal-fragments/fixture.json"] {
+		t.Fatal("unpackaged Terminal selection not preserved")
+	}
+}
+
 // This opt-in uses the real framed receiver and exact NSIS candidate. Only a
 // synthetic configuration is installed, never SSH, Herdr or personal settings.
 func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
@@ -218,7 +247,7 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(guestRoot, "staging", "installer-"+id)); !os.IsNotExist(err) {
 				t.Fatal("probe staging remains")
 			}
-			t.Logf("candidate %s: passed=%t exit=%d checks=%+v", evidence.InstallerSHA256, result.Passed, result.ExitCode, result.Checks)
+			t.Logf("embedded-profile fixture %s: passed=%t exit=%d checks=%+v", evidence.InstallerSHA256, result.Passed, result.ExitCode, result.Checks)
 		})
 	}
 }
@@ -230,15 +259,23 @@ func buildPersonalInstallerFixture(t *testing.T, candidate string, evidence inst
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
+	snapshot := filepath.Join(t.TempDir(), "candidate.exe")
+	if err := installerartifact.Snapshot(candidate, snapshot, evidence); err != nil {
+		t.Fatal(err)
+	}
+	candidate = snapshot
 	extractor, err := exec.LookPath("7z.exe")
 	if err != nil {
 		t.Fatal(err)
 	}
 	command := hiddenCommandContext(ctx, extractor, "e", "-so", "-r", candidate, "personal-profile.json")
-	private, err := command.Output()
+	var captured bytes.Buffer
+	command.Stdout = &captured
+	err = command.Run()
 	if err != nil {
 		t.Fatalf("extract embedded profile for digest check: %v", err)
 	}
+	private := captured.Bytes()
 	digest := fmt.Sprintf("%x", sha256.Sum256(private))
 	clear(private)
 	if digest != evidence.ProfileSHA256 {

@@ -436,6 +436,9 @@ func TestDisabledPackageIntegrationsAreNotDiscoveredOrArchived(t *testing.T) {
 	if sources.HerdrConfig != filepath.Join(root, "herdr", "config.toml") {
 		t.Fatalf("Herdr configuration source = %q, want only config.toml", sources.HerdrConfig)
 	}
+	if _, err := selectedInstallerSettings(provisioningPlan{WindowsTerminal: terminal, Packages: packages}); err != nil {
+		t.Fatalf("personal installer discovered disabled integrations: %v", err)
+	}
 	herdrConfig := filepath.Join(root, "herdr.toml")
 	writeTestFile(t, herdrConfig, "[terminal]\ndefault_shell = \"nu\"\n")
 	packagePlan := filepath.Join(root, wingetPackagePlanFileName)

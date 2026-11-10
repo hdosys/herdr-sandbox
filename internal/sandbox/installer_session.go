@@ -108,17 +108,12 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 }
 
 func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile, error) {
-	roots, err := workstationSettingsRoots()
-	if err != nil {
-		return nil, err
-	}
 	selected, err := defaultHostConfigurationSources(provisioning.WindowsTerminal, provisioning.Packages, provisioning.CodingAgentSync, credentialSyncConfiguration{}, false)
 	if err != nil {
 		return nil, err
 	}
+	roots := map[string]string{}
 	sources := selected.CodingAgents
-	delete(roots, "herdr")
-	delete(roots, "github-cli")
 	if selected.GitHubCLIConfiguration != "" {
 		roots["github-cli"] = selected.GitHubCLIConfiguration
 	}
@@ -134,28 +129,32 @@ func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile
 	} else {
 		roots["claude-state"] = filepath.Dir(sources.ClaudeCodeState)
 	}
-	if !provisioning.Packages.enabled(packageGit) {
-		delete(roots, "git")
-		delete(roots, "git-config")
+	if selected.GitConfig != "" {
+		roots["git"] = filepath.Dir(selected.GitConfig)
+		roots["git-config"] = selected.GitConfigDirectory
 	}
-	if !provisioning.Packages.enabled(packageStarship) {
-		delete(roots, "starship")
+	if selected.StarshipPreset != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		roots["starship"] = filepath.Join(home, ".config")
 	}
-	if !provisioning.Packages.enabled(packageNushell) {
-		delete(roots, "nushell")
+	if provisioning.Packages.enabled(packageNushell) {
+		roots["nushell"] = filepath.Join(os.Getenv("APPDATA"), "nushell")
 	}
-	if !provisioning.Packages.enabled(packageZed) {
-		delete(roots, "zed")
+	if selected.ZedConfiguration != "" {
+		roots["zed"] = selected.ZedConfiguration
 	}
-	if provisioning.WindowsTerminal.Edition == "preview" {
-		delete(roots, "terminal")
-	} else {
-		delete(roots, "terminal-preview")
+	if selected.WindowsTerminalSettings != "" {
+		kind := "terminal"
+		if selected.WindowsTerminalEdition == windowsTerminalPreviewEdition {
+			kind = "terminal-preview"
+		}
+		roots[kind] = filepath.Dir(selected.WindowsTerminalSettings)
 	}
-	if !provisioning.Packages.enabled(packageTerminalStable) && !provisioning.Packages.enabled(packageTerminalPreview) {
-		delete(roots, "terminal")
-		delete(roots, "terminal-preview")
-		delete(roots, "terminal-fragments")
+	if selected.WindowsTerminalFragments != "" {
+		roots["terminal-fragments"] = selected.WindowsTerminalFragments
 	}
 	files, err := exportWorkstationSettings(roots)
 	if err != nil {
