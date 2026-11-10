@@ -19,6 +19,7 @@ function Publish-InstallerProgress {
         if([IO.File]::Exists($path)){[IO.File]::Replace($temporary,$path,[NullString]::Value)}else{[IO.File]::Move($temporary,$path)}
     } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
 }
+$ownedDataPath=$null
 try {
     $inputStream=[Console]::OpenStandardInput()
     if($profileLength -ne 64){throw 'Invalid embedded-profile identity frame.'}
@@ -38,6 +39,7 @@ try {
     $dataInfo=Get-Item -LiteralPath $dataSource -Force -ErrorAction Stop
     if($dataInfo.PSIsContainer -or $dataInfo.Length -le 0 -or $dataInfo.Length -gt 68719476736 -or ($dataInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Materialized installer data is missing or unsafe.'}
     [IO.File]::Copy($dataSource,(Join-Path $privateRoot 'herdr-workstation_setup.data.zip'),$false)
+    $ownedDataPath=Join-Path $privateRoot 'herdr-workstation_setup.data.zip'
     $progress=[ordered]@{schemaVersion=1;phase='installer-running';message='Running the hash-bound workstation installer; no normal provisioning will repair its result.'}
     Publish-InstallerProgress $progress
     [HerdrWorkstation.Directories]::Ensure($stateRoot)
@@ -112,5 +114,10 @@ try {
     $passed=$complete -and $result.ExitCode -eq 0 -and @($probes.checks|Where-Object{-not $_.passed}).Count -eq 0
     Write-Output ([ordered]@{schemaVersion=1;installerSHA256=$installerDigest;profileSHA256=$profileDigest;exitCode=$result.ExitCode;complete=$complete;passed=$passed;checks=$probes.checks;wingetVersion=$probes.wingetVersion;herdrVersion=$probes.herdrVersion;herdrClient=$probes.herdrClient;reportPath=(Join-Path $stateRoot 'report.html')}|ConvertTo-Json -Depth 7 -Compress)
 } finally {
+    # Only this receiver's private test copy is disposable. The user's source
+    # installer/data, reports, resume state and installed tools remain intact.
+    if($null -ne $ownedDataPath -and (Test-Path -LiteralPath $ownedDataPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $ownedDataPath -Force
+    }
     Remove-GuestArchiveStaging
 }
