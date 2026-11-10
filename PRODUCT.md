@@ -10,8 +10,12 @@ The current product contract is:
 
 ### Direct Windows workstation setup
 
-- A separate NSIS installer provisions the current Windows installation without
-  creating a Sandbox. It requires Windows x64 build 19041 or newer, under the
+- The private installer is an alternative delivery path for the same provisioned
+  development system, including selected settings and supported authentication.
+  Its target need not be reachable over SSH. Installation is entirely local;
+  SSH belongs only to the automated Sandbox test harness, never a post-install
+  dependency or a separate configuration/authentication delivery requirement.
+  It requires Windows x64 build 19041 or newer, under the
   intended user's elevated account; Windows 11 is recommended. The existing
   Sandbox product remains intact. Protected control state is separate from
   user-writable runtime caches and toolchain homes.
@@ -29,14 +33,18 @@ The current product contract is:
   Hash-verified download caches use the short machine-local
   `%ProgramData%\herdr-workstation\cache` path, independently of per-user/run control
   state, so retries can reuse downloads and Visual Studio layout paths stay short.
-- The shared package/stack implementations remain canonical. Direct setup never
-  applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
-  mapped-repository trust replacement or live Herdr lifecycle changes.
-- Direct setup applies the shared desktop-only preferences: Explorer visibility
-  and navigation, reduced search/taskbar clutter, and disabled Windows suggestions,
-  promoted content and news/widgets. Defender, SmartScreen, UAC, Windows Update,
-  audio services, volume and microphone permissions remain untouched. Explorer is
-  not restarted; some visual changes take effect at the next sign-in.
+- Package, stack, Windows-preference and configuration-transformation owners are
+  shared with normal Sandbox provisioning. A second implementation of tool setup,
+  shell paths, starting directories or provider configuration is not a delivery
+  variant. Selected settings are adapted to the target, not merely copied with
+  matching source hashes. The installed Terminal, Nushell, Herdr and selected agent
+  integrations must actually start and use the resulting configuration.
+- Local installation preserves audio functionality and Windows protections,
+  including Defender, SmartScreen, UAC and Firewall. It does not run the Sandbox
+  transport bootstrap or weaken protections to install a package. Setup requests
+  administrator rights once and uses a restricted same-user child for packages
+  that prohibit elevation. The remaining selected Windows preferences reuse the
+  normal provisioning owner rather than a separate workstation settings list.
 - The installer details show each step starting and its terminal result, with
   live package output and immediate failure diagnostics. WinGet readiness includes
   initialization and a real query of its community source, not just a version check.
@@ -55,12 +63,17 @@ The current product contract is:
   capture is an error, never a supposedly personal generic installer. Developer
   `package-workstation VERSION` uses the same product builder rather than a second
   implementation. Public release remains a separate user decision.
-- This is a **private personal installer**, never a public release artifact.
-  Dedicated credential stores, private keys, project data and Git history remain
-  excluded. Inline private values and authored scripts may be included. Existing
-  different target settings are preserved and reported as conflicts. The exact
-  private snapshot is retained in protected per-user control state for resume.
-  Software downloads remain online; host cache payloads are not embedded.
+- This is a **private personal installer containing selected credentials**, never
+  a public release artifact. It includes settings and supported authentication
+  through the existing selected configuration/credential exporters and applies
+  their existing target transformations locally. It does not scrape additional
+  keyrings, copy SSH private keys, project data or Git history. The exact private
+  snapshot is retained in protected per-user control state for resume.
+- Required package/tool inputs are materialized by default through the shared
+  verified cache owners. Installation reuses those inputs without direct WinGet
+  installation or repeated network downloads. Already compressed payloads do not
+  undergo expensive recompression. A format-size limit must be reported explicitly;
+  it must not silently produce an incomplete or online-only installer.
 - Nushell owns its generated `terminal-fragments/nu/nu.json`; it is not copied
   from the old machine. Other authored terminal fragments remain part of the snapshot.
 - Capture uses the existing package/configuration selection and agent authored-root
@@ -99,10 +112,11 @@ The current product contract is:
   PowerShell 5.1. It does not install WinGet, VC++, PowerShell 7 or development
   tools, run Base registry policies, or mute audio. A before/after transport
   baseline rejects development prerequisites introduced by bootstrap.
-- The candidate's embedded snapshot is authoritative. The SSH lease transports
-  only its expected hash, never a replacement configuration. Dedicated credentials, Git
-  history, arbitrary user/project script effects, Tailscale/mobile setup and
-  normal configuration-sync policies are not part of this native experiment.
+- The candidate's embedded snapshot is authoritative. The test-only SSH lease
+  transports only its expected identity, never replacement configuration or
+  credentials. The candidate itself owns applying the shared configuration and
+  authentication transformations. Git history, arbitrary user/project script
+  effects and transport/mobile setup remain outside this experiment.
   The host's normal-provisioning `ttsBundle` selection does not apply to this
   test and neither overrides nor blocks the candidate's embedded snapshot.
 - The exact NSIS installer runs visibly on the intended user's interactive guest

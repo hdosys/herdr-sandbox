@@ -1,15 +1,18 @@
 # herdr-sandbox-base-contract: 60
 param(
-    [ValidateSet('Registry', 'Core', 'Development', 'Library')]
+    [ValidateSet('Registry', 'Core', 'Development', 'Library', 'Prepare')]
     [string]$Phase = 'Development',
     [string]$ProjectProvisioningDirectory = '',
     [string]$WorkspacesDirectory = 'C:\Workspaces',
     [string]$PackagePlanPath = '',
+    [string]$PackageCacheDirectory = '',
+    [string]$PreparedInputsPath = '',
     [string]$UserProvisioningPath = '',
     [Parameter(Mandatory = $true)]
     [string]$ProcessOwnerPath,
     [switch]$AudioOutputEnabled,
     [switch]$AudioInputEnabled,
+    [switch]$PreserveWindowsProtections,
     [AllowEmptyCollection()]
     [Collections.Generic.List[string]]$DevelopmentFailures,
     [AllowEmptyCollection()]
@@ -20,6 +23,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+$script:ProvisioningPreparation = $Phase -ceq 'Prepare'
+if ($script:ProvisioningPreparation) { $script:PreparedPackageMetadata = @{} }
+$script:PreparedInputs = $null
 
 if (-not [IO.Path]::IsPathRooted($ProcessOwnerPath) -or
     -not (Test-Path -LiteralPath $ProcessOwnerPath -PathType Leaf)) {
@@ -174,7 +180,7 @@ function Write-ProvisioningTiming {
     }
 }
 
-if ($Phase -ne 'Library') {
+if ($Phase -notin @('Library','Prepare')) {
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -248,7 +254,7 @@ function Read-ProvisioningToolVersionPlan {
     return [pscustomobject]@{ Versions = $versions; Series = $series; Sources = $sources; Owners = $owners }
 }
 
-if ($Phase -ne 'Library') {
+if ($Phase -notin @('Library','Prepare')) {
     $global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
 } else {
     $global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Sources = @{}; Owners = @{} }
@@ -259,7 +265,10 @@ function Get-ProvisioningToolVersion {
         [Parameter(Mandatory = $true)][string]$Tool,
         [AllowEmptyString()][string]$Requested = ''
     )
-    if (-not $global:HerdrSandboxToolVersionPlan.Versions.ContainsKey($Tool)) { return $Requested }
+    if (-not $global:HerdrSandboxToolVersionPlan.Versions.ContainsKey($Tool)) {
+        if (Test-ProvisioningPreparation) { $global:HerdrSandboxToolVersionPlan.Versions[$Tool] = $Requested }
+        return $Requested
+    }
     $resolved = [string]$global:HerdrSandboxToolVersionPlan.Versions[$Tool]
     if (-not [string]::IsNullOrWhiteSpace($Requested) -and
         -not [string]::IsNullOrWhiteSpace($resolved) -and
@@ -278,7 +287,10 @@ function Get-ProvisioningToolSeries {
         [Parameter(Mandatory = $true)][string]$Tool,
         [AllowEmptyString()][string]$Requested = ''
     )
-    if (-not $global:HerdrSandboxToolVersionPlan.Series.ContainsKey($Tool)) { return $Requested }
+    if (-not $global:HerdrSandboxToolVersionPlan.Series.ContainsKey($Tool)) {
+        if (Test-ProvisioningPreparation) { $global:HerdrSandboxToolVersionPlan.Series[$Tool] = $Requested }
+        return $Requested
+    }
     $resolved = [string]$global:HerdrSandboxToolVersionPlan.Series[$Tool]
     if (-not [string]::IsNullOrWhiteSpace($Requested) -and
         -not [string]::IsNullOrWhiteSpace($resolved) -and
@@ -401,7 +413,7 @@ function Read-ProvisioningPackagePlan {
     }
 }
 
-if ($Phase -ne 'Library') {
+if ($Phase -notin @('Library','Prepare')) {
     $provisioningPackagePlan = Read-ProvisioningPackagePlan -Path $PackagePlanPath
     $WindowsTerminalEdition = [string]$provisioningPackagePlan.Data.windowsTerminalEdition
 }
@@ -435,7 +447,41 @@ function Install-ProvisioningNushell {
     Install-ProvisioningCachedPackage -Role 'Nushell' -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter 'MSI' -ExecutableName 'nu.exe' -InstallerArguments @('ALLUSERS=1')
 
-    Initialize-ProvisioningNushell -Version $Version
+}
+
+function Initialize-ProvisioningPowerShellProfile {
+    $path = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\profile.ps1'
+    Assert-ProvisioningPathAncestors $path
+    $directory = Split-Path -Parent $path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $lines = @'
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+'@
+    if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
+        $lines += "`r`nInvoke-Expression (&starship init powershell)"
+    }
+    if (-not (Test-ProvisioningWorkstation)) {
+        $lines += @'
+
+$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = [Environment]::GetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', 'Machine')
+$herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
+    $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
+    if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
+        throw 'Provisioned Herdr executable is unavailable for mobile SSH.'
+    }
+    & $herdrExecutable
+    exit $LASTEXITCODE
+}
+'@
+    }
+    $lines += "`r`n"
+    if (Test-Path -LiteralPath $path) {
+        $item = Get-Item -LiteralPath $path -Force
+        if ($item.PSIsContainer -or $item.Length -gt 1048576) { throw 'Existing PowerShell profile is unsafe.' }
+    }
+    [IO.File]::WriteAllText($path, $lines, (New-Object Text.UTF8Encoding($false)))
+    if ([IO.File]::ReadAllText($path) -cne $lines) { throw 'PowerShell profile read-back failed.' }
 }
 
 function Initialize-ProvisioningNushell {
@@ -1010,6 +1056,7 @@ function Add-ProvisioningMachinePath {
     if (-not [string]::Equals([string]$machinePath, $updatedPath, [StringComparison]::Ordinal)) {
         [Environment]::SetEnvironmentVariable('Path', $updatedPath, $target)
     }
+    if (Test-ProvisioningPreparation) { return }
     Update-ProvisioningPath
 }
 
@@ -1017,11 +1064,11 @@ function Get-ProvisioningPath {
     param([string]$RelativePath = '')
     $root = [Environment]::GetEnvironmentVariable('HERDR_PROVISIONING_ROOT', 'Process')
     if ([string]::IsNullOrEmpty($root)) { $root = 'C:\HerdrSandbox' }
-    if ((Test-ProvisioningWorkstation) -and $RelativePath -match '^cache(?:[\\/](.*))?$') {
+    if (($PackageCacheDirectory -ne '' -or (Test-ProvisioningWorkstation)) -and $RelativePath -match '^cache(?:[\\/](.*))?$') {
         # Downloads are machine-local, hash-verified reusable inputs, not per-run
         # control state. This also keeps VS layouts below its 80-character limit.
         $RelativePath = [string]$Matches[1]
-        $root = Join-Path $env:ProgramData 'herdr-workstation\cache'
+        $root = if ($PackageCacheDirectory -ne '') { $PackageCacheDirectory } else { Join-Path $env:ProgramData 'herdr-workstation\cache' }
     }
     if ($root -notmatch '^[A-Za-z]:\\') { throw [Security.SecurityException]::new('Provisioning root must be an absolute local drive path.') }
     $root = [IO.Path]::GetFullPath($root).TrimEnd('\')
@@ -1048,6 +1095,7 @@ function Assert-ProvisioningPathAncestors {
 }
 
 function Get-ProvisioningEnvironmentTarget {
+    if (Test-ProvisioningPreparation) { return 'Process' }
     if (Test-ProvisioningWorkstation) { return 'User' }
     return 'Machine'
 }
@@ -1065,6 +1113,23 @@ function Get-ProvisioningUserPath {
 
 function Test-ProvisioningWorkstation {
     return $env:HERDR_PROVISIONING_TARGET -ceq 'workstation'
+}
+
+function Test-ProvisioningPreparation {
+    $preparation = Get-Variable -Name ProvisioningPreparation -Scope Script -ErrorAction SilentlyContinue
+    return $null -ne $preparation -and [bool]$preparation.Value
+}
+
+function Get-ProvisioningPreparedMetadata {
+    param([string]$Id, [string]$Architecture, [string]$InstallerType, [string]$Scope = '', [string]$Version = '')
+    if ($null -eq $script:PreparedInputs) { return $null }
+    $preparedMatches = @($script:PreparedInputs.packages | Where-Object {
+        $_.metadata.Id -ieq $Id -and $_.metadata.Architecture -ieq $Architecture -and
+        $_.metadata.InstallerType -ieq $InstallerType -and $_.metadata.Scope -ieq $Scope -and
+        ($Version -eq '' -or $_.metadata.Version -ceq $Version)
+    })
+    if ($preparedMatches.Count -ne 1) { throw "Materialized input for $Id ($Architecture/$InstallerType/$Scope/$Version) is missing or ambiguous." }
+    return $preparedMatches[0].metadata
 }
 
 function Test-ProvisioningDependencyReady {
@@ -1250,6 +1315,8 @@ function Get-ProvisioningGitHubAssetMetadata {
     if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $AssetName -match '[/\\]') {
         throw "$Role GitHub release request is invalid."
     }
+    $prepared = Get-ProvisioningPreparedMetadata -Id $Id -Architecture $Architecture -InstallerType $InstallerType -Version $Version
+    if ($null -ne $prepared) { return $prepared }
     $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
     if ($Version) {
         if ($Version -notmatch '^\d+\.\d+\.\d+$' -or ($MajorVersion -gt 0 -and ([Version]$Version).Major -ne $MajorVersion)) {
@@ -1321,6 +1388,8 @@ function Get-ProvisioningWinGetMetadata {
         [string]$PayloadExtension = ''
     )
 
+    $prepared = Get-ProvisioningPreparedMetadata -Id $Id -Architecture $Architecture -InstallerType $InstallerType -Scope $Scope -Version $Version
+    if ($null -ne $prepared) { return $prepared }
     if (Test-ProvisioningWorkstation) {
         $metadata = Get-ProvisioningDownloadedMetadata -Role $Role -Id $Id -Version $Version -Architecture $Architecture `
             -InstallerType $InstallerType -Scope $Scope -PayloadExtension $PayloadExtension
@@ -1362,10 +1431,11 @@ function Get-ProvisioningWinGetMetadata {
     }
     $extension = [IO.Path]::GetExtension($uri.AbsolutePath).ToLowerInvariant()
     $supportedExtensions = @('.exe', '.msi', '.zip', '.msix', '.msixbundle', '.appx', '.appxbundle')
-    if ([string]::IsNullOrWhiteSpace($extension) -and -not [string]::IsNullOrWhiteSpace($PayloadExtension)) {
+    # A selected installer contract may use an HTTPS download endpoint rather
+    # than a filename. The adapter's explicit payload type owns its local name;
+    # the selected manifest and SHA-256 own the downloaded content identity.
+    if (-not [string]::IsNullOrWhiteSpace($PayloadExtension)) {
         $extension = $PayloadExtension
-    } elseif (-not [string]::IsNullOrWhiteSpace($PayloadExtension) -and $extension -cne $PayloadExtension) {
-        throw "$Role installer URL extension $extension does not match expected extension $PayloadExtension."
     }
     if ($extension -notin $supportedExtensions) {
         throw "$Role installer URL has an unsupported extension: $extension"
@@ -1440,6 +1510,7 @@ function Install-ProvisioningOpenCode {
         -InstallerType 'zip' -PayloadName 'opencode.zip' -MajorVersion 1 -Version $Version
     Install-ProvisioningCachedPackage -Role 'OpenCode stable 1.x' -Metadata $metadata -DownloadSource 'Direct' `
         -Adapter 'Portable' -ExecutableName 'opencode.exe'
+    if (Test-ProvisioningPreparation) { return }
     $actual = Assert-ProvisioningCommand -Role 'OpenCode stable 1.x' -Name 'opencode.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^1\.\d+\.\d+'
     Write-Output "OpenCode ready: $actual"
@@ -2117,6 +2188,8 @@ function Install-ProvisioningPackagePayload {
         [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont', 'PortableExecutable')]
         [string]$Adapter,
         [string]$ExecutableName = '',
+        [string]$CommandAlias = '',
+        [switch]$AsStandardUser,
         [string[]]$InstallerArguments = @(),
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
@@ -2144,8 +2217,9 @@ function Install-ProvisioningPackagePayload {
                 -ArgumentList @('/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') | Out-Null
         }
         'NSIS' {
-            Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath $PayloadPath `
-                -ArgumentList @('/S') | Out-Null
+            $result = Invoke-ProvisioningNativeResult -Role "$Role cached installation" -FilePath $PayloadPath `
+                -ArgumentList (@('/S') + $InstallerArguments) -AsStandardUser:$AsStandardUser -ForwardOutput
+            if (-not $result.Succeeded) { throw "$Role installation failed with exit $($result.ExitCode): $($result.Output)" }
         }
         'MSI' {
             Invoke-ProvisioningNative -Role "$Role cached installation" -FilePath "$env:SystemRoot\System32\msiexec.exe" `
@@ -2218,6 +2292,17 @@ function Install-ProvisioningPackagePayload {
             if (($commands[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw [Security.SecurityException]::new("$Role executable is a reparse point: $($commands[0].FullName)")
             }
+            if ($CommandAlias) {
+                if ([IO.Path]::GetFileName($CommandAlias) -cne $CommandAlias -or $CommandAlias -notmatch '^[A-Za-z0-9._-]+\.exe$') {
+                    throw "$Role portable command alias is unsafe."
+                }
+                $aliasPath = Join-Path $commands[0].Directory.FullName $CommandAlias
+                if (Test-Path -LiteralPath $aliasPath) { throw "$Role portable command alias collides with an archive entry." }
+                Copy-Item -LiteralPath $commands[0].FullName -Destination $aliasPath
+                if ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $commands[0].FullName -Algorithm SHA256).Hash) {
+                    throw [Security.SecurityException]::new("$Role portable command alias hash mismatch.")
+                }
+            }
             Add-ProvisioningMachinePath -Directory $commands[0].Directory.FullName
         }
         'Rustup' {
@@ -2283,6 +2368,8 @@ function Install-ProvisioningCachedPackage {
         [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup', 'GeistMonoFont', 'PortableExecutable')]
         [string]$Adapter,
         [string]$ExecutableName = '',
+        [string]$CommandAlias = '',
+        [switch]$AsStandardUser,
         [string[]]$InstallerArguments = @(),
         [int[]]$InstallerSuccessExitCodes = @(0),
         [string]$CommandSourceExclusion = '',
@@ -2300,8 +2387,8 @@ function Install-ProvisioningCachedPackage {
         throw "$Role resolved direct payload requires the Direct download owner."
     }
     Update-ProvisioningPath
-    if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
-            -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource) {
+    if (-not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
+            -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource)) {
         Write-Host "$Role is already installed; resolved version for this run: $($metadata.Version)"
         $packageStopwatch.Stop()
         Write-ProvisioningTiming -Role "$Role package total" -Seconds $packageStopwatch.Elapsed.TotalSeconds
@@ -2339,6 +2426,7 @@ function Install-ProvisioningCachedPackage {
             Write-Output "$Role package cache hit: $($metadata.Version)"
         } else {
             Write-Output "$Role package cache miss: $($metadata.Version)"
+            if ($null -ne $script:PreparedInputs) { throw "$Role materialized payload is missing or failed its cache identity check; no network recovery was attempted." }
             if ($DownloadSource -eq 'WinGet') {
                 $downloadDirectory = Join-Path $guestStage 'download'
                 New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
@@ -2353,13 +2441,36 @@ function Install-ProvisioningCachedPackage {
                 }
             }
         }
+        if ($RequireAuthenticodeSignature) {
+            Assert-ProvisioningAuthenticodeSignature -Role $Role -Path $guestPayload
+        }
+        # Cache publication owns verified input bytes, not installation outcome.
+        # Keep valid downloads even when a later installation fails or is cancelled.
+        if (-not $cacheHit) {
+            Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
+                -GuestPayloadPath $guestPayload -Metadata $metadata
+        }
+        if (Test-ProvisioningPreparation) {
+            $key = @($metadata.Id,$metadata.Architecture,$metadata.InstallerType,$metadata.Scope) -join '|'
+            if ($script:PreparedPackageMetadata.ContainsKey($key)) {
+                $previous = $script:PreparedPackageMetadata[$key].metadata
+                if ($previous.Version -cne $metadata.Version -or $previous.Sha256 -ine $metadata.Sha256) {
+                    throw "$Role resolution changed while preparing the same input set."
+                }
+            }
+            $relativeEntry = 'packages\' + (Get-ProvisioningSafeCacheName -Value $metadata.Id) + '\' + $entryName
+            $script:PreparedPackageMetadata[$key] = [ordered]@{metadata=$metadata;cachePath=$relativeEntry}
+            $null = Get-ProvisioningToolVersion -Tool $metadata.Id -Requested $metadata.Version
+            Write-Output "$Role materialized: $($metadata.Version)"
+        } else {
         Write-ProvisioningProgress -Message "$Role cached installation"
         Install-ProvisioningPackagePayload -Role $Role -Metadata $metadata -PayloadPath $guestPayload `
             -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
+            -CommandAlias $CommandAlias -AsStandardUser:$AsStandardUser `
             -InstallerSuccessExitCodes $InstallerSuccessExitCodes `
             -CommandSourceExclusion $CommandSourceExclusion `
             -DeferCommandReadiness:$DeferCommandReadiness `
-            -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
+            -RequireAuthenticodeSignature:$false
         $installed = Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter `
             -ExecutableName $ExecutableName -PortableVersionArguments $PortableVersionArguments `
             -PortableVersionSource $PortableVersionSource
@@ -2368,9 +2479,6 @@ function Install-ProvisioningCachedPackage {
         } elseif (-not $installed) {
             Write-Warning "$Role installation command succeeded, but its version read-back did not match $($metadata.Version). Provisioning will continue with the installed payload."
         }
-        if (-not $cacheHit) {
-            Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
-                -GuestPayloadPath $guestPayload -Metadata $metadata
         }
         foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
             if ($directory.Name -ine $entryName) {
@@ -2426,9 +2534,13 @@ function Install-ProvisioningWinGetPackage {
         [string]$InstallerType,
         [string]$Scope = '',
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'Rustup')]
+        [ValidateSet('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX', 'Portable', 'PortableExecutable', 'Rustup')]
         [string]$Adapter,
         [string]$ExecutableName = '',
+        [string]$CommandAlias = '',
+        [switch]$AsStandardUser,
+        [string]$PayloadExtension = '',
+        [ValidateSet('Command','File')][string]$PortableVersionSource = 'Command',
         [string[]]$InstallerArguments = @(),
         [string]$CommandSourceExclusion = '',
         [string[]]$PortableVersionArguments = @('--version'),
@@ -2437,9 +2549,10 @@ function Install-ProvisioningWinGetPackage {
     )
 
     $metadata = Get-ProvisioningWinGetMetadata -Role $Role -Id $Id -Version $Version -VersionTool $VersionTool `
-        -Architecture $Architecture -InstallerType $InstallerType -Scope $Scope
+        -Architecture $Architecture -InstallerType $InstallerType -Scope $Scope -PayloadExtension $PayloadExtension
     Install-ProvisioningCachedPackage -Role $Role -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter $Adapter -ExecutableName $ExecutableName -InstallerArguments $InstallerArguments `
+        -CommandAlias $CommandAlias -AsStandardUser:$AsStandardUser -PortableVersionSource $PortableVersionSource `
         -CommandSourceExclusion $CommandSourceExclusion `
         -PortableVersionArguments $PortableVersionArguments `
         -DeferCommandReadiness:$DeferCommandReadiness `
@@ -2455,10 +2568,12 @@ function Install-ProvisioningGeistMonoNerdFont {
 }
 
 function Install-ProvisioningZed {
+    param([string]$Version = '')
     Write-Output 'Installing Zed...'
     Install-ProvisioningWinGetPackage -Role 'Zed' -Id 'ZedIndustries.Zed' `
-        -Version (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed') `
+        -Version $Version `
         -InstallerType 'inno' -Scope 'user' -Adapter 'Inno' -ExecutableName 'zed.exe'
+    if (Test-ProvisioningPreparation) { return }
     $zedVersion = Assert-ProvisioningCommand -Role 'Zed' -Name 'zed.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^Zed \d+\.\d+\.\d+'
     Write-Output "Zed ready: $zedVersion"
@@ -2472,6 +2587,7 @@ function Install-ProvisioningOpenSrc {
     Write-Output 'Installing opensrc...'
     Install-ProvisioningCachedPackage -Role 'opensrc' -Metadata $metadata `
         -DownloadSource 'Direct' -Adapter 'PortableExecutable' -ExecutableName 'opensrc.exe'
+    if (Test-ProvisioningPreparation) { return }
 
     $openSrcHome = Get-ProvisioningUserPath 'cache\opensrc'
     New-Item -ItemType Directory -Path $openSrcHome -Force | Out-Null
@@ -2485,6 +2601,112 @@ function Install-ProvisioningOpenSrc {
     $openSrcVersion = Assert-ProvisioningCommand -Role 'opensrc' -Name 'opensrc.exe' `
         -VersionArguments @('--version') -ExpectedPattern ('^opensrc ' + [regex]::Escape([string]$metadata.Version) + '$')
     Write-Output "opensrc ready: $openSrcVersion"
+}
+
+function Install-ProvisioningPackage {
+    param([Parameter(Mandatory=$true)][string]$Id, [string]$Version = '', [switch]$AsStandardUser)
+    switch ($Id) {
+        'Microsoft.PowerShell' {
+            Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id $Id -Version $Version -InstallerType 'msix' -Adapter 'MSIX' -ExecutableName 'pwsh.exe'
+            if (Test-ProvisioningPreparation) { return }
+            $installation = Get-ProvisioningPowerShell7Installation
+            Write-Output ('PowerShell 7 ready: ' + $installation.DisplayVersion)
+        }
+        'Nushell.Nushell' { Install-ProvisioningNushell -Version $Version }
+        'Starship.Starship' {
+            Install-ProvisioningWinGetPackage -Role 'Starship' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'starship.exe'
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'Starship' -Name 'starship.exe' -VersionArguments @('--version') -ExpectedPattern '^starship \d+\.\d+\.\d+'
+        }
+        'junegunn.fzf' {
+            Install-ProvisioningWinGetPackage -Role 'fzf' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'fzf.exe'
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'fzf' -Name 'fzf.exe' -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
+        }
+        'BurntSushi.ripgrep.MSVC' {
+            Install-ProvisioningWinGetPackage -Role 'ripgrep' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'rg.exe'
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'ripgrep' -Name 'rg.exe' -VersionArguments @('--version') -ExpectedPattern '^ripgrep \d+\.\d+\.\d+'
+        }
+        'rhysd.actionlint' {
+            Install-ProvisioningWinGetPackage -Role 'actionlint' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'actionlint.exe'
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'actionlint' -Name 'actionlint.exe' -VersionArguments @('-version') -ExpectedPattern '^\d+\.\d+\.\d+'
+        }
+        'Git.Git' {
+            Install-ProvisioningWinGetPackage -Role 'Git' -Id $Id -Version $Version -InstallerType 'inno' -Scope 'machine' -Adapter 'Inno' -ExecutableName 'git.exe' -DeferCommandReadiness -RequireAuthenticodeSignature
+        }
+        'GitHub.cli' {
+            Install-ProvisioningWinGetPackage -Role 'GitHub CLI' -Id $Id -Version $Version -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'gh.exe'
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'GitHub CLI' -Name 'gh.exe' -VersionArguments @('--version') -ExpectedPattern '^gh version (?<v>\d+\.\d+\.\d+(?:-[\w.]+)?) \(\d{4}-\d{2}-\d{2}\)\r?\nhttps://github\.com/cli/cli/releases/tag/v\k<v>$'
+        }
+        'Tailscale.Tailscale' {
+            Install-ProvisioningWinGetPackage -Role 'Tailscale' -Id $Id -Version $Version -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'tailscale.exe' -InstallerArguments @('TS_NOLAUNCH=1')
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'Tailscale' -Name 'tailscale.exe' -VersionArguments @('version') -ExpectedPattern '^\d+\.\d+\.\d+(?:-[\w.]+)?'
+        }
+        'Anomaly.OpenCode' { Install-ProvisioningOpenCode -Version $Version }
+        'Voidstar.FilePilot' {
+            Install-ProvisioningWinGetPackage -Role 'File Pilot' -Id $Id -Version $Version -InstallerType 'portable' -Adapter 'PortableExecutable' -ExecutableName 'FPilot.exe' -PayloadExtension '.exe' -PortableVersionSource 'File'
+        }
+        'Anthropic.ClaudeCode' {
+            Install-ProvisioningWinGetPackage -Role 'Claude Code' -Id $Id -Version $Version -InstallerType 'portable' -Adapter 'PortableExecutable' -ExecutableName 'claude.exe'
+        }
+        'GitHub.Copilot' {
+            Install-ProvisioningPackage -Id 'Microsoft.PowerShell'
+            Install-ProvisioningWinGetPackage -Role 'GitHub Copilot' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'copilot.exe'
+        }
+        'OpenAI.Codex' {
+            Install-ProvisioningPackage -Id 'BurntSushi.ripgrep.MSVC'
+            Install-ProvisioningPackage -Id 'Microsoft.VCRedist.2015+.x64'
+            Install-ProvisioningWinGetPackage -Role 'Codex' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'codex-x86_64-pc-windows-msvc.exe' -CommandAlias 'codex.exe'
+        }
+        'Microsoft.VCRedist.2015+.x64' {
+            Install-ProvisioningWinGetPackage -Role 'Visual C++ runtime' -Id $Id -Version $Version -InstallerType 'burn' -Adapter 'Burn' -InstallerArguments @('/install','/quiet','/norestart') -DeferCommandReadiness
+        }
+        'hdosys.herdr-win' {
+            $existing = Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue
+            if ($null -ne $existing -and -not (Test-ProvisioningPreparation)) {
+                $identity = (Invoke-ProvisioningNative -Role 'Existing Herdr identity' -FilePath $existing.Source -ArgumentList @('--version') -TimeoutSeconds 15) -join ' '
+                if ($identity -notmatch '^herdr-ext ') { throw 'Existing Herdr is not Herdr Extended; it was preserved, not replaced.' }
+                Write-Output 'Existing Herdr Extended retained without update, restart or server mutation.'
+                return
+            }
+            Install-ProvisioningWinGetPackage -Role 'Herdr Extended' -Id $Id -Version $Version -InstallerType 'nullsoft' -Scope 'user' -Adapter 'NSIS' -ExecutableName 'herdr.exe' -InstallerArguments @('/WINGET') -AsStandardUser
+            if (Test-ProvisioningPreparation) { return }
+            Assert-ProvisioningCommand -Role 'Herdr Extended' -Name 'herdr.exe' -VersionArguments @('--version') -ExpectedPattern '^herdr-ext '
+        }
+        'ZedIndustries.Zed' { Install-ProvisioningZed -Version $Version }
+        'WinDirStat.WinDirStat' {
+            Install-ProvisioningWinGetPackage -Role 'WinDirStat' -Id $Id -Version $Version -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI'
+            if (Test-ProvisioningPreparation) { return }
+            $command = Join-Path $env:ProgramFiles 'WinDirStat\WinDirStat.exe'
+            if (-not (Test-Path -LiteralPath $command -PathType Leaf) -or ((Get-Item -LiteralPath $command -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "WinDirStat executable is missing or unsafe: $command"
+            }
+        }
+        'Microsoft.UI.Xaml.2.8' {
+            Install-ProvisioningWinGetPackage -Role 'Windows UI Xaml 2.8' -Id $Id -Version $Version -InstallerType 'msix' -Adapter 'MSIX'
+            if (Test-ProvisioningPreparation) { return }
+            $frameworks = @(Get-AppxPackage -Name $Id -ErrorAction SilentlyContinue | Where-Object { [string]$_.Architecture -in @('X64','Neutral') -and $_.Version -ge [Version]'8.2306.22001.0' })
+            if ($frameworks.Count -lt 1) { throw 'Windows UI Xaml 2.8 framework registration is missing or too old.' }
+        }
+        { $_ -in @('Microsoft.WindowsTerminal','Microsoft.WindowsTerminal.Preview') } {
+            $preview = $Id -eq 'Microsoft.WindowsTerminal.Preview'
+            $family = if ($preview) { 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe' } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe' }
+            $scope = if ($preview) { '' } else { 'user' }
+            Install-ProvisioningWinGetPackage -Role $Id -Id $Id -Version $Version -InstallerType 'msix' -Scope $scope -Adapter 'MSIX' -ExecutableName 'wt.exe'
+            if (Test-ProvisioningPreparation) { return }
+            $packageRoot = Join-Path $env:LOCALAPPDATA (Join-Path 'Packages' $family)
+            if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) { throw "Windows Terminal package is not registered at $packageRoot" }
+            if ($null -eq (Get-Command 'wt.exe' -CommandType Application -ErrorAction SilentlyContinue)) { throw 'Windows Terminal command is not available on PATH: wt.exe' }
+        }
+        default {
+            if (Test-ProvisioningPreparation) { throw "Package $Id has no reviewed materialization adapter." }
+            Install-ProvisioningOnlineWinGetPackage -Role $Id -Id $Id -Version $Version -AsStandardUser:$AsStandardUser
+        }
+    }
 }
 
 function Install-ProvisioningOnlineWinGetPackage {
@@ -3513,11 +3735,21 @@ function Disable-ProvisioningAudioPlayback {
     return [bool]$schemeChanged
 }
 
-if ($Phase -eq 'Library') { return }
+if ($PreparedInputsPath -ne '') {
+    Assert-ProvisioningPathAncestors $PreparedInputsPath
+    $preparedFile = Get-Item -LiteralPath $PreparedInputsPath -Force
+    if ($preparedFile.PSIsContainer -or $preparedFile.Length -gt 16777216) { throw 'Materialized input metadata is unsafe.' }
+    $script:PreparedInputs = [IO.File]::ReadAllText($PreparedInputsPath) | ConvertFrom-Json
+    if ($script:PreparedInputs.schemaVersion -ne 1 -or @($script:PreparedInputs.packages).Count -gt 128) { throw 'Materialized input metadata has an unsupported contract.' }
+    $env:npm_config_offline = 'true'
+}
+if ($Phase -in @('Library','Prepare')) { return }
 $provisioningStopwatch = [Diagnostics.Stopwatch]::StartNew()
 if ($Phase -eq 'Registry') {
 $registryStateChanged = $false
-if (-not $AudioOutputEnabled) {
+if ($PreserveWindowsProtections) {
+    Write-Output 'Preserving Windows audio, protection, and firewall settings.'
+} elseif (-not $AudioOutputEnabled) {
     Write-Output 'Disabling Sandbox audio playback...'
     if (Disable-ProvisioningAudioPlayback -KeepAudioServices:$AudioInputEnabled) {
         $registryStateChanged = $true
@@ -3607,6 +3839,7 @@ foreach ($entry in $edgeMachineDwordPolicies.GetEnumerator()) {
 }
 foreach ($path in @($edgeMachinePolicyPath, $edgeUserPolicyPath)) {
     foreach ($entry in $edgeUserDwordPolicies.GetEnumerator()) {
+        if ($PreserveWindowsProtections -and $entry.Key -in @('SiteSafetyServicesEnabled','SmartScreenEnabled','TyposquattingCheckerEnabled')) { continue }
         if (Set-ProvisioningRegistryValue -Path $path -Name $entry.Key -Value $entry.Value `
                 -PropertyType 'DWord') {
             $registryStateChanged = $true
@@ -3834,6 +4067,7 @@ foreach ($scope in @(
     }
 }
 foreach ($group in $privacyRegistryGroups) {
+    if ($PreserveWindowsProtections -and $group.Path -match '(?i)Windows Defender|PhishingFilter|AppHost|Biometrics|WindowsUpdate|WindowsStore$|\\MRT$|Speech|VoiceActivation|CapabilityAccessManager|\\AppPrivacy$') { continue }
     foreach ($entry in $group.Values.GetEnumerator()) {
         if ($entry.Value -is [string]) {
             $propertyType = 'String'
@@ -3855,10 +4089,10 @@ foreach ($group in $privacyRegistryGroups) {
     }
 }
 
-if ($registryStateChanged) {
+if ($registryStateChanged -and -not $PreserveWindowsProtections) {
     Restart-ProvisioningExplorerShell -Role 'registry changes'
 } else {
-    Write-Host 'Registry state already matches; Explorer restart skipped.'
+    Write-Host 'Explorer restart skipped; changed shell preferences apply at the next sign-in.'
 }
 $provisioningStopwatch.Stop()
 Write-ProvisioningTiming -Role 'early registry customization' -Seconds $provisioningStopwatch.Elapsed.TotalSeconds
@@ -3873,12 +4107,7 @@ Initialize-ProvisioningSteps -Path $StepStatePath -Resume $Resume.IsPresent `
     -ImplementationFiles @($PSCommandPath, $ProcessOwnerPath)
 Invoke-ProvisioningStep -Name 'PowerShell' -InputValues (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') -Action {
 Write-Output 'Installing PowerShell 7...'
-Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id 'Microsoft.PowerShell' `
-    -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') `
-    -InstallerType 'msix' -Adapter 'MSIX' -ExecutableName 'pwsh.exe'
-$powerShell7 = Get-ProvisioningPowerShell7Installation
-$powerShellVersion = "PowerShell $($powerShell7.DisplayVersion)"
-Write-Output "PowerShell 7 ready: $powerShellVersion"
+Install-ProvisioningPackage -Id 'Microsoft.PowerShell' -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell')
 }
 if ($Phase -eq 'Core') { return }
 
@@ -3900,150 +4129,73 @@ if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparis
 $starshipInitialization = ''
 if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
     Write-Output 'Installing Starship...'
-    Install-ProvisioningWinGetPackage -Role 'Starship' -Id 'Starship.Starship' `
-        -Version (Get-ProvisioningPackageVersion -Id 'Starship.Starship') `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'starship.exe'
-    $starshipVersion = Assert-ProvisioningCommand -Role 'Starship' -Name 'starship.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^starship \d+\.\d+\.\d+'
+    Install-ProvisioningPackage -Id 'Starship.Starship' -Version (Get-ProvisioningPackageVersion -Id 'Starship.Starship')
     $starshipInitialization = 'Invoke-Expression (&starship init powershell)' + [Environment]::NewLine
-    Write-Output "Starship ready: $starshipVersion"
 }
-Install-ProvisioningNushell
+Install-ProvisioningPackage -Id 'Nushell.Nushell' -Version (Get-ProvisioningPackageVersion -Id 'Nushell.Nushell')
+Initialize-ProvisioningNushell
 
-$mobileSSHInitialization = @'
-$herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
-    $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
-    if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or
-        -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
-        throw 'Provisioned Herdr executable is unavailable for mobile SSH.'
-    }
-    & $herdrExecutable
-    exit $LASTEXITCODE
-}
-'@ + [Environment]::NewLine
-$pathInitialization = @'
-$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$env:Path = @($machinePath, $userPath) -join ';'
-$env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = [Environment]::GetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', 'Machine')
-'@ + [Environment]::NewLine
-$expectedPowerShellProfile = $pathInitialization + $mobileSSHInitialization + $starshipInitialization
-$powerShellProfileDirectory = Split-Path -Parent $powerShellProfilePath
-New-Item -ItemType Directory -Path $powerShellProfileDirectory -Force | Out-Null
-if (-not (Test-Path -LiteralPath $powerShellProfilePath -PathType Leaf) -or
-    [IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
-    [IO.File]::WriteAllText($powerShellProfilePath, $expectedPowerShellProfile, (New-Object Text.UTF8Encoding($false)))
-}
-if ([IO.File]::ReadAllText($powerShellProfilePath) -cne $expectedPowerShellProfile) {
-    throw 'PowerShell 7 PATH, mobile SSH, and Starship profile verification failed.'
-}
+Initialize-ProvisioningPowerShellProfile
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
     Invoke-ProvisioningIndependentStep -Name 'fzf' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') -Action {
-    Write-Output 'Installing fzf...'
-    Install-ProvisioningWinGetPackage -Role 'fzf' -Id 'junegunn.fzf' `
-        -Version (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'fzf.exe'
-    $fzfVersion = Assert-ProvisioningCommand -Role 'fzf' -Name 'fzf.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
-    Write-Output "fzf ready: $fzfVersion"
+    Install-ProvisioningPackage -Id 'junegunn.fzf' -Version (Get-ProvisioningPackageVersion -Id 'junegunn.fzf')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
     Invoke-ProvisioningIndependentStep -Name 'ripgrep' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') -Action {
-    Write-Output 'Installing ripgrep...'
-    Install-ProvisioningWinGetPackage -Role 'ripgrep' -Id 'BurntSushi.ripgrep.MSVC' `
-        -Version (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'rg.exe'
-    $ripgrepVersion = Assert-ProvisioningCommand -Role 'ripgrep' -Name 'rg.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^ripgrep \d+\.\d+\.\d+'
-    Write-Output "ripgrep ready: $ripgrepVersion"
+    Install-ProvisioningPackage -Id 'BurntSushi.ripgrep.MSVC' -Version (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
     Invoke-ProvisioningIndependentStep -Name 'actionlint' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') -Action {
-    Write-Output 'Installing actionlint...'
-    Install-ProvisioningWinGetPackage -Role 'actionlint' -Id 'rhysd.actionlint' `
-        -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'actionlint.exe'
-    $actionlintVersion = Assert-ProvisioningCommand -Role 'actionlint' -Name 'actionlint.exe' `
-        -VersionArguments @('-version') -ExpectedPattern '^\d+\.\d+\.\d+'
-    Write-Output "actionlint ready: $actionlintVersion"
+    Install-ProvisioningPackage -Id 'rhysd.actionlint' -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     Invoke-ProvisioningStep -Name 'Git' -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
-    Write-Output 'Installing Git...'
-    Install-ProvisioningWinGetPackage -Role 'Git' -Id 'Git.Git' `
-        -Version (Get-ProvisioningPackageVersion -Id 'Git.Git') -InstallerType 'inno' `
-        -Scope 'machine' -Adapter 'Inno' -ExecutableName 'git.exe' -DeferCommandReadiness `
-        -RequireAuthenticodeSignature
+    Install-ProvisioningPackage -Id 'Git.Git' -Version (Get-ProvisioningPackageVersion -Id 'Git.Git')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'GitHub.cli') {
     Invoke-ProvisioningStep -Name 'GitHub CLI' -InputValues (Get-ProvisioningPackageVersion -Id 'GitHub.cli') -Action {
-    Write-Output 'Installing GitHub CLI...'
-    Install-ProvisioningWinGetPackage -Role 'GitHub CLI' -Id 'GitHub.cli' `
-        -Version (Get-ProvisioningPackageVersion -Id 'GitHub.cli') `
-        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'gh.exe'
-    $githubCLIVersion = Assert-ProvisioningCommand -Role 'GitHub CLI' -Name 'gh.exe' `
-        -VersionArguments @('--version') `
-        -ExpectedPattern '^gh version (?<v>\d+\.\d+\.\d+(?:-[\w.]+)?) \(\d{4}-\d{2}-\d{2}\)\r?\nhttps://github\.com/cli/cli/releases/tag/v\k<v>$'
-    Write-Output "GitHub CLI ready: $githubCLIVersion"
+    Install-ProvisioningPackage -Id 'GitHub.cli' -Version (Get-ProvisioningPackageVersion -Id 'GitHub.cli')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Tailscale.Tailscale') {
     Invoke-ProvisioningStep -Name 'Tailscale' -InputValues (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale') -Action {
-    Write-Output 'Installing Tailscale...'
-    Install-ProvisioningWinGetPackage -Role 'Tailscale' -Id 'Tailscale.Tailscale' `
-        -Version (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale') `
-        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'tailscale.exe' `
-        -InstallerArguments @('TS_NOLAUNCH=1')
-    $tailscaleVersion = Assert-ProvisioningCommand -Role 'Tailscale' -Name 'tailscale.exe' `
-        -VersionArguments @('version') -ExpectedPattern '^\d+\.\d+\.\d+(?:-[\w.]+)?'
-    Write-Output "Tailscale ready: $tailscaleVersion"
+    Install-ProvisioningPackage -Id 'Tailscale.Tailscale' -Version (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Anomaly.OpenCode') {
     Invoke-ProvisioningStep -Name 'OpenCode' -InputValues (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode') -Action {
-    Install-ProvisioningOpenCode -Version (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode')
+    Install-ProvisioningPackage -Id 'Anomaly.OpenCode' -Version (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'ZedIndustries.Zed') {
     Invoke-ProvisioningIndependentStep -Name 'Zed' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed') -Action {
-        Install-ProvisioningZed
+        Install-ProvisioningPackage -Id 'ZedIndustries.Zed' -Version (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
     Invoke-ProvisioningIndependentStep -Name 'WinDirStat' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') -Action {
-    Write-Output 'Installing WinDirStat...'
-    Install-ProvisioningWinGetPackage -Role 'WinDirStat' -Id 'WinDirStat.WinDirStat' `
-        -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') `
-        -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI'
-    $winDirStatExecutable = Join-Path $env:ProgramFiles 'WinDirStat\WinDirStat.exe'
-    if (-not (Test-Path -LiteralPath $winDirStatExecutable -PathType Leaf) -or
-        ((Get-Item -LiteralPath $winDirStatExecutable -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "WinDirStat executable is missing or unsafe: $winDirStatExecutable"
-    }
-    Write-Output "WinDirStat ready: $winDirStatExecutable"
+    Install-ProvisioningPackage -Id 'WinDirStat.WinDirStat' -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat')
     }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
     Invoke-ProvisioningIndependentStep -Name 'File Pilot' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot') -Action {
     Write-Output 'Installing File Pilot...'
-    Install-ProvisioningOnlineWinGetPackage -Role 'File Pilot' -Id 'Voidstar.FilePilot' `
-        -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
+    Install-ProvisioningPackage -Id 'Voidstar.FilePilot' -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
     Ensure-ProvisioningFilePilotStartShortcut
     Write-Output 'File Pilot ready: FPilot.exe'
     }
@@ -4060,34 +4212,10 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     Install-ProvisioningGeistMonoNerdFont
 
     Write-Output 'Installing Windows Terminal...'
-    $terminalFrameworkID = 'Microsoft.UI.Xaml.2.8'
-    Install-ProvisioningWinGetPackage -Role 'Windows UI Xaml 2.8' -Id $terminalFrameworkID `
-        -Version (Get-ProvisioningPackageVersion -Id $terminalFrameworkID) `
-        -InstallerType 'msix' -Adapter 'MSIX'
-    $terminalFrameworks = @(Get-AppxPackage -Name $terminalFrameworkID -ErrorAction SilentlyContinue |
-        Where-Object { [string]$_.Architecture -in @('X64', 'Neutral') -and $_.Version -ge [Version]'8.2306.22001.0' })
-    if ($terminalFrameworks.Count -lt 1) {
-        throw 'Windows UI Xaml 2.8 framework registration is missing or too old.'
-    }
-    $terminalPackageFamily = 'Microsoft.WindowsTerminal_8wekyb3d8bbwe'
-    $terminalScope = 'user'
-    if ($WindowsTerminalEdition -eq 'preview') {
-        $terminalPackageFamily = 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe'
-        $terminalScope = ''
-    }
-    Install-ProvisioningWinGetPackage -Role "Windows Terminal $WindowsTerminalEdition" -Id $terminalPackageID `
-        -Version (Get-ProvisioningPackageVersion -Id $terminalPackageID) `
-        -InstallerType 'msix' -Scope $terminalScope -Adapter 'MSIX' -ExecutableName 'wt.exe'
-    $terminalPackageRoot = Join-Path $env:LOCALAPPDATA (Join-Path 'Packages' $terminalPackageFamily)
-    if (-not (Test-Path -LiteralPath $terminalPackageRoot -PathType Container)) {
-        throw "Windows Terminal $WindowsTerminalEdition package was not registered at $terminalPackageRoot"
-    }
-    $terminalCommand = Get-Command 'wt.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $terminalCommand) {
-        throw 'Windows Terminal command is not available on PATH: wt.exe'
-    }
+    Install-ProvisioningPackage -Id 'Microsoft.UI.Xaml.2.8' -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.UI.Xaml.2.8')
+    Install-ProvisioningPackage -Id $terminalPackageID -Version (Get-ProvisioningPackageVersion -Id $terminalPackageID)
     Write-Output 'GeistMono Nerd Font ready: GeistMono Nerd Font'
-    Write-Output "Windows Terminal $WindowsTerminalEdition ready: $($terminalCommand.Source)"
+    Write-Output "Windows Terminal $WindowsTerminalEdition ready"
     }
 }
 
@@ -4097,8 +4225,7 @@ foreach ($package in @($provisioningPackagePlan.Data.additions)) {
         continue
     }
     Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -InputValues ([string]$package.version) -Action {
-        Install-ProvisioningOnlineWinGetPackage -Role "additional WinGet package $packageID" `
-            -Id $packageID -Version ([string]$package.version)
+        Install-ProvisioningPackage -Id $packageID -Version ([string]$package.version)
     }
 }
 

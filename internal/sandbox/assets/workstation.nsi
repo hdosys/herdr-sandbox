@@ -1,8 +1,9 @@
 Unicode true
 RequestExecutionLevel admin
 ManifestDPIAware true
-SetCompressor /SOLID lzma
-SetCompressorDictSize 32
+; Downloaded packages and toolchain inputs are already compressed.
+; Do not spend build or installation time recompressing them.
+SetCompress off
 AllowSkipFiles off
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -32,7 +33,7 @@ Var WasSilent
 Var Passive
 
 !define MUI_WELCOMEPAGE_TITLE "${APP_DISPLAY_NAME} ${BUILD_FRESHNESS}"
-!define MUI_WELCOMEPAGE_TEXT "This PRIVATE installer contains the selected programs and personal configuration captured when it was built. No separate profile file or old computer is needed.$\r$\n$\r$\nWindows 10/11 x64, Internet access and administrator rights are required. Software packages are downloaded during setup. Independent steps continue after failures.$\r$\n$\r$\nDo not publish this installer. Accounts and licences require separate sign-in. Existing Herdr sessions and Windows security policy are not replaced."
+!define MUI_WELCOMEPAGE_TEXT "This PRIVATE installer contains selected configuration and supported authentication captured on the source computer. Possession may grant access to the selected accounts. No source-computer or SSH connection is required.$\r$\n$\r$\nWindows 10/11 x64 and administrator rights are required. Independent steps continue after failures.$\r$\n$\r$\nNever publish this installer. Existing Herdr sessions, Windows protections and audio functionality are preserved."
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipPassivePage
 !insertmacro MUI_PAGE_WELCOME
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipPassivePage

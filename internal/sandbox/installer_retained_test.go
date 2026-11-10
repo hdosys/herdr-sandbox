@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,89 @@ import (
 
 	"herdr-sandbox/internal/installerartifact"
 )
+
+// Explicit developer restart after the user ends/reboots the guest. Reuses the
+// product bootstrap and connection owners without rerunning a known-failing
+// installer while its shared source is being corrected.
+func TestWorkstationStartSandboxTransport(t *testing.T) {
+	if os.Getenv("HERDR_WORKSTATION_START_TRANSPORT") != "1" || IsCurrentWindowsSandbox() {
+		t.Skip("requires explicit host-side transport startup")
+	}
+	installer := os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER")
+	if installer == "" {
+		t.Fatal("an exact installer and sidecar are required to prepare test input")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	release, err := acquireLifecycleLock(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := ensureNoRunningSandbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	configurationRoot, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioning, err := resolveProvisioningReadOnlyAt("", filepath.Join(configurationRoot, applicationName), repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioning.WindowsTerminal, err = detectHostWindowsTerminalConfiguration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioning.Packages, err = resolveWingetPackagePlan(provisioning.PackageConfiguration, provisioning.WindowsTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisioning.InstallerProvisioning, provisioning.InstallerPath = true, installer
+	data, err := defaultDataDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareHostStateDirectories(data); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := prepareRun(ctx, data, provisioning.MemoryMB, provisioning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exited, err := launchSandbox(ctx, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := withSandboxProcessExit(ctx, exited)
+	defer stop()
+	connectable, err := waitForConnectable(ctx, plan.StatusDirectory, os.Stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !connectable.InstallerProvisioning {
+		t.Fatal("bootstrap did not preserve installer-only transport mode")
+	}
+	herdr, err := exec.LookPath("herdr.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := writeRunConnection(plan, connectable, herdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySSH(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	if err := installRunConnectionAlias(plan.DataDirectory, connection); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Transport-only Sandbox ready: %s. No software installation or configuration acceptance claimed.", plan.RunDirectory)
+}
 
 func TestWorkstationStandardUserSandboxProbe(t *testing.T) {
 	run := os.Getenv("HERDR_WORKSTATION_ACCEPTANCE_RUN")

@@ -322,6 +322,7 @@ type hostConfigurationSources struct {
 	WindowsTerminalEdition    string
 	StarshipPreset            string
 	WorkspaceManifest         string
+	StartingDirectory         string
 	PackagePlan               string
 }
 
@@ -720,7 +721,6 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	defer clear(sources.GuestHerdrConfig)
 	expectedGitHubAccounts := 0
-	expectedTradingViewCookies := 0
 	tradingViewCredentialsFound := false
 	if packages.enabled(packageGitHubCLI) && credentialSync.GitHubCLI {
 		authenticationPayload, accountCount, err := exportGitHubCLIAuthentication(ctx, sources.GitHubCLIConfiguration)
@@ -732,16 +732,15 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 		expectedGitHubAccounts = accountCount
 	}
 	if tradingViewEnabled {
-		authenticationPayload, cookieCount, err := emptyTradingViewAuthenticationPayload()
+		authenticationPayload, _, err := emptyTradingViewAuthenticationPayload()
 		if credentialSync.TradingView {
-			authenticationPayload, cookieCount, err = exportTradingViewAuthentication(ctx, sources.TradingViewProfile)
+			authenticationPayload, _, err = exportTradingViewAuthentication(ctx, sources.TradingViewProfile)
 		}
 		if err != nil {
 			return err
 		}
 		sources.TradingViewAuthentication = authenticationPayload
 		defer clear(sources.TradingViewAuthentication)
-		expectedTradingViewCookies = cookieCount
 		authentication, decodeErr := decodeTradingViewAuthentication(authenticationPayload)
 		if decodeErr != nil {
 			return decodeErr
@@ -754,10 +753,6 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	defer clear(archive)
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(archive))
-	expectedCopiedFiles, err := configurationArchivePayloadFileCount(archive)
-	if err != nil {
-		return err
-	}
 	launcherScript := buildDevelopmentConfigurationLauncher(expectedDigest, len(archive))
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcherScript, "transfer development configuration")
 	if err != nil {
@@ -767,42 +762,8 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 9 {
-		return fmt.Errorf("verify guest development configuration: unsupported result schema %d", result.SchemaVersion)
-	}
-	if result.ArchiveSHA256 != expectedDigest {
-		return fmt.Errorf("verify guest development configuration: expected SHA-256 %s but got %q", expectedDigest, result.ArchiveSHA256)
-	}
-	if result.CopiedFiles != expectedCopiedFiles {
-		return fmt.Errorf("verify guest development configuration: copied %d files, expected %d", result.CopiedFiles, expectedCopiedFiles)
-	}
-	expectedTerminalEdition := ""
-	if packages.enabled(terminal.WinGetPackageID) {
-		expectedTerminalEdition = terminal.Edition
-	}
-	if result.WindowsTerminalEdition != expectedTerminalEdition {
-		return fmt.Errorf("verify guest Windows Terminal edition: expected %q but got %q", expectedTerminalEdition, result.WindowsTerminalEdition)
-	}
-	if result.StarshipPreset != sources.StarshipPreset || result.StarshipConfigured != packages.enabled(packageStarship) {
-		return fmt.Errorf("verify guest Starship configuration: preset %q, expected %q", result.StarshipPreset, sources.StarshipPreset)
-	}
-	if packages.enabled(packageOpenCode) && !result.OpenCodePermissionVerified {
-		return errors.New("verify guest OpenCode permissions: selected OpenCode was not verified")
-	}
-	expectedOpenCodeTVControlMCP := tradingViewEnabled && result.OpenCodePermissionVerified
-	if result.OpenCodeTVControlMCPConfigured != expectedOpenCodeTVControlMCP {
-		return fmt.Errorf("verify guest OpenCode TVControl MCP configuration: configured %t, expected %t", result.OpenCodeTVControlMCPConfigured, expectedOpenCodeTVControlMCP)
-	}
-	expectedGitHubVerification := packages.enabled(packageGitHubCLI) && credentialSync.GitHubCLI
-	if result.GitHubAuthenticatedAccounts != expectedGitHubAccounts || result.GitHubAuthenticationVerified != expectedGitHubVerification {
-		return fmt.Errorf("verify guest GitHub CLI authentication: authenticated %d accounts, expected %d; verified %t, expected %t", result.GitHubAuthenticatedAccounts, expectedGitHubAccounts, result.GitHubAuthenticationVerified, expectedGitHubVerification)
-	}
-	if !result.HerdrConfigurationPublished {
-		return errors.New("verify guest Herdr configuration: final config was not published atomically")
-	}
-	expectedTradingViewVerification := tradingViewEnabled && credentialSync.TradingView
-	if result.TradingViewAuthenticatedCookies != expectedTradingViewCookies || result.TradingViewAuthenticationVerified != expectedTradingViewVerification {
-		return fmt.Errorf("verify guest TradingView authentication: imported %d cookies, expected %d; verified %t, expected %t", result.TradingViewAuthenticatedCookies, expectedTradingViewCookies, result.TradingViewAuthenticationVerified, expectedTradingViewVerification)
+	if err := verifyDevelopmentConfigurationResult(archive, result, false); err != nil {
+		return err
 	}
 	return writeCredentialTransferReport(reportOutput, archive, credentialSync, packages.enabled(packageGitHubCLI), expectedGitHubAccounts, tradingViewEnabled, tradingViewCredentialsFound)
 }
@@ -1011,7 +972,7 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	if err := add(sources.PackagePlan, configurationPackagePlanArchivePath); err != nil {
 		return nil, fmt.Errorf("archive resolved WinGet package plan: %w", err)
 	}
-	activeWorkspace := ""
+	activeWorkspace := sources.StartingDirectory
 	if sources.WorkspaceManifest != "" {
 		workspaceManifest, found, err := readBoundedRegularFile(sources.WorkspaceManifest, maximumWorkspaceManifestBytes)
 		if err != nil {

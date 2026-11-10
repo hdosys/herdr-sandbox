@@ -132,9 +132,12 @@ in the global OpenCode configuration, not this repository.
   mounts require an exact read-only selection and remain outside workspace state.
 - Never map host home/app data, credentials, private SSH keys, or a parent broader
   than the exact project or generic folder root selected by the user.
-- Approved coding-agent config/authentication may be streamed only over the
-  verified SSH channel; never stage it in host run state, log it, commit it, or
-  scrape machine-bound keyring credentials.
+- For managed Sandbox transport, approved coding-agent config/authentication is
+  streamed over verified SSH and never staged in host run mappings. The private
+  local installer is the explicitly authorized alternative transport described in
+  `PRODUCT.md` and `SECURITY.md`; its target has no SSH requirement. Reuse the same
+  selected exporters and target transformations. Never log or commit credential
+  payloads or add machine-bound keyring scraping.
 - Only the host SSH public key may enter the guest. Private keys remain on host.
 - After the current user explicitly requests a lifecycle action that closes or
   replaces a ready guest, the product may force-terminate only the exact

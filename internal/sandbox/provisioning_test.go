@@ -372,7 +372,7 @@ func installOpenCodeSandboxConfigurationForTest(t *testing.T, programData string
 	if start < 0 || end <= start {
 		t.Fatal("configuration-sync OpenCode policy helper block was not found")
 	}
-	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeSandboxConfiguration\n"
+	script := string(configurationSyncScript[start:end]) + "\nInstall-OpenCodeManagedConfiguration\n"
 	scriptPath := filepath.Join(t.TempDir(), "install-opencode-allow-all.ps1")
 	writeTestFile(t, scriptPath, script)
 	command := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
@@ -445,7 +445,7 @@ func TestCurrentOpenCodeManagedPluginReplacesTransferredPermissions(t *testing.T
 	if start < 0 || end <= start {
 		t.Fatal("configuration-sync OpenCode verification helper block was not found")
 	}
-	applyScript := string(configurationSyncScript[start:end]) + "\nif (-not (Enable-OpenCodeSandboxConfiguration -RequireExecutable $false)) { throw 'Installed OpenCode was not verified.' }\n"
+	applyScript := string(configurationSyncScript[start:end]) + "\nif (-not (Enable-OpenCodeManagedConfiguration -RequireExecutable $false)) { throw 'Installed OpenCode was not verified.' }\n"
 	applyPath := filepath.Join(root, "apply-opencode-policy.ps1")
 	writeTestFile(t, applyPath, applyScript)
 	apply := hiddenCommand(mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", applyPath)

@@ -53,7 +53,7 @@ func ensureWorkstationSecurity(ctx context.Context, root string) error {
 }
 
 // WorkstationProfile is an explicit portable selection, not a machine backup.
-// Files are private authored configuration; dedicated authentication files are forbidden.
+// Files include the private shared configuration/authentication archive.
 type WorkstationProfile struct {
 	SchemaVersion int                      `json:"schemaVersion"`
 	Packages      []wingetPackagePlanEntry `json:"packages"`
@@ -503,7 +503,17 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 		report.Steps = append(report.Steps, WorkstationStep{"Provisioning process", "failed", "The provisioning process exited unsuccessfully."})
 	}
 	if !errors.Is(ctx.Err(), context.Canceled) {
-		report.Steps = append(report.Steps, importWorkstationSettings(profile.Files)...)
+		for _, file := range profile.Files {
+			if file.Kind == "configuration-archive" {
+				step := WorkstationStep{Name: "Configuration and authentication", Status: "succeeded", Message: "Applied and verified through the shared configuration owner."}
+				if err := applyInstallerConfiguration(ctx, root, file, options.Output); err != nil {
+					step.Status, step.Message = "failed", err.Error()
+				}
+				report.Steps = append(report.Steps, step)
+			} else {
+				report.Steps = append(report.Steps, importWorkstationSettings([]WorkstationFile{file})...)
+			}
+		}
 	}
 	if configurationProblem != "" {
 		report.Steps = append(report.Steps, WorkstationStep{"Configuration source", "failed", configurationProblem})

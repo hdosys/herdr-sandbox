@@ -1105,7 +1105,7 @@ function Invoke-BoundedOpenCode {
     }
 }
 
-if (-not (Enable-OpenCodeSandboxConfiguration -RequireExecutable $true -TradingViewEnabled $true)) {
+if (-not (Enable-OpenCodeManagedConfiguration -RequireExecutable $true -TradingViewEnabled $true)) {
     throw 'OpenCode TVControl MCP configuration was not applied.'
 }
 $mcpList = Invoke-BoundedOpenCode -Arguments @('mcp', 'list') -TimeoutMilliseconds 60000

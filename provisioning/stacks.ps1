@@ -1016,15 +1016,34 @@ function Get-StackRustManifestSnapshot {
         [Parameter(Mandatory = $true)][string]$Target
     )
 
+    $preparedVariable = Get-Variable -Name PreparedInputs -Scope Script -ErrorAction SilentlyContinue
+    $prepared = if ($null -ne $preparedVariable) { $preparedVariable.Value } else { $null }
+    if ($null -ne $prepared) {
+        if ($null -eq $prepared.rust -or [string]$prepared.rust.toolchain -notmatch '^\d+\.\d+\.\d+$' -or
+            ($Channel -cne 'stable' -and $Channel -cne $prepared.rust.toolchain)) { throw 'Selected Rust distribution is not present in the materialized inputs.' }
+        $Channel = [string]$prepared.rust.toolchain
+    }
     $manifestName = "channel-rust-$Channel.toml"
     $manifestURL = "https://static.rust-lang.org/dist/$manifestName"
     $sidecarURL = "$manifestURL.sha256"
-    $sidecarBytes = Invoke-StackRustMetadataDownload -Uri $sidecarURL -MaximumBytes 256
+    if ($null -ne $prepared) {
+        $entry = [string]$prepared.rust.cacheEntryName
+        if ($entry -notmatch '^\d+\.\d+\.\d+-x86_64-pc-windows-msvc-[a-f0-9]{64}$') { throw 'Materialized Rust cache identity is invalid.' }
+        $mirror = Join-Path (Get-ProvisioningPath 'cache\rust') ($entry + '\mirror\dist')
+        Assert-ProvisioningCachePath $mirror
+        $sidecarPath = Join-Path $mirror ($manifestName + '.sha256')
+        if ((Get-Item -LiteralPath $sidecarPath -Force).Length -gt 256) { throw 'Materialized Rust manifest digest is oversized.' }
+        $sidecarBytes = [IO.File]::ReadAllBytes($sidecarPath)
+    } else { $sidecarBytes = Invoke-StackRustMetadataDownload -Uri $sidecarURL -MaximumBytes 256 }
     $utf8 = New-Object Text.UTF8Encoding($false, $true)
     try { $sidecar = $utf8.GetString($sidecarBytes) } catch { throw 'Rust manifest sidecar is not strict UTF-8.' }
     $sidecarMatch = [regex]::Match($sidecar, ('\A(?<hash>[0-9a-f]{64})  ' + [regex]::Escape($manifestName) + '\r?\n\z'))
     if (-not $sidecarMatch.Success) { throw "Rust manifest sidecar is invalid: $sidecarURL" }
-    $manifestBytes = Invoke-StackRustMetadataDownload -Uri $manifestURL -MaximumBytes 4194304
+    if ($null -ne $prepared) {
+        $manifestPath = Join-Path $mirror $manifestName
+        if ((Get-Item -LiteralPath $manifestPath -Force).Length -gt 4194304) { throw 'Materialized Rust manifest is oversized.' }
+        $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+    } else { $manifestBytes = Invoke-StackRustMetadataDownload -Uri $manifestURL -MaximumBytes 4194304 }
     $manifestHash = Get-StackRustSHA256 -Bytes $manifestBytes
     if ($manifestHash -cne $sidecarMatch.Groups['hash'].Value.ToUpperInvariant()) {
         throw "Rust manifest hash mismatch: $manifestURL"
@@ -2346,6 +2365,7 @@ function Install-DotNetStack {
         -Adapter 'Burn' -ExecutableName 'dotnet.exe' `
         -InstallerArguments @('/install', '/quiet', '/norestart') `
         -InstallerSuccessExitCodes @(0, 3010) -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     $dotnetExecutable = 'C:\Program Files\dotnet\dotnet.exe'
     $dotnetExecutableItem = Get-Item -LiteralPath $dotnetExecutable -Force -ErrorAction Stop
     if (($dotnetExecutableItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
@@ -2540,6 +2560,7 @@ function Install-NSISStack {
     Write-Output "Installing NSIS $Version..."
     Install-ProvisioningCachedPackage -Role 'NSIS' -Metadata $metadata -DownloadSource 'WinGet' `
         -Adapter 'NSIS'
+    if (Test-ProvisioningPreparation) { return }
 
     $installRoot = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
     $compiler = Join-Path $installRoot 'makensis.exe'
@@ -2607,6 +2628,7 @@ function Install-GoStack {
     Write-Output 'Installing Go...'
     Install-ProvisioningWinGetPackage -Role 'Go' -Id 'GoLang.Go' -Version $Version -InstallerType 'wix' `
         -Scope 'machine' -Adapter 'MSI' -ExecutableName 'go.exe' -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     $goPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^go version go\d+\.\d+\.\d+ windows/amd64$'
     } else {
@@ -2631,6 +2653,7 @@ function Install-NodeRuntime {
         -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -ExecutableName 'node.exe' `
         -RequireAuthenticodeSignature
     }
+    if (Test-ProvisioningPreparation) { return }
     $nodePattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^v\d+\.\d+\.\d+$'
     } else {
@@ -4136,6 +4159,8 @@ function Get-TradingViewDesktopPackageMetadata {
 }
 
 function Get-TradingViewDesktopPortablePackage {
+    $prepared = Get-ProvisioningPreparedMetadata -Id 'TradingView.TradingViewDesktop' -Architecture 'x64' -InstallerType 'msix'
+    if ($null -ne $prepared) { return [pscustomobject]@{Metadata=$prepared;PayloadPath='';CleanupPath=''} }
     $packageURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
     $downloadDirectory = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
@@ -4287,6 +4312,10 @@ function Install-TradingViewStack {
     }
     if ($null -ne $desktopInstallFailure) { throw $desktopInstallFailure }
     if ($null -ne $desktopCleanupFailure) { throw $desktopCleanupFailure }
+    if (Test-ProvisioningPreparation) {
+        Install-TVControl -NodeVersion $NodeVersion -Version $TVControlVersion
+        return
+    }
 
     $desktopRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
     $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')
@@ -4318,6 +4347,13 @@ function Install-TradingViewStack {
     Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable `
         -ShortcutArguments '--remote-debugging-port=9222'
 
+    Install-TVControl -NodeVersion $NodeVersion -Version $TVControlVersion
+    Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
+}
+
+function Install-TVControl {
+    param([string]$NodeVersion = '', [string]$Version = '')
+    $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $Version
     Install-NodeRuntime -Version $NodeVersion
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
@@ -4442,7 +4478,6 @@ function Install-TradingViewStack {
         throw 'TVControl CLI help output is unexpected.'
     }
 
-    Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
     Write-Output "TVControl ready: $TVControlVersion"
     Write-Output 'TradingView remains stopped after provisioning. Its managed shortcut and TVControl launch command enable local CDP on port 9222 when explicitly launched.'
 }
@@ -4509,6 +4544,7 @@ function Install-PythonStack {
     Install-ProvisioningCachedPackage -Role 'Python' -Metadata $pythonMetadata -DownloadSource 'WinGet' `
         -Adapter 'Burn' -ExecutableName 'python.exe' -CommandSourceExclusion '*\Microsoft\WindowsApps\python.exe' `
         -DeferCommandReadiness -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     $Version = [string]$pythonMetadata.Version
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
     $Series = [string]$pythonSelection.Series
@@ -4674,6 +4710,7 @@ function Install-ZigStack {
     Install-ProvisioningWinGetPackage -Role 'Zig' -Id 'zig.zig' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'zig.exe' `
         -PortableVersionArguments @('version')
+    if (Test-ProvisioningPreparation) { return }
     $zigPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^\d+\.\d+\.\d+$'
     } else {
@@ -4690,6 +4727,39 @@ function Install-ZigStack {
     [Environment]::SetEnvironmentVariable('ZIG_LOCAL_CACHE_DIR', $env:ZIG_LOCAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
     [Environment]::SetEnvironmentVariable('ZIG_GLOBAL_CACHE_DIR', $env:ZIG_GLOBAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
     Write-Output "Zig ready: $zigVersion"
+}
+
+function Copy-StackRustDistributionMirror {
+    param([Parameter(Mandatory=$true)]$Distribution, [Parameter(Mandatory=$true)][string]$Destination)
+    $cacheRoot = Get-ProvisioningPath 'cache\rust'
+    $entry = Join-Path $cacheRoot ([string]$Distribution.CacheEntryName)
+    New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Assert-ProvisioningCachePath $cacheRoot
+    Assert-ProvisioningPathAncestors $Destination
+    $lock = [IO.File]::Open((Join-Path $cacheRoot '.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try {
+        $hit = Test-StackRustMirrorCacheEntry -EntryDirectory $entry -Payloads @($Distribution.Payloads) -Metadata $Distribution.Metadata
+        foreach ($payload in @($Distribution.Payloads)) {
+            $path = Join-Path $Destination $payload.RelativePath
+            New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+            if ($hit) {
+                Copy-Item -LiteralPath (Join-Path (Join-Path $entry 'mirror') $payload.RelativePath) -Destination $path
+            } elseif ($payload.RelativePath -ceq $Distribution.ManifestRelativePath) {
+                [IO.File]::WriteAllBytes($path,[byte[]]$Distribution.ManifestBytes)
+            } elseif ($payload.RelativePath -ceq $Distribution.SidecarRelativePath) {
+                [IO.File]::WriteAllBytes($path,[byte[]]$Distribution.SidecarBytes)
+            } else {
+                Invoke-WebRequest -Uri $payload.Url -OutFile $path -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop
+            }
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $payload.Sha256) { throw 'Rust distribution mirror hash mismatch.' }
+        }
+        Assert-StackRustMirrorPayloads -MirrorRoot $Destination -Payloads @($Distribution.Payloads) -Metadata $Distribution.Metadata
+        if (-not $hit) {
+            Publish-StackRustMirrorCacheEntry -PackageRoot $cacheRoot -EntryDirectory $entry -GuestMirrorRoot $Destination -Payloads @($Distribution.Payloads) -Metadata $Distribution.Metadata
+        }
+        Write-Output ('Rust distribution materialized: ' + $Distribution.Toolchain)
+    } finally { $lock.Dispose() }
 }
 
 function Install-RustMSVCStack {
@@ -4732,6 +4802,15 @@ $rustDistribution = Resolve-StackRustDistribution -RequestedChannel $requestedCh
 $Toolchain = [string]$rustDistribution.Toolchain
 $null = Get-ProvisioningToolVersion -Tool 'rust-toolchain' -Requested $Toolchain
 $rustToolchain = "$Toolchain-$rustTriple"
+if (Test-ProvisioningPreparation) {
+    Install-ProvisioningWinGetPackage -Role 'Rustup' -Id 'Rustlang.Rustup' -InstallerType 'exe' `
+        -Adapter 'Rustup' -InstallerArguments @('-y','-q','--no-modify-path','--default-host',$rustTriple,'--default-toolchain','none','--profile','minimal')
+    $destination = Join-Path (Get-ProvisioningPath 'staging\rust-mirror') ([Guid]::NewGuid().ToString('N'))
+    try { Copy-StackRustDistributionMirror -Distribution $rustDistribution -Destination $destination }
+    finally { if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force } }
+    $script:PreparedRustDistribution = [ordered]@{toolchain=$Toolchain;cacheEntryName=$rustDistribution.CacheEntryName}
+    return
+}
 Write-Output "Installing Rust $Toolchain for MSVC..."
 $env:RUSTUP_HOME = Get-ProvisioningUserPath 'toolchains\rustup'
 $env:CARGO_HOME = Get-ProvisioningUserPath 'toolchains\cargo'
@@ -4773,49 +4852,8 @@ New-Item -ItemType Directory -Path $rustCacheRoot -Force | Out-Null
 Assert-ProvisioningCachePath -Path $rustCacheRoot
 New-Item -ItemType Directory -Path $rustGuestMirror -Force | Out-Null
 try {
-    $rustLockPath = Join-Path $rustCacheRoot '.lock'
-    Assert-ProvisioningCachePath -Path $rustLockPath
-    $rustLock = [IO.File]::Open($rustLockPath, [IO.FileMode]::OpenOrCreate,
-        [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    if (Test-Path -LiteralPath $rustEntryDirectory) {
-        Assert-ProvisioningCachePath -Path $rustEntryDirectory
-    }
-    $rustCacheHit = Test-StackRustMirrorCacheEntry -EntryDirectory $rustEntryDirectory `
-        -Payloads $rustPayloads -Metadata $rustCacheMetadata
-    if ($rustCacheHit) {
-        Write-Output "Rust distribution mirror cache hit: $Toolchain"
-        $cachedMirrorRoot = Join-Path $rustEntryDirectory 'mirror'
-        foreach ($payload in $rustPayloads) {
-            $source = Join-Path $cachedMirrorRoot $payload.RelativePath
-            $destination = Join-Path $rustGuestMirror $payload.RelativePath
-            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-            Copy-Item -LiteralPath $source -Destination $destination -Force
-        }
-        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads `
-            -Metadata $rustCacheMetadata
-        $rustMirrorRoot = $rustGuestMirror
-    } else {
-        Write-Output "Rust distribution mirror cache miss: $Toolchain"
-        foreach ($payload in $rustPayloads) {
-            $destination = Join-Path $rustGuestMirror $payload.RelativePath
-            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-            if ([string]$payload.RelativePath -ceq [string]$rustDistribution.ManifestRelativePath) {
-                [IO.File]::WriteAllBytes($destination, [byte[]]$rustDistribution.ManifestBytes)
-            } elseif ([string]$payload.RelativePath -ceq [string]$rustDistribution.SidecarRelativePath) {
-                [IO.File]::WriteAllBytes($destination, [byte[]]$rustDistribution.SidecarBytes)
-            } else {
-                Invoke-WebRequest -Uri ([string]$payload.Url) -OutFile $destination `
-                    -UseBasicParsing -ErrorAction Stop
-            }
-            $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToUpperInvariant()
-            if ($actualHash -cne $payload.Sha256) {
-                throw "Downloaded Rust mirror payload hash mismatch: $($payload.RelativePath)"
-            }
-        }
-        Assert-StackRustMirrorPayloads -MirrorRoot $rustGuestMirror -Payloads $rustPayloads `
-            -Metadata $rustCacheMetadata
-        $rustMirrorRoot = $rustGuestMirror
-    }
+    Copy-StackRustDistributionMirror -Distribution $rustDistribution -Destination $rustGuestMirror
+    $rustMirrorRoot = $rustGuestMirror
 
     $rustDistServer = ([Uri][IO.Path]::GetFullPath($rustMirrorRoot)).AbsoluteUri.TrimEnd('/')
     $rustDistURI = [Uri]$rustDistServer
@@ -4848,16 +4886,6 @@ try {
     Invoke-ProvisioningNative -Role 'Rustup automatic toolchain install disable' -FilePath 'rustup.exe' `
         -ArgumentList @('set', 'auto-install', 'disable') | Out-Null
 
-    if (-not $rustCacheHit) {
-        Publish-StackRustMirrorCacheEntry -PackageRoot $rustCacheRoot -EntryDirectory $rustEntryDirectory `
-            -GuestMirrorRoot $rustGuestMirror -Payloads $rustPayloads -Metadata $rustCacheMetadata
-    }
-    foreach ($directory in @(Get-ChildItem -LiteralPath $rustCacheRoot -Directory -Force)) {
-        if ($directory.Name -ine $rustEntryName) {
-            Assert-ProvisioningCacheTree -Path $directory.FullName
-            Remove-Item -LiteralPath $directory.FullName -Recurse -Force
-        }
-    }
     $rustSetupSucceeded = $true
 } catch {
     $rustPrimaryFailure = $_
@@ -4916,6 +4944,7 @@ function Install-CargoNextest {
     Write-Output 'Installing Cargo Nextest...'
     Install-ProvisioningWinGetPackage -Role 'Cargo Nextest' -Id 'nextest.cargo-nextest' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'cargo-nextest.exe'
+    if (Test-ProvisioningPreparation) { return }
     $nextestPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^cargo-nextest \d+\.\d+\.\d+ '
     } else {
@@ -4937,6 +4966,7 @@ function Install-Just {
     Write-Output 'Installing Just...'
     Install-ProvisioningWinGetPackage -Role 'Just' -Id 'Casey.Just' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'just.exe'
+    if (Test-ProvisioningPreparation) { return }
     $justPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^just \d+\.\d+\.\d+$'
     } else {

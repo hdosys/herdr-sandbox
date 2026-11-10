@@ -8,7 +8,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 - **Product path:** `cmd/sandbox` owns OS process wiring and exit status, `internal/cli` owns command flow and dependency composition, and `internal/sandbox` owns Windows Sandbox planning and the concrete native workflow.
 - **Host and guest split:** Go owns host contracts and direct process control. Windows PowerShell 5.1 is the exclusive provisioning interpreter. Installed PowerShell 7 is interactive guest tooling.
-- **Data boundary:** Sandbox host mappings are explicit and narrow; its normal configuration/credential transfer uses verified SSH. Personal workstation installers embed selected authored configuration, excluding authentication stores, private keys and Git history. They and their staged copies are private artifacts, not public release inputs.
+- **Data boundary:** Sandbox host mappings are explicit and narrow; its normal configuration/credential transport uses verified SSH. The local installer transports the same selected configuration and supported authentication through a private artifact instead. Both delivery paths consume the same export, transformation and effect owners. SSH is not available or required on the installer's target; the test harness alone uses it. Private installers and their staged copies are never public release inputs. See `PRODUCT.md` for outcome and exclusion contracts.
 - **State boundary:** Per-run state is ephemeral and app-owned. Only the optional Tailscale and mobile SSH identities are durable credential state, encrypted for the current host user with Windows DPAPI.
 - **Provisioning boundary:** Built-in Base and stack scripts, one global `user.ps1`, and the nearest project `.herdr-sandbox\provision.ps1` are the direct provisioning surfaces. No generic provider or plugin system exists.
 - **Delivery and evidence:** `cmd/task` owns recurring build and verification commands, `packaging/windows/installer.nsi` owns installer lifecycle, and native Windows Sandbox gates own environment-sensitive acceptance.
@@ -64,13 +64,14 @@ This file owns stable technical design: command ownership, host/guest boundaries
   installed background application. `package-workstation` owns the distinct
   canonical installer and provenance JSON; packaging preserves both products'
   canonical candidates. Existing Sandbox installer lifecycle remains unchanged.
-- Packaging captures `personal-profile.json` through the existing CLI/export and
-  selected-source owners in task-owned temporary storage outside the checkout.
-  NSIS embeds it and supplies it to the normal setup path by default. The sidecar
-  binds its SHA-256, configuration count, package IDs and source boundary without
-  disclosing values. Protected `selection.json` retains the exact snapshot rather
-  than a pointer to NSIS's temporary extraction directory. No cache payload or
-  credential collection is added. The public Sandbox package does not include it.
+- Packaging uses the existing selected configuration/credential archive owners,
+  not a separate authored-file-only approximation. The installer applies that
+  archive through the shared local transformation owner. Cached payloads retain
+  the existing identity, digest and installation-adapter contracts. Transport
+  selection must not change package execution or configuration semantics.
+  Private staging stays outside the checkout; sidecars bind identities and counts
+  without values. Protected resume state retains the snapshot rather than a
+  pointer to temporary extraction files. Public Sandbox packaging excludes it.
 - `workstation_build.go` owns saved personal installations and the single runtime
   NSIS builder. The template is embedded in the application; installed payload
   files supply its runtime, so no source checkout or Go compiler is needed.

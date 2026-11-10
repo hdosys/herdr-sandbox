@@ -34,11 +34,19 @@ function Test-InstallerEffects {
     $wingetVersion = ''
     try { $wingetVersion = Invoke-InstallerProbe 'winget.exe' @('--version'); $checks.Add([ordered]@{name='WinGet command';passed=$true}) }
     catch { $checks.Add([ordered]@{name='WinGet command';passed=$false}) }
+    $portableCommands = @{'Starship.Starship'='starship.exe';'junegunn.fzf'='fzf.exe';'BurntSushi.ripgrep.MSVC'='rg.exe';'rhysd.actionlint'='actionlint.exe';'Anthropic.ClaudeCode'='claude.exe';'GitHub.Copilot'='copilot.exe';'OpenAI.Codex'='codex.exe'}
     foreach ($package in @($Profile.packages)) {
         $passed = $false
         try {
             if ($package.id -eq 'Anomaly.OpenCode') {
                 $passed = (Invoke-InstallerProbe 'opencode.exe' @('--version')).Trim() -match '^1\.\d+\.\d+$'
+            } elseif ($portableCommands.ContainsKey([string]$package.id)) {
+                $arguments = if ($package.id -eq 'rhysd.actionlint') { @('-version') } else { @('--version') }
+                $passed = -not [string]::IsNullOrWhiteSpace((Invoke-InstallerProbe $portableCommands[[string]$package.id] $arguments))
+            } elseif ($package.id -eq 'Voidstar.FilePilot') {
+                $command = Get-Command 'FPilot.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+                $item = Get-Item -LiteralPath $command.Source -Force
+                $passed = -not $item.PSIsContainer -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
             } else {
                 $null = Invoke-InstallerProbe 'winget.exe' @('list','--id',[string]$package.id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity')
                 $passed = $true
@@ -138,6 +146,11 @@ function Test-InstallerEffects {
     $configurationPassed=$true
     foreach ($file in @($Profile.files)) {
         try {
+            if ($file.kind -eq 'configuration-archive') {
+                $result = [IO.File]::ReadAllText((Join-Path $StateRoot 'configuration-result.json')) | ConvertFrom-Json
+                if ($result.schemaVersion -ne 9 -or $result.archiveSha256 -cne $file.sha256 -or -not $result.herdrConfigurationPublished) { throw 'Shared configuration publication did not match the private snapshot.' }
+                continue
+            }
             if (-not $roots.ContainsKey([string]$file.kind)) {throw 'Unsupported configuration destination.'}
             $path=Join-Path $roots[[string]$file.kind] ([string]$file.path).Replace('/','\')
             $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop

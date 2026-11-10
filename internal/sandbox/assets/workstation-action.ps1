@@ -45,69 +45,18 @@ foreach ($name in @('RUSTUP_HOME','CARGO_HOME','RUSTUP_AUTO_INSTALL','UV_CACHE_D
     if ($null -ne $value) { [Environment]::SetEnvironmentVariable($name, $value, 'Process') }
 }
 
-function Install-WorkstationHerdr {
-    $existing = Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -ne $existing) {
-        $identity = (Invoke-ProvisioningNative -Role 'Existing Herdr identity' -FilePath $existing.Source -ArgumentList @('--version') -TimeoutSeconds 15) -join ' '
-        if ($identity -notmatch '^herdr-ext ') { throw 'Existing Herdr is not Herdr Extended; it was preserved, not replaced.' }
-        Write-Output 'Existing Herdr Extended retained without update, restart or server mutation.'
-        return
-    }
-    Install-ProvisioningOnlineWinGetPackage -Role 'Herdr Extended' -Id 'hdosys.herdr-win' -AsStandardUser
-    Assert-ProvisioningCommand -Role 'Herdr Extended' -Name 'herdr.exe' -VersionArguments @('--version') -ExpectedPattern '^herdr-ext ' | Out-Null
-}
-
-function Assert-WorkstationWritablePath {
-    param([string]$Path)
-    for ($current = $Path; $current; $current = Split-Path -Parent $current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw [Security.SecurityException]::new("Configuration path is a reparse point: $current") }
-        }
-    }
-}
-
-function Set-WorkstationShell {
-    $directory = Get-ProvisioningPath 'shell'
-    Assert-WorkstationWritablePath $directory
-    New-Item -ItemType Directory -Path $directory -Force | Out-Null
-    $initialization = Join-Path $directory 'initialize.ps1'
-    Assert-WorkstationWritablePath $initialization
-    $contents = @'
-$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
-if (Get-Command starship.exe -ErrorAction SilentlyContinue) { Invoke-Expression (& starship.exe init powershell) }
-'@
-    [IO.File]::WriteAllText($initialization, $contents, (New-Object Text.UTF8Encoding($false)))
-    $profileRoot = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell'
-    Assert-WorkstationWritablePath $profileRoot
-    New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
-    $path = Join-Path $profileRoot 'profile.ps1'
-    Assert-WorkstationWritablePath $path
-    $line = ". '" + $initialization.Replace("'", "''") + "'"
-    if (Test-Path -LiteralPath $path) {
-        $item = Get-Item -LiteralPath $path -Force
-        if ($item.PSIsContainer -or $item.Length -gt 1048576) { throw 'Existing PowerShell profile is unsafe; it was preserved.' }
-        $existing = [IO.File]::ReadAllText($path)
-        if ($existing.Trim() -ceq $line) { return }
-        throw 'Existing PowerShell profile was preserved. Add the managed shell loader explicitly if desired.'
-    } else { $contents = $line + "`r`n" }
-    [IO.File]::WriteAllText($path, $contents, (New-Object Text.UTF8Encoding($false)))
-}
-
 switch ($Action) {
     'desktop' {
-        $changed = Set-ProvisioningDesktopUsability
-        Write-Output ('Desktop preferences verified; changed: ' + $changed + '. Some shell visuals apply at the next sign-in. Audio, security and Windows Update settings were not changed.')
+        & $BasePath -Phase Registry -PreserveWindowsProtections -AudioOutputEnabled -AudioInputEnabled -ProcessOwnerPath $nativeProcessOwner
     }
     'winget' {
         & (Join-Path $nativeInputDirectory 'workstation-winget.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'WinGet prerequisite failed.' }
     }
     'package' {
-        if ($PackageID -ieq 'hdosys.herdr-win') { Install-WorkstationHerdr }
-        else { Install-ProvisioningOnlineWinGetPackage -Role $PackageID -Id $PackageID -Version $PackageVersion }
+        Install-ProvisioningPackage -Id $PackageID -Version $PackageVersion
     }
-    'shell' { Set-WorkstationShell }
+    'shell' { Initialize-ProvisioningPowerShellProfile }
     'nushell' { Initialize-ProvisioningNushell }
     'vs-layout' {
         Invoke-ProvisioningNative -Role 'Visual Studio layout preparation' -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(

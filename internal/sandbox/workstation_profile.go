@@ -36,6 +36,8 @@ func allowedWorkstationFile(kind, relative string) bool {
 		}
 	}
 	switch kind {
+	case "configuration-archive":
+		return relative == "configuration.zip"
 	case "herdr":
 		return relative == "config.toml"
 	case "github-cli":
@@ -153,7 +155,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 				profile.Files, err = exportWorkstationSettings(ctx, roots)
 			}
 		} else {
-			profile.Files, err = selectedInstallerSettings(ctx, selection)
+			profile.Files, err = captureInstallerConfiguration(ctx, selection, slices.Contains(profile.Stacks, "tradingview"))
 		}
 		if err != nil {
 			return err
@@ -163,7 +165,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 				clear(file.Data)
 			}
 		}()
-		fmt.Fprintln(output, "Private export: authored settings/scripts may contain inline private values. Known authentication files, SSH keys, Git history and project data are excluded. Do not publish this profile.")
+		fmt.Fprintln(output, "PRIVATE export includes selected configuration and supported authentication. Possession may grant account access. Never publish the profile or installer.")
 	}
 	data, err := json.Marshal(profile)
 	if err != nil {

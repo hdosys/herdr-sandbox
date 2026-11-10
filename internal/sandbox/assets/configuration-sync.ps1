@@ -1,3 +1,4 @@
+param([switch]$LocalTarget)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $archive = [string]$env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE
@@ -33,6 +34,39 @@ function Assert-ConfigurationDestinationPath {
         $current = $parent.TrimEnd('\')
     }
 }
+function Set-TerminalTargetProfiles {
+    param([Parameter(Mandatory=$true)][string]$Path, [Parameter(Mandatory=$true)][string]$StartingDirectory)
+    Assert-ConfigurationDestinationPath -Path $Path
+    $state = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    $profiles = @()
+    if ($null -ne $state.PSObject.Properties['profiles']) {
+        if ($null -ne $state.profiles.PSObject.Properties['list']) {
+            $profiles = @($state.profiles.list)
+            if ($null -ne $state.profiles.PSObject.Properties['defaults']) {
+                $state.profiles.defaults | Add-Member -NotePropertyName startingDirectory -NotePropertyValue $StartingDirectory -Force
+            }
+        } else { $profiles = @($state.profiles) }
+    }
+    foreach ($profile in $profiles) {
+        $profile | Add-Member -NotePropertyName startingDirectory -NotePropertyValue $StartingDirectory -Force
+        $command = if ($null -ne $profile.PSObject.Properties['commandline']) { [string]$profile.commandline } else { '' }
+        $shell = ''
+        $commandParts = [regex]::Match($command, '^\s*(?:"(?<executable>[^"]+)"|(?<executable>\S+))(?<arguments>.*)$')
+        if ($commandParts.Success) {
+            $executableName = [IO.Path]::GetFileName($commandParts.Groups['executable'].Value).ToLowerInvariant()
+            if ($executableName -in @('nu','nu.exe')) { $shell = 'nu.exe' }
+            elseif ($executableName -in @('pwsh','pwsh.exe')) { $shell = 'pwsh.exe' }
+            elseif ($executableName -in @('powershell','powershell.exe')) { $shell = 'powershell.exe' }
+        }
+        if ($shell) {
+            $resolved = Get-Command $shell -CommandType Application -ErrorAction Stop | Select-Object -First 1
+            Assert-ConfigurationDestinationPath -Path $resolved.Source
+            $profile | Add-Member -NotePropertyName commandline -NotePropertyValue ('"' + $resolved.Source + '"' + $commandParts.Groups['arguments'].Value) -Force
+        }
+    }
+    [IO.File]::WriteAllText($Path, ($state | ConvertTo-Json -Depth 64), $script:Utf8NoBom)
+}
+
 function Copy-VerifiedConfigurationFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -480,7 +514,9 @@ function Get-OpenCodeTVControlMCPConfiguration {
         throw 'OpenCode TVControl MCP requires an absolute node.exe command.'
     }
     $nodePath = [IO.Path]::GetFullPath([string]$nodeCommand.Source)
-    $packageDirectory = 'C:\HerdrSandbox\tools\tvcontrol\node_modules\@ferroxlabs\tvcontrol'
+    $provisioningRoot = [string]$env:HERDR_PROVISIONING_ROOT
+    if ([string]::IsNullOrEmpty($provisioningRoot)) { $provisioningRoot = 'C:\HerdrSandbox' }
+    $packageDirectory = Join-Path $provisioningRoot 'tools\tvcontrol\node_modules\@ferroxlabs\tvcontrol'
     $packagePath = Join-Path $packageDirectory 'package.json'
     $serverPath = Join-Path $packageDirectory 'src\server.js'
     foreach ($path in @($nodePath, $packagePath, $serverPath)) {
@@ -514,19 +550,20 @@ function Get-OpenCodeTVControlMCPConfiguration {
         }
     }
 }
-function Install-OpenCodeSandboxConfiguration {
-    param([bool]$TradingViewEnabled = $false)
+function Install-OpenCodeManagedConfiguration {
+    param([bool]$TradingViewEnabled = $false, [bool]$SandboxPermissions = $true)
     $programData = [string]$env:ProgramData
     if ([string]::IsNullOrWhiteSpace($programData) -or -not [IO.Path]::IsPathRooted($programData)) {
         throw 'OpenCode managed policy requires an absolute ProgramData path.'
     }
-    $permissions = Get-OpenCodeAllowAllPermissions
+    $permissions = if ($SandboxPermissions) { Get-OpenCodeAllowAllPermissions } else { $null }
     $expectedTVControlMCP = $null
     if ($TradingViewEnabled) {
         $expectedTVControlMCP = Get-OpenCodeTVControlMCPConfiguration
     }
-    $managedDirectory = Join-Path $programData 'opencode'
-    $managedPluginPath = Join-Path $managedDirectory 'sandbox-allow-all.js'
+    $managedDirectory = if ($SandboxPermissions) { Join-Path $programData 'opencode' } else { Join-Path $env:USERPROFILE '.config\opencode\plugins' }
+    $managedPluginName = if ($SandboxPermissions) { 'sandbox-allow-all.js' } else { 'herdr-provisioning.js' }
+    $managedPluginPath = Join-Path $managedDirectory $managedPluginName
     $managedConfigPath = Join-Path $managedDirectory 'opencode.json'
     foreach ($path in @($managedPluginPath, $managedConfigPath)) {
         Assert-ConfigurationDestinationPath -Path $path
@@ -534,7 +571,7 @@ function Install-OpenCodeSandboxConfiguration {
     New-Item -ItemType Directory -Path $managedDirectory -Force | Out-Null
 
     $managedPluginURI = 'file:///' + $managedPluginPath.Replace('\', '/')
-    $allowAllJSON = $permissions | ConvertTo-Json -Compress
+    $allowAllJSON = if ($SandboxPermissions) { $permissions | ConvertTo-Json -Compress } else { 'null' }
     $tvControlMCPJSON = 'null'
     if ($null -ne $expectedTVControlMCP) {
         $tvControlMCPJSON = $expectedTVControlMCP | ConvertTo-Json -Depth 8 -Compress
@@ -546,9 +583,11 @@ const allowAll = () => ({ ...permissions })
 
 export default async () => ({
   config: async (config) => {
-    config.permission = allowAll()
-    for (const agent of Object.values(config.agent ?? {})) {
-      agent.permission = allowAll()
+    if (permissions) {
+      config.permission = allowAll()
+      for (const agent of Object.values(config.agent ?? {})) {
+        agent.permission = allowAll()
+      }
     }
     if (tvcontrol) {
       config.mcp = { ...(config.mcp ?? {}), tvcontrol: { ...tvcontrol, command: [...tvcontrol.command], environment: { ...tvcontrol.environment } } }
@@ -556,6 +595,15 @@ export default async () => ({
   },
 })
 "@
+    if (-not $SandboxPermissions) {
+        # The copied user configuration retains its permission policy. Only the
+        # existing target-derived integration is supplied through the user plugin.
+        if ($TradingViewEnabled) {
+            [IO.File]::WriteAllText($managedPluginPath, $managedPlugin, (New-Object Text.UTF8Encoding($false)))
+            if ([IO.File]::ReadAllText($managedPluginPath) -cne $managedPlugin) { throw 'Local OpenCode integration publication failed.' }
+        }
+        return
+    }
     $managedConfigState = [ordered]@{
         '$schema' = 'https://opencode.ai/config.json'
         permission = $permissions
@@ -646,10 +694,11 @@ function Invoke-OpenCodeJSON {
         throw "$Role returned invalid JSON."
     }
 }
-function Assert-OpenCodeSandboxConfiguration {
-    param([bool]$TradingViewEnabled = $false)
+function Assert-OpenCodeManagedConfiguration {
+    param([bool]$TradingViewEnabled = $false, [bool]$SandboxPermissions = $true)
     $allowAllPermissions = Get-OpenCodeAllowAllPermissions
     $resolvedConfig = Invoke-OpenCodeJSON -Role 'OpenCode effective configuration inspection' -Arguments @('debug', 'config')
+    if ($SandboxPermissions) {
     $resolvedPermissionNames = @($resolvedConfig.permission.PSObject.Properties.Name | Sort-Object)
     $expectedPermissionNames = @($allowAllPermissions.Keys | Sort-Object)
     if (($resolvedPermissionNames -join '|') -cne ($expectedPermissionNames -join '|')) {
@@ -661,6 +710,7 @@ function Assert-OpenCodeSandboxConfiguration {
             throw "OpenCode effective permission is not allow: $permissionName"
         }
     }
+    }
     if ($TradingViewEnabled) {
         $expectedTVControlMCP = Get-OpenCodeTVControlMCPConfiguration
         if ($null -eq $resolvedConfig.mcp -or
@@ -671,7 +721,7 @@ function Assert-OpenCodeSandboxConfiguration {
         }
     }
     # Validate the policy we supply, not OpenCode's internal agent registry.
-    foreach ($agent in $resolvedConfig.agent.PSObject.Properties) {
+    if ($SandboxPermissions) { foreach ($agent in $resolvedConfig.agent.PSObject.Properties) {
         if ($agent.Value.disable -eq $true) { continue }
         $permissionNames = @($agent.Value.permission.PSObject.Properties.Name | Sort-Object)
         if (($permissionNames -join '|') -cne ($expectedPermissionNames -join '|')) {
@@ -682,14 +732,15 @@ function Assert-OpenCodeSandboxConfiguration {
                 throw "OpenCode configured agent permission is not allow: $($agent.Name)/$permissionName"
             }
         }
-    }
+    } }
 }
-function Enable-OpenCodeSandboxConfiguration {
+function Enable-OpenCodeManagedConfiguration {
     param(
         [Parameter(Mandatory = $true)][bool]$RequireExecutable,
-        [bool]$TradingViewEnabled = $false
+        [bool]$TradingViewEnabled = $false,
+        [bool]$SandboxPermissions = $true
     )
-    Install-OpenCodeSandboxConfiguration -TradingViewEnabled $TradingViewEnabled
+    Install-OpenCodeManagedConfiguration -TradingViewEnabled $TradingViewEnabled -SandboxPermissions $SandboxPermissions
     $openCodeCommand = Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $openCodeCommand) {
         if ($RequireExecutable) {
@@ -698,7 +749,7 @@ function Enable-OpenCodeSandboxConfiguration {
         return $false
     }
     $script:OpenCodeCommand = [string]$openCodeCommand.Source
-    Assert-OpenCodeSandboxConfiguration -TradingViewEnabled $TradingViewEnabled
+    Assert-OpenCodeManagedConfiguration -TradingViewEnabled $TradingViewEnabled -SandboxPermissions $SandboxPermissions
     return $true
 }
 function Test-TradingViewJSONInteger {
@@ -878,11 +929,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $openCodeInstalled = $null -ne (Get-Command 'opencode.exe' -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1)
     if ([bool]$agentSync.opencode -or $openCodeEnabled -or $openCodeInstalled) {
-        [Console]::Error.WriteLine('[config-sync] enforce-opencode-allow-all')
-        $openCodePermissionVerified = [bool](Enable-OpenCodeSandboxConfiguration `
+        [Console]::Error.WriteLine('[config-sync] apply-opencode-integration')
+        $openCodeConfigurationVerified = [bool](Enable-OpenCodeManagedConfiguration `
             -RequireExecutable ($openCodeEnabled -or $openCodeInstalled) `
-            -TradingViewEnabled $tradingViewStackEnabled)
-        $openCodeTVControlMCPConfigured = $openCodePermissionVerified -and $tradingViewStackEnabled
+            -TradingViewEnabled $tradingViewStackEnabled -SandboxPermissions (-not $LocalTarget))
+        $openCodePermissionVerified = $openCodeConfigurationVerified -and -not $LocalTarget
+        $openCodeTVControlMCPConfigured = $openCodeConfigurationVerified -and $tradingViewStackEnabled
     }
 
     if ([bool]$agentSync.claudeCode) {
@@ -1054,9 +1106,10 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
 
         [Console]::Error.WriteLine('[config-sync] apply-git-safe-directories')
         $workspaceManifestPath = Join-Path $expanded 'herdr-sandbox\workspaces.json'
-        if (-not (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
+        if (-not $LocalTarget -and -not (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
             throw 'Workspace manifest is missing from the configuration archive.'
         }
+        if (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf) {
         $workspaceManifest = [IO.File]::ReadAllText($workspaceManifestPath) | ConvertFrom-Json
         $manifestProperties = @($workspaceManifest.PSObject.Properties.Name | Sort-Object)
         $workspaceEntries = @($workspaceManifest.workspaces)
@@ -1101,6 +1154,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $verifiedSafeDirectories = @(& $gitCommand 'config' '--global' '--get-all' 'safe.directory')
         if ($LASTEXITCODE -ne 0 -or ($verifiedSafeDirectories -join '|') -cne ($safeDirectories -join '|')) {
             throw 'Git safe-directory verification failed after configuration copy.'
+        }
         }
     }
 
@@ -1522,14 +1576,24 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         throw "Selected Windows Terminal package is not registered in the guest: $terminalPackageFamily"
     }
     $settingsSource = Join-Path $terminalSource 'settings.json'
+    $targetStartingDirectory = $env:USERPROFILE
     if (Test-Path -LiteralPath $settingsSource -PathType Leaf) {
         $terminalLocalState = Join-Path $terminalPackageRoot 'LocalState'
-        Copy-VerifiedConfigurationFile -Source $settingsSource -Destination (Join-Path $terminalLocalState 'settings.json')
+        $terminalSettingsDestination = Join-Path $terminalLocalState 'settings.json'
+        Copy-VerifiedConfigurationFile -Source $settingsSource -Destination $terminalSettingsDestination
+        $terminalSettings = [IO.File]::ReadAllText($terminalSettingsDestination) | ConvertFrom-Json
+        $targetStartingDirectory = [Environment]::ExpandEnvironmentVariables([string]$terminalSettings.profiles.defaults.startingDirectory)
+        if (-not (Test-Path -LiteralPath $targetStartingDirectory -PathType Container)) { throw 'Transformed Windows Terminal starting directory does not exist.' }
+        Set-TerminalTargetProfiles -Path $terminalSettingsDestination -StartingDirectory $targetStartingDirectory
     }
     $fragmentsSource = Join-Path $terminalSource 'Fragments'
     if (Test-Path -LiteralPath $fragmentsSource -PathType Container) {
         $fragmentsDestination = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragments'
         Copy-VerifiedConfigurationTree -Source $fragmentsSource -Destination $fragmentsDestination
+        foreach ($fragment in @(Get-ChildItem -LiteralPath $fragmentsSource -Filter '*.json' -File -Recurse)) {
+            $relativeFragment = $fragment.FullName.Substring($fragmentsSource.TrimEnd('\').Length).TrimStart('\')
+            Set-TerminalTargetProfiles -Path (Join-Path $fragmentsDestination $relativeFragment) -StartingDirectory $targetStartingDirectory
+        }
     }
     }
 Write-Output ([ordered]@{

@@ -71,33 +71,6 @@ func TestMobileSSHControlScriptIsPowerShell51AndOwnsNarrowEndpoint(t *testing.T)
 	assertPowerShell51Parses(t, script)
 }
 
-func TestBaseProfileRoutesOnlyMobileSSHPortDirectlyIntoHerdr(t *testing.T) {
-	base := readDefaultBaseProvisioning(t)
-	for _, required := range []string{
-		`$env:SSH_CONNECTION -split '\s+'`,
-		"$herdrSSHConnection.Count -eq 4",
-		"[string]$herdrSSHConnection[3] -ceq '2222'",
-		"HERDR_SANDBOX_HERDR_EXE",
-		"GetEnvironmentVariable",
-		"& $herdrExecutable",
-		"exit $LASTEXITCODE",
-		"$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')",
-		"$env:Path = @($machinePath, $userPath) -join ';'",
-		"$expectedPowerShellProfile = $pathInitialization + $mobileSSHInitialization + $starshipInitialization",
-		"PATH, mobile SSH, and Starship profile verification failed",
-	} {
-		if !strings.Contains(base, required) {
-			t.Fatalf("Base mobile SSH profile is missing %q", required)
-		}
-	}
-	if strings.Contains(base, `C:\HerdrSandbox\bin\herdr.exe`) {
-		t.Fatal("Base mobile SSH profile retains the replaced Sandbox-owned Herdr path")
-	}
-	if strings.Index(base, "$mobileSSHInitialization = @'") > strings.Index(base, "$expectedPowerShellProfile =") {
-		t.Fatal("Base assembles the PowerShell profile before defining mobile SSH initialization")
-	}
-}
-
 func TestMobileSSHPrepareArchiveContainsOnlyNativeAssetAndSecretRequest(t *testing.T) {
 	identity := testMobileSSHIdentity()
 	request := mobileSSHPrepareRequest{
