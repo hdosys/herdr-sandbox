@@ -275,6 +275,30 @@ type workstationContextReader struct {
 	reader io.Reader
 }
 
+func workstationInputDigest(name string) (string, error) {
+	if err := validateWorkstationLocalPath(name); err != nil {
+		return "", err
+	}
+	file, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<30 {
+		return "", errors.New("installer data is not a bounded regular file")
+	}
+	hash := sha256.New()
+	count, err := io.Copy(hash, io.LimitReader(file, 64<<30+1))
+	if err != nil {
+		return "", err
+	}
+	if count != info.Size() {
+		return "", errors.New("installer data changed during verification")
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
 func (reader workstationContextReader) Read(buffer []byte) (int, error) {
 	if err := reader.ctx.Err(); err != nil {
 		return 0, err

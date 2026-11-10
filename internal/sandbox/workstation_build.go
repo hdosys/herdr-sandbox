@@ -236,7 +236,7 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 		}
 		if old.DataFileName != "" {
 			hasPreviousData = true
-			actualData, err := workstationFileDigest(filepath.Join(output, old.DataFileName))
+			actualData, err := workstationInputDigest(filepath.Join(output, old.DataFileName))
 			if err != nil || actualData != old.DataSHA256 {
 				return result, errors.New("existing materialized data changed; previous installer preserved")
 			}

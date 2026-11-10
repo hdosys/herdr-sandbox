@@ -1016,7 +1016,7 @@ function Get-StackRustManifestSnapshot {
         [Parameter(Mandatory = $true)][string]$Target
     )
 
-    $preparedVariable = Get-Variable -Name PreparedInputs -Scope Script -ErrorAction SilentlyContinue
+    $preparedVariable = Get-Variable -Name HerdrSandboxPreparedInputs -Scope Global -ErrorAction SilentlyContinue
     $prepared = if ($null -ne $preparedVariable) { $preparedVariable.Value } else { $null }
     if ($null -ne $prepared) {
         if ($null -eq $prepared.rust -or [string]$prepared.rust.toolchain -notmatch '^\d+\.\d+\.\d+$' -or

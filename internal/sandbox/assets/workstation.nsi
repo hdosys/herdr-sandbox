@@ -92,7 +92,7 @@ Function SelectProfile
   ${If} $RefreshArg != ""
     ${NSD_Check} $RefreshControl
   ${EndIf}
-  ${NSD_CreateLabel} 0 100u 100% 40u "Personal settings may contain commands and inline private values. Keep this installer private. Dedicated authentication files, SSH keys, project data and Git history are excluded. Create a new named installation on the source computer, then build it to capture later changes."
+  ${NSD_CreateLabel} 0 100u 100% 40u "This private installer contains selected settings and supported authentication. Possession may grant account access. Keep the installer and required data files private. SSH private keys, project data and Git history are not captured."
   Pop $0
   nsDialogs::Show
 FunctionEnd

@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:ProvisioningPreparation = $Phase -ceq 'Prepare'
 if ($script:ProvisioningPreparation) { $script:PreparedPackageMetadata = @{} }
-$script:PreparedInputs = $null
+$global:HerdrSandboxPreparedInputs = $null
 
 if (-not [IO.Path]::IsPathRooted($ProcessOwnerPath) -or
     -not (Test-Path -LiteralPath $ProcessOwnerPath -PathType Leaf)) {
@@ -186,11 +186,13 @@ $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Provision mode requires an elevated Windows PowerShell process.'
 }
+if ($Phase -ne 'Registry') {
 $ToolVersionPlanPath = Join-Path (Split-Path -Parent $PackagePlanPath) 'tool-versions.json'
 foreach ($requiredPath in @($ProjectProvisioningDirectory, $WorkspacesDirectory, $PackagePlanPath, $ToolVersionPlanPath)) {
     if ([string]::IsNullOrWhiteSpace($requiredPath)) {
         throw 'Provisioning requires ProjectProvisioningDirectory and WorkspacesDirectory.'
     }
+}
 }
 }
 
@@ -254,7 +256,7 @@ function Read-ProvisioningToolVersionPlan {
     return [pscustomobject]@{ Versions = $versions; Series = $series; Sources = $sources; Owners = $owners }
 }
 
-if ($Phase -notin @('Library','Prepare')) {
+if ($Phase -notin @('Library','Prepare','Registry')) {
     $global:HerdrSandboxToolVersionPlan = Read-ProvisioningToolVersionPlan -Path $ToolVersionPlanPath
 } else {
     $global:HerdrSandboxToolVersionPlan = [pscustomobject]@{ Versions = @{}; Series = @{}; Sources = @{}; Owners = @{} }
@@ -413,7 +415,7 @@ function Read-ProvisioningPackagePlan {
     }
 }
 
-if ($Phase -notin @('Library','Prepare')) {
+if ($Phase -notin @('Library','Prepare','Registry')) {
     $provisioningPackagePlan = Read-ProvisioningPackagePlan -Path $PackagePlanPath
     $WindowsTerminalEdition = [string]$provisioningPackagePlan.Data.windowsTerminalEdition
 }
@@ -1125,8 +1127,8 @@ function Test-ProvisioningPreparation {
 
 function Get-ProvisioningPreparedMetadata {
     param([string]$Id, [string]$Architecture, [string]$InstallerType, [string]$Scope = '', [string]$Version = '')
-    if ($null -eq $script:PreparedInputs) { return $null }
-    $preparedMatches = @($script:PreparedInputs.packages | Where-Object {
+    if ($null -eq $global:HerdrSandboxPreparedInputs) { return $null }
+    $preparedMatches = @($global:HerdrSandboxPreparedInputs.packages | Where-Object {
         $_.metadata.Id -ieq $Id -and $_.metadata.Architecture -ieq $Architecture -and
         $_.metadata.InstallerType -ieq $InstallerType -and $_.metadata.Scope -ieq $Scope -and
         ($Version -eq '' -or $_.metadata.Version -ceq $Version)
@@ -2429,7 +2431,7 @@ function Install-ProvisioningCachedPackage {
             Write-Output "$Role package cache hit: $($metadata.Version)"
         } else {
             Write-Output "$Role package cache miss: $($metadata.Version)"
-            if ($null -ne $script:PreparedInputs) { throw "$Role materialized payload is missing or failed its cache identity check; no network recovery was attempted." }
+            if ($null -ne $global:HerdrSandboxPreparedInputs) { throw "$Role materialized payload is missing or failed its cache identity check; no network recovery was attempted." }
             if ($DownloadSource -eq 'WinGet') {
                 $downloadDirectory = Join-Path $guestStage 'download'
                 New-Item -ItemType Directory -Path $downloadDirectory | Out-Null
@@ -3830,8 +3832,8 @@ if ($PreparedInputsPath -ne '') {
     Assert-ProvisioningPathAncestors $PreparedInputsPath
     $preparedFile = Get-Item -LiteralPath $PreparedInputsPath -Force
     if ($preparedFile.PSIsContainer -or $preparedFile.Length -gt 16777216) { throw 'Materialized input metadata is unsafe.' }
-    $script:PreparedInputs = [IO.File]::ReadAllText($PreparedInputsPath) | ConvertFrom-Json
-    if ($script:PreparedInputs.schemaVersion -ne 1 -or @($script:PreparedInputs.packages).Count -gt 128) { throw 'Materialized input metadata has an unsupported contract.' }
+    $global:HerdrSandboxPreparedInputs = [IO.File]::ReadAllText($PreparedInputsPath) | ConvertFrom-Json
+    if ($global:HerdrSandboxPreparedInputs.schemaVersion -ne 1 -or @($global:HerdrSandboxPreparedInputs.packages).Count -gt 128) { throw 'Materialized input metadata has an unsupported contract.' }
     $env:npm_config_offline = 'true'
 }
 if ($Phase -in @('Library','Prepare')) { return }

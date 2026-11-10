@@ -51,7 +51,6 @@ switch ($Action) {
     }
     'winget' {
         & (Join-Path $nativeInputDirectory 'workstation-winget.ps1')
-        if ($LASTEXITCODE -ne 0) { throw 'WinGet prerequisite failed.' }
     }
     'package' {
         Install-ProvisioningPackage -Id $PackageID -Version $PackageVersion
