@@ -780,6 +780,7 @@ try {
     $sshInstallSpec = New-Object HerdrSandbox.ProvisioningProcessSpec
     $sshInstallSpec.Role = 'OpenSSH transport installation'
     $sshInstallSpec.FilePath = Join-Path $env:WINDIR 'System32\msiexec.exe'
+    $sshInstallSpec.WorkingDirectory = Split-Path -Parent $openSSHInstaller
     $sshInstallSpec.Arguments = @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server')
     $sshInstallSpec.TimeoutMilliseconds = 600000
     $sshInstallSpec.SuccessExitCodes = [int[]]@(0,1638)

@@ -16,7 +16,7 @@ function Publish-InstallerProgress {
     $temporary=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
     try {
         [IO.File]::WriteAllText($temporary,($Value|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
-        if([IO.File]::Exists($path)){[IO.File]::Replace($temporary,$path,$null)}else{[IO.File]::Move($temporary,$path)}
+        if([IO.File]::Exists($path)){[IO.File]::Replace($temporary,$path,[NullString]::Value)}else{[IO.File]::Move($temporary,$path)}
     } finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
 }
 try {
@@ -42,9 +42,9 @@ try {
     $spec=New-Object HerdrSandbox.ProvisioningProcessSpec
     $spec.Role='Workstation installer acceptance'
     $spec.FilePath=$installerPath
+    $spec.WorkingDirectory=$privateRoot
     $spec.Arguments=@('/S',('/PROFILE='+$profilePath),('/ROOT='+$stateRoot))
     $spec.TimeoutMilliseconds=172800000
-    $spec.MaximumOutputBytes=32768
     $spec.SuccessExitCodes=[int[]]@(0,1,2)
     $result=[HerdrSandbox.ProvisioningProcess]::Run($spec)
     if($result.Stopped){throw [OperationCanceledException]::new('Installer acceptance cancelled.')}

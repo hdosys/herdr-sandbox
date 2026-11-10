@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,35 @@ import (
 
 	"herdr-sandbox/internal/installerartifact"
 )
+
+func TestInstallerCapabilityProbesInCurrentGuest(t *testing.T) {
+	if runtime.GOOS != "windows" || os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER") == "" {
+		t.Skip("explicit installed-compiler probe acceptance")
+	}
+	root := t.TempDir()
+	for name, data := range map[string][]byte{"probes.ps1": installerProbeScript, "process.cs": provisioningProcessSource} {
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
+$root='` + strings.ReplaceAll(root, "'", "''") + `'
+Add-Type -Path (Join-Path $root 'process.cs')
+. (Join-Path $root 'probes.ps1')
+$profile=@{packages=@();stacks=@('go','python','nsis','rust-msvc','cpp');files=@()}
+$report=@{schemaVersion=1;profileSha256='fixture'}
+$result=Test-InstallerEffects -Profile $profile -Report $report -ExpectedProfileHash 'fixture' -ProbeRoot $root -StateRoot $root
+$result|ConvertTo-Json -Depth 5 -Compress
+if(@($result.checks|Where-Object{-not $_.passed}).Count -ne 0){exit 1}`
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("real installed capability probes: %v %s", err, output)
+	}
+	t.Logf("installed capabilities: %s", output)
+}
 
 func TestInstallerVerificationRejectsMissingAndContradictoryEvidence(t *testing.T) {
 	profile := WorkstationProfile{Packages: []wingetPackagePlanEntry{{ID: "hdosys.herdr-win"}}}
@@ -119,11 +149,14 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	baseline := "$ErrorActionPreference='Stop'; . '" + strings.ReplaceAll(filepath.Join(bootstrap, "installer", "probes.ps1"), "'", "''") + "'; Get-InstallerBaseline | ConvertTo-Json -Compress"
+	baseline := "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; . '" + strings.ReplaceAll(filepath.Join(bootstrap, "installer", "probes.ps1"), "'", "''") + "'; Get-InstallerBaseline | ConvertTo-Json -Compress"
 	query := hiddenCommandContext(t.Context(), mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(baseline))
 	baselineData, err := query.CombinedOutput()
 	if err != nil {
 		t.Fatalf("baseline: %v %s", err, baselineData)
+	}
+	if !json.Valid(bytes.TrimSpace(baselineData)) {
+		t.Fatalf("baseline did not produce JSON: %q", baselineData)
 	}
 	if err := os.WriteFile(filepath.Join(status, "installer-baseline.json"), bytes.TrimSpace(baselineData), 0o600); err != nil {
 		t.Fatal(err)
@@ -159,10 +192,10 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			}
 			launcher := buildInstallerProfileLauncher(id, evidence.InstallerSHA256, digest, len(data), bootstrap, status)
 			guestRoot := filepath.Join(root, "transport")
-			launcher = strings.ReplaceAll(launcher, guestRootDirectory, strings.ReplaceAll(guestRoot, "'", "''"))
+			launcher = strings.ReplaceAll(launcher, "'"+guestRootDirectory+"\\staging'", "'"+strings.ReplaceAll(filepath.Join(guestRoot, "staging"), "'", "''")+"'")
 			encoded := sshArchiveLauncherBytes(launcher)
 			transport := buildSSHArchiveTransportCommand(digest, len(data), encoded, 40*time.Second, id)
-			transport = strings.ReplaceAll(transport, guestRootDirectory, strings.ReplaceAll(guestRoot, "'", "''"))
+			transport = strings.ReplaceAll(transport, "'"+guestRootDirectory+"\\staging'", "'"+strings.ReplaceAll(filepath.Join(guestRoot, "staging"), "'", "''")+"'")
 			output, err := runLocalSSHTransport(t, transport, encoded, data, nil)
 			if err != nil {
 				t.Fatalf("real framed installer receiver: %v %s", err, output)

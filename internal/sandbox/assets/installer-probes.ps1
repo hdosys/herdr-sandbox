@@ -12,7 +12,7 @@ function Invoke-InstallerProbe {
     param([string]$File, [string[]]$Arguments, [string]$Directory = $env:TEMP, [int]$Seconds = 45)
     $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
     $spec.Role = 'Independent installer capability verification'
-    $spec.FilePath = $File
+    $spec.FilePath = (Get-Command $File -CommandType Application -ErrorAction Stop).Source
     $spec.Arguments = $Arguments
     $spec.WorkingDirectory = $Directory
     $spec.TimeoutMilliseconds = $Seconds * 1000
