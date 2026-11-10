@@ -134,7 +134,7 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 	}
 	writeTestFile(t, terminal.SettingsPath, `{"defaultProfile":"fixture"}`)
 	writeTestFile(t, filepath.Join(terminal.FragmentsPath, "fixture.json"), "{}")
-	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageZed, packageNushell}, Add: []string{}, Versions: map[string]string{}}, terminal)
+	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageZed}, Add: []string{}, Versions: map[string]string{}}, terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
