@@ -154,12 +154,12 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 	}
 }
 
-// This opt-in uses the real framed receiver and exact NSIS candidate. Only a
-// synthetic configuration is installed, never SSH, Herdr or personal settings.
+// This guest-only opt-in uses the real interactive receiver and NSIS candidate.
+// It applies the desktop preferences and an isolated synthetic configuration.
 func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 	installer := os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER")
-	if runtime.GOOS != "windows" || installer == "" {
-		t.Skip("set HERDR_WORKSTATION_TEST_INSTALLER for isolated native receiver acceptance")
+	if runtime.GOOS != "windows" || installer == "" || !IsCurrentWindowsSandbox() {
+		t.Skip("set HERDR_WORKSTATION_TEST_INSTALLER inside Windows Sandbox for native receiver acceptance")
 	}
 	evidence, err := installerartifact.Read(strings.TrimSuffix(installer, filepath.Ext(installer)) + ".json")
 	if err != nil || evidence.Product != "herdr-workstation" {
@@ -168,7 +168,18 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 	root := t.TempDir()
 	bootstrap, status := filepath.Join(root, "bootstrap"), filepath.Join(root, "status")
 	settings := []byte("{\"theme\":\"system\"}\n")
-	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "opencode", Path: "opencode.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(settings)), Data: settings}}}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureName := "herdr-installer-fixture-" + filepath.Base(root)
+	fixtureDirectory := filepath.Join(home, ".agents", "skills", fixtureName)
+	if _, err := os.Lstat(fixtureDirectory); !os.IsNotExist(err) {
+		t.Fatal("configuration fixture already exists")
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(fixtureDirectory) })
+	configurationPath := filepath.Join(fixtureDirectory, "SKILL.md")
+	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "agent-skills", Path: fixtureName + "/SKILL.md", SHA256: fmt.Sprintf("%x", sha256.Sum256(settings)), Data: settings}}}
 	installer, evidence = buildPersonalInstallerFixture(t, installer, evidence, profile)
 	for _, directory := range []string{filepath.Join(bootstrap, "installer"), filepath.Join(bootstrap, "provisioning"), status} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -181,6 +192,7 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 	for path, data := range map[string][]byte{
 		filepath.Join(bootstrap, "installer", "workstation-root.cs"):      workstationRootSource,
 		filepath.Join(bootstrap, "installer", "probes.ps1"):               installerProbeScript,
+		filepath.Join(bootstrap, "installer", "interactive.ps1"):          installerInteractiveScript,
 		filepath.Join(bootstrap, "provisioning", provisioningProcessName): provisioningProcessSource,
 	} {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -199,12 +211,11 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(status, "installer-baseline.json"), bytes.TrimSpace(baselineData), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	for _, conflict := range []bool{false, true} {
 		t.Run(fmt.Sprintf("conflict=%t", conflict), func(t *testing.T) {
 			if conflict {
 				settings = []byte("{\"theme\":\"light\"}")
-				if err := os.WriteFile(filepath.Join(root, "config", "opencode", "opencode.json"), settings, 0o600); err != nil {
+				if err := os.WriteFile(configurationPath, settings, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -229,7 +240,7 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			guestRoot := filepath.Join(root, "transport")
 			launcher = strings.ReplaceAll(launcher, "'"+guestRootDirectory+"\\staging'", "'"+strings.ReplaceAll(filepath.Join(guestRoot, "staging"), "'", "''")+"'")
 			encoded := sshArchiveLauncherBytes(launcher)
-			transport := buildSSHArchiveTransportCommand(digest, len(data), encoded, 40*time.Second, id)
+			transport := buildSSHArchiveTransportCommand(digest, len(data), encoded, 180*time.Second, id)
 			transport = strings.ReplaceAll(transport, "'"+guestRootDirectory+"\\staging'", "'"+strings.ReplaceAll(filepath.Join(guestRoot, "staging"), "'", "''")+"'")
 			output, err := runLocalSSHTransport(t, transport, encoded, data, nil)
 			if err != nil {
@@ -245,7 +256,7 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			if result.Passed == conflict || result.Complete == conflict {
 				t.Fatalf("unexpected installer outcome: %+v", result)
 			}
-			actual, err := os.ReadFile(filepath.Join(root, "config", "opencode", "opencode.json"))
+			actual, err := os.ReadFile(configurationPath)
 			if err != nil || !bytes.Equal(actual, settings) {
 				t.Fatalf("installed configuration or conflict preservation: %v", err)
 			}

@@ -22,6 +22,9 @@ var installerReceiverScript string
 //go:embed assets/installer-probes.ps1
 var installerProbeScript []byte
 
+//go:embed assets/installer-interactive.ps1
+var installerInteractiveScript []byte
+
 type installerVerification struct {
 	SchemaVersion   int              `json:"schemaVersion"`
 	InstallerSHA256 string           `json:"installerSHA256"`
@@ -92,6 +95,7 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	for path, data := range map[string][]byte{
 		filepath.Join(input, "setup.json"):                evidenceData,
 		filepath.Join(input, "probes.ps1"):                installerProbeScript,
+		filepath.Join(input, "interactive.ps1"):           installerInteractiveScript,
 		filepath.Join(input, "workstation-root.cs"):       workstationRootSource,
 		filepath.Join(transport, provisioningProcessName): provisioningProcessSource,
 		filepath.Join(transport, workspaceManifestName):   manifest,

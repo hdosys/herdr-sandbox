@@ -35,6 +35,17 @@ This file owns stable technical design: command ownership, host/guest boundaries
   inputs and prerequisite evidence, and uses the shared step executor. Every action
   runs through `workstation-action.ps1` in a separately deadline-bound process tree.
   The overall deadline is derived from that same graph, not a competing time cap.
+- `Set-ProvisioningDesktopUsability` is the single desktop registry allowlist shared
+  by Sandbox and workstation setup. The workstation action calls only this function,
+  never the broader Registry phase, audio controls or security/update policies.
+- Installer-only Sandbox tests use one create-only interactive-token scheduled
+  action in the verified user's desktop session. Its hidden PowerShell wrapper
+  removes the task registration, validates user/session and payload hash, and runs
+  the visible NSIS process through the existing job owner. A retained handle and
+  creation-time check bind cancellation to the exact SSH receiver. The guest-local
+  atomic terminal result precedes independent effect verification; task submission
+  is not acceptance. Only selected workstation processes forward their captured
+  output live to the installer details; parser consumers keep capture-only output.
 - Direct package operations do not consume translated WinGet UI headings. The
   cached-install path consumes WinGet's selected-installer YAML after its verified
   download, checks identity/selection and payload SHA-256 through the genuine YAML

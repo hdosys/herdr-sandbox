@@ -9,11 +9,19 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Workstation setup initializes and verifies the WinGet community source before
+  installing packages, preventing missing-source failures across the selected tools.
+- Personal installer tests display setup on the Sandbox desktop, with step status,
+  live package output and failure details instead of an invisible silent install.
+
 - Testing a personal workstation installer no longer fails merely because the
   host's normal Sandbox configuration selects a local TTS bundle. The test keeps
   using the exact installer and its embedded snapshot.
 
 ### Added
+
+- Workstation setup applies Explorer, search and desktop suggestion preferences
+  without changing audio, Defender, SmartScreen, UAC or Windows Update settings.
 
 - Saved personal installations can be created, built and tested through
   `sandbox workstation create`, `build` and `test`, without a source checkout,

@@ -117,6 +117,7 @@ if ($selected.ContainsKey('android')) { $selected['java'] = $true }
 if ($selected.ContainsKey('cargo-nextest')) { $selected['rust-msvc'] = $true }
 $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rust-msvc')
 
+    Add-WorkstationJob 'Windows desktop preferences' 'desktop' -Seconds 60
     Add-WorkstationJob 'WinGet' 'winget' -Seconds 600
     $vcRuntimeID = 'Microsoft.VCRedist.2015+.x64'
     $needsVCRuntime = $nativeProfile.stacks.Count -gt 0 -or $provisioningPackagePlan.Enabled.ContainsKey('hdosys.herdr-win') -or $provisioningPackagePlan.Enabled.ContainsKey($vcRuntimeID)
@@ -139,7 +140,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         Add-WorkstationJob 'Nushell profile' 'nushell' -Requires $requirements -Seconds 90
     }
     if ($needsVisualStudio) {
-        Add-WorkstationJob 'Visual Studio layout' 'vs-layout' -Seconds 3660
+        Add-WorkstationJob 'Visual Studio layout' 'vs-layout' -Requires @('WinGet') -Seconds 3660
         Add-WorkstationJob 'Visual Studio Build Tools' 'vs' -Requires @('Visual Studio layout') -Seconds 960
     }
     if ($selected.ContainsKey('node-runtime')) { Add-WorkstationJob 'Node.js' 'node-runtime' -Requires @('WinGet') -Tools @('OpenJS.NodeJS') }
@@ -197,6 +198,7 @@ try {
         $inputs = @(Get-WorkstationJobInputs $job)
         $nativeResults[$job.Name] = [ordered]@{ status='running'; message=('Started at ' + [DateTime]::UtcNow.ToString('o') + '; deadline ' + $job.Seconds + ' seconds.') }
         Save-WorkstationReport
+        Write-Output ('[' + [DateTime]::Now.ToString('HH:mm:ss') + '] Starting ' + $job.Name + ' (time limit ' + $job.Seconds + ' seconds)')
         Invoke-ProvisioningIndependentStep -Name $job.Name -Requires $job.Requires -Results $nativeResults -Failures $nativeFailures -ContinueTerminalFailures -InputValues $inputs -Action {
             $ready = @($nativeResults.Keys | Where-Object { $nativeResults[$_].status -in @('succeeded','retained') }) -join '|'
             $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',
@@ -205,7 +207,7 @@ try {
             if ($ready) { $arguments += @('-ReadySteps',$ready) }
             if ($job.PackageID) { $arguments += @('-PackageID',$job.PackageID) }
             if ($job.Version) { $arguments += @('-PackageVersion',$job.Version) }
-            $result = Invoke-ProvisioningNativeResult -Role $job.Name -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -SuccessExitCodes @(0,3) -TimeoutSeconds $job.Seconds
+            $result = Invoke-ProvisioningNativeResult -Role $job.Name -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -SuccessExitCodes @(0,3) -TimeoutSeconds $job.Seconds -ForwardOutput
             $diagnostic = Get-ProvisioningBoundedDiagnosticText -Text ([string]$result.Output) -MaximumBytes 3000
             $job.Diagnostic = $diagnostic
             if (-not $result.Succeeded) {
@@ -214,10 +216,13 @@ try {
                 throw ($job.Name + ' failed with exit code ' + $result.ExitCode + '. ' + $diagnostic)
             }
             if ($result.ExitCode -eq 3) { $OptionalFailures.Add($job.Name + ': ' + $diagnostic) }
-            if ($diagnostic) { Write-Output $diagnostic }
         }
         if (-not $nativeResults[$job.Name].message -and $job.Diagnostic) { $nativeResults[$job.Name].message = $job.Diagnostic }
         Save-WorkstationReport
+        Write-Output ('[' + [DateTime]::Now.ToString('HH:mm:ss') + '] ' + $job.Name + ': ' + $nativeResults[$job.Name].status)
+        if ($nativeResults[$job.Name].status -in @('failed','blocked','cancelled')) {
+            Write-Output $nativeResults[$job.Name].message
+        }
     }
 } finally {
     Save-WorkstationReport

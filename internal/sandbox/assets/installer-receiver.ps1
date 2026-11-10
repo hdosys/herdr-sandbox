@@ -36,14 +36,60 @@ try {
     if((Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash -ine $installerDigest){throw 'Installer snapshot hash mismatch.'}
     $progress=[ordered]@{schemaVersion=1;phase='installer-running';message='Running the hash-bound workstation installer; no normal provisioning will repair its result.'}
     Publish-InstallerProgress $progress
-    $spec=New-Object HerdrSandbox.ProvisioningProcessSpec
-    $spec.Role='Workstation installer acceptance'
-    $spec.FilePath=$installerPath
-    $spec.WorkingDirectory=$privateRoot
-    $spec.Arguments=@('/S',('/ROOT='+$stateRoot))
-    $spec.TimeoutMilliseconds=172800000
-    $spec.SuccessExitCodes=[int[]]@(0,1,2)
-    $result=[HerdrSandbox.ProvisioningProcess]::Run($spec)
+    [HerdrWorkstation.Directories]::Ensure($stateRoot)
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    $sessions=@(Get-Process -Name explorer -IncludeUserName -ErrorAction Stop |
+        Where-Object { $_.UserName -ieq $identity.Name -and $_.SessionId -gt 0 } |
+        Select-Object -ExpandProperty SessionId -Unique)
+    if($sessions.Count -ne 1){throw 'Expected one interactive desktop for the installer user.'}
+    $session=[int]$sessions[0]
+    $owner=[Diagnostics.Process]::GetCurrentProcess()
+    $taskName='HerdrWorkstationInstaller-'+$runID
+    $scheduler=New-Object -ComObject Schedule.Service
+    $scheduler.Connect()
+    $taskRoot=$scheduler.GetFolder('\')
+    $definition=$scheduler.NewTask(0)
+    $definition.Settings.Enabled=$true
+    $definition.Settings.Hidden=$true
+    $definition.Settings.AllowDemandStart=$true
+    $definition.Settings.ExecutionTimeLimit='PT48H'
+    $definition.Settings.DisallowStartIfOnBatteries=$false
+    $definition.Settings.StopIfGoingOnBatteries=$false
+    $definition.Principal.UserId=$identity.User.Value
+    $definition.Principal.LogonType=3
+    $definition.Principal.RunLevel=1
+    $action=$definition.Actions.Create(0)
+    $action.Path=Join-Path $PSHOME 'powershell.exe'
+    $action.WorkingDirectory=$privateRoot
+    $action.Arguments=('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -BootstrapRoot "{1}" -InstallerPath "{2}" -InstallerDigest {3} -StateRoot "{4}" -TaskName {5} -OwnerProcessId {6} -OwnerStartTicks {7} -ExpectedSession {8} -ExpectedUser {9}' -f
+        (Join-Path $bootstrapRoot 'installer\interactive.ps1'),$bootstrapRoot,$installerPath,$installerDigest,$stateRoot,$taskName,$PID,$owner.StartTime.ToUniversalTime().Ticks,$session,$identity.User.Value)
+    # Create-only registration never adopts another task. The worker deletes its
+    # own registration on entry and leases the exact receiver process thereafter.
+    $task=$taskRoot.RegisterTaskDefinition($taskName,$definition,2,$null,$null,3,$null)
+    try {
+        $null=$task.RunEx($null,4,$session,$null)
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        $resultPath=Join-Path $stateRoot 'interactive.json'
+        $started=$false
+        while($true){
+            if(Test-Path -LiteralPath $resultPath -PathType Leaf){
+                $item=Get-Item -LiteralPath $resultPath -Force
+                if($item.Length -gt 16384 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Interactive installer result is unsafe.'}
+                $result=[IO.File]::ReadAllText($resultPath)|ConvertFrom-Json
+                if($result.state -eq 'failed'){throw ('Interactive installer failed: '+$result.message)}
+                if($result.session -ne $session){throw 'Interactive installer result session mismatch.'}
+                if($result.state -eq 'finished'){break}
+                if($result.state -ne 'running'){throw 'Invalid interactive installer state.'}
+                $started=$true
+            }
+            if(-not $started -and $clock.Elapsed.TotalSeconds -gt 30){throw 'Interactive installer did not start within 30 seconds.'}
+            if($clock.Elapsed.TotalHours -ge 48){throw 'Interactive installer exceeded its terminal deadline.'}
+            Start-Sleep -Milliseconds 500
+        }
+    } finally {
+        try { $taskRoot.DeleteTask($taskName,0) }
+        catch { if(($_.Exception.HResult -band 0xFFFF) -ne 2){throw} }
+    }
     if($result.Stopped){throw [OperationCanceledException]::new('Installer acceptance cancelled.')}
     if($result.TimedOut){throw 'Installer acceptance exceeded its terminal deadline.'}
     $profileItem=Get-Item -LiteralPath $profilePath -Force

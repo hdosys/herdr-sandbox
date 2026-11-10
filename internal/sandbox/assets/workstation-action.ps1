@@ -95,6 +95,10 @@ if (Get-Command starship.exe -ErrorAction SilentlyContinue) { Invoke-Expression 
 }
 
 switch ($Action) {
+    'desktop' {
+        $changed = Set-ProvisioningDesktopUsability
+        Write-Output ('Desktop preferences verified; changed: ' + $changed + '. Some shell visuals apply at the next sign-in. Audio, security and Windows Update settings were not changed.')
+    }
     'winget' {
         & (Join-Path $nativeInputDirectory 'workstation-winget.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'WinGet prerequisite failed.' }

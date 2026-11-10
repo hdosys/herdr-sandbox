@@ -4,6 +4,17 @@ $env:PSModulePath = $PSHOME + '\Modules'
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
+function Initialize-WorkstationWinGetSource {
+    param([string]$Command)
+    # App Installer deployment alone does not install the community source index.
+    # Resolve that prerequisite here, before declaring dependent packages ready.
+    Invoke-ProvisioningNative -Role 'WinGet community source initialization' -FilePath $Command -ArgumentList @(
+        'source','update','--name','winget','--disable-interactivity') -TimeoutSeconds 180
+    Invoke-ProvisioningNative -Role 'WinGet community source verification' -FilePath $Command -ArgumentList @(
+        'show','--id','Microsoft.VCRedist.2015+.x64','--exact','--source','winget',
+        '--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 60 | Out-Null
+}
+
 # Retain an already functional supported prerequisite. Only a missing/older
 # manager is deployed, using the newest official stable release below.
 $existing = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue
@@ -12,6 +23,7 @@ if ($null -ne $existing) {
     if ($LASTEXITCODE -eq 0 -and $installed.Trim() -match '^v(?<version>\d+\.\d+\.\d+)$' -and [Version]$Matches['version'] -ge [Version]'1.29.0') {
         $capabilities = (& $existing.Source download --help) -join "`n"
         if ($LASTEXITCODE -eq 0 -and $capabilities.Contains('--skip-dependencies') -and $capabilities.Contains('--download-directory')) {
+            Initialize-WorkstationWinGetSource -Command $existing.Source
             Write-Output "Existing WinGet $installed supports verified selected-manifest downloads."
             exit 0
         }
@@ -46,6 +58,7 @@ try {
     $command = Get-Command winget.exe -CommandType Application -ErrorAction Stop
     & $command.Source --version
     if ($LASTEXITCODE -ne 0) { throw 'WinGet did not become functional after installation.' }
+    Initialize-WorkstationWinGetSource -Command $command.Source
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }

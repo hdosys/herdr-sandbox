@@ -27,6 +27,14 @@ The current product contract is:
 - The shared package/stack implementations remain canonical. Direct setup never
   applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
   mapped-repository trust replacement or live Herdr lifecycle changes.
+- Direct setup applies the shared desktop-only preferences: Explorer visibility
+  and navigation, reduced search/taskbar clutter, and disabled Windows suggestions,
+  promoted content and news/widgets. Defender, SmartScreen, UAC, Windows Update,
+  audio services, volume and microphone permissions remain untouched. Explorer is
+  not restarted; some visual changes take effect at the next sign-in.
+- The installer details show each step starting and its terminal result, with
+  live package output and immediate failure diagnostics. WinGet readiness includes
+  initialization and a real query of its community source, not just a version check.
 - `sandbox workstation create NAME` saves the current configured package, stack
   and selected personal-configuration snapshot under
   `%LOCALAPPDATA%\Herdr Installations\NAME`, preserving existing names.
@@ -90,7 +98,12 @@ The current product contract is:
   normal configuration-sync policies are not part of this native experiment.
   The host's normal-provisioning `ttsBundle` selection does not apply to this
   test and neither overrides nor blocks the candidate's embedded snapshot.
-- The real silent NSIS installer is followed by independent package/command,
+- The exact NSIS installer runs visibly on the intended user's interactive guest
+  desktop. `/PASSIVE` starts installation without wizard clicks and closes at
+  completion; its details remain visible during work. A one-shot scheduled action
+  retains the receiver's process lifetime, so host disconnect/cancellation stops
+  the owned installer tree rather than leaving a detached installation.
+  It is followed by independent package/command,
   selected compiler/runtime and configuration-hash checks. No normal provisioning
   runs before it or repairs its result afterward. Protected guest-local input and
   native reports remain available until the guest is explicitly discarded.

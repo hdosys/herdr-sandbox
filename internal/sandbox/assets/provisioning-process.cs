@@ -23,6 +23,8 @@ namespace HerdrSandbox
         public bool TerminateDescendantsAfterRootExit { get; set; }
         public string StandardInputFile { get; set; }
         public bool SeparateErrorOutput { get; set; }
+        public bool ShowWindow { get; set; }
+        public bool ForwardOutput { get; set; }
     }
 
     public sealed class ProvisioningProcessResult
@@ -76,6 +78,31 @@ namespace HerdrSandbox
                     task.Stop(completed < 0);
                 }
                 return task.WaitAfterStop();
+            }
+        }
+
+        // An interactive scheduled action is outside the SSH job. Retain a handle
+        // to its exact receiver so disconnect/cancellation still stops our job.
+        public static ProvisioningProcessResult RunWithProcessLease(ProvisioningProcessSpec spec, int ownerProcessId, long ownerStartTicks)
+        {
+            using (Process owner = Process.GetProcessById(ownerProcessId))
+            using (EventWaitHandle ownerExited = new EventWaitHandle(false, EventResetMode.ManualReset))
+            {
+                if (owner.StartTime.ToUniversalTime().Ticks != ownerStartTicks || owner.HasExited)
+                {
+                    throw new InvalidOperationException("Installer receiver identity changed or exited.");
+                }
+                ownerExited.SafeWaitHandle = new SafeWaitHandle(owner.Handle, false);
+                using (ProvisioningProcessTask task = ProvisioningProcessTask.Start(spec))
+                {
+                    WaitHandle completion = ((IAsyncResult)task.Completion).AsyncWaitHandle;
+                    int completed = WaitHandle.WaitAny(new WaitHandle[] { completion, ownerExited }, task.RemainingTimeoutMilliseconds);
+                    if (completed != 0)
+                    {
+                        task.Stop(completed == WaitHandle.WaitTimeout);
+                    }
+                    return task.WaitAfterStop();
+                }
             }
         }
     }
@@ -513,7 +540,7 @@ namespace HerdrSandbox
                 NativeMethods.STARTUPINFOEX startup = new NativeMethods.STARTUPINFOEX();
                 startup.StartupInfo.cb = Marshal.SizeOf(typeof(NativeMethods.STARTUPINFOEX));
                 startup.StartupInfo.dwFlags = NativeMethods.STARTF_USESHOWWINDOW | NativeMethods.STARTF_USESTDHANDLES;
-                startup.StartupInfo.wShowWindow = NativeMethods.SW_HIDE;
+                startup.StartupInfo.wShowWindow = spec.ShowWindow ? (short)1 : NativeMethods.SW_HIDE;
                 startup.StartupInfo.hStdInput = nullInput;
                 startup.StartupInfo.hStdOutput = writePipe;
                 startup.StartupInfo.hStdError = spec.SeparateErrorOutput ? errorWritePipe : writePipe;
@@ -545,7 +572,7 @@ namespace HerdrSandbox
                 SafeFileHandle safeReadPipe = new SafeFileHandle(readPipe, true);
                 readPipe = IntPtr.Zero;
                 Task<BoundedOutput> outputTask = Task.Factory.StartNew(
-                    delegate { return ReadOutput(safeReadPipe); },
+                    delegate { return ReadOutput(safeReadPipe, spec.ForwardOutput); },
                     CancellationToken.None,
                     TaskCreationOptions.LongRunning,
                     TaskScheduler.Default);
@@ -555,7 +582,7 @@ namespace HerdrSandbox
                     SafeFileHandle safeErrorPipe = new SafeFileHandle(errorReadPipe, true);
                     errorReadPipe = IntPtr.Zero;
                     errorTask = Task.Factory.StartNew(
-                        delegate { return ReadOutput(safeErrorPipe); },
+                        delegate { return ReadOutput(safeErrorPipe, spec.ForwardOutput); },
                         CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 }
                 Stopwatch stopwatch = Stopwatch.StartNew();
@@ -877,17 +904,23 @@ namespace HerdrSandbox
             return quoted.ToString();
         }
 
-        private static BoundedOutput ReadOutput(SafeFileHandle handle)
+        private static BoundedOutput ReadOutput(SafeFileHandle handle, bool forwardOutput)
         {
             using (handle)
             using (FileStream stream = new FileStream(handle, FileAccess.Read, 65536, false))
             {
                 BoundedOutputBuffer output = new BoundedOutputBuffer(MaximumOutputBytes);
+                Stream destination = forwardOutput ? Console.OpenStandardOutput() : null;
                 byte[] buffer = new byte[65536];
                 int read;
                 while ((read = stream.Read(buffer, 0, buffer.Length)) != 0)
                 {
                     output.Append(buffer, read);
+                    if (destination != null)
+                    {
+                        destination.Write(buffer, 0, read);
+                        destination.Flush();
+                    }
                 }
                 return output.Complete();
             }

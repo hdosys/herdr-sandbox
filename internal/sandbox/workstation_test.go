@@ -261,6 +261,12 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		t.Fatalf("deadline does not cover the whole actual plan: %+v", plan)
 	}
 	for _, job := range plan.Jobs {
+		if job.Name == "Windows desktop preferences" && len(job.Requires) != 0 {
+			t.Fatal("desktop preferences depend on package installation")
+		}
+		if job.Name == "Visual Studio layout" && !slices.Contains(job.Requires, "WinGet") {
+			t.Fatal("Visual Studio metadata resolution lacks its WinGet prerequisite")
+		}
 		if job.Name == "Handy native headers" && (!slices.Equal(job.Requires, []string{"Vulkan SDK", "C and C++"})) {
 			t.Fatalf("unrelated tools can suppress Handy header preparation: %v", job.Requires)
 		}
@@ -272,7 +278,7 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 			t.Setenv("WORKSTATION_TEST_DEPENDENCIES", string(dependencies))
 		}
 	}
-	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{path: base, names: []string{"Get-ProvisioningBoundedDiagnosticText", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Test-ProvisioningTerminalError"}})
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{path: base, names: []string{"Get-ProvisioningBoundedDiagnosticText", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Test-ProvisioningTerminalError", "Set-ProvisioningDesktopUsability"}})
 	fixture, err := os.ReadFile(filepath.Join("testdata", "workstation-dependencies.ps1"))
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +332,7 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 // Herdr, Sandbox, user configuration or tool installation is replaced.
 func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	installer := os.Getenv("HERDR_WORKSTATION_TEST_INSTALLER")
-	if installer == "" {
+	if installer == "" || !IsCurrentWindowsSandbox() {
 		t.Skip("set HERDR_WORKSTATION_TEST_INSTALLER and its SHA256 for native acceptance")
 	}
 	if runtime.GOOS != "windows" {

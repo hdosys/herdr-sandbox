@@ -29,10 +29,13 @@ Var FinishText
 Var SetupExit
 Var StateRoot
 Var WasSilent
+Var Passive
 
 !define MUI_WELCOMEPAGE_TITLE "${APP_DISPLAY_NAME} ${BUILD_FRESHNESS}"
 !define MUI_WELCOMEPAGE_TEXT "This PRIVATE installer contains the selected programs and personal configuration captured when it was built. No separate profile file or old computer is needed.$\r$\n$\r$\nWindows 10/11 x64, Internet access and administrator rights are required. Software packages are downloaded during setup. Independent steps continue after failures.$\r$\n$\r$\nDo not publish this installer. Accounts and licences require separate sign-in. Existing Herdr sessions and Windows security policy are not replaced."
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipPassivePage
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipPassivePage
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\LICENSE.txt"
 Page custom SelectProfile LeaveProfile
 !insertmacro MUI_PAGE_INSTFILES
@@ -41,6 +44,7 @@ Page custom SelectProfile LeaveProfile
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open the setup report"
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenReport
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipPassivePage
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
@@ -52,6 +56,12 @@ Function .onInit
   InitPluginsDir
   SetShellVarContext current
   ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/PASSIVE" $1
+  ${IfNot} ${Errors}
+    StrCpy $Passive 1
+  ${EndIf}
+  ClearErrors
   ${GetOptions} $0 "/PROFILE=" $ProfilePath
   ClearErrors
   ${GetOptions} $0 "/ROOT=" $StateRoot
@@ -63,7 +73,14 @@ Function .onInit
   ClearErrors
 FunctionEnd
 
+Function SkipPassivePage
+  ${If} $Passive == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
 Function SelectProfile
+  Call SkipPassivePage
   !insertmacro MUI_HEADER_TEXT "Your configuration is included" "Apply the snapshot embedded in this private installer."
   nsDialogs::Create 1018
   Pop $0
@@ -88,6 +105,9 @@ Function LeaveProfile
 FunctionEnd
 
 Section "Workstation setup"
+  ${If} $Passive == 1
+    SetAutoClose true
+  ${EndIf}
   SetDetailsView show
   SetOutPath "$PLUGINSDIR\payload"
   StrCpy $WasSilent 1

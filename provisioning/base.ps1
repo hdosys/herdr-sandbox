@@ -617,6 +617,7 @@ function Invoke-ProvisioningNativeResult {
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
         [switch]$TerminateDescendantsAfterRootExit,
+        [switch]$ForwardOutput,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
@@ -625,6 +626,7 @@ function Invoke-ProvisioningNativeResult {
         -SuccessExitCodes $SuccessExitCodes `
         -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
+    $spec.ForwardOutput = [bool]$ForwardOutput
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
@@ -2479,7 +2481,7 @@ function Install-ProvisioningOnlineWinGetPackage {
         if ($Override) { $arguments += @('--override',$Override) }
         # Official APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, not a generic
         # error suppression. Presence is independently checked below.
-        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600
+        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 -ForwardOutput
         if ($installation.Stopped) { throw [OperationCanceledException]::new("$Role installation was cancelled.") }
         if (-not $installation.Succeeded -and ($installation.TimedOut -or $installation.ExitCode -ne [int]0x8A15002B)) {
             $diagnostic = Get-ProvisioningBoundedDiagnosticText -Text ([string]$installation.Output) -MaximumBytes 3000
@@ -3201,6 +3203,68 @@ function Ensure-ProvisioningTaskbarPins {
     Write-Host "Taskbar pins applied: $($pinNames -join ', ')"
 }
 
+function Set-ProvisioningDesktopUsability {
+    # Shared desktop-only allowlist. Never include audio, security, updates,
+    # services or blanket capability-consent policies in this workstation path.
+    $groups = @(
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Values = [ordered]@{
+            RotatingLockScreenEnabled = 0; RotatingLockScreenOverlayEnabled = 0; SilentInstalledAppsEnabled = 0
+            SoftLandingEnabled = 0; 'SubscribedContent-338387Enabled' = 0; 'SubscribedContent-338388Enabled' = 0
+            'SubscribedContent-338389Enabled' = 0; 'SubscribedContent-338393Enabled' = 0
+            'SubscribedContent-353694Enabled' = 0; 'SubscribedContent-353696Enabled' = 0
+            'SubscribedContent-353698Enabled' = 0; SystemPaneSuggestionsEnabled = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy'; Values = [ordered]@{
+            TailoredExperiencesWithDiagnosticDataEnabled = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement'; Values = [ordered]@{
+            ScoobeSystemSettingEnabled = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'; Values = [ordered]@{
+            ShowFrequent = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Values = [ordered]@{
+            Hidden = 1; HideFileExt = 0; HideMergeConflicts = 0; LaunchTo = 1
+            NavPaneExpandToCurrentFolder = 1; NavPaneShowAllFolders = 1; ShowEncryptCompressedColor = 1
+            ShowSuperHidden = 1; ShowSyncProviderNotifications = 0; ShowTaskViewButton = 0
+            Start_TrackDocs = 0; Start_TrackProgs = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\People'; Values = [ordered]@{
+            PeopleBand = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState'; Values = [ordered]@{
+            FullPath = 1
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; Values = [ordered]@{
+            DisableSearchBoxSuggestions = 1
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; Values = [ordered]@{
+            SearchboxTaskbarMode = 0; TraySearchBoxVisible = 0; TraySearchBoxVisibleOnAnyMonitor = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Values = [ordered]@{
+            IsAADCloudSearchEnabled = 0; IsMSACloudSearchEnabled = 0
+        } },
+        [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Windows Search'; Values = [ordered]@{
+            CortanaConsent = 0
+        } },
+        [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
+            AllowNewsAndInterests = 0
+        } },
+        [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; Values = [ordered]@{
+            EnableFeeds = 0
+        } }
+    )
+    $changed = $false
+    foreach ($group in $groups) {
+        foreach ($entry in $group.Values.GetEnumerator()) {
+            if (Set-ProvisioningRegistryValue -Path $group.Path -Name $entry.Key -Value $entry.Value -PropertyType 'DWord') {
+                $changed = $true
+            }
+        }
+    }
+    return $changed
+}
+
 function Initialize-ProvisioningAudioEndpointType {
     if ($null -ne ('HerdrSandbox.AudioPolicy' -as [type])) { return }
 
@@ -3528,6 +3592,7 @@ foreach ($path in @($edgeMachinePolicyPath, $edgeUserPolicyPath)) {
 }
 
 Write-Output 'Applying reviewed Windows UI and privacy settings...'
+if (Set-ProvisioningDesktopUsability) { $registryStateChanged = $true }
 $privacyRegistryGroups = @(
     [ordered]@{ Path = 'HKCU:\Control Panel\International\User Profile'; Values = [ordered]@{
         HttpAcceptLanguageOptOut = 1
@@ -3557,46 +3622,6 @@ $privacyRegistryGroups = @(
     [ordered]@{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo'; Values = [ordered]@{ Enabled = 0 } },
     [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AppHost'; Values = [ordered]@{
         EnableWebContentEvaluation = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'; Values = [ordered]@{
-        RotatingLockScreenEnabled = 0; RotatingLockScreenOverlayEnabled = 0; SilentInstalledAppsEnabled = 0
-        SoftLandingEnabled = 0; 'SubscribedContent-338387Enabled' = 0; 'SubscribedContent-338388Enabled' = 0
-        'SubscribedContent-338389Enabled' = 0; 'SubscribedContent-338393Enabled' = 0
-        'SubscribedContent-353694Enabled' = 0; 'SubscribedContent-353696Enabled' = 0
-        'SubscribedContent-353698Enabled' = 0; SystemPaneSuggestionsEnabled = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy'; Values = [ordered]@{
-        TailoredExperiencesWithDiagnosticDataEnabled = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement'; Values = [ordered]@{
-        ScoobeSystemSettingEnabled = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer'; Values = [ordered]@{
-        ShowFrequent = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Values = [ordered]@{
-        Hidden = 1; HideFileExt = 0; HideMergeConflicts = 0; LaunchTo = 1
-        NavPaneExpandToCurrentFolder = 1; NavPaneShowAllFolders = 1; ShowEncryptCompressedColor = 1
-        ShowSuperHidden = 1; ShowSyncProviderNotifications = 0; ShowTaskViewButton = 0
-        Start_TrackDocs = 0; Start_TrackProgs = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\People'; Values = [ordered]@{
-        PeopleBand = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState'; Values = [ordered]@{
-        FullPath = 1
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; Values = [ordered]@{
-        DisableSearchBoxSuggestions = 1
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; Values = [ordered]@{
-        SearchboxTaskbarMode = 0; TraySearchBoxVisible = 0; TraySearchBoxVisibleOnAnyMonitor = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings'; Values = [ordered]@{
-        IsAADCloudSearchEnabled = 0; IsMSACloudSearchEnabled = 0
-    } },
-    [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Windows Search'; Values = [ordered]@{
-        CortanaConsent = 0
     } },
     [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\DeliveryOptimization'; Values = [ordered]@{
         SystemSettingsDownloadMode = 0
@@ -3683,9 +3708,6 @@ $privacyRegistryGroups = @(
     [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'; Values = [ordered]@{
         DisableLocation = 1; DisableLocationScripting = 1; DisableSensors = 1; DisableWindowsLocationProvider = 1
     } },
-    [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
-        AllowNewsAndInterests = 0
-    } },
     [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'; Values = [ordered]@{
         PublishUserActivities = 0; EnableActivityFeed = 0; UploadUserActivities = 0
         AllowClipboardHistory = 0; AllowCrossDeviceClipboard = 0; EnableMmx = 0
@@ -3703,9 +3725,6 @@ $privacyRegistryGroups = @(
     } },
     [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'; Values = [ordered]@{
         NoAutoUpdate = 1
-    } },
-    [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; Values = [ordered]@{
-        EnableFeeds = 0
     } },
     [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'; Values = [ordered]@{
         AllowTelemetry = 0; DisableOneSettingsDownloads = 1; DoNotShowFeedbackNotifications = 1
