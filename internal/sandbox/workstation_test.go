@@ -270,8 +270,8 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		if job.Name == "Windows desktop preferences" && len(job.Requires) != 0 {
 			t.Fatal("desktop preferences depend on package installation")
 		}
-		if job.Name == "Visual Studio layout" && !slices.Contains(job.Requires, "WinGet") {
-			t.Fatal("Visual Studio metadata resolution lacks its WinGet prerequisite")
+		if job.Name == "Visual Studio layout" {
+			t.Fatal("target installation must consume the prepared layout, not materialize it again")
 		}
 		if job.Name == "Handy native headers" && (!slices.Equal(job.Requires, []string{"Vulkan SDK", "C and C++"})) {
 			t.Fatalf("unrelated tools can suppress Handy header preparation: %v", job.Requires)

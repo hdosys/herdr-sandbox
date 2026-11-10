@@ -30,6 +30,8 @@ type Evidence struct {
 	ConfigurationSource string            `json:"configurationSource,omitempty"`
 	Identity            Identity          `json:"identity"`
 	InstallerSHA256     string            `json:"installerSHA256"`
+	DataFileName        string            `json:"dataFileName,omitempty"`
+	DataSHA256          string            `json:"dataSHA256,omitempty"`
 	PayloadSHA256       map[string]string `json:"payloadSHA256"`
 }
 
@@ -85,6 +87,12 @@ func Decode(data []byte) (Evidence, error) {
 		if value.ConfigurationFiles < 1 || value.ConfigurationFiles > 2048 || len(value.PackageIDs) > 128 || (value.ConfigurationSource != "current-windows-user" && value.ConfigurationSource != "current-sandbox-user" && value.ConfigurationSource != "saved-installation") {
 			return value, errors.New("workstation candidate must identify its embedded personal configuration")
 		}
+		if value.DataFileName != "" || value.DataSHA256 != "" {
+			if value.DataFileName != "herdr-workstation_setup.data.zip" {
+				return value, errors.New("materialized installer data has an unexpected filename")
+			}
+			hashes = append(hashes, value.DataSHA256)
+		}
 	}
 	for _, name := range []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, productidentity.LicenseName} {
 		hashes = append(hashes, value.PayloadSHA256[name])
@@ -96,6 +104,38 @@ func Decode(data []byte) (Evidence, error) {
 		}
 	}
 	return value, nil
+}
+
+// SnapshotData keeps test input immutable without loading large payloads into memory.
+func SnapshotData(sourcePath, destination string, evidence Evidence) error {
+	if evidence.DataFileName != "herdr-workstation_setup.data.zip" || len(evidence.DataSHA256) != 64 {
+		return errors.New("installer has no bound materialized data")
+	}
+	info, err := os.Lstat(sourcePath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<30 {
+		return errors.New("installer data must be a bounded regular file")
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(target, hash), io.LimitReader(source, 64<<30+1))
+	if err := errors.Join(copyErr, target.Close()); err != nil {
+		return err
+	}
+	if n != info.Size() || hex.EncodeToString(hash.Sum(nil)) != evidence.DataSHA256 {
+		return errors.New("installer data does not match its bound SHA-256")
+	}
+	return nil
 }
 
 // Snapshot binds the single copy that will execute, even if the canonical file changes.

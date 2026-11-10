@@ -88,6 +88,8 @@ func runWorkstation(ctx context.Context, args []string, stdout, stderr io.Writer
 		flags.StringVar(&options.Profile, "profile", "", "explicit portable profile; otherwise generic development setup")
 		flags.StringVar(&options.Root, "root", "", "owned local installation-state root")
 		flags.BoolVar(&options.Refresh, "refresh", false, "rerun completed steps intentionally")
+		flags.StringVar(&options.Inputs, "inputs", "", "materialized installer data archive")
+		flags.StringVar(&options.InputsSHA256, "inputs-sha256", "", "installer-bound data SHA-256")
 		execute = func() error {
 			report, err := sandbox.SetupWorkstation(ctx, options)
 			if err != nil && report == "" {

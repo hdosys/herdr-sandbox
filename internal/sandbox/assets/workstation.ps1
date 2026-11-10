@@ -142,8 +142,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         Add-WorkstationJob 'Nushell profile' 'nushell' -Requires $requirements -Seconds 90
     }
     if ($needsVisualStudio) {
-        Add-WorkstationJob 'Visual Studio layout' 'vs-layout' -Requires @('WinGet') -Seconds 3660
-        Add-WorkstationJob 'Visual Studio Build Tools' 'vs' -Requires @('Visual Studio layout') -Seconds 960
+        Add-WorkstationJob 'Visual Studio Build Tools' 'vs' -Requires @('WinGet') -Seconds 960
     }
     if ($selected.ContainsKey('node-runtime')) { Add-WorkstationJob 'Node.js' 'node-runtime' -Requires @('WinGet') -Tools @('OpenJS.NodeJS') }
     if ($selected.ContainsKey('java')) { Add-WorkstationJob 'Java' 'java' -Requires @('WinGet') -Tools @('Microsoft.OpenJDK') }

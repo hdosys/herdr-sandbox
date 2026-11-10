@@ -20,7 +20,7 @@ $env:HERDR_PROVISIONING_TARGET = 'workstation'
 $env:HERDR_PROVISIONING_RUNNER = $RunnerPath
 $env:HERDR_SANDBOX_STATUS_DIRECTORY = $null
 $nativeProcessOwner = Join-Path $nativeInputDirectory 'provisioning-process.cs'
-. $BasePath -Phase Library -ProcessOwnerPath $nativeProcessOwner
+. $BasePath -Phase Library -ProcessOwnerPath $nativeProcessOwner -PreparedInputsPath (Join-Path $nativeInputDirectory 'prepared-inputs.json')
 . $StacksPath
 $global:HerdrWorkstationReadySteps = @($ReadySteps -split '\|' | Where-Object { $_ })
 $nativeProfile = [IO.File]::ReadAllText($NativeProfilePath) | ConvertFrom-Json
@@ -58,11 +58,6 @@ switch ($Action) {
     }
     'shell' { Initialize-ProvisioningPowerShellProfile }
     'nushell' { Initialize-ProvisioningNushell }
-    'vs-layout' {
-        Invoke-ProvisioningNative -Role 'Visual Studio layout preparation' -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
-            '-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $nativeInputDirectory 'prepare-visual-studio-layout.ps1'),
-            '-CacheDirectory',(Get-ProvisioningPath 'cache'),'-TimeoutSeconds','3600') -TimeoutSeconds 3600 | Out-Null
-    }
     'vs' { Install-StackVisualStudioBuildTools }
     'node-runtime' { Install-NodeRuntime }
     'java' { Install-JavaStack }

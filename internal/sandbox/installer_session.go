@@ -88,6 +88,9 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	if err := installerartifact.Snapshot(installer, filepath.Join(input, "setup.exe"), evidence); err != nil {
 		return err
 	}
+	if err := installerartifact.SnapshotData(filepath.Join(filepath.Dir(installer), evidence.DataFileName), filepath.Join(input, evidence.DataFileName), evidence); err != nil {
+		return err
+	}
 	evidenceData, err := json.Marshal(evidence)
 	if err != nil {
 		return err

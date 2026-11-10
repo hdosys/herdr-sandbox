@@ -37,6 +37,7 @@ foreach ($tool in @($selection.tools)) {
     $global:HerdrSandboxToolVersionPlan.Sources[[string]$tool.tool] = [string]$tool.source
     $global:HerdrSandboxToolVersionPlan.Owners[[string]$tool.tool] = @($tool.owners)
 }
+Prepare-ProvisioningWinGet
 foreach ($package in @($selection.packages)) {
     Install-ProvisioningPackage -Id ([string]$package.id) -Version ([string]$package.version)
 }

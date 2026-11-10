@@ -183,11 +183,17 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 		}
 	}()
 	installer := filepath.Join(temporary, productidentity.WorkstationInstallerName)
+	materializedData, materializedDigest, err := prepareWorkstationInputs(ctx, stage, temporary, profile, options.Output)
+	if err != nil {
+		return result, err
+	}
+	result.DataFileName = filepath.Base(materializedData)
+	result.DataSHA256 = materializedDigest
 	buildContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	command := hiddenCommandContext(buildContext, compiler, "/WX", "/V2", "/NOCONFIG", "/DPACKAGE_DIR="+stage, "/DOUTPUT_FILE="+installer, "/DFIXED_VERSION="+options.Identity.Version+".0", "/DBUILD_FRESHNESS="+options.Identity.Freshness, "/DAPP_DISPLAY_NAME="+productidentity.WorkstationDisplayName, "/DAPP_APPLICATION_NAME="+productidentity.WorkstationApplicationName, script)
+	command := hiddenCommandContext(buildContext, compiler, "/WX", "/V2", "/NOCONFIG", "/DPACKAGE_DIR="+stage, "/DOUTPUT_FILE="+installer, "/DFIXED_VERSION="+options.Identity.Version+".0", "/DBUILD_FRESHNESS="+options.Identity.Freshness, "/DAPP_DISPLAY_NAME="+productidentity.WorkstationDisplayName, "/DAPP_APPLICATION_NAME="+productidentity.WorkstationApplicationName, "/DINPUTS_FILENAME="+result.DataFileName, "/DINPUTS_SHA256="+result.DataSHA256, script)
 	command.Stdout, command.Stderr = options.Output, options.Errors
-	fmt.Fprintln(options.Output, "Building the installer from the saved personal snapshot. Software downloads remain online.")
+	fmt.Fprintln(options.Output, "Building the private installer with verified materialized data, without recompression.")
 	if err := command.Run(); err != nil {
 		return result, fmt.Errorf("compile personal installer: %w", err)
 	}
@@ -215,6 +221,7 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	defer release()
 	canonical := filepath.Join(output, productidentity.WorkstationInstallerName)
 	canonicalEvidence := filepath.Join(output, productidentity.WorkstationEvidenceName)
+	hasPreviousData := false
 	if _, err := os.Lstat(canonical); err == nil {
 		old, err := installerartifact.Read(canonicalEvidence)
 		if err != nil {
@@ -227,6 +234,13 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 		if old.Product != result.Product || actual != old.InstallerSHA256 {
 			return result, errors.New("existing installer changed or has another owner; preserved")
 		}
+		if old.DataFileName != "" {
+			hasPreviousData = true
+			actualData, err := workstationFileDigest(filepath.Join(output, old.DataFileName))
+			if err != nil || actualData != old.DataSHA256 {
+				return result, errors.New("existing materialized data changed; previous installer preserved")
+			}
+		}
 		if old.Identity.Freshness > result.Identity.Freshness {
 			return result, errors.New("a newer installer is already present; preserved")
 		}
@@ -235,12 +249,52 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	} else if _, err := os.Lstat(canonicalEvidence); err == nil {
 		return result, errors.New("orphan installer provenance was preserved")
 	}
-	retainPublicationFiles, err = publishWorkstationPair(installer, evidenceFile, canonical, canonicalEvidence)
+	if !hasPreviousData {
+		if _, err := os.Lstat(filepath.Join(output, result.DataFileName)); err == nil {
+			return result, errors.New("unowned materialized installer data was preserved")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return result, err
+		}
+	}
+	retainPublicationFiles, err = publishWorkstationSet(installer, evidenceFile, materializedData, canonical, canonicalEvidence, filepath.Join(output, result.DataFileName))
 	if err != nil {
 		return result, err
 	}
-	fmt.Fprintf(options.Output, "PRIVATE installer: %s\nSHA-256: %s\nEmbedded configuration files: %d\nKeep this installer and its sidecar private. Sandbox acceptance pending.\n", canonical, result.InstallerSHA256, result.ConfigurationFiles)
+	fmt.Fprintf(options.Output, "PRIVATE installer: %s\nSHA-256: %s\nRequired data: %s\nData SHA-256: %s\nKeep the installer, data and provenance together and private. Sandbox acceptance pending.\n", canonical, result.InstallerSHA256, filepath.Join(output, result.DataFileName), result.DataSHA256)
 	return result, nil
+}
+
+func publishWorkstationSet(installer, evidence, data, canonical, canonicalEvidence, canonicalData string) (bool, error) {
+	backup := filepath.Join(filepath.Dir(data), "previous-data.zip")
+	_, err := os.Lstat(canonicalData)
+	hadData := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if hadData {
+		if err := os.Rename(canonicalData, backup); err != nil {
+			return false, err
+		}
+	}
+	restore := func() error {
+		if hadData {
+			return os.Rename(backup, canonicalData)
+		}
+		if err := os.Remove(canonicalData); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.Rename(data, canonicalData); err != nil {
+		restoreErr := restore()
+		return restoreErr != nil, errors.Join(err, restoreErr)
+	}
+	retain, publishErr := publishWorkstationPair(installer, evidence, canonical, canonicalEvidence)
+	if publishErr != nil {
+		restoreErr := restore()
+		return retain || restoreErr != nil, errors.Join(publishErr, restoreErr)
+	}
+	return false, nil
 }
 
 // Publish provenance first so a locked/read-only sidecar cannot destroy the

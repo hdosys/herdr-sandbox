@@ -65,6 +65,7 @@ func TestSavedWorkstationPreservesExistingInstallationAndRejectsDrift(t *testing
 	}
 	profile := []byte("saved private fixture")
 	installer := []byte("owned installer fixture")
+	materialized := []byte("owned materialized input fixture")
 	if err := os.WriteFile(filepath.Join(directory, "profile.json"), profile, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +73,11 @@ func TestSavedWorkstationPreservesExistingInstallationAndRejectsDrift(t *testing
 		t.Fatal("existing installation was replaced")
 	}
 	evidence := installerartifact.Evidence{Product: productidentity.WorkstationApplicationName, ConfigurationSource: "saved-installation", ConfigurationFiles: 1, ProfileSHA256: fmt.Sprintf("%x", sha256.Sum256(profile)), InstallerSHA256: fmt.Sprintf("%x", sha256.Sum256(installer)), Identity: installerartifact.Identity{Version: "0.0.28", Revision: strings.Repeat("a", 40), Freshness: "2026.11.10.1200Z"}, PayloadSHA256: map[string]string{}}
+	evidence.DataFileName = "herdr-workstation_setup.data.zip"
+	evidence.DataSHA256 = fmt.Sprintf("%x", sha256.Sum256(materialized))
+	if err := os.WriteFile(filepath.Join(directory, evidence.DataFileName), materialized, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, productidentity.LicenseName} {
 		evidence.PayloadSHA256[name] = strings.Repeat("b", 64)
 	}

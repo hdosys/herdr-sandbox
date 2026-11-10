@@ -34,6 +34,10 @@ try {
     if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Installer input is unsafe.'}
     [IO.File]::Copy($source,$installerPath,$false)
     if((Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash -ine $installerDigest){throw 'Installer snapshot hash mismatch.'}
+    $dataSource=Join-Path $bootstrapRoot 'installer\herdr-workstation_setup.data.zip'
+    $dataInfo=Get-Item -LiteralPath $dataSource -Force -ErrorAction Stop
+    if($dataInfo.PSIsContainer -or $dataInfo.Length -le 0 -or $dataInfo.Length -gt 68719476736 -or ($dataInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Materialized installer data is missing or unsafe.'}
+    [IO.File]::Copy($dataSource,(Join-Path $privateRoot 'herdr-workstation_setup.data.zip'),$false)
     $progress=[ordered]@{schemaVersion=1;phase='installer-running';message='Running the hash-bound workstation installer; no normal provisioning will repair its result.'}
     Publish-InstallerProgress $progress
     [HerdrWorkstation.Directories]::Ensure($stateRoot)

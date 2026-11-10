@@ -70,10 +70,12 @@ type WorkstationFile struct {
 }
 
 type WorkstationOptions struct {
-	Profile string
-	Root    string
-	Refresh bool
-	Output  io.Writer
+	Profile      string
+	Root         string
+	Refresh      bool
+	Inputs       string
+	InputsSHA256 string
+	Output       io.Writer
 }
 
 type WorkstationStep struct {
@@ -320,6 +322,9 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
+	if options.Inputs == "" || options.InputsSHA256 == "" {
+		return "", errors.New("setup requires the complete installer set and its bound materialized inputs")
+	}
 	if options.Root == "" {
 		var err error
 		options.Root, err = WorkstationStateRoot()
@@ -396,6 +401,18 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	if err := rejectMappedPathReparsePoints(input); err != nil {
 		return "", err
 	}
+	if err := applyWorkstationInputs(ctx, root, options.Inputs, options.InputsSHA256, options.Output); err != nil {
+		return "", err
+	}
+	preparedPath := filepath.Join(root, "prepared-inputs.json")
+	preparedData, found, err := readBoundedRegularFile(preparedPath, 16*1024*1024)
+	if err != nil || !found {
+		return "", errors.New("materialized input metadata is unavailable")
+	}
+	var prepared preparedWorkstationInputs
+	if err := decodeStrictJSON(preparedData, &prepared); err != nil || prepared.SchemaVersion != 1 {
+		return "", errors.New("materialized input metadata is invalid")
+	}
 	baseData, err := readProvisioningScript(base, "base", maximumBaseScriptSize)
 	if err != nil {
 		return "", err
@@ -407,6 +424,23 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	// Do not stage personal settings into the elevated tool runner's input.
 	selection := profile
 	selection.Files = []WorkstationFile{}
+	selection.Packages = append([]wingetPackagePlanEntry(nil), profile.Packages...)
+	for index, requested := range selection.Packages {
+		resolved := ""
+		for _, entry := range prepared.Packages {
+			if strings.EqualFold(entry.Metadata.ID, requested.ID) {
+				if resolved != "" && resolved != entry.Metadata.Version {
+					return "", errors.New("materialized package versions conflict")
+				}
+				resolved = entry.Metadata.Version
+			}
+		}
+		if resolved == "" || (requested.Version != "" && requested.Version != resolved) {
+			return "", fmt.Errorf("materialized package does not match the selected %s version", requested.ID)
+		}
+		selection.Packages[index].Version = resolved
+	}
+	selection.Tools = prepared.Tools
 	selectionData, err := json.Marshal(selection)
 	if err != nil {
 		return "", err
@@ -415,8 +449,8 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 		baseProvisioningName: baseData, stackProvisioningName: stackData,
 		playwrightAccessName: playwrightAccessScript, apifyAccessName: apifyAccessScript,
 		"profile.json": selectionData, "workstation.ps1": workstationScript,
+		"prepared-inputs.json":   preparedData,
 		"workstation-winget.ps1": workstationWinGetScript, "workstation-action.ps1": workstationActionScript, provisioningProcessName: provisioningProcessSource,
-		visualStudioLayoutScriptName: visualStudioLayoutScript,
 	} {
 		path := filepath.Join(input, name)
 		if err := validateWorkstationLocalPath(path); err != nil {

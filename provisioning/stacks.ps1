@@ -4097,65 +4097,9 @@ function Get-TradingViewDesktopPackageMetadata {
         [string]$PayloadPath
     )
 
-    $packageID = 'TradingView.TradingViewDesktop'
-    $packageURL = 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix'
-    $expectedPublisher = 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US'
-    if (-not [IO.Path]::IsPathRooted($PayloadPath) -or
-        -not (Test-Path -LiteralPath $PayloadPath -PathType Leaf) -or
-        ((Get-Item -LiteralPath $PayloadPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "TradingView Desktop MSIX is missing or unsafe: $PayloadPath"
-    }
-    $signature = Get-AuthenticodeSignature -LiteralPath $PayloadPath
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-        [string]$signature.SignerCertificate.Subject -cne $expectedPublisher) {
-        throw "TradingView Desktop MSIX signer is invalid: $($signature.Status) $($signature.SignerCertificate.Subject)"
-    }
-
-    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
-    $packageStream = [IO.File]::Open($PayloadPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    $archive = $null
-    $manifestReader = $null
-    try {
-        $archive = [IO.Compression.ZipArchive]::new(
-            $packageStream, [IO.Compression.ZipArchiveMode]::Read, $false)
-        $manifestEntries = @($archive.Entries | Where-Object { $_.FullName -ceq 'AppxManifest.xml' })
-        if ($manifestEntries.Count -ne 1 -or $manifestEntries[0].Length -le 0 -or
-            $manifestEntries[0].Length -gt 1048576) {
-            throw "TradingView Desktop MSIX contains $($manifestEntries.Count) bounded AppxManifest.xml entries; expected one."
-        }
-        $manifestReader = [IO.StreamReader]::new($manifestEntries[0].Open(), [Text.Encoding]::UTF8, $true)
-        [xml]$manifest = $manifestReader.ReadToEnd()
-    } finally {
-        if ($null -ne $manifestReader) { $manifestReader.Dispose() }
-        if ($null -ne $archive) { $archive.Dispose() }
-        $packageStream.Dispose()
-    }
-    $identity = $manifest.Package.Identity
-    if ([string]$identity.Name -cne 'TradingView.Desktop' -or
-        [string]$identity.ProcessorArchitecture -cne 'x64' -or
-        [string]$identity.Publisher -cne $expectedPublisher -or
-        [string]$identity.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-        throw 'TradingView Desktop MSIX package identity is invalid.'
-    }
-
-    $payloadStream = [IO.File]::Open($PayloadPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    $sha256 = [Security.Cryptography.SHA256]::Create()
-    try {
-        $payloadHash = [BitConverter]::ToString($sha256.ComputeHash($payloadStream)).Replace('-', '')
-    } finally {
-        $sha256.Dispose()
-        $payloadStream.Dispose()
-    }
-    return [pscustomobject]@{
-        Id = $packageID
-        Version = [string]$identity.Version
-        Architecture = 'x64'
-        InstallerType = 'msix'
-        Scope = ''
-        Url = $packageURL
-        Sha256 = $payloadHash
-        PayloadName = 'payload.msix'
-    }
+    return Get-ProvisioningSignedMSIXMetadata -PayloadPath $PayloadPath -Id 'TradingView.TradingViewDesktop' `
+        -Url 'https://tvd-packages.tradingview.com/stable/latest/win32/TradingView.msix' `
+        -PackageName 'TradingView.Desktop' -Publisher 'CN="TradingView, Inc.", O="TradingView, Inc.", S=Ohio, C=US' -Architecture 'x64'
 }
 
 function Get-TradingViewDesktopPortablePackage {

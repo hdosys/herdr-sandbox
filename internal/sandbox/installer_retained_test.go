@@ -162,6 +162,9 @@ func TestWorkstationRetainedSandboxAcceptance(t *testing.T) {
 	if err := installerartifact.Snapshot(installer, filepath.Join(input, "installer", "setup.exe"), evidence); err != nil {
 		t.Fatal(err)
 	}
+	if err := installerartifact.SnapshotData(filepath.Join(filepath.Dir(installer), evidence.DataFileName), filepath.Join(input, "installer", evidence.DataFileName), evidence); err != nil {
+		t.Fatal(err)
+	}
 	for path, data := range map[string][]byte{
 		filepath.Join(input, "installer", "workstation-root.cs"):      workstationRootSource,
 		filepath.Join(input, "installer", "probes.ps1"):               installerProbeScript,

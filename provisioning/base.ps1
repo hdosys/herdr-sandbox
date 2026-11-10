@@ -2562,6 +2562,94 @@ function Install-ProvisioningWinGetPackage {
         -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
 }
 
+function Get-ProvisioningSignedMSIXMetadata {
+    param([string]$PayloadPath, [string]$Id, [string]$Url, [string]$PackageName, [string]$Publisher, [string]$Architecture)
+    Assert-ProvisioningPathAncestors $PayloadPath
+    $signature = Get-AuthenticodeSignature -LiteralPath $PayloadPath
+    if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or $signature.SignerCertificate.Subject -cne $Publisher) {
+        throw "$Id MSIX publisher verification failed."
+    }
+    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+    $stream = [IO.File]::OpenRead($PayloadPath)
+    $archive = $null
+    $reader = $null
+    try {
+        $archive = [IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$false)
+        $entries = @($archive.Entries | Where-Object {$_.FullName -ceq 'AppxManifest.xml'})
+        if ($entries.Count -ne 1 -or $entries[0].Length -le 0 -or $entries[0].Length -gt 1048576) { throw "$Id MSIX manifest is not bounded and unique." }
+        $reader = [IO.StreamReader]::new($entries[0].Open())
+        [xml]$manifest = $reader.ReadToEnd()
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        if ($null -ne $archive) { $archive.Dispose() }
+        $stream.Dispose()
+    }
+    $identity = $manifest.Package.Identity
+    if ($identity.Name -cne $PackageName -or $identity.Publisher -cne $Publisher -or
+        $identity.ProcessorArchitecture -cne $Architecture -or $identity.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw "$Id MSIX package identity is invalid."
+    }
+    return [pscustomobject]@{Id=$Id;Version=[string]$identity.Version;Architecture=$Architecture;InstallerType='msix';Scope='';Url=$Url;Sha256=(Get-FileHash -LiteralPath $PayloadPath -Algorithm SHA256).Hash;PayloadName='payload.msix'}
+}
+
+function Prepare-ProvisioningWinGet {
+    if (-not (Test-ProvisioningPreparation)) { throw 'WinGet materialization requires preparation mode.' }
+    $bundle = Get-ProvisioningGitHubAssetMetadata -Role 'WinGet' -Repository 'microsoft/winget-cli' `
+        -AssetName 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' -Id 'Microsoft.DesktopAppInstaller' `
+        -Architecture 'neutral' -InstallerType 'msixbundle' -PayloadName 'payload.msixbundle'
+    Install-ProvisioningCachedPackage -Role 'WinGet' -Metadata $bundle -DownloadSource Direct -Adapter MSIX
+    $dependencies = Get-ProvisioningGitHubAssetMetadata -Role 'WinGet dependencies' -Repository 'microsoft/winget-cli' -Version $bundle.Version `
+        -AssetName 'DesktopAppInstaller_Dependencies.zip' -Id 'Microsoft.DesktopAppInstaller.Dependencies' `
+        -Architecture 'neutral' -InstallerType 'zip' -PayloadName 'payload.zip'
+    Install-ProvisioningCachedPackage -Role 'WinGet dependencies' -Metadata $dependencies -DownloadSource Direct -Adapter Portable
+    $source = Join-Path (Get-ProvisioningPath 'staging') ('winget-source-' + [Guid]::NewGuid().ToString('N') + '.msix')
+    try {
+        $uri = 'https://cdn.winget.microsoft.com/cache/source2.msix'
+        Invoke-WebRequest -Uri $uri -OutFile $source -UseBasicParsing -TimeoutSec 180
+        $metadata = Get-ProvisioningSignedMSIXMetadata -PayloadPath $source -Id 'Microsoft.Winget.Source' -Url $uri `
+            -PackageName 'Microsoft.Winget.Source' -Publisher 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' -Architecture 'neutral'
+        Install-ProvisioningCachedPackage -Role 'WinGet catalog' -Metadata $metadata -DownloadSource Direct -Adapter MSIX -ResolvedDirectPayloadPath $source
+    } finally { if (Test-Path -LiteralPath $source) { Remove-Item -LiteralPath $source -Force } }
+}
+
+function Install-ProvisioningMaterializedWinGet {
+    $bundle = Get-ProvisioningPreparedMetadata -Id 'Microsoft.DesktopAppInstaller' -Architecture 'neutral' -InstallerType 'msixbundle'
+    $dependencies = Get-ProvisioningPreparedMetadata -Id 'Microsoft.DesktopAppInstaller.Dependencies' -Architecture 'neutral' -InstallerType 'zip'
+    $catalog = Get-ProvisioningPreparedMetadata -Id 'Microsoft.Winget.Source' -Architecture 'neutral' -InstallerType 'msix'
+    if ($null -eq $bundle -or $null -eq $dependencies -or $null -eq $catalog) { throw 'WinGet requires its verified materialized distribution.' }
+    $stage = Join-Path (Get-ProvisioningPath 'staging') ('winget-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    try {
+        foreach ($metadata in @($bundle,$dependencies,$catalog)) {
+            $entry = (Get-ProvisioningSafeCacheName $metadata.Version) + '-' + $metadata.Sha256.Substring(0,16).ToLowerInvariant()
+            $directory = Join-Path (Get-ProvisioningPath 'cache\packages') ((Get-ProvisioningSafeCacheName $metadata.Id) + '\' + $entry)
+            $destination = Join-Path $stage ((Get-ProvisioningSafeCacheName $metadata.Id) + '-' + $metadata.PayloadName)
+            if (-not (Copy-ProvisioningCachedPackage -Directory $directory -Metadata $metadata -Destination $destination)) { throw 'WinGet materialized distribution failed integrity validation.' }
+        }
+        $installed = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        $functional = $false
+        if ($null -ne $installed) {
+            $capabilities = Invoke-ProvisioningNativeResult -Role 'Existing WinGet capability' -FilePath $installed.Source -ArgumentList @('download','--help') -TimeoutSeconds 30
+            $functional = $capabilities.Succeeded -and $capabilities.Output.Contains('--skip-dependencies')
+        }
+        if (-not $functional) {
+            $dependencyRoot = Join-Path $stage 'dependencies'
+            Expand-Archive -LiteralPath (Join-Path $stage ((Get-ProvisioningSafeCacheName $dependencies.Id) + '-' + $dependencies.PayloadName)) -DestinationPath $dependencyRoot
+            $dependencyFiles = @(Get-ChildItem -LiteralPath (Join-Path $dependencyRoot 'x64') -Filter '*.appx' -File | ForEach-Object {$_.FullName})
+            if ($dependencyFiles.Count -eq 0 -or $dependencyFiles.Count -gt 16) { throw 'WinGet materialized dependencies are invalid.' }
+            Add-AppxPackage -Path (Join-Path $stage ((Get-ProvisioningSafeCacheName $bundle.Id) + '-' + $bundle.PayloadName)) -DependencyPath $dependencyFiles
+        }
+        $installedCatalog = @(Get-AppxPackage -Name 'Microsoft.Winget.Source' -ErrorAction SilentlyContinue | Where-Object {$_.Version -ge [Version]$catalog.Version})
+        if ($installedCatalog.Count -eq 0) {
+            Add-AppxPackage -Path (Join-Path $stage ((Get-ProvisioningSafeCacheName $catalog.Id) + '-' + $catalog.PayloadName))
+        }
+        Update-ProvisioningPath
+        $manager = Get-Command winget.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+        Invoke-ProvisioningNative -Role 'Materialized WinGet verification' -FilePath $manager.Source -ArgumentList @('--version') -TimeoutSeconds 30
+        Invoke-ProvisioningNative -Role 'Materialized WinGet catalog verification' -FilePath $manager.Source -ArgumentList @('show','--id','Microsoft.VCRedist.2015+.x64','--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 60 | Out-Null
+    } finally { Remove-ProvisioningGuestPackageStage -Path $stage -Attempts 1 -DelayMilliseconds 0 | Out-Null }
+}
+
 function Install-ProvisioningGeistMonoNerdFont {
     $metadata = Get-ProvisioningGitHubAssetMetadata -Role 'GeistMono Nerd Font' `
         -Repository 'ryanoasis/nerd-fonts' -AssetName 'GeistMono.zip' -Id 'NerdFonts.GeistMono' `

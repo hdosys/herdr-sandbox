@@ -147,10 +147,10 @@ Section "Workstation setup"
   ${If} $ProfilePath == ""
     StrCpy $ProfilePath "$PLUGINSDIR\payload\personal-profile.json"
   ${EndIf}
-  nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" $RefreshArg'
+  nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" --inputs $\"$EXEDIR\${INPUTS_FILENAME}$\" --inputs-sha256 ${INPUTS_SHA256} $RefreshArg'
   Pop $SetupExit
   ${If} $SetupExit == "0"
-    StrCpy $FinishText "Setup completed. The report contains the checked component results. Accounts and licensed applications still require your separate sign-in. Re-run this installer to resume or refresh later."
+    StrCpy $FinishText "Setup completed. The report contains component and selected configuration/authentication results. Accounts without portable authentication and licensed applications may require sign-in. Re-run this installer to resume or refresh later."
   ${Else}
     StrCpy $FinishText "Setup finished with incomplete work (exit $SetupExit). Open the report for failed, blocked or interrupted steps, then run this installer again to resume. Exit 2 means no current report was published; some work may have completed."
     SetErrorLevel 1
