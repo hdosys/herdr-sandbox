@@ -136,6 +136,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 			return err
 		}
 		selection.Packages = packages
+		selection.WindowsTerminal = terminal
 		profile, _, err = workstationSelectionFromPlan(ctx, selection)
 		if err != nil {
 			return err
