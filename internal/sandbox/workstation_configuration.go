@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -161,7 +162,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	}
 	applyContext, stop := context.WithTimeout(ctx, 10*time.Minute)
 	defer stop()
-	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget`
+	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); try { & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget } catch { $failure=$_.Exception.GetBaseException(); [Console]::Error.WriteLine('[config-failure] '+$failure.GetType().FullName+' line='+$_.InvocationInfo.ScriptLineNumber); exit 1 }`
 	command := hiddenCommandContext(applyContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
 	command.Env = append(childProcessEnvironment(os.Environ()), "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
 	// Provider tools can include account material in errors. Keep their diagnostics
@@ -173,6 +174,14 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	result, err := command.Output()
 	defer clear(result)
 	if err != nil {
+		// Only code-owned phase labels and exception type/line are public. Never
+		// print provider messages, source configuration, tokens or account values.
+		safe := regexp.MustCompile(`^\[config-(?:sync|failure)\] (?:[a-z][a-z0-9-]{1,63}|[A-Za-z0-9_.+]+ line=[0-9]+)$`)
+		for line := range strings.SplitSeq(diagnostics.String(), "\n") {
+			if line = strings.TrimSpace(line); safe.MatchString(line) {
+				fmt.Fprintln(output, line)
+			}
+		}
 		return fmt.Errorf("apply shared configuration and authentication: %w (private diagnostics withheld)", err)
 	}
 	verified, err := decodeDevelopmentConfigurationSyncResult(result)

@@ -80,7 +80,6 @@ switch ($Action) {
     'playwright-cli' { Install-PlaywrightCLIStack }
     'tradingview' { Install-TradingViewStack }
     'hyperframes' { Install-StackHyperFramesRendering }
-    'tts-models' { Invoke-ProvisioningNative -Role 'TTS bundle preparation' -FilePath $RunnerPath -ArgumentList @('workstation','prepare-tts','--root',$NativeRoot) -TimeoutSeconds 1800 | Out-Null }
     'tts' { Install-StackHyperFramesOptionalTTS }
     'git-sh' {
         $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source

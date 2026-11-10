@@ -1074,6 +1074,10 @@ function Get-ProvisioningPath {
         # control state. This also keeps VS layouts below its 80-character limit.
         $RelativePath = [string]$Matches[1]
         $root = if ($PackageCacheDirectory -ne '') { $PackageCacheDirectory } else { Join-Path $env:ProgramData 'herdr-workstation\cache' }
+    } elseif ((Test-ProvisioningWorkstation) -and $RelativePath -match '^(?:visual-studio|toolchains[\\/]visual-studio)(?:[\\/]|$)') {
+        # VS layout and installation paths have vendor length limits. These are
+        # machine tool inputs/effects, not per-attempt control-state directories.
+        $root = Join-Path $env:ProgramData 'herdr-workstation'
     }
     if ($root -notmatch '^[A-Za-z]:\\') { throw [Security.SecurityException]::new('Provisioning root must be an absolute local drive path.') }
     $root = [IO.Path]::GetFullPath($root).TrimEnd('\')

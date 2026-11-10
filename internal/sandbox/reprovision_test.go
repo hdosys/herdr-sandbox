@@ -153,7 +153,7 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 	t.Setenv(fastTestsEnvironment, "")
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
-		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningExtensionScript"},
+		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningExtensionScript", "Test-ProvisioningPreparation"},
 	}, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
 		names: []string{"Install-HyperFramesStack", "Install-StackHyperFramesOptionalTTS", "Assert-StackSupertonicRuntime"},

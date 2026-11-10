@@ -172,8 +172,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     if ($selected.ContainsKey('tradingview')) { Add-WorkstationJob 'TradingView' 'tradingview' -Requires @('Node.js') -Tools @('TradingView.TradingViewDesktop','@ferroxlabs/tvcontrol') }
     if ($selected.ContainsKey('hyperframes')) {
         Add-WorkstationJob 'HyperFrames rendering' 'hyperframes' -Requires @('Node.js','WinGet') -Tools @('hyperframes','Gyan.FFmpeg')
-        Add-WorkstationJob 'TTS models' 'tts-models' -Seconds 1860
-        Add-WorkstationJob 'HyperFrames TTS' 'tts' -Requires @('HyperFrames rendering','TTS models','Python','uv')
+        Add-WorkstationJob 'HyperFrames TTS' 'tts' -Requires @('HyperFrames rendering','Python','uv')
     }
     if ($selected.ContainsKey('git-sh')) {
         Add-WorkstationJob 'Git shell' 'git-sh' -Requires @('Package Git.Git') -Seconds 60

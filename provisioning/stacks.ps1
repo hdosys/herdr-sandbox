@@ -585,6 +585,7 @@ function Install-StackVisualStudioBuildTools {
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $cacheRoot = Get-ProvisioningPath 'cache\vsbt'
     $guestLayout = Get-ProvisioningPath 'visual-studio\layout'
+    if ($guestLayout.Length -ge 80) { throw 'Visual Studio source layout must remain below 80 characters.' }
     if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) {
         throw 'The host-prepared Visual Studio Build Tools cache is missing.'
     }
@@ -3755,6 +3756,21 @@ function Install-HyperFramesStack {
     [CmdletBinding()]
     param([string]$NodeVersion = '', [string]$FFmpegVersion = '', [string]$Version = '')
 
+    if (Test-ProvisioningPreparation) {
+        $preparationHome = Get-ProvisioningPath 'preparation-home'
+        New-Item -ItemType Directory -Path $preparationHome -Force | Out-Null
+        $previousHome = $env:HOME
+        $previousUserProfile = $env:USERPROFILE
+        try {
+            $env:HOME = $preparationHome
+            $env:USERPROFILE = $preparationHome
+            Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
+        } finally {
+            $env:HOME = $previousHome
+            $env:USERPROFILE = $previousUserProfile
+        }
+        return
+    }
     Invoke-ProvisioningStep -Name 'HyperFrames rendering' `
         -InputValues @($global:HerdrSandboxStepState.StackImplementation, $NodeVersion, $FFmpegVersion, $Version,
             (Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion),
@@ -3833,6 +3849,7 @@ function Install-StackHyperFramesRendering {
     Install-ProvisioningCachedPackage -Role 'HyperFrames FFmpeg full build' -Metadata $ffmpegMetadata `
         -DownloadSource 'WinGet' -Adapter 'Portable' -ExecutableName 'ffmpeg.exe' `
         -PortableVersionArguments @('-version')
+    if (-not (Test-ProvisioningPreparation)) {
     $ffmpeg = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $ffprobe = Get-Command 'ffprobe.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     if ((Split-Path -Parent $ffmpeg.Source) -ine (Split-Path -Parent $ffprobe.Source)) {
@@ -3845,6 +3862,7 @@ function Install-StackHyperFramesRendering {
     $ffprobeVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFprobe' -Name 'ffprobe.exe' `
         -VersionArguments @('-version') `
         -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
+    }
 
     $toolsRoot = Get-ProvisioningPath 'tools'
     $toolRoot = Join-Path $toolsRoot 'hyperframes'
@@ -4071,6 +4089,7 @@ function Install-StackHyperFramesRendering {
             [IO.Path]::GetFullPath($activationLauncher)) {
             throw [Security.SecurityException]::new("HyperFrames OpenCode launcher resolved from an unexpected path: $($resolvedActivationLauncher.Source)")
         }
+        if (Test-ProvisioningPreparation) { return }
 
         $doctorLines = @(Invoke-ProvisioningNative -Role 'HyperFrames doctor' -FilePath $node `
             -ArgumentList @($cliEntry, 'doctor', '--json') -WorkingDirectory $stagingRoot -TimeoutSeconds 180)

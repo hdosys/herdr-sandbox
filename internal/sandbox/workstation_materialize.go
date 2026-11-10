@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -58,6 +59,13 @@ func prepareWorkstationInputs(ctx context.Context, stage, destination string, pr
 	work := filepath.Join(filepath.Dir(cache), "materialization")
 	if err := os.MkdirAll(work, 0o700); err != nil {
 		return "", "", err
+	}
+	hyperFramesModels := ""
+	if slices.Contains(profile.Stacks, "hyperframes") && configuration.ModelsDirectory != "" {
+		hyperFramesModels = configuration.ModelsDirectory
+		if err := prepareHyperFramesVoxCPM2(ctx, hyperFramesModels, configuration.TTSBundle, output); err != nil {
+			return "", "", err
+		}
 	}
 	visualStudioSlot := ""
 	if profileNeedsVisualStudioLayout(profile) {
@@ -251,6 +259,42 @@ func prepareWorkstationInputs(ctx context.Context, stage, destination string, pr
 			buildErr = addTree(source, prefix)
 		}
 	}
+	if slices.Contains(profile.Stacks, "hyperframes") && buildErr == nil {
+		buildErr = addTree(filepath.Join(work, "preparation-home", ".cache", "hyperframes", "chrome"), "user-cache/hyperframes/chrome")
+		if buildErr == nil {
+			buildErr = addTree(filepath.Join(work, "tools", "hyperframes-opencode"), "tools/hyperframes-opencode")
+		}
+		if buildErr == nil && hyperFramesModels != "" {
+			releaseRoot := filepath.Join(hyperFramesModels, ".herdr-sandbox", voxcpm2CacheDirectoryName)
+			descriptorData, err := os.ReadFile(filepath.Join(releaseRoot, voxcpm2CurrentDescriptorName))
+			var descriptor voxcpm2ReleaseDescriptor
+			if err != nil || json.Unmarshal(descriptorData, &descriptor) != nil || descriptor.SchemaVersion != 1 {
+				buildErr = errors.New("prepared TTS release descriptor is unavailable")
+			} else {
+				for _, item := range append(append([]voxcpm2Artifact(nil), descriptor.Models.Files...), descriptor.ReferenceAudio) {
+					if !filepath.IsLocal(item.Name) || filepath.Base(item.Name) != item.Name {
+						buildErr = errors.New("prepared TTS model name is unsafe")
+						break
+					}
+					if buildErr == nil {
+						buildErr = addFile(filepath.Join(hyperFramesModels, item.Name), path.Join("models", item.Name))
+					}
+				}
+				if buildErr == nil {
+					buildErr = addFile(filepath.Join(hyperFramesModels, voxcpm2ModelCompletionName), path.Join("models", voxcpm2ModelCompletionName))
+				}
+				if buildErr == nil {
+					buildErr = addFile(filepath.Join(releaseRoot, voxcpm2CurrentDescriptorName), path.Join("models/.herdr-sandbox", voxcpm2CacheDirectoryName, voxcpm2CurrentDescriptorName))
+				}
+				if !filepath.IsLocal(descriptor.Tag) || filepath.Base(descriptor.Tag) != descriptor.Tag {
+					buildErr = errors.New("prepared TTS release tag is unsafe")
+				}
+				if buildErr == nil {
+					buildErr = addTree(filepath.Join(releaseRoot, "releases", descriptor.Tag), path.Join("models/.herdr-sandbox", voxcpm2CacheDirectoryName, "releases", descriptor.Tag))
+				}
+			}
+		}
+	}
 	if profileNeedsVisualStudioLayout(profile) && buildErr == nil {
 		buildErr = addTree(visualStudioSlot, "cache/vsbt/a")
 	}
@@ -375,8 +419,14 @@ func applyWorkstationInputs(ctx context.Context, root, sourcePath, expectedDiges
 			destination = filepath.Join(root, "prepared-inputs.json")
 		case strings.HasPrefix(name, "cache/"):
 			destination = filepath.Join(cache, filepath.FromSlash(strings.TrimPrefix(name, "cache/")))
-		case strings.HasPrefix(name, "tools/npm-cache/_cacache/"), strings.HasPrefix(name, "tools/playwright-browsers/"):
+		case strings.HasPrefix(name, "tools/npm-cache/_cacache/"), strings.HasPrefix(name, "tools/playwright-browsers/"), strings.HasPrefix(name, "tools/hyperframes-opencode/"), strings.HasPrefix(name, "models/"):
 			destination = filepath.Join(root, filepath.FromSlash(name))
+		case strings.HasPrefix(name, "user-cache/hyperframes/chrome/"):
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			destination = filepath.Join(home, ".cache", filepath.FromSlash(strings.TrimPrefix(name, "user-cache/")))
 		default:
 			return errors.New("materialized data contains an unexpected target")
 		}

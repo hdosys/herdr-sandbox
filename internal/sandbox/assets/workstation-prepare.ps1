@@ -49,6 +49,7 @@ if (-not $PackagesOnly) {
     if ($stackSet.Contains('herdr')) { foreach ($dependency in @('python','zig','rust-msvc','bun','cargo-nextest','just','git-sh')) { $null=$stackSet.Add($dependency) } }
     if ($stackSet.Contains('handy')) { foreach ($dependency in @('rust-msvc','cpp','bun','vulkan','webview2')) { $null=$stackSet.Add($dependency) } }
     if ($stackSet.Contains('cargo-nextest')) { $null=$stackSet.Add('rust-msvc') }
+    if ($stackSet.Contains('hyperframes')) { $null=$stackSet.Add('python'); $null=$stackSet.Add('uv'); $null=$stackSet.Add('git-sh') }
     foreach ($stack in @($stackSet | Sort-Object)) {
         switch ([string]$stack) {
             'go' { Install-GoStack }
@@ -69,6 +70,7 @@ if (-not $PackagesOnly) {
             'audio' { Install-AudioStack }
             'playwright-cli' { Install-PlaywrightCLIStack }
             'android' { Install-AndroidStack }
+            'hyperframes' { Install-HyperFramesStack }
             'cpp' { Install-CppStack }
             'git-sh' { Install-ProvisioningPackage -Id 'Git.Git' }
             'vulkan' { Install-StackVulkanSDK }
