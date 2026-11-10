@@ -263,7 +263,7 @@ func prepareWorkstationInputs(ctx context.Context, stage, destination string, pr
 
 func profileNeedsVisualStudioLayout(profile WorkstationProfile) bool {
 	for _, stack := range profile.Stacks {
-		if stack == "rust-msvc" || stack == "cpp" || stack == "handy" {
+		if stack == "rust-msvc" || stack == "cpp" || stack == "handy" || stack == "herdr" || stack == "cargo-nextest" {
 			return true
 		}
 	}

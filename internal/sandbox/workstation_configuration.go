@@ -163,7 +163,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	defer stop()
 	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget`
 	command := hiddenCommandContext(applyContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
-	command.Env = append(os.Environ(), "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
+	command.Env = append(childProcessEnvironment(os.Environ()), "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
 	// Provider tools can include account material in errors. Keep their diagnostics
 	// in memory, just as the authenticated transfer boundary does, never setup.log.
 	var diagnostics bytes.Buffer

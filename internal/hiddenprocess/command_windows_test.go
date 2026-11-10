@@ -23,12 +23,42 @@ const (
 	processTreePIDFile    = "HERDR_SANDBOX_PROCESS_TREE_PID_FILE"
 	successHelperMode     = "HERDR_SANDBOX_SUCCESS_HELPER"
 	largeOutputHelperMode = "HERDR_SANDBOX_LARGE_OUTPUT_HELPER"
+	outputHelperMode      = "HERDR_SANDBOX_OUTPUT_HELPER"
 	parentWaitsForChild   = "parent-waits"
 	parentExitsAfterSpawn = "parent-exits"
 	grandchildSleeps      = "grandchild"
 )
 
 const windowsSharingViolation syscall.Errno = 32
+
+func TestCommandOutputUsesOwnedRunPath(t *testing.T) {
+	// The outer job also bounds a regression to the promoted exec.Cmd.Output:
+	// that path would leave its grandchild suspended and ignore cancellation.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	command := CommandContext(ctx, os.Args[0], "-test.run=^TestOutputCommandHelper$")
+	command.Env = append(os.Environ(), outputHelperMode+"=1")
+	output, err := command.CombinedOutput()
+	if err != nil || string(output) != "owned" {
+		t.Fatalf("owned Output path: %v, output %q", err, output)
+	}
+}
+
+func TestOutputCommandHelper(t *testing.T) {
+	if os.Getenv(outputHelperMode) != "1" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	command := CommandContext(ctx, os.Args[0], "-test.run=^TestSuccessfulCommandHelper$")
+	command.Env = append(os.Environ(), successHelperMode+"=1")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprint(os.Stdout, string(output))
+	os.Exit(0)
+}
 
 func TestCommandCombinedOutputUsesOwnedRunPath(t *testing.T) {
 	command := CommandContext(t.Context(), os.Args[0], "-test.run=^TestSuccessfulCommandHelper$")

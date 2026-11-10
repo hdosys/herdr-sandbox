@@ -43,7 +43,13 @@ foreach ($package in @($selection.packages)) {
 }
 Install-ProvisioningPackage -Id 'Microsoft.VCRedist.2015+.x64'
 if (-not $PackagesOnly) {
-    foreach ($stack in @($selection.stacks)) {
+    $stackSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($stack in @($selection.stacks)) { $null = $stackSet.Add([string]$stack) }
+    if ($stackSet.Contains('python-ai')) { $null=$stackSet.Add('python'); $null=$stackSet.Add('uv') }
+    if ($stackSet.Contains('herdr')) { foreach ($dependency in @('python','zig','rust-msvc','bun','cargo-nextest','just','git-sh')) { $null=$stackSet.Add($dependency) } }
+    if ($stackSet.Contains('handy')) { foreach ($dependency in @('rust-msvc','cpp','bun','vulkan','webview2')) { $null=$stackSet.Add($dependency) } }
+    if ($stackSet.Contains('cargo-nextest')) { $null=$stackSet.Add('rust-msvc') }
+    foreach ($stack in @($stackSet | Sort-Object)) {
         switch ([string]$stack) {
             'go' { Install-GoStack }
             'python' { Install-PythonStack }
@@ -57,6 +63,17 @@ if (-not $PackagesOnly) {
             'node' { Install-NodeStack }
             'rust-msvc' { Install-RustMSVCStack }
             'tradingview' { Install-TradingViewStack }
+            'bun' { Install-BunStack }
+            'uv' { Install-Uv }
+            'java' { Install-JavaStack }
+            'audio' { Install-AudioStack }
+            'playwright-cli' { Install-PlaywrightCLIStack }
+            'android' { Install-AndroidStack }
+            'cpp' { Install-CppStack }
+            'git-sh' { Install-ProvisioningPackage -Id 'Git.Git' }
+            'vulkan' { Install-StackVulkanSDK }
+            'webview2' { Install-StackWebView2 }
+            {$_ -in @('python-ai','herdr','handy')} { }
             default { throw "Materialization for selected stack $stack has not completed its shared preparation contract." }
         }
     }

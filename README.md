@@ -573,9 +573,9 @@ Windows x64 build 19041 or newer and Windows PowerShell 5.1. Run it elevated as
 the Windows user who will use the tools. Elevating with a different administrator
 account configures that account, not the signed-in user's profile.
 
-This is a self-contained setup program, not another background service or a
-second installed administration application. It extracts its executable payload
-temporarily. Installed tools retain their own normal uninstallers.
+This is a local setup program for targets without SSH, not another background
+service. It uses the same provisioning and configuration owners as the Sandbox
+path. Installed tools retain their normal uninstallers.
 
 ### Create, build and test an installation
 
@@ -596,7 +596,9 @@ does not silently install a compiler on the host.
 
 The resulting private installer is
 `%LOCALAPPDATA%\Herdr Installations\MeinPC\herdr-workstation_setup.exe`, with its
-matching JSON sidecar and saved `profile.json`. Each named installation has one
+matching `herdr-workstation_setup.data.zip`, JSON provenance and saved `profile.json`.
+The data companion carries the prepared dependencies without recompression;
+large selections exceed NSIS's 2-GiB single-executable limit. Each name has one
 current installer. These saved installations survive ordinary Sandbox cleanup and
 application uninstall. Creating an existing name never overwrites it; use a new
 name for a new snapshot. A rebuild updates only the verified owned artifact.
@@ -612,12 +614,14 @@ save its work before separately choosing `sandbox down`. It bootstraps only SSH,
 runs the personal installer and independently checks its results. After success,
 use `sandbox attach` in a real terminal. Building inside a guest is supported, but
 starting a nested Sandbox is not. Before discarding a build guest, copy its private
-installer and matching JSON sidecar to persistent host storage. Test that pair on
+installer, data ZIP and matching JSON provenance to persistent host storage. Test that set on
 the host with `sandbox workstation test --installer "C:\path\herdr-workstation_setup.exe"`.
 No separate profile is needed for this copied-installer path.
 
-Copy the generated private EXE to a new computer and run it. No separate profile
-or access to the old computer is needed there. For unattended installation:
+Copy the private EXE, data ZIP and JSON provenance together to a local directory on
+the new computer, then run the EXE. Use NTFS or exFAT storage for data files larger
+than 4 GiB. No separate profile, source-computer connection or SSH is required on
+the target. For unattended installation:
 
 ```powershell
 (Start-Process .\herdr-workstation_setup.exe -ArgumentList '/S' -Wait -PassThru).ExitCode
@@ -627,18 +631,21 @@ or access to the old computer is needed there. For unattended installation:
 Herdr, OpenCode, Claude Code, Codex, Copilot, Pi, shared agent skills, GitHub CLI,
 Zed, Windows Terminal, Nushell, Starship and Git. Referenced skill scripts/assets
 and tracked supporting files from agent configuration repositories are included,
-without their Git metadata. Known authentication stores, environment-secret files, SSH keys,
-Git history, runtime caches/sessions and project trees are excluded. Authored
-settings may contain inline private values; this is not a universal secret scrubber.
-Commands and machine-specific paths remain authored values, not guessed bindings.
+without their Git metadata. Supported authentication follows the same independent
+`credentialSync` selections and provider exporters as normal provisioning. The
+private installer can grant access to those accounts. SSH private keys, project
+trees and Git history are not captured. Shared target transformations adapt shell
+paths and starting directories; source file hashes alone are not usability checks.
 
 The sidecar records the profile digest and file count; named builds identify their
 source as a saved installation, not a new live capture. Creating an installation
 inside a guest captures that guest's accessible settings, not an unseen complete
 host configuration. Create a new named installation
-on the source computer, then build it to capture later changes. Software and model
-downloads remain online; existing host cache payloads are not bundled. Accounts
-and licences require separate sign-in.
+on the source computer, then build it to capture later changes. Build preparation
+resolves and verifies the selected software inputs through the shared cache owners.
+The installer consumes the bound data companion rather than downloading those
+packages again. Unsupported or expired authentication and licences remain explicit
+provider boundaries; copied data is not a guarantee of a successful account login.
 
 ### Completion, failures and resume
 
@@ -650,22 +657,26 @@ never activates a component. Explicit cancellation can still interrupt setup.
 The final HTML/JSON report lives below
 `%ProgramData%\herdr-workstation\<Windows-user-SID>`. It distinguishes successful,
 retained, failed, unavailable, blocked and interrupted/pending work. An incomplete
-run returns nonzero and is not presented as a fully successful setup.
+run returns nonzero and is not presented as a fully successful setup. `setup.log`
+beside the report records installer output across timestamped attempts; private
+credential diagnostics are withheld rather than written into that log.
 
 Run the installer again to resume. Protected setup state retains its embedded
-configuration snapshot. `/REFRESH` deliberately repeats completed work. Existing
-different target settings are preserved and reported as conflicts. Sandbox-only
+configuration snapshot. `/REFRESH` deliberately repeats completed work. The shared
+configuration application owns selected target transformations. Sandbox-only
 security changes, audio disabling, SSH setup, firewall rules and the OpenCode
 Sandbox allow-all policy are not applied. Existing Herdr is retained without an
 automatic update or live-session restart.
 
 Advanced automation can select a distinct protected control-state directory with
 `/ROOT=C:\ProgramData\<owned-directory>` (CLI: `--root`). This changes only setup
-state/cache ownership; it does not isolate the installed Windows applications.
+control state; it does not isolate installed Windows applications or duplicate the
+shared verified download cache.
 
 For developers only, the canonical source-build candidate is produced with
 `go run ./cmd/task package-workstation v0.0.28` at
-`build/dist/herdr-workstation_setup.exe`, with its provenance JSON beside it.
+`build/dist/herdr-workstation_setup.exe`, with required data ZIP and provenance
+JSON beside it. `--profile FILE` builds an existing private snapshot explicitly.
 This target is separate from `herdr-sandbox_setup.exe`; neither package task
 removes the other product's canonical candidate. No public workstation release
 is implied by a local development build. This task delegates to the same runtime

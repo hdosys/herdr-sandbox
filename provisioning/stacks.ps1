@@ -827,6 +827,7 @@ function Install-StackCMake {
     Install-ProvisioningCachedPackage -Role 'CMake' -Metadata $metadata `
         -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'cmake.exe' `
         -InstallerArguments @('ADD_CMAKE_TO_PATH=System') -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     Add-ProvisioningMachinePath -Directory (Join-Path $env:ProgramFiles 'CMake\bin')
     return Assert-ProvisioningCommand -Role 'CMake' -Name 'cmake.exe' `
         -VersionArguments @('--version') `
@@ -888,6 +889,7 @@ function Install-CppStack {
     [CmdletBinding()]
     param()
 
+    if (Test-ProvisioningPreparation) { Install-StackCMake; return }
     Write-Output 'Installing Visual Studio C/C++ Build Tools...'
     Install-StackVisualStudioBuildTools
     $cmakeVersion = Install-StackCMake
@@ -1428,6 +1430,7 @@ function Install-StackAndroidDirectArchive {
             Write-Output "$Role package cache hit: $($Metadata.Version)"
         } else {
             Write-Output "$Role package cache miss: $($Metadata.Version)"
+            if ($null -ne $global:HerdrSandboxPreparedInputs) { throw "$Role materialized archive is missing or invalid." }
             Get-ProvisioningDirectPackage -Role $Role -Metadata $Metadata -GuestPayloadPath $guestPayload
         }
 
@@ -1446,6 +1449,13 @@ function Install-StackAndroidDirectArchive {
         if (-not [string]::IsNullOrWhiteSpace($SignedRelativePath)) {
             Assert-StackAndroidGoogleSignature -Path (Join-Path $sourceRoot $SignedRelativePath)
         }
+        if (-not $cacheHit) {
+            Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory -GuestPayloadPath $guestPayload -Metadata $Metadata
+        }
+        if (Test-ProvisioningPreparation) {
+            $key = @($Metadata.Id,$Metadata.Architecture,$Metadata.InstallerType,$Metadata.Scope) -join '|'
+            $script:PreparedPackageMetadata[$key] = [ordered]@{metadata=$Metadata;cachePath=('packages\'+(Get-ProvisioningSafeCacheName $Metadata.Id)+'\'+$entryName)}
+        } else {
         if (Test-Path -LiteralPath $Destination) {
             Remove-Item -LiteralPath $Destination -Recurse -Force
         }
@@ -1455,9 +1465,6 @@ function Install-StackAndroidDirectArchive {
         if (-not [string]::IsNullOrWhiteSpace($SignedRelativePath)) {
             Assert-StackAndroidGoogleSignature -Path (Join-Path $Destination $SignedRelativePath)
         }
-        if (-not $cacheHit) {
-            Publish-ProvisioningPackageCacheEntry -PackageRoot $packageRoot -EntryDirectory $entryDirectory `
-                -GuestPayloadPath $guestPayload -Metadata $Metadata
         }
         foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory -Force)) {
             if ($directory.Name -ine $entryName) {
@@ -1538,6 +1545,9 @@ function Install-AndroidStack {
     [CmdletBinding()]
     param()
 
+    $androidCLIMetadata = Get-ProvisioningPreparedMetadata -Id 'Google.AndroidCommandLineTools' -Architecture 'x64' -InstallerType 'zip'
+    if ($null -ne $androidCLIMetadata) { $androidCLIRevision = [string]$androidCLIMetadata.Version }
+    else {
     $downloadPageURI = 'https://developer.android.com/studio'
     $downloadPage = Get-StackWebResponseText -Response (Invoke-WebRequest -Uri $downloadPageURI -UseBasicParsing)
     $windowsRows = @([regex]::Matches($downloadPage,
@@ -1571,6 +1581,7 @@ function Install-AndroidStack {
         Sha256 = $androidCLISHA256
         PayloadName = 'payload.zip'
     }
+    }
     $androidCLIURI = [Uri][string]$androidCLIMetadata.Url
     if ($androidCLIURI.Scheme -cne 'https' -or $androidCLIURI.Host -cne 'dl.google.com' -or
         [string]$androidCLIMetadata.Sha256 -cnotmatch '^[A-F0-9]{64}$') {
@@ -1586,6 +1597,7 @@ function Install-AndroidStack {
     }
 
     if (-not (Test-ProvisioningDependencyReady 'Java')) { Install-JavaStack }
+    if (-not (Test-ProvisioningPreparation)) {
     $jdkRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
     if ([string]::IsNullOrWhiteSpace($jdkRoot)) { throw 'Android Java stack did not publish JAVA_HOME.' }
     $jdkReleasePath = Join-Path $jdkRoot 'release'
@@ -1598,6 +1610,7 @@ function Install-AndroidStack {
         $jdkVersion = 'unverified'
         Write-Warning 'Android Java did not report a recognized release version; provisioning will continue after executable smoke checks.'
     }
+    } else { $jdkVersion = 'prepared input' }
 
     $androidSDK = Get-ProvisioningUserPath 'tools\android-sdk'
     $androidCLIRoot = Join-Path $androidSDK 'cmdline-tools\latest'
@@ -1615,6 +1628,7 @@ function Install-AndroidStack {
         -Destination $platformTools -ArchiveRoot 'platform-tools' `
         -RequiredRelativePaths @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'source.properties') `
         -SignedRelativePath 'adb.exe'
+    if (Test-ProvisioningPreparation) { return }
 
     $sourceProperties = [IO.File]::ReadAllText((Join-Path $androidCLIRoot 'source.properties'))
     if ($sourceProperties -notmatch ('(?m)^Pkg\.Revision=' + [regex]::Escape($androidCLIRevision) + '\r?$') -or
@@ -2229,6 +2243,7 @@ function Install-StackREAPER {
     Write-Output "Installing REAPER $reaperVersion..."
     Install-ProvisioningCachedPackage -Role 'REAPER' -Metadata $reaperMetadata -DownloadSource 'WinGet' `
         -Adapter 'Exe' -InstallerArguments @('/S') -InstallerSuccessExitCodes @(0, 1223)
+    if (Test-ProvisioningPreparation) { return }
     $reaper = 'C:\Program Files\REAPER (x64)\reaper.exe'
     $reaperInfo = Get-Item -LiteralPath $reaper -Force -ErrorAction Stop
     if ($reaperInfo.PSIsContainer -or ($reaperInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -2246,6 +2261,11 @@ function Install-StackREAPER {
 function Install-StackAudioGridder {
     $audioGridderVersion = Get-ProvisioningToolVersion -Tool 'AudioGridder'
 
+    $preparedAudio = Get-ProvisioningPreparedMetadata -Id 'AudioGridder' -Architecture 'x64' -InstallerType 'zip' -Version $audioGridderVersion
+    if ($null -ne $preparedAudio) {
+        $audioGridderVersion = [string]$preparedAudio.Version
+        $audioGridderURL = [string]$preparedAudio.Url
+    } else {
     $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/apohl79/audiogridder/releases/latest' `
         -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
     $tag = [string]$release.tag_name
@@ -2268,10 +2288,11 @@ function Install-StackAudioGridder {
         [long]$assets[0].size -le 0) {
         throw 'AudioGridder metadata does not match the resolved official Windows release.'
     }
+    }
     $audioGridderRoot = Get-ProvisioningPath 'tools\AudioGridder'
     $resolvedPayload = ''
     try {
-        $digest = [string]$assets[0].digest
+        $digest = if ($null -ne $preparedAudio) { 'sha256:' + $preparedAudio.Sha256.ToLowerInvariant() } else { [string]$assets[0].digest }
         if ($digest -match '^sha256:(?<sha>[0-9a-f]{64})$') {
             $audioGridderSHA256 = $Matches['sha'].ToUpperInvariant()
         } else {
@@ -2282,14 +2303,19 @@ function Install-StackAudioGridder {
             }
             $audioGridderSHA256 = (Get-FileHash -LiteralPath $resolvedPayload -Algorithm SHA256).Hash.ToUpperInvariant()
         }
+        $audioGridderMetadata = [pscustomobject]@{
+            Id = 'AudioGridder'; Version = $audioGridderVersion; Architecture = 'x64'; InstallerType = 'zip'; Scope = ''
+            Url = $audioGridderURL; Sha256 = $audioGridderSHA256; PayloadName = 'payload.zip'
+        }
+        if (Test-ProvisioningPreparation) {
+            Install-ProvisioningCachedPackage -Role 'AudioGridder' -Metadata $audioGridderMetadata -DownloadSource Direct `
+                -Adapter Portable -ExecutableName 'AudioGridderServer.exe' -PortableVersionSource File -ResolvedDirectPayloadPath $resolvedPayload
+            return
+        }
         $payloadAlreadyCurrent = Test-StackAudioGridderPayload -Root $audioGridderRoot `
             -ExpectedVersion $audioGridderVersion -ExpectedSourceSHA256 $audioGridderSHA256
         if (-not $payloadAlreadyCurrent) {
             if (Test-Path -LiteralPath $audioGridderRoot) { Remove-StackAudioGridderRoot -Root $audioGridderRoot }
-            $audioGridderMetadata = [pscustomobject]@{
-                Id = 'AudioGridder'; Version = $audioGridderVersion; Architecture = 'x64'; InstallerType = 'zip'; Scope = ''
-                Url = $audioGridderURL; Sha256 = $audioGridderSHA256; PayloadName = 'payload.zip'
-            }
             Write-Output "Installing AudioGridder $audioGridderVersion server and VST2/VST3 clients..."
             Install-ProvisioningCachedPackage -Role 'AudioGridder' -Metadata $audioGridderMetadata `
                 -DownloadSource 'Direct' -Adapter 'Portable' -ExecutableName 'AudioGridderServer.exe' `
@@ -2459,11 +2485,12 @@ function Install-JavaStack {
     }
     $Version = [string]$metadata.Version
     Write-Output "Installing Microsoft OpenJDK $Version..."
-    if (-not (Test-ProvisioningWorkstation)) { Remove-StackJavaPreviousInstallation -Metadata $metadata }
+    if (-not (Test-ProvisioningPreparation) -and -not (Test-ProvisioningWorkstation)) { Remove-StackJavaPreviousInstallation -Metadata $metadata }
     Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK' -Metadata $metadata `
         -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe' `
         -InstallerArguments @('ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome') `
         -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     Update-ProvisioningPath
 
     $javaHomeValue = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
@@ -2981,6 +3008,7 @@ function Install-PlaywrightCLIStack {
     }
     Invoke-ProvisioningNative -Role 'Playwright CLI command smoke' -FilePath $node `
         -ArgumentList @($cliEntry, '--version') | Out-Null
+    if (Test-ProvisioningPreparation) { return }
 
     $extensionID = 'mmlmfjhmonkocbjadbfplnigmagldckm'
     $extensionUpdateURL = 'https://clients2.google.com/service/update2/crx'
@@ -4593,6 +4621,7 @@ function Install-Uv {
     Write-Output 'Installing uv...'
     Install-ProvisioningWinGetPackage -Role 'uv' -Id 'astral-sh.uv' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'uv.exe'
+    if (Test-ProvisioningPreparation) { return }
     $uvPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^uv \d+\.\d+\.\d+(?: \([^)]+\))?$'
     } else {
@@ -4932,6 +4961,7 @@ function Install-BunStack {
     Write-Output 'Installing Bun...'
     Install-ProvisioningWinGetPackage -Role 'Bun' -Id 'Oven-sh.Bun' -Version $Version `
         -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'bun.exe'
+    if (Test-ProvisioningPreparation) { return }
     $bunPattern = if ([string]::IsNullOrWhiteSpace($Version)) {
         '^\d+\.\d+\.\d+$'
     } else {
@@ -5218,6 +5248,7 @@ function Install-StackVulkanSDK {
         -DownloadSource 'WinGet' -Adapter 'Exe' `
         -InstallerArguments @('--accept-licenses', '--default-answer', '--confirm-command', 'install') `
         -RequireAuthenticodeSignature
+    if (Test-ProvisioningPreparation) { return }
     $vulkanRoot = [string][Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
     $expectedVulkanRoot = "C:\VulkanSDK\$vulkanVersion"
     if ([string]::IsNullOrWhiteSpace($vulkanRoot) -or -not [IO.Path]::IsPathRooted($vulkanRoot)) {
@@ -5256,6 +5287,11 @@ function Install-StackWebView2 {
         $minimumWebViewVersion = [Version][string]$webViewMetadata.Version
     } catch {
         throw "Handy WebView2 metadata version is invalid: $($webViewMetadata.Version)"
+    }
+    if (Test-ProvisioningPreparation) {
+        Install-ProvisioningCachedPackage -Role 'Handy WebView2 Runtime' -Metadata $webViewMetadata `
+            -DownloadSource 'WinGet' -Adapter 'Exe' -InstallerArguments @('/silent','/install') -RequireAuthenticodeSignature
+        return
     }
     $webView = Get-HandyWebView2Runtime -MinimumVersion $minimumWebViewVersion
     if ($null -eq $webView) {

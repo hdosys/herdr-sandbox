@@ -26,15 +26,27 @@ func (c *Command) Run() error {
 
 // CombinedOutput runs the owned command and returns combined standard output and error.
 func (c *Command) CombinedOutput() ([]byte, error) {
+	return c.captureOutput(true)
+}
+
+// Output must use the same suspended-start, job and cancellation owner as Run.
+// Promoting exec.Cmd.Output bypasses that owner and never resumes the child.
+func (c *Command) Output() ([]byte, error) {
+	return c.captureOutput(false)
+}
+
+func (c *Command) captureOutput(combined bool) ([]byte, error) {
 	if c.Stdout != nil {
 		return nil, errors.New("exec: Stdout already set")
 	}
-	if c.Stderr != nil {
+	if combined && c.Stderr != nil {
 		return nil, errors.New("exec: Stderr already set")
 	}
 	output := newBoundedOutput(maximumCombinedOutputBytes)
 	c.Stdout = output
-	c.Stderr = output
+	if combined {
+		c.Stderr = output
+	}
 	if err := c.Start(); err != nil {
 		return nil, err
 	}
