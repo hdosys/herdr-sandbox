@@ -597,7 +597,8 @@ For unattended installation:
 **Do not publish this personal installer.** Supported selected settings include
 Herdr, OpenCode, Claude Code, Codex, Copilot, Pi, shared agent skills, GitHub CLI,
 Zed, Windows Terminal, Nushell, Starship and Git. Referenced skill scripts/assets
-are included. Known authentication stores, environment-secret files, SSH keys,
+and tracked supporting files from agent configuration repositories are included,
+without their Git metadata. Known authentication stores, environment-secret files, SSH keys,
 Git history, runtime caches/sessions and project trees are excluded. Authored
 settings may contain inline private values; this is not a universal secret scrubber.
 Commands and machine-specific paths remain authored values, not guessed bindings.

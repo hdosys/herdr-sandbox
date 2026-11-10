@@ -89,7 +89,7 @@ func TestInstallerSettingsCaptureOnlyAuthoredAgentFilesAndPortableMCP(t *testing
 			t.Fatal(err)
 		}
 	}
-	files, err := exportWorkstationSettings(map[string]string{"claude": filepath.Join(root, "claude"), "claude-state": root, "opencode": filepath.Join(root, "opencode"), "codex": filepath.Join(root, "codex"), "pi": filepath.Join(root, "pi")})
+	files, err := exportWorkstationSettings(t.Context(), map[string]string{"claude": filepath.Join(root, "claude"), "claude-state": root, "opencode": filepath.Join(root, "opencode"), "codex": filepath.Join(root, "codex"), "pi": filepath.Join(root, "pi")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +127,18 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 	terminal := testStableWindowsTerminalConfiguration()
 	terminal.SettingsPath = filepath.Join(root, "unpackaged", "settings.json")
 	terminal.FragmentsPath = filepath.Join(root, "fragments")
+	for _, directory := range []string{filepath.Dir(terminal.SettingsPath), terminal.FragmentsPath} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	writeTestFile(t, terminal.SettingsPath, `{"defaultProfile":"fixture"}`)
 	writeTestFile(t, filepath.Join(terminal.FragmentsPath, "fixture.json"), "{}")
 	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageZed, packageNushell}, Add: []string{}, Versions: map[string]string{}}, terminal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := selectedInstallerSettings(provisioningPlan{Packages: packages, WindowsTerminal: terminal})
+	files, err := selectedInstallerSettings(t.Context(), provisioningPlan{Packages: packages, WindowsTerminal: terminal})
 	if err != nil {
 		t.Fatal(err)
 	}

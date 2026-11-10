@@ -39,7 +39,7 @@ The current product contract is:
   private snapshot is retained in protected per-user control state for resume.
   Software downloads remain online; host cache payloads are not embedded.
 - Capture uses the existing package/configuration selection and agent authored-root
-  lists, including referenced scripts/assets, portable Claude MCP data and selected
+  lists and tracked authored files, including referenced scripts/assets, portable Claude MCP data and selected
   GitHub CLI config. The build sidecar records profile identity, counts and whether
   capture ran in a Sandbox. A guest snapshot is not proof of complete host capture.
 

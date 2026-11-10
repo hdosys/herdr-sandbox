@@ -148,10 +148,10 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 			var roots map[string]string
 			roots, err = workstationSettingsRoots()
 			if err == nil {
-				profile.Files, err = exportWorkstationSettings(roots)
+				profile.Files, err = exportWorkstationSettings(ctx, roots)
 			}
 		} else {
-			profile.Files, err = selectedInstallerSettings(selection)
+			profile.Files, err = selectedInstallerSettings(ctx, selection)
 		}
 		if err != nil {
 			return err
@@ -232,10 +232,15 @@ func workstationSelectionFromPlan(ctx context.Context, selection provisioningPla
 	return profile, workspaces, nil
 }
 
-func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, error) {
+func exportWorkstationSettings(ctx context.Context, roots map[string]string) ([]WorkstationFile, error) {
 	result := []WorkstationFile{}
+	seen := map[string]bool{}
 	add := func(kind, relative, source string) error {
 		if !allowedWorkstationFile(kind, relative) {
+			return nil
+		}
+		identity := strings.ToLower(kind + "/" + relative)
+		if seen[identity] {
 			return nil
 		}
 		if err := validateWorkstationLocalPath(source); err != nil {
@@ -249,6 +254,7 @@ func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, erro
 			return nil
 		}
 		result = append(result, WorkstationFile{Kind: kind, Path: relative, SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), Data: data})
+		seen[identity] = true
 		if len(result) > 512 {
 			return errors.New("too many configuration files for one workstation profile")
 		}
@@ -287,7 +293,8 @@ func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, erro
 		}
 		if files != nil || kind == "codex" {
 			capture := func(source, destination string) error {
-				return add(kind, strings.TrimPrefix(filepath.ToSlash(destination), kind+"/"), source)
+				_, relative, _ := strings.Cut(filepath.ToSlash(destination), "/")
+				return add(kind, relative, source)
 			}
 			var err error
 			if kind == "codex" {
@@ -302,6 +309,13 @@ func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, erro
 				if err := archiveFirstOptionalConfigurationFile(root, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, "pi/AGENTS.md", capture); err != nil {
 					return nil, err
 				}
+			}
+			archiveRoot := kind
+			if kind == "copilot" {
+				archiveRoot = "github-copilot"
+			}
+			if _, err := archiveAgentGitSelection(ctx, root, archiveRoot, false, capture); err != nil {
+				return nil, err
 			}
 			continue
 		}

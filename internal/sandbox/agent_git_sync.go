@@ -148,6 +148,12 @@ func updateHostConfigurationGitRepository(ctx context.Context, directory string)
 }
 
 func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot string, add func(string, string) error) ([]string, error) {
+	return archiveAgentGitSelection(ctx, directory, archiveRoot, true, add)
+}
+
+// Both targets use the same tracked configuration boundary. Personal installers
+// copy working-tree files, not the source repository's history or remote state.
+func archiveAgentGitSelection(ctx context.Context, directory, archiveRoot string, includeMetadata bool, add func(string, string) error) ([]string, error) {
 	if directory == "" {
 		return nil, nil
 	}
@@ -197,8 +203,10 @@ func archiveAgentGitRepository(ctx context.Context, directory, archiveRoot strin
 			return nil, fmt.Errorf("archive tracked agent configuration %s: %w", relative, err)
 		}
 	}
-	if err := archiveAgentGitMetadata(gitDirectory, filepath.Join(archiveRoot, ".git"), add); err != nil {
-		return nil, err
+	if includeMetadata {
+		if err := archiveAgentGitMetadata(gitDirectory, filepath.Join(archiveRoot, ".git"), add); err != nil {
+			return nil, err
+		}
 	}
 	return deleted, nil
 }

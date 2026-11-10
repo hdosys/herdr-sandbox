@@ -107,7 +107,7 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	return nil
 }
 
-func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile, error) {
+func selectedInstallerSettings(ctx context.Context, provisioning provisioningPlan) ([]WorkstationFile, error) {
 	selected, err := defaultHostConfigurationSources(provisioning.WindowsTerminal, provisioning.Packages, provisioning.CodingAgentSync, credentialSyncConfiguration{}, false)
 	if err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile
 	if selected.WindowsTerminalFragments != "" {
 		roots["terminal-fragments"] = selected.WindowsTerminalFragments
 	}
-	files, err := exportWorkstationSettings(roots)
+	files, err := exportWorkstationSettings(ctx, roots)
 	if err != nil {
 		return nil, err
 	}

@@ -485,6 +485,22 @@ func TestArchiveAgentGitRepositoryRestoresUpstreamAndTrackedChanges(t *testing.T
 			t.Fatalf("Git repository archive is missing %s", required)
 		}
 	}
+	personal, err := exportWorkstationSettings(t.Context(), map[string]string{"opencode": repository})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readmeFound := false
+	for _, file := range personal {
+		if strings.HasPrefix(file.Path, ".git/") {
+			t.Fatal("personal installer captured Git history")
+		}
+		if file.Path == "README.md" && string(file.Data) == "after" {
+			readmeFound = true
+		}
+	}
+	if !readmeFound {
+		t.Fatal("personal installer omitted tracked configuration outside conventional directories")
+	}
 	for name := range archived {
 		if strings.Contains(name, "/.git/hooks/") || strings.Contains(name, "/.git/logs/") {
 			t.Fatalf("Git repository archive contains excluded state %s", name)

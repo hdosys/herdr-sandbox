@@ -67,7 +67,7 @@ func TestWorkstationPrivateConfigurationRoundTripAndConflict(t *testing.T) {
 	source := t.TempDir()
 	nu := filepath.Join(source, "nushell")
 	opencode := filepath.Join(source, "opencode")
-	for _, directory := range []string{filepath.Join(nu, "scripts"), opencode, filepath.Join(opencode, ".git")} {
+	for _, directory := range []string{filepath.Join(nu, "scripts"), opencode} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -78,13 +78,12 @@ func TestWorkstationPrivateConfigurationRoundTripAndConflict(t *testing.T) {
 		filepath.Join(opencode, "opencode.json"):     "{\"theme\":\"system\"}\n",
 		filepath.Join(opencode, "auth.json"):         "secret fixture must not export",
 		filepath.Join(opencode, ".usage-status.env"): "private fixture must not export",
-		filepath.Join(opencode, ".git", "config"):    "private history fixture must not export",
 	} {
 		if err := os.WriteFile(name, []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	files, err := exportWorkstationSettings(map[string]string{"nushell": nu, "opencode": opencode})
+	files, err := exportWorkstationSettings(t.Context(), map[string]string{"nushell": nu, "opencode": opencode})
 	if err != nil {
 		t.Fatal(err)
 	}
