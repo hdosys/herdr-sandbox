@@ -54,6 +54,38 @@ The current product contract is:
 
 ## Core Behavior
 
+### Installer-only Sandbox acceptance
+
+- `sandbox up --provisioning installer --installer FILE` selects the exact
+  workstation setup executable and its adjacent product-bound JSON provenance.
+  It requires a fresh Sandbox. An existing guest is preserved and blocks this
+  mode; ordinary `up` also refuses to reprovision an installer-test guest.
+- Bootstrap installs only the verified OpenSSH transport and uses inbox Windows
+  PowerShell 5.1. It does not install WinGet, VC++, PowerShell 7 or development
+  tools, run Base registry policies, or mute audio. A before/after transport
+  baseline rejects development prerequisites introduced by bootstrap.
+- Existing configured package and declarative stack selections become the native
+  installer's profile automatically. Selected authored settings travel in memory
+  over verified SSH, never through host run files. Dedicated credentials, Git
+  history, arbitrary user/project script effects, Tailscale/mobile setup and
+  normal configuration-sync policies are not part of this native experiment.
+  A selected local `ttsBundle` is rejected rather than silently substituted.
+- The real silent NSIS installer is followed by independent package/command,
+  selected compiler/runtime and configuration-hash checks. No normal provisioning
+  runs before it or repairs its result afterward. Protected guest-local input and
+  native reports remain available until the guest is explicitly discarded.
+- Successful installation is distinct from terminal readiness. Only matching
+  installed host/guest Herdr identities permit server startup, workspace opening
+  and ready publication. An incompatible runtime is reported, never replaced.
+  `--no-attach` skips only the interactive terminal, not these readiness checks.
+- The mode's outer deadline is 49 hours, with a 48-hour installer ceiling and the
+  installer's existing graph-derived per-step deadlines; `--timeout` overrides the
+  outer deadline. Cancellation preserves the guest and terminates the owned
+  execution tree. A failed test is not resumable through ordinary `up`.
+
+The remaining Sandbox provisioning descriptions refer to the normal mode unless
+explicitly stated otherwise.
+
 ### Commands and lifecycle
 
 - `sandbox config` reports whether it created the default configuration or opened an existing file, then points to `sandbox plan` as the next validation step.

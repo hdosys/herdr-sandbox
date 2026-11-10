@@ -53,7 +53,17 @@ func allowedWorkstationFile(kind, relative string) bool {
 		return strings.EqualFold(path.Ext(relative), ".json")
 	case "zed":
 		return slices.Contains([]string{"settings.json", "keymap.json", "tasks.json"}, relative) || ((strings.HasPrefix(relative, "snippets/") || strings.HasPrefix(relative, "themes/")) && strings.EqualFold(path.Ext(relative), ".json"))
-	case "opencode", "claude", "codex", "pi":
+	case "copilot":
+		if slices.Contains(copilotConfigurationFiles, relative) {
+			return true
+		}
+		for _, directory := range copilotConfigurationDirectories {
+			if strings.HasPrefix(relative, directory+"/") {
+				return slices.Contains([]string{".json", ".jsonc", ".md", ".js", ".mjs", ".ts", ".nu", ".ps1", ".toml", ".yaml", ".yml", ".txt"}, strings.ToLower(path.Ext(relative)))
+			}
+		}
+		return false
+	case "opencode", "claude", "codex", "pi", "agent-skills":
 		return slices.Contains([]string{".json", ".jsonc", ".md", ".js", ".mjs", ".ts", ".nu", ".ps1", ".toml", ".yaml", ".yml", ".txt"}, strings.ToLower(path.Ext(relative)))
 	default:
 		return false
@@ -78,6 +88,7 @@ func workstationSettingsRoots() (map[string]string, error) {
 	return map[string]string{
 		"herdr": filepath.Join(appData, "herdr"), "opencode": openCode,
 		"claude": filepath.Join(home, ".claude"), "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
+		"copilot": filepath.Join(home, ".copilot"), "agent-skills": filepath.Join(home, ".agents", "skills"),
 		"git": home, "zed": filepath.Join(appData, "Zed"),
 		"git-config": filepath.Join(home, ".config", "git"),
 		"starship":   filepath.Join(home, ".config"), "nushell": filepath.Join(appData, "nushell"),
@@ -113,40 +124,10 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 		if err != nil {
 			return err
 		}
-		profile.Packages = append(slices.Clone(packages.Defaults), packages.Additions...)
-		if !slices.ContainsFunc(profile.Packages, func(entry wingetPackagePlanEntry) bool { return strings.EqualFold(entry.ID, "hdosys.herdr-win") }) {
-			profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "hdosys.herdr-win"})
-		}
-		userExists, err := regularFileExists(selection.UserScript)
+		selection.Packages = packages
+		profile, _, err = workstationSelectionFromPlan(ctx, selection)
 		if err != nil {
 			return err
-		}
-		profile.Stacks = []string{"opensrc", "font"}
-		if userExists || len(selection.Workspaces) > 0 {
-			inspection, err := inspectEffectivePlanScripts(ctx, selection, userExists)
-			if err != nil {
-				return err
-			}
-			stacks := map[string]bool{}
-			for _, stack := range inspection.UserStacks {
-				stacks[string(stack)] = true
-			}
-			for _, workspace := range inspection.Workspaces {
-				for _, stack := range workspace.Stacks {
-					stacks[string(stack)] = true
-				}
-			}
-			for stack := range stacks {
-				profile.Stacks = append(profile.Stacks, stack)
-			}
-			slices.Sort(profile.Stacks)
-			profile.Tools = inspection.ToolVersions
-			if profile.Tools == nil {
-				profile.Tools = []resolvedToolVersion{}
-			}
-			for index := range profile.Tools {
-				profile.Tools[index].Owners = []string{"workstation"}
-			}
 		}
 	}
 	if includeSettings {
@@ -191,6 +172,47 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 	}
 	fmt.Fprintf(output, "Exported %d package selections, %d stacks and %d configuration files to %s\n", len(profile.Packages), len(profile.Stacks), len(profile.Files), absolute)
 	return nil
+}
+
+func workstationSelectionFromPlan(ctx context.Context, selection provisioningPlan) (WorkstationProfile, []workspacePlan, error) {
+	profile := WorkstationProfile{SchemaVersion: 1, Packages: append(slices.Clone(selection.Packages.Defaults), selection.Packages.Additions...), Stacks: []string{"opensrc", "font"}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{}}
+	if !slices.ContainsFunc(profile.Packages, func(entry wingetPackagePlanEntry) bool { return strings.EqualFold(entry.ID, "hdosys.herdr-win") }) {
+		profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "hdosys.herdr-win"})
+	}
+	userExists, err := regularFileExists(selection.UserScript)
+	if err != nil {
+		return profile, nil, err
+	}
+	workspaces := selection.Workspaces
+	if userExists || len(workspaces) > 0 {
+		inspection, err := inspectEffectivePlanScripts(ctx, selection, userExists)
+		if err != nil {
+			return profile, nil, err
+		}
+		workspaces = inspection.Workspaces
+		stacks := map[string]bool{"opensrc": true, "font": true}
+		for _, stack := range inspection.UserStacks {
+			stacks[string(stack)] = true
+		}
+		for _, workspace := range workspaces {
+			for _, stack := range workspace.Stacks {
+				stacks[string(stack)] = true
+			}
+		}
+		profile.Stacks = []string{}
+		for stack := range stacks {
+			profile.Stacks = append(profile.Stacks, stack)
+		}
+		slices.Sort(profile.Stacks)
+		profile.Tools = inspection.ToolVersions
+		if profile.Tools == nil {
+			profile.Tools = []resolvedToolVersion{}
+		}
+		for index := range profile.Tools {
+			profile.Tools[index].Owners = []string{"workstation"}
+		}
+	}
+	return profile, workspaces, nil
 }
 
 func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, error) {

@@ -39,6 +39,7 @@ Tasks:
   native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
   package-current-sandbox VERSION  exercise the existing local candidate through install, repair, upgrade, provisioning, and uninstall
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
+  native-installer-sandbox test the exact workstation installer in a fresh Sandbox from the host
   release VERSION    validate and tag one clean pushed release commit
   release-notes VERSION  validate the matching CHANGELOG section and print its tagged link
   package VERSION [--release]  build one canonical local installer or the versioned release pair
@@ -70,6 +71,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "native-installer-sandbox":
+		if len(args) != 1 {
+			return errors.New("native-installer-sandbox accepts no arguments")
+		}
+		return nativeInstallerSandbox(ctx, stdout, stderr)
 	case "package-workstation":
 		if len(args) != 2 {
 			return errors.New("usage: go run ./cmd/task package-workstation VERSION")
@@ -148,6 +154,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 func taskTimeoutFor(args []string) time.Duration {
+	if len(args) > 0 && args[0] == "native-installer-sandbox" {
+		return 50 * time.Hour
+	}
 	if len(args) > 0 && args[0] == "native-all-stacks" {
 		return nativeAllStacksTaskTimeout
 	}
@@ -337,12 +346,6 @@ func build(ctx context.Context, stdout, stderr io.Writer) error {
 		identity.Revision = revision
 	}
 	return buildWithIdentity(ctx, identity, stdout, stderr)
-}
-
-type buildIdentity struct {
-	Version   string `json:"version"`
-	Revision  string `json:"revision"`
-	Freshness string `json:"freshness"`
 }
 
 func sourceRevision(ctx context.Context) (string, error) {

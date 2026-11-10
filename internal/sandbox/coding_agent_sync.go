@@ -68,6 +68,9 @@ func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, c
 	return append(data, '\n'), nil
 }
 
+var copilotConfigurationFiles = []string{"settings.json", "copilot-instructions.md", "mcp-config.json", "lsp-config.json"}
+var copilotConfigurationDirectories = []string{"instructions", "agents", "skills", "hooks", "extensions"}
+
 func defaultCodingAgentConfigurationSources(userHome string, selection codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration) (codingAgentConfigurationSources, error) {
 	if !filepath.IsAbs(userHome) {
 		return codingAgentConfigurationSources{}, fmt.Errorf("user home is not absolute: %q", userHome)
@@ -268,8 +271,7 @@ func archiveCodingAgentConfiguration(
 
 	if sources.Selection.GitHubCopilot {
 		if err := archiveAllowedConfigurationRoot(sources.GitHubCopilotDirectory, "github-copilot",
-			[]string{"settings.json", "copilot-instructions.md", "mcp-config.json", "lsp-config.json"},
-			[]string{"instructions", "agents", "skills", "hooks", "extensions"}, nil, addConfiguration); err != nil {
+			copilotConfigurationFiles, copilotConfigurationDirectories, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive GitHub Copilot configuration: %w", err)
 		}
 		if err := archiveGit(sources.GitHubCopilotDirectory, "github-copilot"); err != nil {

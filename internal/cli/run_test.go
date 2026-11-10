@@ -635,6 +635,31 @@ func TestRunUpExplicitTimeoutOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestRunUpInstallerSelectionAndNoHostPull(t *testing.T) {
+	dependencies := defaultCommandDependencies()
+	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
+	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
+	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
+		t.Fatal("installer acceptance must not change the selected host configuration")
+		return sandbox.HostConfigurationPullResult{}, nil
+	}
+	var received sandbox.Options
+	dependencies.up = func(_ context.Context, options sandbox.Options, _ sandbox.HostHerdr) (sandbox.Connection, error) {
+		received = options
+		return sandbox.Connection{}, nil
+	}
+	args := []string{"up", "--provisioning", "installer", "--installer", "candidate.exe", "--no-attach"}
+	code := runWithCommandDependencies(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
+	if code != 0 || !received.InstallerProvisioning || received.InstallerPath != "candidate.exe" || received.Timeout != 49*time.Hour {
+		t.Fatalf("installer selection: code=%d options=%+v", code, received)
+	}
+	for _, invalid := range [][]string{{"up", "--installer", "candidate.exe"}, {"up", "--provisioning", "installer"}, append(args, "--refresh"), {"up", "--provisioning", "unknown"}} {
+		if code := runWithCommandDependencies(t.Context(), invalid, &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{}, dependencies); code != 2 {
+			t.Fatalf("invalid installer arguments %v returned %d", invalid, code)
+		}
+	}
+}
+
 func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dependencies := defaultCommandDependencies()

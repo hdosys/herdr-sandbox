@@ -27,6 +27,7 @@ const usage = `Usage:
   sandbox plan
   sandbox init [--stack android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|playwright-cli|python|python-ai|rust|tradingview|zig|all|handy|herdr]...
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]
+  sandbox up --provisioning installer --installer FILE [--no-attach]
   sandbox attach
   sandbox status
   sandbox mobile
@@ -63,6 +64,7 @@ Behavior:
   - up has a four-hour launch-to-terminal-ready timeout; --timeout replaces it for one run
   - after incomplete setup, up resumes unfinished or changed steps; --refresh requests a full refresh
   - optional TTS unavailability does not block a verified ready Sandbox or automatic attach
+  - installer provisioning requires a fresh Sandbox and never runs normal tool provisioning to repair the result
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
 `
 
@@ -343,12 +345,15 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 
 	options := sandbox.DefaultOptions()
 	noAttach := false
+	provisioningMode := "normal"
 	flags := flag.NewFlagSet("sandbox up", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout (default 4h)")
 	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
 	flags.BoolVar(&options.Refresh, "refresh", false, "run a full provisioning refresh instead of resuming incomplete steps")
+	flags.StringVar(&provisioningMode, "provisioning", "normal", "normal or installer")
+	flags.StringVar(&options.InstallerPath, "installer", "", "exact workstation installer with its matching JSON sidecar")
 	flags.Usage = func() {}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -380,6 +385,23 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprintln(stderr, "sandbox: --timeout must be positive")
 		return 2
 	}
+	if provisioningMode != "normal" && provisioningMode != "installer" {
+		fmt.Fprintln(stderr, "sandbox: --provisioning must be normal or installer")
+		return 2
+	}
+	options.InstallerProvisioning = provisioningMode == "installer"
+	if options.InstallerProvisioning {
+		if options.InstallerPath == "" || options.Refresh {
+			fmt.Fprintln(stderr, "sandbox: installer provisioning requires --installer and a fresh run, not --refresh")
+			return 2
+		}
+		if !timeoutSet {
+			options.Timeout = 49 * time.Hour
+		}
+	} else if options.InstallerPath != "" {
+		fmt.Fprintln(stderr, "sandbox: --installer requires --provisioning installer")
+		return 2
+	}
 	options.Output = stdout
 	if !noAttach {
 		if err := dependencies.validateAttach(stdin, stdout, stderr); err != nil {
@@ -398,12 +420,14 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 		return 1
 	}
-	if pulled, err := dependencies.pullHostConfigOnUp(ctx); err != nil {
-		printHostConfigurationPullResult(stdout, pulled)
-		fmt.Fprintln(stderr, "sandbox:", err)
-		return 1
-	} else {
-		printHostConfigurationPullResult(stdout, pulled)
+	if !options.InstallerProvisioning {
+		if pulled, err := dependencies.pullHostConfigOnUp(ctx); err != nil {
+			printHostConfigurationPullResult(stdout, pulled)
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		} else {
+			printHostConfigurationPullResult(stdout, pulled)
+		}
 	}
 
 	provisioningStartedAt := time.Now()

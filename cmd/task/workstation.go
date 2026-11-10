@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
+	"herdr-sandbox/internal/installerartifact"
 	"herdr-sandbox/internal/productidentity"
 )
 
@@ -18,6 +20,32 @@ const (
 	workstationInstallerName = "herdr-workstation_setup.exe"
 	workstationEvidenceName  = "herdr-workstation_setup.json"
 )
+
+func nativeInstallerSandbox(ctx context.Context, stdout, stderr io.Writer) error {
+	if runtime.GOOS != "windows" || strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		return errors.New("native-installer-sandbox must run on the Windows host, not inside the running Sandbox; no guest was replaced")
+	}
+	evidence, err := installerartifact.Read(filepath.Join("build", "dist", workstationEvidenceName))
+	if err != nil {
+		return err
+	}
+	if evidence.Product != productidentity.WorkstationApplicationName {
+		return errors.New("workstation candidate required")
+	}
+	if err := validateLocalInstallerSource(ctx, evidence.Identity.Revision); err != nil {
+		return err
+	}
+	identity := buildIdentity{Version: evidence.Identity.Version, Revision: evidence.Identity.Revision, Freshness: evidence.Identity.Freshness}
+	if err := buildWithIdentity(ctx, identity, stdout, stderr); err != nil {
+		return err
+	}
+	installer, err := filepath.Abs(filepath.Join("build", "dist", workstationInstallerName))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Fresh installer-only Sandbox acceptance. An existing Sandbox is preserved and blocks this command. No automatic down/recreation or normal-provisioning repair is performed.")
+	return runCommand(ctx, stdout, stderr, filepath.Join("build", "bin", productidentity.ExecutableName), "up", "--provisioning", "installer", "--installer", installer, "--no-attach")
+}
 
 func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Writer) (resultErr error) {
 	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
@@ -92,6 +120,7 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	if err != nil {
 		return err
 	}
+	evidence.Product = productidentity.WorkstationApplicationName
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err

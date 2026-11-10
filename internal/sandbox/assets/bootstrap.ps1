@@ -11,7 +11,8 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidateSet('Disabled', 'Enabled')]
-    [string]$AudioInput
+    [string]$AudioInput,
+    [switch]$InstallerProvisioning
 )
 
 Set-StrictMode -Version Latest
@@ -560,7 +561,12 @@ try {
     $env:HERDR_SANDBOX_STATUS_DIRECTORY = [IO.Path]::GetFullPath($StatusDirectory)
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if ($InstallerProvisioning) {
+        . (Join-Path $InputDirectory 'installer\probes.ps1')
+        Write-AtomicJson -Path (Join-Path $StatusDirectory 'installer-baseline.json') -Value (Get-InstallerBaseline)
+    }
 
+    if (-not $InstallerProvisioning) {
     $wingetRelease = Get-LatestGitHubRelease -Repository 'microsoft/winget-cli'
     $ExpectedWinGetVersion = [string]$wingetRelease.tag_name
     if ($ExpectedWinGetVersion -notmatch '^v\d+\.\d+\.\d+$') {
@@ -570,6 +576,7 @@ try {
         -NamePattern '^Microsoft\.DesktopAppInstaller_8wekyb3d8bbwe\.msixbundle$' -Role 'WinGet bundle'
     $wingetDependenciesAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
         -NamePattern '^DesktopAppInstaller_Dependencies\.zip$' -Role 'WinGet dependencies'
+    }
     $openSSHSelection = Get-OpenSSHRelease
     $openSSHRelease = $openSSHSelection.Release
     $OpenSSHVersion = $openSSHSelection.Version
@@ -587,7 +594,8 @@ try {
     $workspaceManifestPath = Join-Path $provisioningDirectory 'workspaces.json'
     $packagePlanPath = Join-Path $provisioningDirectory 'winget-packages.json'
     $toolVersionPlanPath = Join-Path $provisioningDirectory 'tool-versions.json'
-    foreach ($requiredPath in @($baseProvisioning, $userProvisioning, $processOwner, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath, $toolVersionPlanPath)) {
+    $requiredInputs = if ($InstallerProvisioning) { @($processOwner) } else { @($baseProvisioning, $userProvisioning, $processOwner, $projectProvisioningDirectory, $workspaceManifestPath, $packagePlanPath, $toolVersionPlanPath) }
+    foreach ($requiredPath in $requiredInputs) {
         if (-not (Test-Path -LiteralPath $requiredPath)) {
             throw "Development provisioning input is missing: $requiredPath"
         }
@@ -598,6 +606,11 @@ try {
     if ([HerdrSandbox.ProvisioningProcess]::ContractVersion -ne 3) {
         throw 'Provisioning process owner contract is invalid.'
     }
+    $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
+    $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
+    $wingetVersion = ''
+    $powerShell7Executable = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not $InstallerProvisioning) {
     $workspaceManifest = [IO.File]::ReadAllText($workspaceManifestPath) | ConvertFrom-Json
     $manifestProperties = @($workspaceManifest.PSObject.Properties.Name | Sort-Object)
     if (($manifestProperties -join '|') -cne 'activeWorkspace|schemaVersion|workspaces' -or
@@ -747,6 +760,9 @@ try {
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
     $powerShell7 = Get-PowerShell7Installation
     $powerShell7Executable = $powerShell7.Executable
+    } else {
+        Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'
+    }
 
     Write-ProgressStatus -Phase 'openssh-install' `
         -Message "Installing Microsoft OpenSSH Server $OpenSSHVersion ($openSSHChannel)"
@@ -761,12 +777,14 @@ try {
         $openSSHInstallerSignature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
         throw "OpenSSH MSI signature is invalid: $($openSSHInstallerSignature.Status)"
     }
-    $openSSHInstallProcess = Start-Process -FilePath 'msiexec.exe' `
-        -ArgumentList @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server') `
-        -WindowStyle Hidden -Wait -PassThru
-    if ($openSSHInstallProcess.ExitCode -notin @(0, 1638)) {
-        throw "OpenSSH MSI installer exited with code $($openSSHInstallProcess.ExitCode)."
-    }
+    $sshInstallSpec = New-Object HerdrSandbox.ProvisioningProcessSpec
+    $sshInstallSpec.Role = 'OpenSSH transport installation'
+    $sshInstallSpec.FilePath = Join-Path $env:WINDIR 'System32\msiexec.exe'
+    $sshInstallSpec.Arguments = @('/i', $openSSHInstaller, '/qn', '/norestart', 'ADDLOCAL=Server')
+    $sshInstallSpec.TimeoutMilliseconds = 600000
+    $sshInstallSpec.SuccessExitCodes = [int[]]@(0,1638)
+    $sshInstall = [HerdrSandbox.ProvisioningProcess]::Run($sshInstallSpec)
+    if (-not $sshInstall.Succeeded) { throw "OpenSSH MSI installation failed (exit $($sshInstall.ExitCode), timeout $($sshInstall.TimedOut))." }
     $openSSHDirectory = Join-Path $env:ProgramFiles 'OpenSSH'
     $sshKeygen = Join-Path $openSSHDirectory 'ssh-keygen.exe'
     $sshd = Join-Path $openSSHDirectory 'sshd.exe'
@@ -861,13 +879,15 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         throw 'Sandbox IPv4 address is empty.'
     }
 
-    Write-AtomicJson -Path (Join-Path $StatusDirectory 'connectable.json') -Value ([ordered]@{
+    $connectable = [ordered]@{
         schemaVersion = 1
         ip = $ipAddress
         sshUser = 'WDAGUtilityAccount'
         sshHostKey = $sshHostKey
         wingetVersion = $wingetVersion
-    })
+    }
+    if ($InstallerProvisioning) { $connectable.installerProvisioning = $true }
+    Write-AtomicJson -Path (Join-Path $StatusDirectory 'connectable.json') -Value $connectable
     Write-Host '[connectable] SSH is ready. The host now provisions this Sandbox over SSH.' -ForegroundColor Green
 } catch {
     $message = Get-BoundedDiagnosticText -Text ([string]$_.Exception.Message) -MaximumBytes 4000
@@ -888,7 +908,7 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     Write-Host 'Keep this Sandbox open. Retry here with the following command, then run sandbox up on the host:'
     Write-Host ("& '" + $PSCommandPath.Replace("'", "''") + "' -InputDirectory '" +
         $InputDirectory.Replace("'", "''") + "' -StatusDirectory '" + $StatusDirectory.Replace("'", "''") +
-        "' -AudioPlayback " + $AudioPlayback + ' -AudioInput ' + $AudioInput)
+        "' -AudioPlayback " + $AudioPlayback + ' -AudioInput ' + $AudioInput + $(if ($InstallerProvisioning) { ' -InstallerProvisioning' } else { '' }))
 } finally {
     if ($null -ne $wingetDependenciesDirectory -and (Test-Path -LiteralPath $wingetDependenciesDirectory)) {
         Remove-Item -LiteralPath $wingetDependenciesDirectory -Recurse -Force -ErrorAction SilentlyContinue

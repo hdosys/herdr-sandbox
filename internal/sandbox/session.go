@@ -49,13 +49,15 @@ var guestFinalizationScript []byte
 const guestFinalizationName = "finalize-provisioning.ps1"
 
 type Options struct {
-	DataDirectory string
-	MemoryMB      int
-	Timeout       time.Duration
-	Output        io.Writer
-	Refresh       bool
-	resume        bool
-	repairReady   bool
+	DataDirectory         string
+	MemoryMB              int
+	Timeout               time.Duration
+	Output                io.Writer
+	Refresh               bool
+	InstallerProvisioning bool
+	InstallerPath         string
+	resume                bool
+	repairReady           bool
 }
 
 type Connection struct {
@@ -76,6 +78,8 @@ type Connection struct {
 }
 
 type runPlan struct {
+	InstallerProvisioning      bool
+	InstallerPath              string
 	ID                         string
 	DataDirectory              string
 	RunDirectory               string
@@ -172,6 +176,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if options.Timeout < 0 {
 		return Connection{}, errors.New("timeout for Sandbox must be positive when set")
 	}
+	if options.InstallerProvisioning && options.InstallerPath == "" {
+		return Connection{}, errors.New("installer provisioning requires --installer with its matching JSON provenance sidecar")
+	}
 	if err := hostHerdr.validate(); err != nil {
 		return Connection{}, fmt.Errorf("validate compatible host Herdr: %w", err)
 	}
@@ -181,9 +188,14 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	runContext, cancelRun := withOptionalTimeout(ctx, options.Timeout)
 	defer cancelRun()
 
-	authKey, authKeyFound, err := consumeTailscaleAuthKeyEnvironment()
-	if err != nil {
-		return Connection{}, err
+	var authKey []byte
+	var authKeyFound bool
+	var err error
+	if !options.InstallerProvisioning {
+		authKey, authKeyFound, err = consumeTailscaleAuthKeyEnvironment()
+		if err != nil {
+			return Connection{}, err
+		}
 	}
 	defer clear(authKey)
 
@@ -211,6 +223,8 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if err != nil {
 		return Connection{}, err
 	}
+	provisioning.InstallerProvisioning = options.InstallerProvisioning
+	provisioning.InstallerPath = options.InstallerPath
 	dataDirectory, err = prepareHostStateDirectories(dataDirectory)
 	if err != nil {
 		return Connection{}, err
@@ -233,6 +247,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	var ready readyStatus
 	var tailscaleBootstrap tailscaleBootstrap
 	retained := sessionStatus.State != SessionStopped
+	if options.InstallerProvisioning && retained {
+		return Connection{}, errors.New("installer acceptance requires a fresh Sandbox; the existing Sandbox was preserved. End it explicitly only after saving current work, then run the installer provisioning path")
+	}
 	options.resume = retained && !options.Refresh && sessionStatus.Operation != nil && sessionStatus.Operation.State != operationStateSucceeded
 	options.repairReady = options.resume && sessionStatus.State == SessionReady &&
 		(sessionStatus.Operation.Phase == "development-incomplete" || sessionStatus.Operation.Phase == "optional-unavailable")
@@ -251,6 +268,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		}
 		if !found {
 			return Connection{}, errors.New("running Sandbox lost its active-session identity")
+		}
+		if active.InstallerProvisioning {
+			return Connection{}, errors.New("this Sandbox was created for installer acceptance; normal provisioning would invalidate that evidence and was not run")
 		}
 		plan, err = retainedRunPlan(active, provisioning, memoryMB)
 		if err != nil {
@@ -273,7 +293,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 			return Connection{}, err
 		}
 	}
-	if ready.SchemaVersion == 0 {
+	if ready.SchemaVersion == 0 && !options.InstallerProvisioning {
 		tailscaleBootstrap, err = prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
 		if err != nil {
 			return Connection{}, err
@@ -285,7 +305,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	} else {
 		fmt.Fprintln(options.Output, "Mode: starting and provisioning a new Sandbox")
 	}
-	if provisioning.ModelsDirectory != "" && !options.resume {
+	if provisioning.ModelsDirectory != "" && !options.resume && !options.InstallerProvisioning {
 		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
 		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, provisioning.TTSBundle, options.Output); err != nil {
 			return Connection{}, err
@@ -314,7 +334,12 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		}()
 		fmt.Fprintln(options.Output, "Windows Sandbox started; preparing the SSH management connection...")
 	}
-	connection, err := provisionSession(runContext, options, plan, ready, provisioning, hostHerdr, tailscaleBootstrap)
+	var connection Connection
+	if options.InstallerProvisioning {
+		connection, err = provisionInstallerSession(runContext, options, plan, provisioning, hostHerdr)
+	} else {
+		connection, err = provisionSession(runContext, options, plan, ready, provisioning, hostHerdr, tailscaleBootstrap)
+	}
 	if err != nil {
 		return Connection{}, err
 	}
@@ -357,7 +382,7 @@ func Attach(ctx context.Context, connection Connection, stdin io.Reader, stdout,
 	if version != connection.HerdrVersion || status.Version != connection.herdrRuntimeVersion || status.Protocol != connection.HerdrProtocol {
 		return fmt.Errorf("host Herdr identity = %q protocol %d, ready guest = %q protocol %d; run `sandbox up` to reprovision the ready guest with the current host runtime", version, status.Protocol, connection.HerdrVersion, connection.HerdrProtocol)
 	}
-	command := exec.CommandContext(ctx, commandPath, "--remote", connection.SSHTarget)
+	command := exec.CommandContext(ctx, commandPath, "--remote", connection.SSHTarget, "--remote-keybindings", "server")
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -472,6 +497,8 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	}
 
 	plan := runPlan{
+		InstallerProvisioning:   provisioning.InstallerProvisioning,
+		InstallerPath:           provisioning.InstallerPath,
 		ID:                      id,
 		DataDirectory:           dataDirectory,
 		RunDirectory:            filepath.Join(dataDirectory, "runs", id),
@@ -490,6 +517,10 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		SandboxExecutable:       sandboxExecutable,
 	}
 	plan.CacheDirectory = cacheDirectory
+	if plan.InstallerProvisioning {
+		plan.Tailscale = false
+		plan.MobileSSHAuthorizedKeys = nil
+	}
 	plan.InputDirectory = filepath.Join(plan.RunDirectory, "input")
 	plan.StatusDirectory = filepath.Join(plan.RunDirectory, "status")
 	plan.ConfigPath = filepath.Join(plan.RunDirectory, "herdr-sandbox.wsb")
@@ -535,7 +566,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	}
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
-	config, err := renderConfigWithMappedDirectories(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput)
+	config, err := renderConfigWithMappedDirectories(plan.InputDirectory, plan.StatusDirectory, plan.CacheDirectory, plan.WorktreeDirectory, plan.ModelsDirectory, plan.Mounts, plan.Workspaces, memoryMB, provisioning.AudioOutput, provisioning.AudioInput, plan.InstallerProvisioning)
 	if err != nil {
 		return runPlan{}, err
 	}
@@ -560,14 +591,20 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	if err := writeMobileSSHAuthorizedKeysInput(plan.InputDirectory, plan.MobileSSHAuthorizedKeys); err != nil {
 		return runPlan{}, err
 	}
-	snapshot, err := prepareProvisioningSnapshot(ctx, plan.RunDirectory, filepath.Join(plan.InputDirectory, "provisioning"), provisioning)
-	if err != nil {
-		return runPlan{}, err
+	if plan.InstallerProvisioning {
+		if err := prepareInstallerRunInputs(ctx, &plan, provisioning); err != nil {
+			return runPlan{}, err
+		}
+	} else {
+		snapshot, err := prepareProvisioningSnapshot(ctx, plan.RunDirectory, filepath.Join(plan.InputDirectory, "provisioning"), provisioning)
+		if err != nil {
+			return runPlan{}, err
+		}
+		plan.Workspaces = snapshot.Workspaces
+		plan.ActiveWorkspace = snapshot.ActiveWorkspace
+		plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
+		plan.TradingViewEnabled = snapshot.TradingViewEnabled
 	}
-	plan.Workspaces = snapshot.Workspaces
-	plan.ActiveWorkspace = snapshot.ActiveWorkspace
-	plan.RequiresVisualStudioLayout = snapshot.RequiresVisualStudioLayout
-	plan.TradingViewEnabled = snapshot.TradingViewEnabled
 	if err := os.WriteFile(plan.ConfigPath, config, 0o600); err != nil {
 		return runPlan{}, fmt.Errorf("write Windows Sandbox configuration: %w", err)
 	}

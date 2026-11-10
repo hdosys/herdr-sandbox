@@ -108,7 +108,7 @@ func TestDescribeWSBLaunchDifferencesNamesModelsDirectoryChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := renderConfigWithMappedDirectories(input, status, cache, "", filepath.Join(root, "models"), nil, nil, 4096, false, false)
+	changed, err := renderConfigWithMappedDirectories(input, status, cache, "", filepath.Join(root, "models"), nil, nil, 4096, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

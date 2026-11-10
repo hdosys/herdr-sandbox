@@ -246,6 +246,8 @@ func encodeGuestWorkspaceManifest(workspaces []workspacePlan, activeWorkspace st
 }
 
 type provisioningPlan struct {
+	InstallerProvisioning   bool
+	InstallerPath           string
 	BaseScript              string
 	StackScript             string
 	UserScript              string

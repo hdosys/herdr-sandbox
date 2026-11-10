@@ -18,6 +18,7 @@ func TestRenderConfigMapsSharedModelsReadWrite(t *testing.T) {
 		4096,
 		false,
 		false,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("render config: %v", err)

@@ -51,6 +51,25 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 ### Go And PowerShell Ownership
 
+The explicit installer-only Sandbox mode reuses `bootstrap.ps1` with
+`-InstallerProvisioning`: signed OpenSSH plus inbox PowerShell 5.1 only. Its
+before/after WinGet, VC++ and PowerShell 7 baseline guards against preinstalling
+the capabilities being tested. `installer_session.go` snapshots the exact
+workstation candidate through `internal/installerartifact`, freezes the public
+selection, and streams private authored settings through the existing framed SSH
+input lease. `installer-receiver.ps1` executes NSIS under the existing bounded
+process owner. `installer-probes.ps1` checks effects independently of the native
+success journal. Probe scratch space is removed; protected guest-local profile,
+installer and native report remain diagnostic inputs, never host-mounted secrets.
+
+The persisted installer-mode bit is part of active/connectable/ready identity and
+prevents normal retained provisioning from contaminating acceptance. Only after
+independent success does the coordinator start the installed matching Herdr and
+reuse workspace finalization. It never calls Herdr remote provisioning, normal
+configuration sync or a package repair path. Cold transport, full selected-stack
+installation and console-backed remote attach require the explicit host-side
+`native-installer-sandbox` gate; isolated receiver evidence is not that gate.
+
 - Go owns the host product: CLI parsing, configuration, path/mapping validation, run/status contracts, `.wsb` generation, SSH/Herdr lifecycle, configuration sync, cache-policy decisions, subprocess bounds, and final error reporting.
 - Every noninteractive host subprocess, including repository task/test adapters, uses one shared Windows hidden process-tree console with captured output so compiler/test/installer descendants inherit that invisible console instead of allocating visible windows; noninteractive guest PowerShell launched through SSH also uses `-WindowStyle Hidden`.
 - Only the user-facing Herdr attach, a real interactive terminal check, and the Windows Sandbox application/bootstrap console remain intentionally visible.

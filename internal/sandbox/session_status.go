@@ -248,6 +248,9 @@ func inspectSessionDuringOperation(ctx context.Context, dataDirectory string, lo
 }
 
 func sessionNextAction(status SessionStatus) string {
+	if status.InstallerProvisioning && status.State != SessionReady && status.State != SessionStopped {
+		return "Installer test instance preserved. Inspect its installer report; normal provisioning is disabled for this instance. A new fresh acceptance run requires an explicit later shutdown."
+	}
 	switch status.State {
 	case SessionStopped:
 		return "Run `sandbox up` from a configured project."

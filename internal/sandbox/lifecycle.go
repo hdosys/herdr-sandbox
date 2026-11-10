@@ -40,26 +40,27 @@ var (
 )
 
 type SessionStatus struct {
-	State              string
-	RunID              string
-	PID                int
-	StartedAtUTC       string
-	GuestFreeSpace     *GuestFreeSpace
-	Phase              string
-	Message            string
-	GuestIP            string
-	WinGetVersion      string
-	HerdrVersion       string
-	HerdrProtocol      int
-	MobileAccess       *MobileAccess
-	Workspaces         []SessionWorkspace
-	Operation          *SessionOperation
-	DiagnosticsPath    string
-	Timings            []SessionTiming
-	Warnings           []string
-	NextAction         string
-	CleanupRemovedRuns int
-	Processes          []string
+	InstallerProvisioning bool `json:"installerProvisioning,omitempty"`
+	State                 string
+	RunID                 string
+	PID                   int
+	StartedAtUTC          string
+	GuestFreeSpace        *GuestFreeSpace
+	Phase                 string
+	Message               string
+	GuestIP               string
+	WinGetVersion         string
+	HerdrVersion          string
+	HerdrProtocol         int
+	MobileAccess          *MobileAccess
+	Workspaces            []SessionWorkspace
+	Operation             *SessionOperation
+	DiagnosticsPath       string
+	Timings               []SessionTiming
+	Warnings              []string
+	NextAction            string
+	CleanupRemovedRuns    int
+	Processes             []string
 }
 
 type GuestFreeSpace struct {
@@ -189,14 +190,15 @@ func (protection cleanupProtection) activeRunID() string {
 }
 
 type activeSession struct {
-	SchemaVersion  int    `json:"schemaVersion"`
-	RunID          string `json:"runID"`
-	ConfigPath     string `json:"configPath"`
-	Tailscale      bool   `json:"tailscale"`
-	PID            int    `json:"pid"`
-	ExecutablePath string `json:"executablePath"`
-	StartedAtUTC   string `json:"startedAtUTC"`
-	CommandLine    string `json:"commandLine"`
+	InstallerProvisioning bool   `json:"installerProvisioning,omitempty"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	RunID                 string `json:"runID"`
+	ConfigPath            string `json:"configPath"`
+	Tailscale             bool   `json:"tailscale"`
+	PID                   int    `json:"pid"`
+	ExecutablePath        string `json:"executablePath"`
+	StartedAtUTC          string `json:"startedAtUTC"`
+	CommandLine           string `json:"commandLine"`
 }
 
 type sandboxProcessSnapshot struct {
@@ -319,7 +321,7 @@ func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus,
 	if err != nil {
 		return SessionStatus{}, err
 	}
-	status := SessionStatus{State: SessionStale, RunID: active.RunID, PID: active.PID}
+	status := SessionStatus{State: SessionStale, RunID: active.RunID, PID: active.PID, InstallerProvisioning: active.InstallerProvisioning}
 	if !running {
 		status.Message = "recorded Windows Sandbox process is no longer running"
 		enrichSessionStatus(dataDirectory, active, &status)
@@ -348,7 +350,7 @@ func inspectSessionAt(ctx context.Context, dataDirectory string) (SessionStatus,
 }
 
 func classifyManagedSession(dataDirectory string, active activeSession) (SessionStatus, error) {
-	status := SessionStatus{State: SessionStarting, RunID: active.RunID, PID: active.PID, StartedAtUTC: active.StartedAtUTC}
+	status := SessionStatus{State: SessionStarting, RunID: active.RunID, PID: active.PID, StartedAtUTC: active.StartedAtUTC, InstallerProvisioning: active.InstallerProvisioning}
 	statusDirectory := filepath.Join(dataDirectory, "runs", active.RunID, "status")
 	if failure, ok, err := readOptionalStatus[failureStatus](filepath.Join(statusDirectory, failureFileName)); err != nil {
 		return SessionStatus{}, fmt.Errorf("read active Sandbox failure status: %w", err)
@@ -367,6 +369,9 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 		if err := ready.validate(); err != nil {
 			return SessionStatus{}, fmt.Errorf("validate active Sandbox ready status: %w", err)
 		}
+		if ready.InstallerProvisioning != active.InstallerProvisioning {
+			return SessionStatus{}, errors.New("ready provisioning mode differs from the owned launch")
+		}
 		status.State = SessionReady
 		status.GuestIP = ready.IP
 		status.WinGetVersion = ready.WinGetVersion
@@ -379,6 +384,9 @@ func classifyManagedSession(dataDirectory string, active activeSession) (Session
 	} else if ok {
 		if err := connectable.validate(); err != nil {
 			return SessionStatus{}, fmt.Errorf("validate active Sandbox connectable status: %w", err)
+		}
+		if connectable.InstallerProvisioning != active.InstallerProvisioning {
+			return SessionStatus{}, errors.New("transport provisioning mode differs from the owned launch")
 		}
 		status.Phase = "connectable"
 		status.State = SessionConnectable
@@ -918,14 +926,15 @@ func recordActiveSession(ctx context.Context, plan runPlan, pid int) error {
 		}
 	}
 	active := activeSession{
-		SchemaVersion:  activeSessionSchemaVersion,
-		RunID:          plan.ID,
-		ConfigPath:     plan.ConfigPath,
-		Tailscale:      plan.Tailscale,
-		PID:            snapshot.PID,
-		ExecutablePath: snapshot.ExecutablePath,
-		StartedAtUTC:   snapshot.StartedAtUTC,
-		CommandLine:    snapshot.CommandLine,
+		InstallerProvisioning: plan.InstallerProvisioning,
+		SchemaVersion:         activeSessionSchemaVersion,
+		RunID:                 plan.ID,
+		ConfigPath:            plan.ConfigPath,
+		Tailscale:             plan.Tailscale,
+		PID:                   snapshot.PID,
+		ExecutablePath:        snapshot.ExecutablePath,
+		StartedAtUTC:          snapshot.StartedAtUTC,
+		CommandLine:           snapshot.CommandLine,
 	}
 	if err := active.validate(plan.DataDirectory, plan.SandboxExecutable); err != nil {
 		return fmt.Errorf("validate active Sandbox identity: %w", err)
@@ -983,7 +992,8 @@ func loadActiveSession(dataDirectory, sandboxExecutable string) (activeSession, 
 }
 
 func validateActiveSessionShape(data []byte) error {
-	if err := validateExactJSONObjectShape(data, "identity", []string{
+	if err := validateJSONObjectShape(data, "identity", []string{
+		"installerProvisioning",
 		"schemaVersion",
 		"runID",
 		"configPath",
@@ -998,6 +1008,14 @@ func validateActiveSessionShape(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
+	}
+	for _, name := range []string{"schemaVersion", "runID", "configPath", "tailscale", "pid", "executablePath", "startedAtUTC", "commandLine"} {
+		if _, found := fields[name]; !found {
+			return fmt.Errorf("identity missing %s", name)
+		}
+	}
+	if value, found := fields["installerProvisioning"]; found && string(value) != "true" && string(value) != "false" {
+		return errors.New("installerProvisioning must be a JSON boolean")
 	}
 	tailscale := string(bytes.TrimSpace(fields["tailscale"]))
 	if tailscale != "true" && tailscale != "false" {

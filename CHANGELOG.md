@@ -9,6 +9,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Added
 
+- An explicit installer-only Sandbox path runs the exact workstation candidate
+  after transport-only bootstrap, transfers selected settings over SSH, and
+  independently checks installed effects without normal provisioning repairs.
+- Remote attachment selects server keybindings so transferred custom commands
+  execute in the guest context.
+
 - A separate direct Windows workstation setup candidate for physical PCs and VMs,
   with explicit private configuration export/import, per-step deadlines, complete
   failure reporting and targeted resume. Independent selected work continues after

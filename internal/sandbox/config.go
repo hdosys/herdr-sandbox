@@ -47,7 +47,7 @@ type wsbLogonCommand struct {
 	Command string `xml:"Command"`
 }
 
-func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
+func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled, installer bool) string {
 	audioOutputSelection := "'Disabled'"
 	if audioOutputEnabled {
 		audioOutputSelection = "'Enabled'"
@@ -64,19 +64,22 @@ func guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled bool) string {
 		"'-AudioPlayback'", audioOutputSelection,
 		"'-AudioInput'", audioInputSelection,
 	}
+	if installer {
+		arguments = append(arguments, "'-InstallerProvisioning'")
+	}
 	return "Start-Process -FilePath 'powershell.exe' -WindowStyle Normal -Wait -ArgumentList @(" +
 		strings.Join(arguments, ",") + ")"
 }
 
 func renderConfig(inputDirectory, statusDirectory, cacheDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
-	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, "", "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, "", "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled, false)
 }
 
 func renderConfigWithWorktreeDirectory(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
-	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled)
+	return renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, "", mounts, workspaces, memoryMB, audioOutputEnabled, audioInputEnabled, false)
 }
 
-func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled bool) ([]byte, error) {
+func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory string, mounts []mountPlan, workspaces []workspacePlan, memoryMB int, audioOutputEnabled, audioInputEnabled, installer bool) ([]byte, error) {
 	if len(mounts) > maximumMounts {
 		return nil, fmt.Errorf("folder mount count %d exceeds limit %d", len(mounts), maximumMounts)
 	}
@@ -193,7 +196,7 @@ func renderConfigWithMappedDirectories(inputDirectory, statusDirectory, cacheDir
 			"-NoProfile",
 			"-NonInteractive",
 			"-ExecutionPolicy Bypass",
-			`-Command "` + guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled) + `"`,
+			`-Command "` + guestBootstrapLaunch(audioOutputEnabled, audioInputEnabled, installer) + `"`,
 		}, " ")},
 	}
 

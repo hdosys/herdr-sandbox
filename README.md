@@ -651,6 +651,45 @@ This target is separate from `herdr-sandbox_setup.exe`; neither package task
 removes the other product's canonical candidate. No public workstation release
 is implied by a local development build.
 
+<details>
+<summary><strong>Test the workstation installer in a fresh Sandbox</strong></summary>
+
+On the Windows host, use the current Sandbox CLI and keep the workstation
+installer's matching `.json` sidecar beside it:
+
+```powershell
+sandbox up --provisioning installer --installer "C:\path\herdr-workstation_setup.exe" --no-attach
+```
+
+This is an alternative provisioning path, not an installation on top of a normal
+development guest. It refuses any existing Sandbox and never closes it for you.
+Save your work before separately choosing to close a guest. From a clean source
+checkout with its matching built candidate, the equivalent host gate is:
+
+```powershell
+go run ./cmd/task native-installer-sandbox
+```
+
+Only OpenSSH and inbox PowerShell 5.1 run before the exact NSIS installer. Your
+configured package/stack selection and selected authored settings are passed
+automatically; no manually maintained profile is needed. Dedicated credentials,
+Git history, arbitrary project/user script effects, Tailscale/mobile setup and
+normal Sandbox configuration policies are excluded. A local `ttsBundle` selection
+is rejected because the native installer cannot reproduce it.
+
+Independent checks validate installed effects and settings hashes. The command
+prints each result and preserves native reports in the guest. It never runs normal
+provisioning to conceal a failure. Host and installed guest Herdr must match before
+the server/workspaces become ready; a mismatch is reported without replacement.
+Then use `sandbox attach` in a real terminal. Server keybindings are selected, so
+custom commands run in the guest and their tools/scripts must exist there.
+
+The outer default deadline is 49 hours; individual steps remain bounded and
+`--timeout` can shorten the run. A receiver test in an already prepared guest does
+not establish fresh-machine or interactive-attach acceptance.
+
+</details>
+
 ## Security boundaries
 
 See [`SECURITY.md`](SECURITY.md) for vulnerability reporting, the complete threat

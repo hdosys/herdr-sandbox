@@ -34,15 +34,16 @@ type progressStatus struct {
 }
 
 type connectionStatus struct {
-	SchemaVersion       int    `json:"schemaVersion"`
-	IP                  string `json:"ip"`
-	SSHUser             string `json:"sshUser"`
-	SSHHostKey          string `json:"sshHostKey"`
-	WinGetVersion       string `json:"wingetVersion"`
-	HerdrVersion        string `json:"herdrVersion"`
-	HerdrRuntimeVersion string `json:"herdrRuntimeVersion,omitempty"`
-	HerdrProtocol       int    `json:"herdrProtocol"`
-	HerdrBinary         string `json:"herdrBinary,omitempty"`
+	InstallerProvisioning bool   `json:"installerProvisioning,omitempty"`
+	SchemaVersion         int    `json:"schemaVersion"`
+	IP                    string `json:"ip"`
+	SSHUser               string `json:"sshUser"`
+	SSHHostKey            string `json:"sshHostKey"`
+	WinGetVersion         string `json:"wingetVersion"`
+	HerdrVersion          string `json:"herdrVersion"`
+	HerdrRuntimeVersion   string `json:"herdrRuntimeVersion,omitempty"`
+	HerdrProtocol         int    `json:"herdrProtocol"`
+	HerdrBinary           string `json:"herdrBinary,omitempty"`
 }
 
 type connectableStatus connectionStatus
@@ -216,7 +217,7 @@ func statusFields(value any) ([]string, error) {
 	case progressStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case connectableStatus, readyStatus:
-		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrRuntimeVersion", "herdrProtocol", "herdrBinary"}, nil
+		return []string{"schemaVersion", "ip", "sshUser", "sshHostKey", "wingetVersion", "herdrVersion", "herdrRuntimeVersion", "herdrProtocol", "herdrBinary", "installerProvisioning"}, nil
 	case failureStatus:
 		return []string{"schemaVersion", "phase", "message"}, nil
 	case explorerRestartStatus:
@@ -366,8 +367,12 @@ func validateConnectionStatus(status connectionStatus, expectedSchemaVersion int
 	if _, err := base64.StdEncoding.DecodeString(fields[1]); err != nil {
 		return fmt.Errorf("decode sshHostKey: %w", err)
 	}
-	if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); err != nil {
-		return err
+	if !status.InstallerProvisioning || expectedSchemaVersion == readyStatusSchemaVersion {
+		if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); err != nil {
+			return err
+		}
+	} else if status.WinGetVersion != "" {
+		return errors.New("installer transport must not claim WinGet provisioning")
 	}
 	if expectedSchemaVersion == readyStatusSchemaVersion {
 		if err := validateTerminalText("herdrVersion", status.HerdrVersion, 256); err != nil {
@@ -413,7 +418,8 @@ func sameConnectionIdentity(connectable connectableStatus, ready readyStatus) bo
 	return left.IP == right.IP &&
 		left.SSHUser == right.SSHUser &&
 		left.SSHHostKey == right.SSHHostKey &&
-		left.WinGetVersion == right.WinGetVersion &&
+		left.InstallerProvisioning == right.InstallerProvisioning &&
+		(left.InstallerProvisioning || left.WinGetVersion == right.WinGetVersion) &&
 		right.HerdrVersion != "" &&
 		right.HerdrRuntimeVersion != "" &&
 		right.HerdrProtocol > 0 &&
