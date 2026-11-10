@@ -8,7 +8,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
 
 - **Product path:** `cmd/sandbox` owns OS process wiring and exit status, `internal/cli` owns command flow and dependency composition, and `internal/sandbox` owns Windows Sandbox planning and the concrete native workflow.
 - **Host and guest split:** Go owns host contracts and direct process control. Windows PowerShell 5.1 is the exclusive provisioning interpreter. Installed PowerShell 7 is interactive guest tooling.
-- **Data boundary:** Sandbox host mappings are explicit and narrow; its configuration/credential transfer uses verified SSH. Direct workstation migration instead uses an explicitly selected private configuration profile, excluding authentication stores, private keys and Git history.
+- **Data boundary:** Sandbox host mappings are explicit and narrow; its normal configuration/credential transfer uses verified SSH. Personal workstation installers embed selected authored configuration, excluding authentication stores, private keys and Git history. They and their staged copies are private artifacts, not public release inputs.
 - **State boundary:** Per-run state is ephemeral and app-owned. Only the optional Tailscale and mobile SSH identities are durable credential state, encrypted for the current host user with Windows DPAPI.
 - **Provisioning boundary:** Built-in Base and stack scripts, one global `user.ps1`, and the nearest project `.herdr-sandbox\provision.ps1` are the direct provisioning surfaces. No generic provider or plugin system exists.
 - **Delivery and evidence:** `cmd/task` owns recurring build and verification commands, `packaging/windows/installer.nsi` owns installer lifecycle, and native Windows Sandbox gates own environment-sensitive acceptance.
@@ -48,6 +48,13 @@ This file owns stable technical design: command ownership, host/guest boundaries
   installed background application. `package-workstation` owns the distinct
   canonical installer and provenance JSON; packaging preserves both products'
   canonical candidates. Existing Sandbox installer lifecycle remains unchanged.
+- Packaging captures `personal-profile.json` through the existing CLI/export and
+  selected-source owners in task-owned temporary storage outside the checkout.
+  NSIS embeds it and supplies it to the normal setup path by default. The sidecar
+  binds its SHA-256, configuration count, package IDs and source boundary without
+  disclosing values. Protected `selection.json` retains the exact snapshot rather
+  than a pointer to NSIS's temporary extraction directory. No cache payload or
+  credential collection is added. The public Sandbox package does not include it.
 
 ### Go And PowerShell Ownership
 
@@ -55,12 +62,13 @@ The explicit installer-only Sandbox mode reuses `bootstrap.ps1` with
 `-InstallerProvisioning`: signed OpenSSH plus inbox PowerShell 5.1 only. Its
 before/after WinGet, VC++ and PowerShell 7 baseline guards against preinstalling
 the capabilities being tested. `installer_session.go` snapshots the exact
-workstation candidate through `internal/installerartifact`, freezes the public
-selection, and streams private authored settings through the existing framed SSH
-input lease. `installer-receiver.ps1` executes NSIS under the existing bounded
+workstation candidate through `internal/installerartifact` and sends only its
+embedded-profile hash through the existing framed SSH input lease.
+`installer-receiver.ps1` executes NSIS without a profile override under the bounded
 process owner. `installer-probes.ps1` checks effects independently of the native
 success journal. Probe scratch space is removed; protected guest-local profile,
-installer and native report remain diagnostic inputs, never host-mounted secrets.
+installer and native report remain diagnostic inputs. The private installer copy
+itself contains the selected settings; no separate plaintext host profile is staged.
 
 The persisted installer-mode bit is part of active/connectable/ready identity and
 prevents normal retained provisioning from contaminating acceptance. Only after

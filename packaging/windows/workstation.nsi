@@ -23,19 +23,15 @@ VIAddVersionKey /LANG=1033 "FileDescription" "Direct Windows development setup"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "Copyright (c) 2026 hdosys"
 
 Var ProfilePath
-Var ProfileControl
 Var RefreshControl
 Var RefreshArg
-Var ExportPath
-Var SettingsArg
-Var DefaultsArg
 Var FinishText
 Var SetupExit
 Var StateRoot
 Var WasSilent
 
 !define MUI_WELCOMEPAGE_TITLE "${APP_DISPLAY_NAME} ${BUILD_FRESHNESS}"
-!define MUI_WELCOMEPAGE_TEXT "Set up this Windows 10/11 x64 computer directly, without creating a Sandbox. Windows 11 is recommended.$\r$\n$\r$\nInternet access and administrator rights are required. The full development selection can take several hours. Independent steps continue after failures; each step has a deadline.$\r$\n$\r$\nRe-run this installer to resume. Accounts and licences require separate sign-in. Existing Herdr sessions and Windows security policy are not replaced."
+!define MUI_WELCOMEPAGE_TEXT "This PRIVATE installer contains the selected programs and personal configuration captured when it was built. No separate profile file or old computer is needed.$\r$\n$\r$\nWindows 10/11 x64, Internet access and administrator rights are required. Software packages are downloaded during setup. Independent steps continue after failures.$\r$\n$\r$\nDo not publish this installer. Accounts and licences require separate sign-in. Existing Herdr sessions and Windows security policy are not replaced."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\LICENSE.txt"
 Page custom SelectProfile LeaveProfile
@@ -60,57 +56,30 @@ Function .onInit
   ClearErrors
   ${GetOptions} $0 "/ROOT=" $StateRoot
   ClearErrors
-  ${GetOptions} $0 "/EXPORTPROFILE=" $ExportPath
-  ClearErrors
   ${GetOptions} $0 "/REFRESH" $1
   ${IfNot} ${Errors}
     StrCpy $RefreshArg "--refresh"
   ${EndIf}
   ClearErrors
-  ${GetOptions} $0 "/INCLUDESETTINGS" $1
-  ${IfNot} ${Errors}
-    StrCpy $SettingsArg "--include-settings"
-  ${EndIf}
-  ClearErrors
-  ${GetOptions} $0 "/DEFAULTS" $1
-  ${IfNot} ${Errors}
-    StrCpy $DefaultsArg "--defaults"
-  ${EndIf}
-  ClearErrors
 FunctionEnd
 
 Function SelectProfile
-  !insertmacro MUI_HEADER_TEXT "Configuration and resume" "Choose a private profile or resume this computer's saved selection."
+  !insertmacro MUI_HEADER_TEXT "Your configuration is included" "Apply the snapshot embedded in this private installer."
   nsDialogs::Create 1018
   Pop $0
-  ${NSD_CreateLabel} 0 0 100% 42u "Optional: select the private profile exported on your previous computer. Otherwise setup resumes its saved selection, or uses the full development selection on a new machine. Existing different configuration is preserved."
+  ${NSD_CreateLabel} 0 0 100% 42u "The selected programs, stacks and personal settings are already in this installer. Setup imports them automatically. Existing different configuration is preserved and reported as a conflict, never silently overwritten."
   Pop $0
-  ${NSD_CreateFileRequest} 0 48u 84% 13u "$ProfilePath"
-  Pop $ProfileControl
-  ${NSD_CreateBrowseButton} 86% 47u 14% 15u "Browse..."
-  Pop $0
-  ${NSD_OnClick} $0 BrowseProfile
   ${NSD_CreateCheckbox} 0 75u 100% 14u "Refresh completed steps instead of resuming unfinished work"
   Pop $RefreshControl
   ${If} $RefreshArg != ""
     ${NSD_Check} $RefreshControl
   ${EndIf}
-  ${NSD_CreateLabel} 0 100u 100% 40u "Only use a profile you trust. Authored configuration can contain commands or private values. Dedicated authentication files, SSH keys and project data are excluded. Keep the original private profile available for configuration repair."
+  ${NSD_CreateLabel} 0 100u 100% 40u "Personal settings may contain commands and inline private values. Keep this installer private. Dedicated authentication files, SSH keys, project data and Git history are excluded. Rebuild on the source computer to capture later changes."
   Pop $0
   nsDialogs::Show
 FunctionEnd
 
-Function BrowseProfile
-  Pop $0
-  nsDialogs::SelectFileDialog open "" "Workstation profile (*.json)|*.json"
-  Pop $0
-  ${If} $0 != ""
-    ${NSD_SetText} $ProfileControl $0
-  ${EndIf}
-FunctionEnd
-
 Function LeaveProfile
-  ${NSD_GetText} $ProfileControl $ProfilePath
   ${NSD_GetState} $RefreshControl $0
   StrCpy $RefreshArg ""
   ${If} $0 == ${BST_CHECKED}
@@ -131,6 +100,7 @@ Section "Workstation setup"
   File "${PACKAGE_DIR}\base.ps1"
   File "${PACKAGE_DIR}\stacks.ps1"
   File "${PACKAGE_DIR}\LICENSE.txt"
+  File "${PACKAGE_DIR}\personal-profile.json"
   ${If} $WasSilent == 0
     SetSilent normal
   ${EndIf}
@@ -141,16 +111,6 @@ Section "Workstation setup"
   ${EndIf}
   GetDlgItem $0 $HWNDPARENT 2
   EnableWindow $0 0
-  ${If} $ExportPath != ""
-    DetailPrint "Exporting the explicitly selected configuration. No tools will be installed."
-    nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation export --output $\"$ExportPath$\" $SettingsArg $DefaultsArg'
-    Pop $SetupExit
-    StrCpy $FinishText "Profile export finished with exit status $SetupExit. No tool provisioning was run. If successful, transfer the private profile separately and select it when running this installer on the new computer."
-    ${If} $SetupExit != "0"
-      SetErrorLevel 1
-    ${EndIf}
-    Goto setup_finished
-  ${EndIf}
   ${If} $StateRoot == ""
     nsExec::ExecToStack '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation root'
     Pop $SetupExit
@@ -164,10 +124,9 @@ Section "Workstation setup"
   ${EndIf}
   DetailPrint "Running bounded setup. Independent steps continue after errors."
   ${If} $ProfilePath == ""
-    nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --root $\"$StateRoot$\" $RefreshArg'
-  ${Else}
-    nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" $RefreshArg'
+    StrCpy $ProfilePath "$PLUGINSDIR\payload\personal-profile.json"
   ${EndIf}
+  nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" $RefreshArg'
   Pop $SetupExit
   ${If} $SetupExit == "0"
     StrCpy $FinishText "Setup completed. The report contains the checked component results. Accounts and licensed applications still require your separate sign-in. Re-run this installer to resume or refresh later."
@@ -181,8 +140,7 @@ SectionEnd
 Function OpenReport
   ${If} $SetupExit == "0"
   ${OrIf} $SetupExit == "1"
-    ${If} $ExportPath == ""
-    ${AndIf} ${FileExists} "$StateRoot\report.html"
+    ${If} ${FileExists} "$StateRoot\report.html"
       ExecShell "open" "$StateRoot\report.html"
     ${EndIf}
   ${EndIf}

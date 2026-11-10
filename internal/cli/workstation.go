@@ -26,7 +26,8 @@ export reads the existing Sandbox tool selection without executing project scrip
 --defaults selects the generic full development profile instead.
 --include-settings explicitly includes private authored configuration, never dedicated
 auth files, SSH keys, project trees or Git history. Inline private values may remain:
-keep the exported file private and transfer it separately from the installer.
+keep the exported file private. package-workstation embeds this selected snapshot
+automatically; normal installation needs no separately transferred profile.
 Existing different target configuration is preserved and reported, not overwritten.
 `
 

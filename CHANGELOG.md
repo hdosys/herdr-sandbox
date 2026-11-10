@@ -9,6 +9,10 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Added
 
+- Personal workstation installers now embed the selected software and authored
+  configuration snapshot, apply it without an external profile, and retain it
+  securely for resume. These installers are private, not public release artifacts.
+
 - An explicit installer-only Sandbox path runs the exact workstation candidate
   after transport-only bootstrap, transfers selected settings over SSH, and
   independently checks installed effects without normal provisioning repairs.

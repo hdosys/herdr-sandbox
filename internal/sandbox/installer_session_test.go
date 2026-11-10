@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -132,6 +133,9 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 	}
 	root := t.TempDir()
 	bootstrap, status := filepath.Join(root, "bootstrap"), filepath.Join(root, "status")
+	settings := []byte("{\"theme\":\"system\"}\n")
+	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "opencode", Path: "opencode.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(settings)), Data: settings}}}
+	installer, evidence = buildPersonalInstallerFixture(t, installer, evidence, profile)
 	for _, directory := range []string{filepath.Join(bootstrap, "installer"), filepath.Join(bootstrap, "provisioning"), status} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
@@ -162,19 +166,16 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
-	settings := []byte("{\"theme\":\"system\"}\n")
-	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "opencode", Path: "opencode.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(settings)), Data: settings}}}
 	for _, conflict := range []bool{false, true} {
 		t.Run(fmt.Sprintf("conflict=%t", conflict), func(t *testing.T) {
 			if conflict {
-				profile.Files[0].Data = []byte("{\"theme\":\"light\"}")
-				profile.Files[0].SHA256 = fmt.Sprintf("%x", sha256.Sum256(profile.Files[0].Data))
+				settings = []byte("{\"theme\":\"light\"}")
+				if err := os.WriteFile(filepath.Join(root, "config", "opencode", "opencode.json"), settings, 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
-			data, err := json.Marshal(profile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			digest := fmt.Sprintf("%x", sha256.Sum256(data))
+			digest := evidence.ProfileSHA256
+			data := []byte(digest)
 			id, err := newRunID()
 			if err != nil {
 				t.Fatal(err)
@@ -220,4 +221,70 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 			t.Logf("candidate %s: passed=%t exit=%d checks=%+v", evidence.InstallerSHA256, result.Passed, result.ExitCode, result.Checks)
 		})
 	}
+}
+
+// Verify the private candidate's embedded bytes without printing or installing
+// them. Exercise the exact extracted runtime and production NSIS template with
+// a synthetic embedded profile, so no real user's configuration is overwritten.
+func buildPersonalInstallerFixture(t *testing.T, candidate string, evidence installerartifact.Evidence, profile WorkstationProfile) (string, installerartifact.Evidence) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	extractor, err := exec.LookPath("7z.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommandContext(ctx, extractor, "e", "-so", "-r", candidate, "personal-profile.json")
+	private, err := command.Output()
+	if err != nil {
+		t.Fatalf("extract embedded profile for digest check: %v", err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(private))
+	clear(private)
+	if digest != evidence.ProfileSHA256 {
+		t.Fatal("actual candidate does not contain its recorded personal profile")
+	}
+	stage := t.TempDir()
+	command = hiddenCommandContext(ctx, extractor, "e", "-y", "-r", "-o"+stage, candidate, "sandbox.exe", "base.ps1", "stacks.ps1", "LICENSE.txt")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("extract candidate runtime: %v %s", err, output)
+	}
+	for name, expected := range evidence.PayloadSHA256 {
+		data, err := os.ReadFile(filepath.Join(stage, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(data)) != expected {
+			t.Fatalf("candidate payload differs: %s", name)
+		}
+	}
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "personal-profile.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := exec.LookPath("makensis.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "workstation.nsi"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(t.TempDir(), "fixture.exe")
+	command = hiddenCommandContext(ctx, compiler, "/WX", "/V2", "/NOCONFIG", "/DPACKAGE_DIR="+stage, "/DOUTPUT_FILE="+fixture, "/DFIXED_VERSION="+evidence.Identity.Version+".0", "/DBUILD_FRESHNESS="+evidence.Identity.Freshness, "/DAPP_DISPLAY_NAME=Personal setup fixture", "/DAPP_APPLICATION_NAME=herdr-workstation", script)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("compile real personalized installer fixture: %v %s", err, output)
+	}
+	binary, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.InstallerSHA256 = fmt.Sprintf("%x", sha256.Sum256(binary))
+	evidence.ProfileSHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
+	evidence.ConfigurationFiles = len(profile.Files)
+	evidence.PackageIDs = nil
+	return fixture, evidence
 }

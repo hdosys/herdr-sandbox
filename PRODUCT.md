@@ -27,12 +27,21 @@ The current product contract is:
 - The shared package/stack implementations remain canonical. Direct setup never
   applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
   mapped-repository trust replacement or live Herdr lifecycle changes.
-- Personal configuration travels only through an explicit, separate export/import
-  file, never embedded in the distributable installer. Dedicated credential files,
-  private keys, project data and Git history are excluded. Free-form settings may
-  contain private values; their export requires explicit selection and the output
-  must remain private. Existing different target settings are preserved and
-  reported as conflicts, not silently overwritten.
+- `package-workstation VERSION` captures the current user's configured package,
+  declarative stack and selected authored-configuration snapshot inside the
+  installer. On the new computer it applies that embedded snapshot automatically;
+  no external profile or access to the old computer is required. Empty settings
+  capture is an error, never a supposedly personal generic installer.
+- This is a **private personal installer**, never a public release artifact.
+  Dedicated credential stores, private keys, project data and Git history remain
+  excluded. Inline private values and authored scripts may be included. Existing
+  different target settings are preserved and reported as conflicts. The exact
+  private snapshot is retained in protected per-user control state for resume.
+  Software downloads remain online; host cache payloads are not embedded.
+- Capture uses the existing package/configuration selection and agent authored-root
+  lists, including referenced scripts/assets, portable Claude MCP data and selected
+  GitHub CLI config. The build sidecar records profile identity, counts and whether
+  capture ran in a Sandbox. A guest snapshot is not proof of complete host capture.
 
 - The host `sandbox` command starts, provisions, inspects, and stops an app-owned Windows Sandbox while Herdr keeps the interactive terminal on the host.
 - Selected projects and explicit cache, mount, worktree, and model roots can persist on the host. Unselected host data is not mapped, and guest tools and processes remain disposable.
@@ -64,9 +73,8 @@ The current product contract is:
   PowerShell 5.1. It does not install WinGet, VC++, PowerShell 7 or development
   tools, run Base registry policies, or mute audio. A before/after transport
   baseline rejects development prerequisites introduced by bootstrap.
-- Existing configured package and declarative stack selections become the native
-  installer's profile automatically. Selected authored settings travel in memory
-  over verified SSH, never through host run files. Dedicated credentials, Git
+- The candidate's embedded snapshot is authoritative. The SSH lease transports
+  only its expected hash, never a replacement configuration. Dedicated credentials, Git
   history, arbitrary user/project script effects, Tailscale/mobile setup and
   normal configuration-sync policies are not part of this native experiment.
   A selected local `ttsBundle` is rejected rather than silently substituted.

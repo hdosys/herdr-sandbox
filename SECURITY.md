@@ -34,13 +34,18 @@ policy. Failed package integrity never activates that component; unrelated safe
 steps still continue. Packages, compiler tools and applications retain their own
 normal operating-system permissions and uninstall mechanisms.
 
-Configuration migration is a separate, explicit private-file operation. Dedicated
+The workstation build captures selected personal configuration **inside its private
+installer**. Never upload that installer or its profile to releases, Git, logs or
+public storage. The build uses private temporary staging outside the checkout and
+removes it afterward; the final installer remains private. Dedicated
 known authentication stores, SSH keys, project trees and Git history are excluded.
 Authored configuration and scripts can contain inline private values; no universal
-secret-scrubbing claim is made. Keep the profile private, use only a profile you
-trust, and review its settings before importing. The importer does not execute an
+secret-scrubbing claim is made. Capture on the source computer under the intended
+user; a Sandbox capture contains that guest's settings, not an asserted complete
+host snapshot. Use only an installer/profile you trust. The importer does not execute an
 exported apply script, rejects unsafe destinations and hash mismatches, and preserves
-different existing target files. Credentials and account sign-in remain separate.
+different existing target files. Authored absolute paths are not automatically
+rewritten for another machine. Credentials and account sign-in remain separate.
 
 Resumable control state below ProgramData is bound to the current Windows user and
 uses protected administrator/System write access. Ordinary-user runtime caches and

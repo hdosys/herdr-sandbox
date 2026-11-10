@@ -120,6 +120,7 @@ function Test-InstallerEffects {
         herdr=(Join-Path $env:APPDATA 'herdr'); opencode=(Join-Path $env:USERPROFILE '.config\opencode');
         claude=(Join-Path $env:USERPROFILE '.claude');'claude-state'=$env:USERPROFILE;codex=(Join-Path $env:USERPROFILE '.codex');pi=(Join-Path $env:USERPROFILE '.pi\agent');
         copilot=(Join-Path $env:USERPROFILE '.copilot');'agent-skills'=(Join-Path $env:USERPROFILE '.agents\skills');
+        'github-cli'=$(if($env:GH_CONFIG_DIR){$env:GH_CONFIG_DIR}elseif($env:XDG_CONFIG_HOME){Join-Path $env:XDG_CONFIG_HOME 'gh'}else{Join-Path $env:APPDATA 'GitHub CLI'});
         git=$env:USERPROFILE;'git-config'=(Join-Path $env:USERPROFILE '.config\git');zed=(Join-Path $env:APPDATA 'Zed');
         starship=(Join-Path $env:USERPROFILE '.config');nushell=(Join-Path $env:APPDATA 'nushell');
         terminal=(Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState');

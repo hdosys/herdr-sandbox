@@ -41,6 +41,26 @@ func TestWorkstationDefaultProfileAndSavedSelectionRoundTrip(t *testing.T) {
 	if err != nil || problem != "" || len(first.Packages) != len(second.Packages) || len(first.Stacks) != len(second.Stacks) {
 		t.Fatalf("resume selection: %v %s", err, problem)
 	}
+	settings := []byte("{\"theme\":\"system\"}")
+	profile.Files = []WorkstationFile{{Kind: "opencode", Path: "opencode.json", Data: settings, SHA256: fmt.Sprintf("%x", sha256.Sum256(settings))}}
+	data, err = json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(t.TempDir(), "extracted-profile.json")
+	if err := os.WriteFile(input, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := resolveWorkstationSelection(root, input); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(input); err != nil {
+		t.Fatal(err)
+	}
+	resumed, _, problem, err := resolveWorkstationSelection(root, "")
+	if err != nil || problem != "" || len(resumed.Files) != 1 || !bytes.Equal(resumed.Files[0].Data, settings) {
+		t.Fatal("embedded configuration cannot resume after extraction cleanup")
+	}
 }
 
 func TestWorkstationPrivateConfigurationRoundTripAndConflict(t *testing.T) {
@@ -359,19 +379,6 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	}
 	private := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(private, "config"))
-	defaultExport := filepath.Join(private, "generic-profile.json")
-	exportCommand := hiddenCommandContext(ctx, installer, "/S", "/EXPORTPROFILE="+defaultExport, "/DEFAULTS")
-	if output, err := exportCommand.CombinedOutput(); err != nil {
-		t.Fatalf("real installer export: %v %s", err, output)
-	}
-	exported, err := os.ReadFile(defaultExport)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaultProfile, err := decodeWorkstationProfile(exported)
-	if err != nil || len(defaultProfile.Packages) == 0 || len(defaultProfile.Files) != 0 {
-		t.Fatalf("real default export is invalid or captured settings: %v", err)
-	}
 	profilePath := filepath.Join(private, "profile.json")
 	settings := []byte("{\"theme\":\"system\"}\n")
 	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{

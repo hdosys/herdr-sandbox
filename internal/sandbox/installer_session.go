@@ -65,7 +65,7 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	if evidence.Product != productidentity.WorkstationApplicationName {
 		return errors.New("installer mode requires the workstation installer, not the Sandbox application installer")
 	}
-	profile, workspaces, err := workstationSelectionFromPlan(ctx, provisioning)
+	_, workspaces, err := workstationSelectionFromPlan(ctx, provisioning)
 	if err != nil {
 		return err
 	}
@@ -76,13 +76,6 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	plan.MobileSSHAuthorizedKeys = nil
 	manifest, err := encodeGuestWorkspaceManifest(workspaces, plan.ActiveWorkspace)
 	if err != nil {
-		return err
-	}
-	publicProfile, err := json.Marshal(profile)
-	if err != nil {
-		return err
-	}
-	if _, err := decodeWorkstationProfile(publicProfile); err != nil {
 		return err
 	}
 	input := filepath.Join(plan.InputDirectory, "installer")
@@ -101,7 +94,6 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	}
 	for path, data := range map[string][]byte{
 		filepath.Join(input, "setup.json"):                evidenceData,
-		filepath.Join(input, "selection.json"):            publicProfile,
 		filepath.Join(input, "probes.ps1"):                installerProbeScript,
 		filepath.Join(input, "workstation-root.cs"):       workstationRootSource,
 		filepath.Join(transport, provisioningProcessName): provisioningProcessSource,
@@ -120,13 +112,15 @@ func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile
 	if err != nil {
 		return nil, err
 	}
-	home, err := os.UserHomeDir()
+	selected, err := defaultHostConfigurationSources(provisioning.WindowsTerminal, provisioning.Packages, provisioning.CodingAgentSync, credentialSyncConfiguration{}, false)
 	if err != nil {
 		return nil, err
 	}
-	sources, err := defaultCodingAgentConfigurationSources(home, provisioning.CodingAgentSync, credentialSyncConfiguration{})
-	if err != nil {
-		return nil, err
+	sources := selected.CodingAgents
+	delete(roots, "herdr")
+	delete(roots, "github-cli")
+	if selected.GitHubCLIConfiguration != "" {
+		roots["github-cli"] = selected.GitHubCLIConfiguration
 	}
 	for kind, selected := range map[string]string{"opencode": sources.OpenCodeDirectory, "claude": sources.ClaudeCodeDirectory, "codex": sources.CodexDirectory, "pi": sources.PiDirectory, "copilot": sources.GitHubCopilotDirectory, "agent-skills": sources.SharedSkillsDirectory} {
 		if selected == "" {
@@ -163,7 +157,21 @@ func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile
 		delete(roots, "terminal-preview")
 		delete(roots, "terminal-fragments")
 	}
-	return exportWorkstationSettings(roots)
+	files, err := exportWorkstationSettings(roots)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateWorkstationLocalPath(selected.HerdrConfig); err != nil {
+		return nil, err
+	}
+	data, found, err := readBoundedRegularFile(selected.HerdrConfig, 4*1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		files = append(files, WorkstationFile{Kind: "herdr", Path: "config.toml", Data: data, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
+	}
+	return files, nil
 }
 
 func provisionInstallerSession(ctx context.Context, options Options, plan runPlan, provisioning provisioningPlan, hostHerdr HostHerdr) (connection Connection, resultErr error) {
@@ -207,33 +215,14 @@ func provisionInstallerSession(ctx context.Context, options Options, plan runPla
 	if err != nil {
 		return connection, err
 	}
-	selection, found, err := readBoundedRegularFile(filepath.Join(input, "selection.json"), workstationProfileLimit)
-	if err != nil || !found {
-		return connection, errors.New("frozen installer selection is unavailable")
+	profileHash := evidence.ProfileSHA256
+	// The lease frame carries only the expected embedded-profile identity. No
+	// host configuration can replace the candidate's captured personal snapshot.
+	data := []byte(profileHash)
+	profile := WorkstationProfile{}
+	for _, id := range evidence.PackageIDs {
+		profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: id})
 	}
-	profile, err := decodeWorkstationProfile(selection)
-	clear(selection)
-	if err != nil {
-		return connection, err
-	}
-	profile.Files, err = selectedInstallerSettings(provisioning)
-	if err != nil {
-		return connection, err
-	}
-	defer func() {
-		for _, file := range profile.Files {
-			clear(file.Data)
-		}
-	}()
-	data, err := json.Marshal(profile)
-	if err != nil {
-		return connection, err
-	}
-	defer clear(data)
-	if _, err := decodeWorkstationProfile(data); err != nil {
-		return connection, err
-	}
-	profileHash := fmt.Sprintf("%x", sha256.Sum256(data))
 	fmt.Fprintln(options.Output, "Running the exact workstation installer; no Base, project provisioning, configuration-sync repair or Herdr deployment follows it.")
 	var result installerVerification
 	err = runWithRetainedProgress(ctx, plan.StatusDirectory, options.Output, nil, func(runContext context.Context) error {

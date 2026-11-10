@@ -23,10 +23,14 @@ type Identity struct {
 }
 
 type Evidence struct {
-	Product         string            `json:"product"`
-	Identity        Identity          `json:"identity"`
-	InstallerSHA256 string            `json:"installerSHA256"`
-	PayloadSHA256   map[string]string `json:"payloadSHA256"`
+	Product             string            `json:"product"`
+	ProfileSHA256       string            `json:"profileSHA256,omitempty"`
+	ConfigurationFiles  int               `json:"configurationFiles,omitempty"`
+	PackageIDs          []string          `json:"packageIDs,omitempty"`
+	ConfigurationSource string            `json:"configurationSource,omitempty"`
+	Identity            Identity          `json:"identity"`
+	InstallerSHA256     string            `json:"installerSHA256"`
+	PayloadSHA256       map[string]string `json:"payloadSHA256"`
 }
 
 var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -76,6 +80,12 @@ func Decode(data []byte) (Evidence, error) {
 		return value, errors.New("installer evidence has an unexpected payload set")
 	}
 	hashes := []string{value.InstallerSHA256}
+	if value.Product == productidentity.WorkstationApplicationName {
+		hashes = append(hashes, value.ProfileSHA256)
+		if value.ConfigurationFiles < 1 || value.ConfigurationFiles > 2048 || len(value.PackageIDs) > 128 || (value.ConfigurationSource != "current-windows-user" && value.ConfigurationSource != "current-sandbox-user") {
+			return value, errors.New("workstation candidate must identify its embedded personal configuration")
+		}
+	}
 	for _, name := range []string{productidentity.ExecutableName, productidentity.BaseScriptName, productidentity.StackScriptName, productidentity.LicenseName} {
 		hashes = append(hashes, value.PayloadSHA256[name])
 	}

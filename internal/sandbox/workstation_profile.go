@@ -38,13 +38,14 @@ func allowedWorkstationFile(kind, relative string) bool {
 	switch kind {
 	case "herdr":
 		return relative == "config.toml"
+	case "github-cli":
+		return relative == "config.yml"
 	case "claude-state":
 		return relative == ".claude.json"
 	case "git":
 		return slices.Contains([]string{".gitconfig", ".gitignore_global", ".gitattributes"}, relative)
 	case "git-config":
-		return slices.Contains([]string{"config", "ignore", "attributes"}, path.Base(relative)) ||
-			slices.Contains([]string{".gitconfig", ".conf", ".ini", ".txt", ".md", ".sh", ".nu", ".ps1", ".json", ".yaml", ".yml"}, strings.ToLower(path.Ext(relative)))
+		return true
 	case "terminal", "terminal-preview":
 		return relative == "settings.json"
 	case "starship":
@@ -61,12 +62,14 @@ func allowedWorkstationFile(kind, relative string) bool {
 		}
 		for _, directory := range copilotConfigurationDirectories {
 			if strings.HasPrefix(relative, directory+"/") {
-				return slices.Contains([]string{".json", ".jsonc", ".md", ".js", ".mjs", ".ts", ".nu", ".ps1", ".toml", ".yaml", ".yml", ".txt"}, strings.ToLower(path.Ext(relative)))
+				return true
 			}
 		}
 		return false
 	case "opencode", "claude", "codex", "pi", "agent-skills":
-		return slices.Contains([]string{".json", ".jsonc", ".md", ".js", ".mjs", ".ts", ".nu", ".ps1", ".toml", ".yaml", ".yml", ".txt"}, strings.ToLower(path.Ext(relative)))
+		// Export selects authored roots through the normal configuration owner.
+		// Referenced skill scripts/assets must not disappear by file extension.
+		return true
 	default:
 		return false
 	}
@@ -87,8 +90,13 @@ func workstationSettingsRoots() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	github, err := defaultGitHubCLIConfigurationDirectory(home, appData)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]string{
-		"herdr": filepath.Join(appData, "herdr"), "opencode": openCode,
+		"github-cli": github,
+		"herdr":      filepath.Join(appData, "herdr"), "opencode": openCode,
 		"claude": filepath.Join(home, ".claude"), "claude-state": home, "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
 		"copilot": filepath.Join(home, ".copilot"), "agent-skills": filepath.Join(home, ".agents", "skills"),
 		"git": home, "zed": filepath.Join(appData, "Zed"),
@@ -104,6 +112,7 @@ func workstationSettingsRoots() (map[string]string, error) {
 // repositories/history or dedicated auth stores and never runs exported scripts.
 func ExportWorkstationProfile(ctx context.Context, destination string, includeSettings, defaults bool, output io.Writer) error {
 	profile := DefaultWorkstationProfile()
+	var selection provisioningPlan
 	if !defaults {
 		configurationRoot, err := os.UserConfigDir()
 		if err != nil {
@@ -114,7 +123,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 			return err
 		}
 		globalRoot := filepath.Join(configurationRoot, applicationName)
-		selection, err := resolveProvisioningReadOnlyAt("", globalRoot, filepath.Dir(executable))
+		selection, err = resolveProvisioningReadOnlyAt("", globalRoot, filepath.Dir(executable))
 		if err != nil {
 			return fmt.Errorf("resolve selected old-machine configuration (use --defaults for an explicit generic profile): %w", err)
 		}
@@ -133,11 +142,16 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 		}
 	}
 	if includeSettings {
-		roots, err := workstationSettingsRoots()
-		if err != nil {
-			return err
+		var err error
+		if defaults {
+			var roots map[string]string
+			roots, err = workstationSettingsRoots()
+			if err == nil {
+				profile.Files, err = exportWorkstationSettings(roots)
+			}
+		} else {
+			profile.Files, err = selectedInstallerSettings(selection)
 		}
-		profile.Files, err = exportWorkstationSettings(roots)
 		if err != nil {
 			return err
 		}
@@ -148,7 +162,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 		}()
 		fmt.Fprintln(output, "Private export: authored settings/scripts may contain inline private values. Known authentication files, SSH keys, Git history and project data are excluded. Do not publish this profile.")
 	}
-	data, err := json.MarshalIndent(profile, "", "  ")
+	data, err := json.Marshal(profile)
 	if err != nil {
 		return err
 	}
@@ -167,7 +181,7 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 	if err != nil {
 		return fmt.Errorf("create new export without overwriting existing data: %w", err)
 	}
-	_, writeErr := file.Write(append(data, '\n'))
+	_, writeErr := file.Write(data)
 	err = errors.Join(writeErr, file.Sync(), file.Close())
 	if err != nil {
 		return fmt.Errorf("write private workstation export: %w", err)

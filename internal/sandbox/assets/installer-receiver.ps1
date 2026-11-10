@@ -8,7 +8,7 @@ Add-Type -Path (Join-Path $bootstrapRoot 'installer\workstation-root.cs')
 $privateRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('herdr-installer-input\' + $runID)
 [HerdrWorkstation.Directories]::Ensure($privateRoot)
 $stateRoot = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('herdr-installer-state\' + $runID)
-$profilePath = Join-Path $privateRoot 'profile.json'
+$profilePath = Join-Path $stateRoot 'selection.json'
 $installerPath = Join-Path $privateRoot 'setup.exe'
 function Publish-InstallerProgress {
     param($Value)
@@ -21,14 +21,11 @@ function Publish-InstallerProgress {
 }
 try {
     $inputStream=[Console]::OpenStandardInput()
-    $target=[IO.File]::Open($profilePath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    try {
-        $remaining=$profileLength;$buffer=New-Object byte[] 65536
-        while($remaining -gt 0){$read=$inputStream.Read($buffer,0,[int][Math]::Min($remaining,$buffer.Length));if($read -le 0){throw 'Installer profile transport ended early.'};$target.Write($buffer,0,$read);$remaining-=$read}
-        $target.Flush($true)
-    } finally {$target.Dispose()}
-    if((Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash -ine $profileDigest){throw 'Installer profile transport hash mismatch.'}
-    $profile=[IO.File]::ReadAllText($profilePath)|ConvertFrom-Json
+    if($profileLength -ne 64){throw 'Invalid embedded-profile identity frame.'}
+    $buffer=New-Object byte[] 64
+    $offset=0
+    while($offset -lt 64){$read=$inputStream.Read($buffer,$offset,64-$offset);if($read -le 0){throw 'Installer identity transport ended early.'};$offset+=$read}
+    if([Text.Encoding]::ASCII.GetString($buffer) -cne $profileDigest){throw 'Installer profile identity mismatch.'}
     $baseline=[IO.File]::ReadAllText((Join-Path $statusRoot 'installer-baseline.json'))|ConvertFrom-Json
     $current=Get-InstallerBaseline
     if($baseline.schemaVersion -ne 1 -or [bool]$baseline.winget -ne $current.winget -or [bool]$baseline.powershell7 -ne $current.powershell7 -or [bool]$baseline.vcRuntime -ne $current.vcRuntime){throw 'Transport bootstrap changed tested development prerequisites; installer acceptance refused.'}
@@ -43,12 +40,16 @@ try {
     $spec.Role='Workstation installer acceptance'
     $spec.FilePath=$installerPath
     $spec.WorkingDirectory=$privateRoot
-    $spec.Arguments=@('/S',('/PROFILE='+$profilePath),('/ROOT='+$stateRoot))
+    $spec.Arguments=@('/S',('/ROOT='+$stateRoot))
     $spec.TimeoutMilliseconds=172800000
     $spec.SuccessExitCodes=[int[]]@(0,1,2)
     $result=[HerdrSandbox.ProvisioningProcess]::Run($spec)
     if($result.Stopped){throw [OperationCanceledException]::new('Installer acceptance cancelled.')}
     if($result.TimedOut){throw 'Installer acceptance exceeded its terminal deadline.'}
+    $profileItem=Get-Item -LiteralPath $profilePath -Force
+    if($profileItem.PSIsContainer -or $profileItem.Length -gt 50331648 -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Retained embedded profile is unsafe.'}
+    if((Get-FileHash -LiteralPath $profilePath -Algorithm SHA256).Hash -ine $profileDigest){throw 'Installed embedded profile differs from candidate identity.'}
+    $profile=[IO.File]::ReadAllText($profilePath)|ConvertFrom-Json
     $reportPath=Join-Path $stateRoot 'report.json'
     if(-not(Test-Path -LiteralPath $reportPath -PathType Leaf)){throw 'Installer did not publish a report; no normal provisioning was run.'}
     $reportItem=Get-Item -LiteralPath $reportPath -Force

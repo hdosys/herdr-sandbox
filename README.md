@@ -577,49 +577,36 @@ This is a self-contained setup program, not another background service or a
 second installed administration application. It extracts its executable payload
 temporarily. Installed tools retain their own normal uninstallers.
 
-### Move your existing configuration
+### Build once with your personal configuration
 
-On the previous computer, use the new setup program to explicitly export the
-existing Sandbox tool selection and supported authored configuration:
-
-```powershell
-$profile = Join-Path $env:USERPROFILE 'workstation.profile.json'
-$arguments = @('/S', '/INCLUDESETTINGS', "/EXPORTPROFILE=`"$profile`"")
-(Start-Process .\herdr-workstation_setup.exe -ArgumentList $arguments -Wait -PassThru).ExitCode
-```
-
-An updated `sandbox` CLI provides the same export:
+On the source computer, build under your normal Windows user:
 
 ```powershell
-sandbox workstation export --output "$env:USERPROFILE\workstation.profile.json" --include-settings
+go run ./cmd/task package-workstation v0.0.28
 ```
 
-Without `--include-settings` or `/INCLUDESETTINGS`, export contains tool selection
-only. `--defaults` or `/DEFAULTS` explicitly selects the generic development
-selection instead of reading the previous Sandbox selection. Existing output
-files are never overwritten.
-
-**Keep this profile private.** Supported settings include Herdr, OpenCode,
-Claude Code, Codex, Pi, Zed, Windows Terminal, Nushell, Starship and common Git
-configuration. Known authentication files, environment-secret files, SSH keys,
-Git history, caches, sessions and project trees are excluded. Arbitrary authored
-settings or scripts can still contain inline private values; this is not a
-universal secret scrubber. Review the export before transferring it. Commands and
-custom paths remain authored configuration, not guessed or rewritten bindings.
-
-Copy the installer and private profile separately to the new computer. Start the
-installer and select the profile, or run the same flow without interactive pages:
+The resulting `build/dist/herdr-workstation_setup.exe` already contains the selected
+packages/stacks and personal configuration. Copy that private installer to the new
+computer and run it. No separate profile or access to the old computer is needed.
+For unattended installation:
 
 ```powershell
-$arguments = @('/S', '/PROFILE="C:\Transfer\workstation.profile.json"')
-(Start-Process .\herdr-workstation_setup.exe -ArgumentList $arguments -Wait -PassThru).ExitCode
+(Start-Process .\herdr-workstation_setup.exe -ArgumentList '/S' -Wait -PassThru).ExitCode
 ```
 
-Without a profile, a new machine receives the generic full development selection;
-an existing setup resumes its saved selection. The generic selection is large:
-Visual Studio, SDKs, browsers and model downloads need substantial free disk space
-and internet access. Accounts, API tokens and licensed applications require
-separate sign-in after installation. No model-provider credentials are embedded.
+**Do not publish this personal installer.** Supported selected settings include
+Herdr, OpenCode, Claude Code, Codex, Copilot, Pi, shared agent skills, GitHub CLI,
+Zed, Windows Terminal, Nushell, Starship and Git. Referenced skill scripts/assets
+are included. Known authentication stores, environment-secret files, SSH keys,
+Git history, runtime caches/sessions and project trees are excluded. Authored
+settings may contain inline private values; this is not a universal secret scrubber.
+Commands and machine-specific paths remain authored values, not guessed bindings.
+
+The sidecar records the profile digest, file count and whether capture used a normal
+Windows or Sandbox user. A build inside a guest captures that guest's accessible
+settings, not an unseen complete host configuration. Rebuild on the source computer
+to capture later changes. Software and model downloads remain online; existing
+host cache payloads are not bundled. Accounts and licences require separate sign-in.
 
 ### Completion, failures and resume
 
@@ -633,8 +620,8 @@ The final HTML/JSON report lives below
 retained, failed, unavailable, blocked and interrupted/pending work. An incomplete
 run returns nonzero and is not presented as a fully successful setup.
 
-Run the installer again to resume. Keep the private input profile available for
-configuration repair. `/REFRESH` deliberately repeats completed work. Existing
+Run the installer again to resume. Protected setup state retains its embedded
+configuration snapshot. `/REFRESH` deliberately repeats completed work. Existing
 different target settings are preserved and reported as conflicts. Sandbox-only
 security changes, audio disabling, SSH setup, firewall rules and the OpenCode
 Sandbox allow-all policy are not applied. Existing Herdr is retained without an
@@ -670,9 +657,9 @@ checkout with its matching built candidate, the equivalent host gate is:
 go run ./cmd/task native-installer-sandbox
 ```
 
-Only OpenSSH and inbox PowerShell 5.1 run before the exact NSIS installer. Your
-configured package/stack selection and selected authored settings are passed
-automatically; no manually maintained profile is needed. Dedicated credentials,
+Only OpenSSH and inbox PowerShell 5.1 run before the exact NSIS installer. Its
+embedded package/stack selection and personal settings are applied directly; no
+current host profile replaces the candidate's captured settings. Dedicated credentials,
 Git history, arbitrary project/user script effects, Tailscale/mobile setup and
 normal Sandbox configuration policies are excluded. A local `ttsBundle` selection
 is rejected because the native installer cannot reproduce it.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 
 	"herdr-sandbox/internal/installerartifact"
 	"herdr-sandbox/internal/productidentity"
+	"herdr-sandbox/internal/sandbox"
 )
 
 const (
@@ -71,7 +73,8 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	if err := os.MkdirAll("build", 0o755); err != nil {
 		return err
 	}
-	temporary, err := os.MkdirTemp("build", ".local-package-workstation-")
+	// Personal settings must never become a source-tree staging file.
+	temporary, err := os.MkdirTemp("", "herdr-workstation-package-")
 	if err != nil {
 		return err
 	}
@@ -82,6 +85,27 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	}
 	if err := stageReleasePackage(filepath.Join("build", "bin"), paths.Stage); err != nil {
 		return err
+	}
+	profilePath := filepath.Join(paths.Stage, "personal-profile.json")
+	if err := runCommand(ctx, stdout, stderr, filepath.Join(paths.Stage, productidentity.ExecutableName), "workstation", "export", "--output", profilePath, "--include-settings"); err != nil {
+		return err
+	}
+	profileData, err := os.ReadFile(profilePath)
+	if err != nil {
+		return err
+	}
+	defer clear(profileData)
+	var profile sandbox.WorkstationProfile
+	if err := json.Unmarshal(profileData, &profile); err != nil {
+		return err
+	}
+	defer func() {
+		for _, file := range profile.Files {
+			clear(file.Data)
+		}
+	}()
+	if len(profile.Files) == 0 {
+		return errors.New("no selected personal configuration was found; refusing to label an empty installer as personalized")
 	}
 	compiler, err := findMakeNSIS()
 	if err != nil {
@@ -121,6 +145,15 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 		return err
 	}
 	evidence.Product = productidentity.WorkstationApplicationName
+	evidence.ProfileSHA256 = fmt.Sprintf("%x", sha256.Sum256(profileData))
+	evidence.ConfigurationFiles = len(profile.Files)
+	evidence.ConfigurationSource = "current-windows-user"
+	if strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		evidence.ConfigurationSource = "current-sandbox-user"
+	}
+	for _, entry := range profile.Packages {
+		evidence.PackageIDs = append(evidence.PackageIDs, entry.ID)
+	}
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err
@@ -140,6 +173,6 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	if err := replaceGeneratedFile(evidencePath, filepath.Join(directory, workstationEvidenceName)); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Direct Windows setup candidate; native acceptance pending.")
+	fmt.Fprintf(stdout, "PRIVATE personalized setup: %d configuration files embedded (%s). Do not publish or upload this installer. Native acceptance pending.\n", evidence.ConfigurationFiles, evidence.ConfigurationSource)
 	return writeArtifactEvidenceWithHash(stdout, "workstation-installer", canonical, evidence.InstallerSHA256)
 }

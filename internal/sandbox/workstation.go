@@ -91,13 +91,6 @@ type WorkstationReport struct {
 	Steps         []WorkstationStep `json:"steps"`
 }
 
-type workstationSelection struct {
-	Profile        WorkstationProfile `json:"profile"`
-	SettingsSource string             `json:"settingsSource"`
-	SettingsSHA256 string             `json:"settingsSha256"`
-	SettingsOwner  string             `json:"settingsOwner"`
-}
-
 // WorkstationStateRoot keeps resumable machine state separate for each intended user.
 func WorkstationStateRoot() (string, error) {
 	current, err := user.Current()
@@ -120,58 +113,22 @@ func resolveWorkstationSelection(root, requested string) (WorkstationProfile, []
 		return WorkstationProfile{}, nil, "", err
 	}
 	if requested == "" {
-		stored, found, err := readBoundedRegularFile(selectionPath, 1024*1024)
+		stored, found, err := readBoundedRegularFile(selectionPath, workstationProfileLimit)
 		if err != nil {
 			return WorkstationProfile{}, nil, "", err
 		}
 		if found {
-			var selection workstationSelection
-			if err := decodeStrictJSON(stored, &selection); err != nil {
-				return WorkstationProfile{}, nil, "", fmt.Errorf("saved selection is invalid; supply --profile explicitly: %w", err)
-			}
-			data, err := json.Marshal(selection.Profile)
-			if err != nil {
-				return WorkstationProfile{}, nil, "", err
-			}
-			profile, err := decodeWorkstationProfile(data)
-			if err != nil || len(profile.Files) != 0 {
-				return WorkstationProfile{}, nil, "", errors.New("saved selection is invalid or contains private file data")
-			}
-			if selection.SettingsSource != "" {
-				current, identityErr := user.Current()
-				if identityErr != nil || current.Uid != selection.SettingsOwner {
-					return profile, data, "Saved private configuration belongs to another Windows user. Tool setup continued; supply your own profile explicitly.", nil
-				}
-				original, originalData, err := readWorkstationProfile(selection.SettingsSource)
-				if err != nil || fmt.Sprintf("%x", sha256.Sum256(originalData)) != selection.SettingsSHA256 {
-					clear(originalData)
-					return profile, data, "Original private configuration profile is missing or changed. Tool setup continued from its saved selection; supply --profile explicitly to restore configuration.", nil
-				}
-				clear(data)
-				return original, originalData, "", nil
-			}
-			return profile, data, "", nil
+			profile, err := decodeWorkstationProfile(stored)
+			return profile, stored, "", err
 		}
 	}
 	profile, data, err := readWorkstationProfile(requested)
 	if err != nil {
 		return profile, data, "", err
 	}
-	selection := workstationSelection{Profile: profile}
-	selection.Profile.Files = []WorkstationFile{}
-	if len(profile.Files) != 0 {
-		current, err := user.Current()
-		if err != nil {
-			return profile, data, "", err
-		}
-		selection.SettingsOwner = current.Uid
-		selection.SettingsSource, err = filepath.Abs(requested)
-		if err != nil {
-			return profile, data, "", err
-		}
-		selection.SettingsSHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
-	}
-	if err := writeVoxCPM2JSONAtomically(selectionPath, selection); err != nil {
+	// The already ACL-protected installation root owns the exact personal
+	// snapshot, including resume after NSIS removes its extraction directory.
+	if err := writeFileAtomically(selectionPath, data, 0o600); err != nil {
 		return profile, data, "", err
 	}
 	return profile, data, "", nil
