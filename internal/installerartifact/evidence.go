@@ -82,7 +82,7 @@ func Decode(data []byte) (Evidence, error) {
 	hashes := []string{value.InstallerSHA256}
 	if value.Product == productidentity.WorkstationApplicationName {
 		hashes = append(hashes, value.ProfileSHA256)
-		if value.ConfigurationFiles < 1 || value.ConfigurationFiles > 2048 || len(value.PackageIDs) > 128 || (value.ConfigurationSource != "current-windows-user" && value.ConfigurationSource != "current-sandbox-user") {
+		if value.ConfigurationFiles < 1 || value.ConfigurationFiles > 2048 || len(value.PackageIDs) > 128 || (value.ConfigurationSource != "current-windows-user" && value.ConfigurationSource != "current-sandbox-user" && value.ConfigurationSource != "saved-installation") {
 			return value, errors.New("workstation candidate must identify its embedded personal configuration")
 		}
 	}

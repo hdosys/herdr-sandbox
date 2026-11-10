@@ -27,11 +27,19 @@ The current product contract is:
 - The shared package/stack implementations remain canonical. Direct setup never
   applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
   mapped-repository trust replacement or live Herdr lifecycle changes.
-- `package-workstation VERSION` captures the current user's configured package,
-  declarative stack and selected authored-configuration snapshot inside the
-  installer. On the new computer it applies that embedded snapshot automatically;
+- `sandbox workstation create NAME` saves the current configured package, stack
+  and selected personal-configuration snapshot under
+  `%LOCALAPPDATA%\Herdr Installations\NAME`, preserving existing names.
+  `sandbox workstation build NAME` builds that saved snapshot using the installed
+  payload and NSIS compiler, without Go, a source checkout or a release tag.
+  `sandbox workstation test NAME` verifies snapshot/artifact identity and reuses
+  the installer-only fresh-Sandbox path from the host, never replacing a live guest.
+  The named collection is outside disposable run state and uninstall cleanup.
+- The installer applies its embedded snapshot automatically on the new computer;
   no external profile or access to the old computer is required. Empty settings
-  capture is an error, never a supposedly personal generic installer.
+  capture is an error, never a supposedly personal generic installer. Developer
+  `package-workstation VERSION` uses the same product builder rather than a second
+  implementation. Public release remains a separate user decision.
 - This is a **private personal installer**, never a public release artifact.
   Dedicated credential stores, private keys, project data and Git history remain
   excluded. Inline private values and authored scripts may be included. Existing

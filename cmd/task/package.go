@@ -4,13 +4,11 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/sha256"
-	"debug/pe"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -19,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"herdr-sandbox/internal/installerartifact"
 	"herdr-sandbox/internal/productidentity"
 )
 
@@ -697,57 +696,13 @@ func buildNSISInstaller(ctx context.Context, version releaseVersion, identity bu
 }
 
 func findMakeNSIS() (string, error) {
-	if configured := strings.TrimSpace(os.Getenv("MAKENSIS")); configured != "" {
-		return requireExecutable(configured, "MAKENSIS")
-	}
-	if path, err := exec.LookPath("makensis.exe"); err == nil {
-		return path, nil
-	}
-	for _, base := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
-		if strings.TrimSpace(base) == "" {
-			continue
-		}
-		candidate := filepath.Join(base, "NSIS", "makensis.exe")
-		if path, err := requireExecutable(candidate, "NSIS compiler"); err == nil {
-			return path, nil
-		}
-	}
-	return "", errors.New("makensis.exe was not found; set MAKENSIS or provision the current stable NSIS compiler")
+	return installerartifact.FindNSIS()
 }
 
 func requireExecutable(path, role string) (string, error) {
-	if !filepath.IsAbs(path) {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return "", fmt.Errorf("resolve %s path: %w", role, err)
-		}
-		path = absolute
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("inspect %s: %w", role, err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file: %s", role, path)
-	}
-	return path, nil
+	return installerartifact.RequireRegularFile(path, role)
 }
 
 func verifyInstallerArtifact(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("inspect installer artifact: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return fmt.Errorf("installer artifact must be a nonempty regular file: %s", path)
-	}
-	file, err := pe.Open(path)
-	if err != nil {
-		return fmt.Errorf("inspect installer PE: %w", err)
-	}
-	defer file.Close()
-	if file.FileHeader.Machine != pe.IMAGE_FILE_MACHINE_I386 {
-		return fmt.Errorf("NSIS installer PE machine = %#x, want %#x", file.FileHeader.Machine, pe.IMAGE_FILE_MACHINE_I386)
-	}
-	return nil
+	return installerartifact.VerifyPE(path)
 }

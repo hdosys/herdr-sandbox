@@ -12,8 +12,19 @@ import (
 )
 
 const workstationUsage = `Usage:
+  sandbox workstation create NAME
+  sandbox workstation build NAME
+  sandbox workstation test NAME
   sandbox workstation setup [--profile FILE] [--root DIRECTORY] [--refresh]
   sandbox workstation export --output FILE [--include-settings] [--defaults]
+
+create captures the currently selected installation and personal configuration.
+build turns that saved snapshot into a private installer using the installed payload
+and NSIS compiler. No source checkout, Go, Git build, release tag or version argument
+is needed. Saved installations live below %LOCALAPPDATA%\Herdr Installations.
+test runs that exact installer in a fresh Sandbox from the Windows host. Existing
+guests are preserved; use sandbox down separately only after saving their work.
+After a successful test, sandbox attach opens the terminal.
 
 setup provisions Windows x64 build 19041 or newer without creating a Sandbox.
 Windows 11 is recommended. Setup state stays below ProgramData.
@@ -26,14 +37,33 @@ export reads the existing Sandbox tool selection without executing project scrip
 --defaults selects the generic full development profile instead.
 --include-settings explicitly includes private authored configuration, never dedicated
 auth files, SSH keys, project trees or Git history. Inline private values may remain:
-keep the exported file private. package-workstation embeds this selected snapshot
-automatically; normal installation needs no separately transferred profile.
+keep the exported file private. create and build manage this snapshot automatically;
+normal installation needs no separately transferred profile.
 Existing different target configuration is preserved and reported, not overwritten.
 `
 
 func runWorkstation(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(stdout, workstationUsage)
+		return 0
+	}
+	if args[0] == "create" || args[0] == "build" {
+		if len(args) != 2 {
+			fmt.Fprint(stderr, workstationUsage)
+			return 2
+		}
+		operation, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		var err error
+		if args[0] == "create" {
+			_, err = sandbox.CreateWorkstationInstallation(operation, args[1], stdout)
+		} else {
+			_, err = sandbox.BuildSavedWorkstation(operation, args[1], stdout, stderr)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "workstation:", err)
+			return 1
+		}
 		return 0
 	}
 	flags := flag.NewFlagSet("workstation "+args[0], flag.ContinueOnError)

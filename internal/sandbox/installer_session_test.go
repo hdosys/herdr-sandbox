@@ -311,8 +311,8 @@ func buildPersonalInstallerFixture(t *testing.T, candidate string, evidence inst
 	if err != nil {
 		t.Fatal(err)
 	}
-	script, err := filepath.Abs(filepath.Join("..", "..", "packaging", "windows", "workstation.nsi"))
-	if err != nil {
+	script := filepath.Join(stage, "workstation.nsi")
+	if err := os.WriteFile(script, workstationInstallerScript, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fixture := filepath.Join(t.TempDir(), "fixture.exe")

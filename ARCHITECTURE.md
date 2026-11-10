@@ -44,7 +44,7 @@ This file owns stable technical design: command ownership, host/guest boundaries
   direct setup publishes its tool environment at User scope. Sandbox keeps its
   existing machine-scoped deployment behavior. Browser-token UI uses User scope
   on the direct target. Existing Herdr is never upgraded or restarted by setup.
-- `packaging/windows/workstation.nsi` is a temporary-payload bootstrapper, not an
+- `internal/sandbox/assets/workstation.nsi` is a temporary-payload bootstrapper, not an
   installed background application. `package-workstation` owns the distinct
   canonical installer and provenance JSON; packaging preserves both products'
   canonical candidates. Existing Sandbox installer lifecycle remains unchanged.
@@ -55,6 +55,14 @@ This file owns stable technical design: command ownership, host/guest boundaries
   disclosing values. Protected `selection.json` retains the exact snapshot rather
   than a pointer to NSIS's temporary extraction directory. No cache payload or
   credential collection is added. The public Sandbox package does not include it.
+- `workstation_build.go` owns saved personal installations and the single runtime
+  NSIS builder. The template is embedded in the application; installed payload
+  files supply its runtime, so no source checkout or Go compiler is needed.
+  `internal/installerartifact` owns shared compiler discovery, PE validation and
+  provenance. Named user snapshots/artifacts live outside app run/uninstall roots.
+  Only canonical artifact publication uses a short per-output-directory lock;
+  capture and compilation use isolated temporary directories. The CLI test command
+  reuses ordinary installer-mode `up`, with its host-only and existing-guest guards.
 
 ### Go And PowerShell Ownership
 

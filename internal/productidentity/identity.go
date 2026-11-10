@@ -27,4 +27,6 @@ const (
 	Copyright                  = "Copyright (c) 2026 hdosys"
 	WorkstationDisplayName     = "Herdr Workstation"
 	WorkstationApplicationName = "herdr-workstation"
+	WorkstationInstallerName   = "herdr-workstation_setup.exe"
+	WorkstationEvidenceName    = "herdr-workstation_setup.json"
 )

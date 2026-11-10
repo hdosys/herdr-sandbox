@@ -21,6 +21,9 @@ const usage = `Usage:
   sandbox config
   sandbox pull-host-config
   sandbox workstation setup [--profile FILE] [--refresh]
+  sandbox workstation create NAME
+  sandbox workstation build NAME
+  sandbox workstation test NAME
   sandbox workstation export --output FILE [--include-settings] [--defaults]
   sandbox version
   sandbox --version
@@ -37,7 +40,7 @@ const usage = `Usage:
 Commands:
   config  create the global config when absent and open it with the registered .json application
   pull-host-config  fast-forward transferred Git-backed configuration roots on the host
-  workstation  provision this Windows installation directly, or explicitly export its configuration
+  workstation  create a saved personal installation, build its installer, test it in Sandbox, or run direct setup
   version, --version  print version, UTC build freshness, and source revision when available
   plan    validate and print the effective plan without changing app or Sandbox state
   init    create one project profile without replacing an existing profile
@@ -95,6 +98,7 @@ type commandDependencies struct {
 	attach                     func(context.Context, sandbox.Connection, io.Reader, io.Writer, io.Writer) error
 	validateAttach             func(io.Reader, io.Writer, io.Writer) error
 	resolvePlan                func(context.Context, string) (sandbox.EffectivePlan, error)
+	workstationInstaller       func(string) (string, error)
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
 	openConfig                 func() (string, bool, error)
 	seedInstaller              func() error
@@ -117,6 +121,7 @@ func defaultCommandDependencies() commandDependencies {
 		attach:                     sandbox.Attach,
 		validateAttach:             sandbox.ValidateInteractiveAttachStreams,
 		resolvePlan:                sandbox.ResolveEffectivePlan,
+		workstationInstaller:       sandbox.SavedWorkstationInstaller,
 		initialize:                 sandbox.InitializeProject,
 		openConfig:                 sandbox.OpenConfiguration,
 		seedInstaller:              sandbox.SeedInstallerConfiguration,
@@ -144,6 +149,26 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	}
 	switch args[0] {
 	case "workstation":
+		if len(args) == 3 && (args[2] == "--help" || args[2] == "-h") {
+			fmt.Fprint(stdout, workstationUsage)
+			return 0
+		}
+		if len(args) > 1 && args[1] == "test" {
+			if len(args) != 3 {
+				fmt.Fprintln(stderr, "Usage: sandbox workstation test NAME")
+				return 2
+			}
+			if sandbox.IsCurrentWindowsSandbox() {
+				fmt.Fprintln(stderr, "Run the installer test from the Windows host. The current development Sandbox was not closed or replaced.")
+				return 1
+			}
+			installer, err := dependencies.workstationInstaller(args[2])
+			if err != nil {
+				fmt.Fprintln(stderr, "sandbox:", err)
+				return 1
+			}
+			return runWithCommandDependencies(ctx, []string{"up", "--provisioning", "installer", "--installer", installer, "--no-attach"}, stdin, stdout, stderr, dependencies)
+		}
 		return runWorkstation(ctx, args[1:], stdout, stderr)
 	case "version", "--version":
 		if len(args) != 1 {

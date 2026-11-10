@@ -577,18 +577,46 @@ This is a self-contained setup program, not another background service or a
 second installed administration application. It extracts its executable payload
 temporarily. Installed tools retain their own normal uninstallers.
 
-### Build once with your personal configuration
+### Create, build and test an installation
 
-On the source computer, build under your normal Windows user:
+Use the installed Sandbox application under the user whose configuration you want
+to capture. Review the existing selection with `sandbox config` and `sandbox plan`,
+then create a named installation:
 
 ```powershell
-go run ./cmd/task package-workstation v0.0.28
+sandbox workstation create MeinPC
+sandbox workstation build MeinPC
 ```
 
-The resulting `build/dist/herdr-workstation_setup.exe` already contains the selected
-packages/stacks and personal configuration. Copy that private installer to the new
-computer and run it. No separate profile or access to the old computer is needed.
-For unattended installation:
+`create` saves a private snapshot. `build` consumes that snapshot, not later changes
+to the source computer. No source checkout, Go toolchain or release tag is needed.
+The build computer needs the NSIS compiler, available through the `nsis` Sandbox
+stack or `winget install --id NSIS.NSIS --exact --source winget`. The application
+does not silently install a compiler on the host.
+
+The resulting private installer is
+`%LOCALAPPDATA%\Herdr Installations\MeinPC\herdr-workstation_setup.exe`, with its
+matching JSON sidecar and saved `profile.json`. Each named installation has one
+current installer. These saved installations survive ordinary Sandbox cleanup and
+application uninstall. Creating an existing name never overwrites it; use a new
+name for a new snapshot. A rebuild updates only the verified owned artifact.
+
+On the Windows host, test that exact built installation:
+
+```powershell
+sandbox workstation test MeinPC
+```
+
+The test requires no existing Sandbox. It never closes a running guest for you;
+save its work before separately choosing `sandbox down`. It bootstraps only SSH,
+runs the personal installer and independently checks its results. After success,
+use `sandbox attach` in a real terminal. Building inside a guest is supported, but
+starting a nested Sandbox is not. To test on another host, copy the private named
+installation directory into that host's same per-user collection, or use the
+explicit installer-file test below.
+
+Copy the generated private EXE to a new computer and run it. No separate profile
+or access to the old computer is needed there. For unattended installation:
 
 ```powershell
 (Start-Process .\herdr-workstation_setup.exe -ArgumentList '/S' -Wait -PassThru).ExitCode
@@ -632,12 +660,13 @@ Advanced automation can select a distinct protected control-state directory with
 `/ROOT=C:\ProgramData\<owned-directory>` (CLI: `--root`). This changes only setup
 state/cache ownership; it does not isolate the installed Windows applications.
 
-For source builds, the canonical candidate is produced with
+For developers only, the canonical source-build candidate is produced with
 `go run ./cmd/task package-workstation v0.0.28` at
 `build/dist/herdr-workstation_setup.exe`, with its provenance JSON beside it.
 This target is separate from `herdr-sandbox_setup.exe`; neither package task
 removes the other product's canonical candidate. No public workstation release
-is implied by a local development build.
+is implied by a local development build. This task delegates to the same runtime
+builder used by `sandbox workstation build`; it is not the product workflow.
 
 <details>
 <summary><strong>Test the workstation installer in a fresh Sandbox</strong></summary>

@@ -9,6 +9,10 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Added
 
+- Saved personal installations can be created, built and tested through
+  `sandbox workstation create`, `build` and `test`, without a source checkout,
+  Go build or release tag. The installed application includes the NSIS template.
+
 - Personal workstation installers now embed the selected software and authored
   configuration snapshot, apply it without an external profile, and retain it
   securely for resume. These installers are private, not public release artifacts.
