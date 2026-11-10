@@ -2619,7 +2619,7 @@ function Install-ProvisioningMaterializedWinGet {
     $dependencies = Get-ProvisioningPreparedMetadata -Id 'Microsoft.DesktopAppInstaller.Dependencies' -Architecture 'neutral' -InstallerType 'zip'
     $catalog = Get-ProvisioningPreparedMetadata -Id 'Microsoft.Winget.Source' -Architecture 'neutral' -InstallerType 'msix'
     if ($null -eq $bundle -or $null -eq $dependencies -or $null -eq $catalog) { throw 'WinGet requires its verified materialized distribution.' }
-    $stage = Join-Path (Get-ProvisioningPath 'staging') ('winget-' + [Guid]::NewGuid().ToString('N'))
+    $stage = Join-Path (Get-ProvisioningPath 'staging\packages') ('winget-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     try {
         foreach ($metadata in @($bundle,$dependencies,$catalog)) {
