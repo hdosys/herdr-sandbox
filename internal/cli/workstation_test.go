@@ -32,9 +32,12 @@ func TestWorkstationTestRoutesToExactInstallerWithoutNormalProvisioning(t *testi
 		}
 		return sandbox.Connection{}, nil
 	}
-	var stdout, stderr bytes.Buffer
-	code := runWithCommandDependencies(t.Context(), []string{"workstation", "test", "MyPC"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
-	if code != 0 || !called {
-		t.Fatalf("test flow failed: %d %s", code, stderr.String())
+	for _, args := range [][]string{{"workstation", "test", "MyPC"}, {"workstation", "test", "--installer", `C:\fixture\setup.exe`}} {
+		called = false
+		var stdout, stderr bytes.Buffer
+		code := runWithCommandDependencies(t.Context(), args, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+		if code != 0 || !called {
+			t.Fatalf("test flow failed: %d %s", code, stderr.String())
+		}
 	}
 }

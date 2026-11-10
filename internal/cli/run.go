@@ -24,6 +24,7 @@ const usage = `Usage:
   sandbox workstation create NAME
   sandbox workstation build NAME
   sandbox workstation test NAME
+  sandbox workstation test --installer FILE
   sandbox workstation export --output FILE [--include-settings] [--defaults]
   sandbox version
   sandbox --version
@@ -154,15 +155,21 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 0
 		}
 		if len(args) > 1 && args[1] == "test" {
-			if len(args) != 3 {
-				fmt.Fprintln(stderr, "Usage: sandbox workstation test NAME")
+			if len(args) != 3 && !(len(args) == 4 && args[2] == "--installer") {
+				fmt.Fprintln(stderr, "Usage: sandbox workstation test NAME | --installer FILE")
 				return 2
 			}
 			if sandbox.IsCurrentWindowsSandbox() {
 				fmt.Fprintln(stderr, "Run the installer test from the Windows host. The current development Sandbox was not closed or replaced.")
 				return 1
 			}
-			installer, err := dependencies.workstationInstaller(args[2])
+			var installer string
+			var err error
+			if len(args) == 4 {
+				installer = args[3]
+			} else {
+				installer, err = dependencies.workstationInstaller(args[2])
+			}
 			if err != nil {
 				fmt.Fprintln(stderr, "sandbox:", err)
 				return 1

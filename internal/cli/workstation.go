@@ -15,6 +15,7 @@ const workstationUsage = `Usage:
   sandbox workstation create NAME
   sandbox workstation build NAME
   sandbox workstation test NAME
+  sandbox workstation test --installer FILE
   sandbox workstation setup [--profile FILE] [--root DIRECTORY] [--refresh]
   sandbox workstation export --output FILE [--include-settings] [--defaults]
 
@@ -25,6 +26,8 @@ is needed. Saved installations live below %LOCALAPPDATA%\Herdr Installations.
 test runs that exact installer in a fresh Sandbox from the Windows host. Existing
 guests are preserved; use sandbox down separately only after saving their work.
 After a successful test, sandbox attach opens the terminal.
+For an installer copied from another computer, use test --installer FILE and keep
+its matching JSON sidecar beside it. No separate profile is needed for that test.
 
 setup provisions Windows x64 build 19041 or newer without creating a Sandbox.
 Windows 11 is recommended. Setup state stays below ProgramData.

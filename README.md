@@ -611,9 +611,10 @@ The test requires no existing Sandbox. It never closes a running guest for you;
 save its work before separately choosing `sandbox down`. It bootstraps only SSH,
 runs the personal installer and independently checks its results. After success,
 use `sandbox attach` in a real terminal. Building inside a guest is supported, but
-starting a nested Sandbox is not. To test on another host, copy the private named
-installation directory into that host's same per-user collection, or use the
-explicit installer-file test below.
+starting a nested Sandbox is not. Before discarding a build guest, copy its private
+installer and matching JSON sidecar to persistent host storage. Test that pair on
+the host with `sandbox workstation test --installer "C:\path\herdr-workstation_setup.exe"`.
+No separate profile is needed for this copied-installer path.
 
 Copy the generated private EXE to a new computer and run it. No separate profile
 or access to the old computer is needed there. For unattended installation:
@@ -631,11 +632,13 @@ Git history, runtime caches/sessions and project trees are excluded. Authored
 settings may contain inline private values; this is not a universal secret scrubber.
 Commands and machine-specific paths remain authored values, not guessed bindings.
 
-The sidecar records the profile digest, file count and whether capture used a normal
-Windows or Sandbox user. A build inside a guest captures that guest's accessible
-settings, not an unseen complete host configuration. Rebuild on the source computer
-to capture later changes. Software and model downloads remain online; existing
-host cache payloads are not bundled. Accounts and licences require separate sign-in.
+The sidecar records the profile digest and file count; named builds identify their
+source as a saved installation, not a new live capture. Creating an installation
+inside a guest captures that guest's accessible settings, not an unseen complete
+host configuration. Create a new named installation
+on the source computer, then build it to capture later changes. Software and model
+downloads remain online; existing host cache payloads are not bundled. Accounts
+and licences require separate sign-in.
 
 ### Completion, failures and resume
 

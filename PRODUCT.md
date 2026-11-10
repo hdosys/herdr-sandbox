@@ -34,6 +34,8 @@ The current product contract is:
   payload and NSIS compiler, without Go, a source checkout or a release tag.
   `sandbox workstation test NAME` verifies snapshot/artifact identity and reuses
   the installer-only fresh-Sandbox path from the host, never replacing a live guest.
+  `test --installer FILE` tests a copied installer plus its matching sidecar without
+  requiring the original saved profile or source computer.
   The named collection is outside disposable run state and uninstall cleanup.
 - The installer applies its embedded snapshot automatically on the new computer;
   no external profile or access to the old computer is required. Empty settings
@@ -48,8 +50,9 @@ The current product contract is:
   Software downloads remain online; host cache payloads are not embedded.
 - Capture uses the existing package/configuration selection and agent authored-root
   lists and tracked authored files, including referenced scripts/assets, portable Claude MCP data and selected
-  GitHub CLI config. The build sidecar records profile identity, counts and whether
-  capture ran in a Sandbox. A guest snapshot is not proof of complete host capture.
+  GitHub CLI config. The build sidecar records profile identity, counts and its
+  saved-installation or direct-capture source. A guest snapshot is not proof of
+  complete host capture.
 
 - The host `sandbox` command starts, provisions, inspects, and stops an app-owned Windows Sandbox while Herdr keeps the interactive terminal on the host.
 - Selected projects and explicit cache, mount, worktree, and model roots can persist on the host. Unselected host data is not mapped, and guest tools and processes remain disposable.
