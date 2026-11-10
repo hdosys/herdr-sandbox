@@ -783,6 +783,7 @@ namespace HerdrSandbox
             }
             if (Interlocked.Exchange(ref stopRequested, 1) == 0 && !completion.IsCompleted)
             {
+                if (timedOut) WriteTimeoutSnapshot();
                 if (!NativeMethods.TerminateJobObject(jobHandle, 1))
                 {
                     int error = Marshal.GetLastWin32Error();
@@ -791,6 +792,45 @@ namespace HerdrSandbox
                         throw new Win32Exception(error, "terminate provisioning process tree " + spec.Role);
                     }
                 }
+            }
+        }
+
+        private void WriteTimeoutSnapshot()
+        {
+            try
+            {
+                uint rootWait = NativeMethods.WaitForSingleObject(processHandle, 0);
+                int rootWaitError = rootWait == NativeMethods.WAIT_FAILED ? Marshal.GetLastWin32Error() : 0;
+                uint rootExitCode;
+                string rootExit = NativeMethods.GetExitCodeProcess(processHandle, out rootExitCode)
+                    ? rootExitCode.ToString() : "query-error:" + Marshal.GetLastWin32Error();
+                const int maximumPids = 32;
+                byte[] members = new byte[8 + maximumPids * IntPtr.Size];
+                bool queried = NativeMethods.QueryInformationJobObject(jobHandle, NativeMethods.JobObjectBasicProcessIdList,
+                    members, members.Length, IntPtr.Zero);
+                int jobError = queried ? 0 : Marshal.GetLastWin32Error();
+                string jobMembers = "unavailable";
+                if (queried || jobError == NativeMethods.ERROR_MORE_DATA)
+                {
+                    uint assigned = BitConverter.ToUInt32(members, 0);
+                    uint returned = BitConverter.ToUInt32(members, 4);
+                    int count = (int)Math.Min(returned, (uint)maximumPids);
+                    string[] pids = new string[count];
+                    for (int index = 0; index < count; index++)
+                    {
+                        int offset = 8 + index * IntPtr.Size;
+                        pids[index] = (IntPtr.Size == 8 ? BitConverter.ToUInt64(members, offset) : BitConverter.ToUInt32(members, offset)).ToString();
+                    }
+                    bool truncated = jobError == NativeMethods.ERROR_MORE_DATA || assigned > (uint)count || returned > (uint)count;
+                    jobMembers = "assigned=" + assigned + " pids=[" + String.Join(",", pids) + "] truncated=" + truncated;
+                }
+                Console.Error.WriteLine("[provisioning-timeout] rootWait={0} rootWaitError={1} rootExitCode={2} jobQueryError={3} {4} stdout={5} stderr={6}",
+                    rootWait, rootWaitError, rootExit, jobError, jobMembers, outputTask.Status,
+                    errorTask == null ? "merged-into-stdout" : errorTask.Status.ToString());
+            }
+            catch (Exception)
+            {
+                // Diagnostic failure must not prevent the existing timeout cleanup.
             }
         }
 
@@ -1149,6 +1189,8 @@ namespace HerdrSandbox
         internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
         internal const int PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
         internal const int PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
+        internal const int JobObjectBasicProcessIdList = 3;
+        internal const int ERROR_MORE_DATA = 234;
         internal const uint CREATE_SUSPENDED = 0x00000004;
         internal const uint CREATE_NEW_CONSOLE = 0x00000010;
         internal const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -1187,6 +1229,10 @@ namespace HerdrSandbox
         [DllImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool SetTokenInformation(IntPtr token, int informationClass, IntPtr information, int length);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool QueryInformationJobObject(IntPtr job, int informationClass, [Out] byte[] information, int informationLength, IntPtr returnLength);
 
         [DllImport("advapi32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
