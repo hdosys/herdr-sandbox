@@ -88,7 +88,8 @@ The current product contract is:
   only its expected hash, never a replacement configuration. Dedicated credentials, Git
   history, arbitrary user/project script effects, Tailscale/mobile setup and
   normal configuration-sync policies are not part of this native experiment.
-  A selected local `ttsBundle` is rejected rather than silently substituted.
+  The host's normal-provisioning `ttsBundle` selection does not apply to this
+  test and neither overrides nor blocks the candidate's embedded snapshot.
 - The real silent NSIS installer is followed by independent package/command,
   selected compiler/runtime and configuration-hash checks. No normal provisioning
   runs before it or repairs its result afterward. Protected guest-local input and

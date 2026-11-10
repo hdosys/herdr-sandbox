@@ -7,6 +7,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Fixed
+
+- Testing a personal workstation installer no longer fails merely because the
+  host's normal Sandbox configuration selects a local TTS bundle. The test keeps
+  using the exact installer and its embedded snapshot.
+
 ### Added
 
 - Saved personal installations can be created, built and tested through

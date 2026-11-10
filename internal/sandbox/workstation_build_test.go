@@ -88,6 +88,15 @@ func TestSavedWorkstationPreservesExistingInstallationAndRejectsDrift(t *testing
 	if _, err := SavedWorkstationInstaller("MyPC"); err != nil {
 		t.Fatal(err)
 	}
+	plan := runPlan{InstallerPath: filepath.Join(directory, productidentity.WorkstationInstallerName), InputDirectory: t.TempDir()}
+	selection := provisioningPlan{TTSBundle: filepath.Join(directory, "host-only-tts.zip"), UserScript: filepath.Join(directory, "absent-user.ps1")}
+	if err := prepareInstallerRunInputs(t.Context(), &plan, selection); err != nil {
+		t.Fatalf("host TTS selection must not override or block the embedded installer snapshot: %v", err)
+	}
+	copied, err := os.ReadFile(filepath.Join(plan.InputDirectory, "installer", "setup.exe"))
+	if err != nil || string(copied) != string(installer) {
+		t.Fatalf("selected installer was not preserved: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(directory, "profile.json"), []byte("new settings"), 0o600); err != nil {
 		t.Fatal(err)
 	}

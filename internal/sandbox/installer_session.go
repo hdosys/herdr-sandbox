@@ -42,9 +42,6 @@ type installerCheck struct {
 }
 
 func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning provisioningPlan) error {
-	if provisioning.TTSBundle != "" {
-		return errors.New("installer acceptance cannot silently substitute the standalone installer's public TTS bundle for a configured local ttsBundle; this selection is not portable")
-	}
 	installer, err := filepath.Abs(plan.InstallerPath)
 	if err != nil {
 		return err
