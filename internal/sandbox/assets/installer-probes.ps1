@@ -12,7 +12,7 @@ function Invoke-InstallerProbe {
     param([string]$File, [string[]]$Arguments, [string]$Directory = $env:TEMP, [int]$Seconds = 45)
     $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
     $spec.Role = 'Independent installer capability verification'
-    $spec.FilePath = (Get-Command $File -CommandType Application -ErrorAction Stop).Source
+    $spec.FilePath = @(Get-Command $File -CommandType Application -ErrorAction Stop)[0].Source
     $spec.Arguments = $Arguments
     $spec.WorkingDirectory = $Directory
     $spec.TimeoutMilliseconds = $Seconds * 1000
@@ -47,7 +47,7 @@ function Test-InstallerEffects {
     foreach ($name in @($commands.Keys | Sort-Object)) {
         $arguments = if ($name -eq 'go.exe') { @('version') } elseif ($name -eq 'zig.exe') { @('version') } elseif ($name -eq 'makensis.exe') { @('/VERSION') } elseif ($name -eq 'ffmpeg.exe') { @('-version') } elseif ($name -eq 'adb.exe') { @('version') } else { @('--version') }
         $passed = $false
-        try { $command = Get-Command $name -CommandType Application -ErrorAction Stop; $text = Invoke-InstallerProbe $command.Source $arguments; $passed = -not [string]::IsNullOrWhiteSpace($text) } catch {}
+        try { $text = Invoke-InstallerProbe $name $arguments; $passed = -not [string]::IsNullOrWhiteSpace($text) } catch {}
         $checks.Add([ordered]@{name=('command '+$name);passed=$passed})
     }
     if ($commands.ContainsKey('go.exe')) {
@@ -141,7 +141,7 @@ function Test-InstallerEffects {
     if (@($Profile.packages | Where-Object { [string]$_.id -ieq 'hdosys.herdr-win' }).Count -gt 0) {
         $passed=$false
         try {
-            $command=Get-Command herdr.exe -CommandType Application -ErrorAction Stop
+            $command=@(Get-Command herdr.exe -CommandType Application -ErrorAction Stop)[0]
             $herdrVersion=Invoke-InstallerProbe $command.Source @('--version')
             $herdrClient=(Invoke-InstallerProbe $command.Source @('status','client','--json'))|ConvertFrom-Json
             $binary=Get-Item -LiteralPath ([string]$herdrClient.binary) -Force
