@@ -7,12 +7,47 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"herdr-sandbox/internal/installerartifact"
 	"herdr-sandbox/internal/productidentity"
 )
+
+func TestWorkstationPublicationFailurePreservesPreviousPair(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows read-only replacement boundary")
+	}
+	for _, blocked := range []string{"setup.json", "setup.exe"} {
+		t.Run(blocked, func(t *testing.T) {
+			root := t.TempDir()
+			staging := t.TempDir()
+			canonical, evidence := filepath.Join(root, "setup.exe"), filepath.Join(root, "setup.json")
+			next, nextEvidence := filepath.Join(staging, "setup.exe"), filepath.Join(staging, "setup.json")
+			for path, data := range map[string]string{canonical: "old installer", evidence: "old provenance", next: "new installer", nextEvidence: "new provenance"} {
+				if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			blockedPath := filepath.Join(root, blocked)
+			if err := os.Chmod(blockedPath, 0o400); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(blockedPath, 0o600) })
+			retain, err := publishWorkstationPair(next, nextEvidence, canonical, evidence)
+			if err == nil || retain {
+				t.Fatalf("unexpected publication outcome: retain=%t err=%v", retain, err)
+			}
+			for path, want := range map[string]string{canonical: "old installer", evidence: "old provenance"} {
+				data, err := os.ReadFile(path)
+				if err != nil || string(data) != want {
+					t.Fatalf("previous pair lost: %s %v", path, err)
+				}
+			}
+		})
+	}
+}
 
 func TestSavedWorkstationPreservesExistingInstallationAndRejectsDrift(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())

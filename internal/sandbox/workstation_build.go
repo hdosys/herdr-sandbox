@@ -176,7 +176,12 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	if err != nil {
 		return result, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, os.RemoveAll(temporary)) }()
+	retainPublicationFiles := false
+	defer func() {
+		if !retainPublicationFiles {
+			resultErr = errors.Join(resultErr, os.RemoveAll(temporary))
+		}
+	}()
 	installer := filepath.Join(temporary, productidentity.WorkstationInstallerName)
 	buildContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -230,14 +235,45 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	} else if _, err := os.Lstat(canonicalEvidence); err == nil {
 		return result, errors.New("orphan installer provenance was preserved")
 	}
-	if err := os.Rename(installer, canonical); err != nil {
-		return result, err
-	}
-	if err := os.Rename(evidenceFile, canonicalEvidence); err != nil {
+	retainPublicationFiles, err = publishWorkstationPair(installer, evidenceFile, canonical, canonicalEvidence)
+	if err != nil {
 		return result, err
 	}
 	fmt.Fprintf(options.Output, "PRIVATE installer: %s\nSHA-256: %s\nEmbedded configuration files: %d\nKeep this installer and its sidecar private. Sandbox acceptance pending.\n", canonical, result.InstallerSHA256, result.ConfigurationFiles)
 	return result, nil
+}
+
+// Publish provenance first so a locked/read-only sidecar cannot destroy the
+// previous executable. If executable publication fails, restore the old sidecar.
+// The caller holds the per-output lock. Retain recovery inputs if rollback itself
+// fails; never report an unmatched pair as usable or delete its last provenance.
+func publishWorkstationPair(installer, evidence, canonical, canonicalEvidence string) (retain bool, resultErr error) {
+	previous, found, err := readBoundedRegularFile(canonicalEvidence, 16*1024)
+	if err != nil {
+		return false, err
+	}
+	backup := filepath.Join(filepath.Dir(evidence), "previous-provenance.json")
+	if found {
+		if err := os.WriteFile(backup, previous, 0o600); err != nil {
+			return false, err
+		}
+	}
+	if err := os.Rename(evidence, canonicalEvidence); err != nil {
+		return false, fmt.Errorf("publish provenance; previous installer preserved: %w", err)
+	}
+	if err := os.Rename(installer, canonical); err != nil {
+		var restoreErr error
+		if found {
+			restoreErr = os.Rename(backup, canonicalEvidence)
+		} else {
+			restoreErr = os.Remove(canonicalEvidence)
+		}
+		if restoreErr != nil {
+			return true, errors.Join(err, fmt.Errorf("restore provenance failed; publication files retained at %s: %w", filepath.Dir(evidence), restoreErr))
+		}
+		return false, fmt.Errorf("publish installer; previous pair restored: %w", err)
+	}
+	return false, nil
 }
 
 func workstationFileDigest(path string) (string, error) {
