@@ -10,6 +10,17 @@ Open, planned, blocked, or deferred product features and fixes only. User-visibl
 
 ## Items
 
+- Add lifecycle commands for saved personal installations under `sandbox workstation`:
+  - `list`: show saved names, snapshot details and whether a matching installer is available.
+  - `update NAME`: explicitly recapture the current software selection and personal
+    configuration into an existing set. Preserve the previous snapshot if capture
+    fails; require a rebuild before testing an installer for the updated snapshot.
+    Keep `create` non-overwriting and `build` limited to its saved snapshot.
+  - `delete NAME`: explicitly remove only the selected set's owned snapshot,
+    installer and sidecar, with clear deletion scope and protection for unrelated files.
+  - `clean`: explicitly remove disposable generated leftovers, with a preview of
+    the affected files. Never delete saved sets automatically by age or as part of
+    ordinary Sandbox cleanup; deleting a set remains a deliberate selection.
 - Audit remaining project-file checks by ownership rather than moving every guest
   check earlier. Generic stacks must accept an otherwise empty mapped project and
   must not require manifests, dependency state, builds, or tests. Preflight only a
