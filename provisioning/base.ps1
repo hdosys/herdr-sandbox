@@ -549,9 +549,9 @@ function Initialize-ProvisioningNushell {
     }
     if (-not (Test-Path -LiteralPath $nushellInitializationPath -PathType Leaf) -or
         [IO.File]::ReadAllText($nushellInitializationPath) -cne $nushellInitialization) {
-        if ((Test-ProvisioningWorkstation) -and (Test-Path -LiteralPath $nushellInitializationPath)) {
-            throw 'Existing different Nushell initialization was preserved. Reconcile the configuration explicitly before retrying.'
-        }
+        # This product-owned vendor/autoload file is generated configuration, not
+        # the user's config.nu. Starship's generated session data can change on
+        # every run, so both transports must refresh it through this same owner.
         [IO.File]::WriteAllText(
             $nushellInitializationPath,
             $nushellInitialization,

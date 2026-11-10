@@ -1105,6 +1105,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         }
 
         [Console]::Error.WriteLine('[config-sync] apply-git-safe-directories')
+        $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $workspaceManifestPath = Join-Path $expanded 'herdr-sandbox\workspaces.json'
         if (-not $LocalTarget -and -not (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
             throw 'Workspace manifest is missing from the configuration archive.'
@@ -1144,7 +1145,6 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         if ($worktreeDirectoryConfigured) {
             $safeDirectories += 'C:/Worktrees/*'
         }
-        $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $null = & $gitCommand 'config' '--global' '--replace-all' 'safe.directory' $safeDirectories[0]
         if ($LASTEXITCODE -ne 0) { throw "Git safe-directory reset failed with exit code $LASTEXITCODE." }
         foreach ($safeDirectory in @($safeDirectories | Select-Object -Skip 1)) {
