@@ -73,13 +73,19 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	if err := os.MkdirAll("build", 0o755); err != nil {
 		return err
 	}
-	// Personal settings must never become a source-tree staging file.
-	temporary, err := os.MkdirTemp("", "herdr-workstation-package-")
+	// Final artifact replacement stays on its destination filesystem.
+	temporary, err := os.MkdirTemp("build", ".local-package-workstation-")
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, removeGeneratedPath(temporary)) }()
-	paths := releasePackagePaths{Stage: filepath.Join(temporary, "stage"), Installer: filepath.Join(temporary, workstationInstallerName)}
+	// Plaintext personal settings never become a source-tree staging file.
+	privateStage, err := os.MkdirTemp("", "herdr-workstation-profile-")
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, removeGeneratedPath(privateStage)) }()
+	paths := releasePackagePaths{Stage: privateStage, Installer: filepath.Join(temporary, workstationInstallerName)}
 	if err := buildWithIdentity(ctx, identity, stdout, stderr); err != nil {
 		return err
 	}
