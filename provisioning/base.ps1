@@ -441,15 +441,15 @@ function Install-ProvisioningNushell {
 function Initialize-ProvisioningNushell {
     param([string]$Version = '')
 
-    $expectedCommand = Join-Path $env:ProgramFiles 'nu\bin\nu.exe'
+    # WinGet owns the selected installation scope. Its per-user installation is
+    # just as valid as its machine installation; do not guess a second path here.
+    $resolvedCommand = Get-Command 'nu.exe' -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1
+    $expectedCommand = [IO.Path]::GetFullPath([string]$resolvedCommand.Source)
+    Assert-ProvisioningPathAncestors $expectedCommand
     if (-not (Test-Path -LiteralPath $expectedCommand -PathType Leaf) -or
         ((Get-Item -LiteralPath $expectedCommand -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Nushell command is missing or unsafe: $expectedCommand"
-    }
-    $resolvedCommand = Get-Command 'nu.exe' -CommandType Application -ErrorAction Stop |
-        Select-Object -First 1
-    if ([IO.Path]::GetFullPath([string]$resolvedCommand.Source) -ine [IO.Path]::GetFullPath($expectedCommand)) {
-        throw "Nushell command resolved from an unexpected path: $($resolvedCommand.Source)"
     }
     Invoke-ProvisioningNative -Role 'Nushell command smoke' -FilePath $expectedCommand `
         -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
@@ -618,6 +618,7 @@ function Invoke-ProvisioningNativeResult {
         [int[]]$SuccessExitCodes = @(0),
         [switch]$TerminateDescendantsAfterRootExit,
         [switch]$ForwardOutput,
+        [switch]$AsStandardUser,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
@@ -627,6 +628,7 @@ function Invoke-ProvisioningNativeResult {
         -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $spec.ForwardOutput = [bool]$ForwardOutput
+    $spec.AsStandardUser = [bool]$AsStandardUser
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
@@ -1015,6 +1017,12 @@ function Get-ProvisioningPath {
     param([string]$RelativePath = '')
     $root = [Environment]::GetEnvironmentVariable('HERDR_PROVISIONING_ROOT', 'Process')
     if ([string]::IsNullOrEmpty($root)) { $root = 'C:\HerdrSandbox' }
+    if ((Test-ProvisioningWorkstation) -and $RelativePath -match '^cache(?:[\\/](.*))?$') {
+        # Downloads are machine-local, hash-verified reusable inputs, not per-run
+        # control state. This also keeps VS layouts below its 80-character limit.
+        $RelativePath = [string]$Matches[1]
+        $root = Join-Path $env:ProgramData 'herdr-workstation\cache'
+    }
     if ($root -notmatch '^[A-Za-z]:\\') { throw [Security.SecurityException]::new('Provisioning root must be an absolute local drive path.') }
     $root = [IO.Path]::GetFullPath($root).TrimEnd('\')
     if ($root.Length -le 2) { throw [Security.SecurityException]::new('Provisioning root must not be a drive root.') }
@@ -1226,7 +1234,7 @@ function Resolve-ProvisioningWinGetNumericFamilyID {
         @{ Expression = 'Value'; Descending = $true }, @{ Expression = 'Key'; Descending = $false })[0].Key)
 }
 
-function Get-ProvisioningGitHubLatestAssetMetadata {
+function Get-ProvisioningGitHubAssetMetadata {
     param(
         [Parameter(Mandatory = $true)][string]$Role,
         [Parameter(Mandatory = $true)][string]$Repository,
@@ -1234,14 +1242,34 @@ function Get-ProvisioningGitHubLatestAssetMetadata {
         [Parameter(Mandatory = $true)][string]$Id,
         [Parameter(Mandatory = $true)][string]$Architecture,
         [Parameter(Mandatory = $true)][string]$InstallerType,
-        [Parameter(Mandatory = $true)][string]$PayloadName
+        [Parameter(Mandatory = $true)][string]$PayloadName,
+        [string]$Version = '',
+        [int]$MajorVersion = 0
     )
 
     if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $AssetName -match '[/\\]') {
         throw "$Role GitHub release request is invalid."
     }
-    $api = "https://api.github.com/repos/$Repository/releases/latest"
-    $release = Invoke-RestMethod -Uri $api -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
+    $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox' }
+    if ($Version) {
+        if ($Version -notmatch '^\d+\.\d+\.\d+$' -or ($MajorVersion -gt 0 -and ([Version]$Version).Major -ne $MajorVersion)) {
+            throw "$Role requested version is outside its supported stable release series."
+        }
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/tags/v$Version" -Headers $headers -TimeoutSec 30
+    } elseif ($MajorVersion -gt 0) {
+        $release = $null
+        for ($page = 1; $page -le 10; $page++) {
+            $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases?per_page=100&page=$page" -Headers $headers -TimeoutSec 30
+            $matching = @($releases | Where-Object {
+                -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -match ('^v?' + $MajorVersion + '\.\d+\.\d+$')
+            } | Sort-Object { [Version](([string]$_.tag_name).TrimStart('v')) } -Descending)
+            if ($matching.Count -gt 0) { $release = $matching[0]; break }
+            if ($releases.Count -lt 100) { break }
+        }
+        if ($null -eq $release) { throw "$Role has no published stable $MajorVersion.x release in the bounded official release listing." }
+    } else {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -Headers $headers -TimeoutSec 30
+    }
     $tag = [string]$release.tag_name
     if ([bool]$release.draft -or [bool]$release.prerelease -or
         $tag -notmatch '^v?(?<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))$') {
@@ -1293,7 +1321,6 @@ function Get-ProvisioningWinGetMetadata {
         [string]$PayloadExtension = ''
     )
 
-    if ($Id -ieq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
     if (Test-ProvisioningWorkstation) {
         $metadata = Get-ProvisioningDownloadedMetadata -Role $Role -Id $Id -Version $Version -Architecture $Architecture `
             -InstallerType $InstallerType -Scope $Scope -PayloadExtension $PayloadExtension
@@ -1406,17 +1433,16 @@ function Get-ProvisioningDownloadedMetadata {
     }
 }
 
-function Resolve-ProvisioningOpenCodeVersion {
-    param([AllowEmptyString()][string]$Requested = '')
-    if ($Requested) {
-        if ($Requested -notmatch '^1\.\d+\.\d+$') { throw 'OpenCode provisioning supports stable 1.x only; the requested major/version was not installed.' }
-        return $Requested
-    }
-    $lines = @(Invoke-ProvisioningNative -Role 'OpenCode stable 1.x version selection' -FilePath 'winget.exe' -ArgumentList @(
-        'show','--id','SST.opencode','--exact','--source','winget','--versions','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120)
-    $versions = @($lines | ForEach-Object { if ([string]$_ -match '^\s*(1\.\d+\.\d+)\s*$') { [Version]$Matches[1] } } | Sort-Object -Descending)
-    if ($versions.Count -eq 0) { throw 'WinGet did not publish a stable OpenCode 1.x version.' }
-    return $versions[0].ToString()
+function Install-ProvisioningOpenCode {
+    param([string]$Version = '')
+    $metadata = Get-ProvisioningGitHubAssetMetadata -Role 'OpenCode stable 1.x' -Repository 'anomalyco/opencode' `
+        -AssetName 'opencode-windows-x64-baseline.zip' -Id 'Anomaly.OpenCode' -Architecture 'x64' `
+        -InstallerType 'zip' -PayloadName 'opencode.zip' -MajorVersion 1 -Version $Version
+    Install-ProvisioningCachedPackage -Role 'OpenCode stable 1.x' -Metadata $metadata -DownloadSource 'Direct' `
+        -Adapter 'Portable' -ExecutableName 'opencode.exe'
+    $actual = Assert-ProvisioningCommand -Role 'OpenCode stable 1.x' -Name 'opencode.exe' `
+        -VersionArguments @('--version') -ExpectedPattern '^1\.\d+\.\d+'
+    Write-Output "OpenCode ready: $actual"
 }
 
 function Copy-ProvisioningCachedPackage {
@@ -2421,7 +2447,7 @@ function Install-ProvisioningWinGetPackage {
 }
 
 function Install-ProvisioningGeistMonoNerdFont {
-    $metadata = Get-ProvisioningGitHubLatestAssetMetadata -Role 'GeistMono Nerd Font' `
+    $metadata = Get-ProvisioningGitHubAssetMetadata -Role 'GeistMono Nerd Font' `
         -Repository 'ryanoasis/nerd-fonts' -AssetName 'GeistMono.zip' -Id 'NerdFonts.GeistMono' `
         -Architecture 'neutral' -InstallerType 'zip' -PayloadName 'payload.zip'
     Install-ProvisioningCachedPackage -Role 'GeistMono Nerd Font' -Metadata $metadata `
@@ -2439,7 +2465,7 @@ function Install-ProvisioningZed {
 }
 
 function Install-ProvisioningOpenSrc {
-    $metadata = Get-ProvisioningGitHubLatestAssetMetadata -Role 'opensrc' `
+    $metadata = Get-ProvisioningGitHubAssetMetadata -Role 'opensrc' `
         -Repository 'vercel-labs/opensrc' -AssetName 'opensrc-win32-x64.exe' -Id 'vercel-labs.opensrc' `
         -Architecture 'x64' -InstallerType 'portable-exe' -PayloadName 'payload.exe'
 
@@ -2468,10 +2494,11 @@ function Install-ProvisioningOnlineWinGetPackage {
         [Parameter(Mandatory = $true)]
         [string]$Id,
         [string]$Version = '',
-        [string]$Override = ''
+        [string]$Override = '',
+        [switch]$AsStandardUser
     )
 
-    if ($Id -ieq 'SST.opencode') { $Version = Resolve-ProvisioningOpenCodeVersion -Requested $Version }
+    if ($Id -ieq 'Anomaly.OpenCode') { Install-ProvisioningOpenCode -Version $Version; return }
     if (Test-ProvisioningWorkstation) {
         # The package manager owns latest-version selection and verification.
         # No translated Version label is consumed on physical Windows.
@@ -2481,7 +2508,7 @@ function Install-ProvisioningOnlineWinGetPackage {
         if ($Override) { $arguments += @('--override',$Override) }
         # Official APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, not a generic
         # error suppression. Presence is independently checked below.
-        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 -ForwardOutput
+        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 -ForwardOutput -AsStandardUser:$AsStandardUser
         if ($installation.Stopped) { throw [OperationCanceledException]::new("$Role installation was cancelled.") }
         if (-not $installation.Succeeded -and ($installation.TimedOut -or $installation.ExitCode -ne [int]0x8A15002B)) {
             $diagnostic = Get-ProvisioningBoundedDiagnosticText -Text ([string]$installation.Output) -MaximumBytes 3000
@@ -2490,10 +2517,6 @@ function Install-ProvisioningOnlineWinGetPackage {
         Invoke-ProvisioningNative -Role "$Role installed-package verification" -FilePath 'winget.exe' -ArgumentList @(
             'list','--id',$Id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120 | Out-Null
         Update-ProvisioningPath
-        if ($Id -ieq 'SST.opencode') {
-            $versionText = (Invoke-ProvisioningNative -Role 'OpenCode major-version verification' -FilePath 'opencode.exe' -ArgumentList @('--version') -TimeoutSeconds 30) -join ' '
-            if ($versionText -notmatch '^1\.\d+\.\d+$') { throw 'Installed OpenCode is not stable 1.x; it was not force-downgraded.' }
-        }
         return
     }
 
@@ -3989,15 +4012,9 @@ if (Test-ProvisioningPackageEnabled -Id 'Tailscale.Tailscale') {
     }
 }
 
-if (Test-ProvisioningPackageEnabled -Id 'SST.opencode') {
-    Invoke-ProvisioningStep -Name 'OpenCode' -InputValues (Get-ProvisioningPackageVersion -Id 'SST.opencode') -Action {
-    Write-Output 'Installing OpenCode...'
-    Install-ProvisioningWinGetPackage -Role 'OpenCode' -Id 'SST.opencode' `
-        -Version (Get-ProvisioningPackageVersion -Id 'SST.opencode') `
-        -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'opencode.exe'
-    $openCodeVersion = Assert-ProvisioningCommand -Role 'OpenCode' -Name 'opencode.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^\d+\.\d+\.\d+'
-    Write-Output "OpenCode ready: $openCodeVersion"
+if (Test-ProvisioningPackageEnabled -Id 'Anomaly.OpenCode') {
+    Invoke-ProvisioningStep -Name 'OpenCode' -InputValues (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode') -Action {
+    Install-ProvisioningOpenCode -Version (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode')
     }
 }
 
@@ -4076,7 +4093,7 @@ if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
 
 foreach ($package in @($provisioningPackagePlan.Data.additions)) {
     $packageID = [string]$package.id
-    if ($packageID -ieq 'SST.opencode') {
+    if ($packageID -ieq 'Anomaly.OpenCode') {
         continue
     }
     Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -InputValues ([string]$package.version) -Action {

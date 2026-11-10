@@ -53,7 +53,7 @@ function Install-WorkstationHerdr {
         Write-Output 'Existing Herdr Extended retained without update, restart or server mutation.'
         return
     }
-    Install-ProvisioningOnlineWinGetPackage -Role 'Herdr Extended' -Id 'hdosys.herdr-win'
+    Install-ProvisioningOnlineWinGetPackage -Role 'Herdr Extended' -Id 'hdosys.herdr-win' -AsStandardUser
     Assert-ProvisioningCommand -Role 'Herdr Extended' -Name 'herdr.exe' -VersionArguments @('--version') -ExpectedPattern '^herdr-ext ' | Out-Null
 }
 

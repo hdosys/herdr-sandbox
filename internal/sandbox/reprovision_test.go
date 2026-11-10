@@ -357,7 +357,7 @@ func TestCredentialSyncRunsBeforeUnchangedRetainedProvisioning(t *testing.T) {
 	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, credentialSyncConfiguration{}) {
 		t.Fatal("disabled credentials scheduled early credential sync")
 	}
-	writeTestFile(t, current, `{"schemaVersion":1,"defaults":[{"id":"SST.opencode","version":""}],"additions":[]}`)
+	writeTestFile(t, current, `{"schemaVersion":1,"defaults":[{"id":"Anomaly.OpenCode","version":""}],"additions":[]}`)
 	if shouldSyncCredentialsBeforeRetainedProvisioning(plan, snapshot, credentials) {
 		t.Fatal("changed retained package plan scheduled credential sync before package provisioning")
 	}

@@ -13,6 +13,43 @@ import (
 	"herdr-sandbox/internal/installerartifact"
 )
 
+func TestWorkstationStandardUserSandboxProbe(t *testing.T) {
+	run := os.Getenv("HERDR_WORKSTATION_ACCEPTANCE_RUN")
+	if run == "" || IsCurrentWindowsSandbox() {
+		t.Skip("requires explicit host-side retained test run")
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "provisioning-standard-user.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]string{"process": string(provisioningProcessSource), "boundary": string(workstationRootSource), "fixture": string(fixture)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := newRunID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := `$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+$payload=(New-Object IO.StreamReader([Console]::OpenStandardInput())).ReadToEnd()|ConvertFrom-Json
+Add-Type -TypeDefinition $payload.boundary
+$root='C:\ProgramData\herdr-native-check\` + id + `'
+[HerdrWorkstation.Directories]::Ensure($root)
+[IO.File]::WriteAllText((Join-Path $root 'process.cs'),$payload.process)
+[IO.File]::WriteAllText((Join-Path $root 'probe.ps1'),$payload.fixture)
+& (Join-Path $root 'probe.ps1') -ProcessOwnerPath (Join-Path $root 'process.cs') -Interactive
+`
+	connection := Connection{RunDirectory: run, SSHConfigPath: filepath.Join(run, ".ssh", "config"), SSHTarget: sshTargetName}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	output, err := runSecretSSHArchivePowerShell(ctx, connection, payload, launcher, "standard-user process boundary probe")
+	if err != nil || !strings.Contains(string(output), "Verified same user/session/profile, non-administrator, medium integrity, and restricted privileges.") {
+		t.Fatalf("standard-user boundary: %v: %s", err, output)
+	}
+	t.Log(string(output))
+}
+
 // Explicit in-place acceptance uses the existing verified SSH transport. It never
 // starts, closes, or repairs a Sandbox and does not claim pristine-guest evidence.
 func TestWorkstationRetainedSandboxAcceptance(t *testing.T) {

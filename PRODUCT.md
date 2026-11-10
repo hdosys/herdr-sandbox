@@ -24,6 +24,11 @@ The current product contract is:
   The report distinguishes successful, retained, failed, unavailable and
   dependency-blocked steps. An incomplete run remains a nonzero CLI outcome,
   not a false successful installation. Re-running resumes unfinished/changed work.
+- `setup.log` beside the report records the complete installer output and appends
+  timestamped attempts during resume. It stays private; the report links to it.
+  Hash-verified download caches use the short machine-local
+  `%ProgramData%\herdr-workstation\cache` path, independently of per-user/run control
+  state, so retries can reuse downloads and Visual Studio layout paths stay short.
 - The shared package/stack implementations remain canonical. Direct setup never
   applies Sandbox security relaxation, audio disabling, SSH/firewall bootstrap,
   mapped-repository trust replacement or live Herdr lifecycle changes.
@@ -56,6 +61,8 @@ The current product contract is:
   different target settings are preserved and reported as conflicts. The exact
   private snapshot is retained in protected per-user control state for resume.
   Software downloads remain online; host cache payloads are not embedded.
+- Nushell owns its generated `terminal-fragments/nu/nu.json`; it is not copied
+  from the old machine. Other authored terminal fragments remain part of the snapshot.
 - Capture uses the existing package/configuration selection and agent authored-root
   lists and tracked authored files, including referenced scripts/assets, portable Claude MCP data and selected
   GitHub CLI config. The build sidecar records profile identity, counts and its

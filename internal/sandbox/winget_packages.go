@@ -22,7 +22,7 @@ const (
 	packageGit             = "Git.Git"
 	packageGitHubCLI       = "GitHub.cli"
 	packageTailscale       = "Tailscale.Tailscale"
-	packageOpenCode        = "SST.opencode"
+	packageOpenCode        = "Anomaly.OpenCode"
 	packageClaudeCode      = "Anthropic.ClaudeCode"
 	packageCodex           = "OpenAI.Codex"
 	packageGitHubCopilot   = "GitHub.Copilot"

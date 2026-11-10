@@ -330,7 +330,7 @@ letter or number, and are at most 64 characters.
 | `workspaceDiscovery.root` | Existing parent directory whose direct child directories become workspaces. `""` disables discovery. |
 | `workspaceDiscovery.exclude` | Array of at most 64 unique Go RE2 patterns matched against direct child names. |
 | `wingetPackages.remove` | Array of supported Base package IDs to remove from the default set. |
-| `wingetPackages.add` | Array of supported Base package IDs to add. Defaults to `SST.opencode`, `Anthropic.ClaudeCode`, `OpenAI.Codex`, and `GitHub.Copilot`. |
+| `wingetPackages.add` | Array of supported Base package IDs to add. Defaults to `Anomaly.OpenCode`, `Anthropic.ClaudeCode`, `OpenAI.Codex`, and `GitHub.Copilot`. OpenCode uses verified official stable 1.x release assets, not WinGet's 2.x package. |
 | `wingetPackages.versions.<packageID>` | Exact WinGet version string for a selected package. Omit it for newest-stable resolution. |
 
 </details>

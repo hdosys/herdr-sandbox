@@ -53,7 +53,9 @@ func allowedWorkstationFile(kind, relative string) bool {
 	case "nushell":
 		return relative == "config.nu" || relative == "env.nu" || (strings.HasPrefix(relative, "scripts/") && path.Ext(relative) == ".nu")
 	case "terminal-fragments":
-		return strings.EqualFold(path.Ext(relative), ".json")
+		// Nushell's installer owns this machine-specific fragment. Its executable
+		// and icon paths must come from the target installation, not the old PC.
+		return !strings.EqualFold(relative, "nu/nu.json") && strings.EqualFold(path.Ext(relative), ".json")
 	case "zed":
 		return slices.Contains([]string{"settings.json", "keymap.json", "tasks.json"}, relative) || ((strings.HasPrefix(relative, "snippets/") || strings.HasPrefix(relative, "themes/")) && strings.EqualFold(path.Ext(relative), ".json"))
 	case "copilot":

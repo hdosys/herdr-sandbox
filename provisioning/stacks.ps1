@@ -4583,7 +4583,15 @@ function Install-PythonStack {
     }
     Add-ProvisioningMachinePath -Directory $pythonAliasDirectory
     $resolvedPython = Wait-ProvisioningCommandAvailable -Role 'App-local Python command' -Name 'python.exe'
-    if ([IO.Path]::GetFullPath($resolvedPython) -ine [IO.Path]::GetFullPath($pythonAlias)) {
+    if (Test-ProvisioningWorkstation) {
+        # Windows merges Machine PATH before User PATH. Keep a valid installed
+        # python.exe there rather than demanding that our user python3 alias
+        # replace it. Both must belong to the exact runtime verified above.
+        Assert-ProvisioningPathAncestors $resolvedPython
+        if ((Get-FileHash -LiteralPath $resolvedPython -Algorithm SHA256).Hash -cne $pythonHash) {
+            throw "Python command does not match the installed runtime: $resolvedPython"
+        }
+    } elseif ([IO.Path]::GetFullPath($resolvedPython) -ine [IO.Path]::GetFullPath($pythonAlias)) {
         throw "Python command resolved from an unexpected path: $resolvedPython"
     }
     $resolvedPython3 = Wait-ProvisioningCommandAvailable -Role 'Python 3 command' -Name 'python3.exe'

@@ -832,7 +832,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     $gitEnabled = $enabledPackages.ContainsKey('Git.Git')
     $githubCLIEnabled = $enabledPackages.ContainsKey('GitHub.cli')
-    $openCodeEnabled = $enabledPackages.ContainsKey('SST.opencode')
+    $openCodeEnabled = $enabledPackages.ContainsKey('Anomaly.OpenCode')
     $starshipEnabled = $enabledPackages.ContainsKey('Starship.Starship')
     $terminalPackageID = 'Microsoft.WindowsTerminal'
     if ([string]$packagePlan.windowsTerminalEdition -ceq 'preview') {

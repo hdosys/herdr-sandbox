@@ -47,7 +47,7 @@ func nativeInstallerSandbox(ctx context.Context, stdout, stderr io.Writer) error
 
 // Developer packaging builds the application, then uses the same saved-profile
 // NSIS builder shipped in that application. Product use needs neither Go nor Git.
-func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Writer) (resultErr error) {
+func packageWorkstation(ctx context.Context, tag, profile string, stdout, stderr io.Writer) (resultErr error) {
 	version, err := parseReleaseVersion(tag)
 	if err != nil {
 		return err
@@ -63,22 +63,25 @@ func packageWorkstation(ctx context.Context, tag string, stdout, stderr io.Write
 	if err := buildWithIdentity(ctx, identity, stdout, stderr); err != nil {
 		return err
 	}
-	private, err := os.MkdirTemp("", "herdr-workstation-capture-")
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, removeGeneratedPath(private)) }()
-	profile := filepath.Join(private, "profile.json")
-	if err := runCommand(ctx, stdout, stderr, filepath.Join("build", "bin", productidentity.ExecutableName), "workstation", "export", "--output", profile, "--include-settings"); err != nil {
-		return err
+	source := "saved-installation"
+	if profile == "" {
+		private, err := os.MkdirTemp("", "herdr-workstation-capture-")
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, removeGeneratedPath(private)) }()
+		profile = filepath.Join(private, "profile.json")
+		if err := runCommand(ctx, stdout, stderr, filepath.Join("build", "bin", productidentity.ExecutableName), "workstation", "export", "--output", profile, "--include-settings"); err != nil {
+			return err
+		}
+		source = "current-windows-user"
+		if sandbox.IsCurrentWindowsSandbox() {
+			source = "current-sandbox-user"
+		}
 	}
 	payload, err := filepath.Abs(filepath.Join("build", "bin"))
 	if err != nil {
 		return err
-	}
-	source := "current-windows-user"
-	if sandbox.IsCurrentWindowsSandbox() {
-		source = "current-sandbox-user"
 	}
 	current, err := cleanPackageSource(ctx)
 	if err != nil {

@@ -313,7 +313,7 @@ func ensureWorkstationRoot(root string) error {
 
 // SetupWorkstation runs trusted shared provisioning against this Windows machine.
 // It never enters the Sandbox lifecycle or applies the Sandbox security profile.
-func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, error) {
+func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFile string, setupErr error) {
 	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
 		return "", errors.New("direct setup requires Windows x64")
 	}
@@ -351,6 +351,22 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (string, 
 	if err := ensureWorkstationRoot(root); err != nil {
 		return "", err
 	}
+	logPath := filepath.Join(root, "setup.log")
+	if err := validateWorkstationLocalPath(logPath); err != nil {
+		return "", err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("open setup log: %w", err)
+	}
+	options.Output = io.MultiWriter(logFile, options.Output)
+	defer func() {
+		if setupErr != nil {
+			_, _ = fmt.Fprintf(options.Output, "Setup failed: %v\n", setupErr)
+		}
+		setupErr = errors.Join(setupErr, logFile.Sync(), logFile.Close())
+	}()
+	fmt.Fprintf(options.Output, "\nSetup attempt started %s\nComplete installer output: %s\n", time.Now().UTC().Format(time.RFC3339), logPath)
 	profile, data, configurationProblem, err := resolveWorkstationSelection(root, options.Profile)
 	if err != nil {
 		return "", err
@@ -523,7 +539,7 @@ func publishWorkstationReport(root string, report WorkstationReport, output io.W
 	return htmlPath, nil
 }
 
-var workstationReportTemplate = template.Must(template.New("report").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Herdr Workstation setup</title><style>body{font:16px system-ui;background:#fafafa;color:#222;max-width:1000px;margin:3rem auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.6rem;text-align:left}pre{white-space:pre-wrap}h1{font-size:1.6rem}</style><h1>Herdr Workstation setup: {{if .Complete}}complete{{else}}incomplete{{end}}</h1><p>Finished {{.FinishedAtUTC}}. Re-run the installer to resume unfinished steps. Existing successful unchanged steps are retained. Applications requiring accounts or licences need your separate sign-in.</p><table><tr><th>Step</th><th>Result</th><th>Details</th></tr>{{range .Steps}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td><pre>{{.Message}}</pre></td></tr>{{end}}</table></html>`))
+var workstationReportTemplate = template.Must(template.New("report").Parse(`<!doctype html><html lang="en"><meta charset="utf-8"><title>Herdr Workstation setup</title><style>body{font:16px system-ui;background:#fafafa;color:#222;max-width:1000px;margin:3rem auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.6rem;text-align:left}pre{white-space:pre-wrap}h1{font-size:1.6rem}</style><h1>Herdr Workstation setup: {{if .Complete}}complete{{else}}incomplete{{end}}</h1><p>Finished {{.FinishedAtUTC}}. Re-run the installer to resume unfinished steps. Existing successful unchanged steps are retained. Applications requiring accounts or licences need your separate sign-in.</p><p><a href="setup.log">Open the complete installer output</a>. Attempts are appended with their start time; this log is private.</p><table><tr><th>Step</th><th>Result</th><th>Details</th></tr>{{range .Steps}}<tr><td>{{.Name}}</td><td>{{.Status}}</td><td><pre>{{.Message}}</pre></td></tr>{{end}}</table></html>`))
 
 // PrepareWorkstationTTS reuses the existing public bundle preparation owner.
 func PrepareWorkstationTTS(ctx context.Context, root string, output io.Writer) error {

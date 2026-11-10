@@ -5,6 +5,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,6 +27,7 @@ namespace HerdrSandbox
         public bool SeparateErrorOutput { get; set; }
         public bool ShowWindow { get; set; }
         public bool ForwardOutput { get; set; }
+        public bool AsStandardUser { get; set; }
     }
 
     public sealed class ProvisioningProcessResult
@@ -451,6 +454,7 @@ namespace HerdrSandbox
             IntPtr nullInput = IntPtr.Zero;
             IntPtr attributeList = IntPtr.Zero;
             IntPtr jobList = IntPtr.Zero;
+            IntPtr inheritedHandles = IntPtr.Zero;
             bool attributeListInitialized = false;
             NativeMethods.PROCESS_INFORMATION process = new NativeMethods.PROCESS_INFORMATION();
             try
@@ -512,13 +516,13 @@ namespace HerdrSandbox
                 NativeMethods.ThrowIfInvalid(nullInput, "open provisioning process null input");
 
                 UIntPtr attributeListSize = UIntPtr.Zero;
-                NativeMethods.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
+                NativeMethods.InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref attributeListSize);
                 if (attributeListSize == UIntPtr.Zero)
                 {
                     NativeMethods.ThrowLastError("size provisioning process attribute list");
                 }
                 attributeList = Marshal.AllocHGlobal(new IntPtr(checked((long)attributeListSize.ToUInt64())));
-                if (!NativeMethods.InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeListSize))
+                if (!NativeMethods.InitializeProcThreadAttributeList(attributeList, 2, 0, ref attributeListSize))
                 {
                     NativeMethods.ThrowLastError("initialize provisioning process attribute list");
                 }
@@ -548,19 +552,36 @@ namespace HerdrSandbox
                 StringBuilder commandLine = new StringBuilder(BuildCommandLine(spec.FilePath, spec.Arguments));
                 uint flags = NativeMethods.CREATE_SUSPENDED | NativeMethods.CREATE_NEW_CONSOLE |
                     NativeMethods.CREATE_UNICODE_ENVIRONMENT | NativeMethods.EXTENDED_STARTUPINFO_PRESENT;
-                if (!NativeMethods.CreateProcessExtended(
-                    spec.FilePath,
-                    commandLine,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    true,
-                    flags,
-                    IntPtr.Zero,
-                    spec.WorkingDirectory,
-                    ref startup,
-                    out process))
+                inheritedHandles = Marshal.AllocHGlobal(IntPtr.Size * (spec.SeparateErrorOutput ? 3 : 2));
+                IntPtr userToken = IntPtr.Zero;
+                try
                 {
-                    NativeMethods.ThrowLastError("create provisioning process " + spec.Role);
+                    Marshal.WriteIntPtr(inheritedHandles, 0, nullInput);
+                    Marshal.WriteIntPtr(inheritedHandles, IntPtr.Size, writePipe);
+                    if (spec.SeparateErrorOutput) Marshal.WriteIntPtr(inheritedHandles, IntPtr.Size * 2, errorWritePipe);
+                    if (!NativeMethods.UpdateProcThreadAttribute(attributeList, 0,
+                        new IntPtr(NativeMethods.PROC_THREAD_ATTRIBUTE_HANDLE_LIST), inheritedHandles,
+                        new UIntPtr((uint)(IntPtr.Size * (spec.SeparateErrorOutput ? 3 : 2))), IntPtr.Zero, IntPtr.Zero))
+                    {
+                        NativeMethods.ThrowLastError("restrict inherited provisioning handles");
+                    }
+                    bool created;
+                    if (spec.AsStandardUser)
+                    {
+                        userToken = CreateStandardUserToken();
+                        created = NativeMethods.CreateProcessAsUserExtended(userToken, spec.FilePath, commandLine,
+                            IntPtr.Zero, IntPtr.Zero, true, flags, IntPtr.Zero, spec.WorkingDirectory, ref startup, out process);
+                    }
+                    else
+                    {
+                        created = NativeMethods.CreateProcessExtended(spec.FilePath, commandLine,
+                            IntPtr.Zero, IntPtr.Zero, true, flags, IntPtr.Zero, spec.WorkingDirectory, ref startup, out process);
+                    }
+                    if (!created) NativeMethods.ThrowLastError("create provisioning process " + spec.Role);
+                }
+                finally
+                {
+                    NativeMethods.CloseIfValid(userToken);
                 }
 
                 NativeMethods.CloseHandle(writePipe);
@@ -618,6 +639,10 @@ namespace HerdrSandbox
                 {
                     Marshal.FreeHGlobal(jobList);
                 }
+                if (inheritedHandles != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(inheritedHandles);
+                }
                 if (attributeList != IntPtr.Zero)
                 {
                     Marshal.FreeHGlobal(attributeList);
@@ -632,6 +657,98 @@ namespace HerdrSandbox
                 NativeMethods.CloseIfValid(completionPort);
                 NativeMethods.CloseIfValid(job);
             }
+        }
+
+        private static IntPtr CreateStandardUserToken()
+        {
+            IntPtr administrators = IntPtr.Zero;
+            IntPtr mediumIntegrity = IntPtr.Zero;
+            IntPtr restricted = IntPtr.Zero;
+            try
+            {
+                using (WindowsIdentity current = WindowsIdentity.GetCurrent(TokenAccessLevels.Query | TokenAccessLevels.Duplicate |
+                    TokenAccessLevels.AssignPrimary | TokenAccessLevels.AdjustDefault))
+                {
+                    if (current.User == null || current.User.IsWellKnown(WellKnownSidType.LocalSystemSid) ||
+                        current.User.IsWellKnown(WellKnownSidType.LocalServiceSid) || current.User.IsWellKnown(WellKnownSidType.NetworkServiceSid))
+                        throw new InvalidOperationException("Standard-user provisioning requires an intended Windows user.");
+                    administrators = AllocateSid("S-1-5-32-544");
+                    NativeMethods.SID_AND_ATTRIBUTES[] disabled = new NativeMethods.SID_AND_ATTRIBUTES[] {
+                        new NativeMethods.SID_AND_ATTRIBUTES { Sid = administrators, Attributes = 0 }
+                    };
+                    // DISABLE_MAX_PRIVILEGE | LUA_TOKEN. Administrators is explicitly
+                    // deny-only; this also works without an existing UAC split token.
+                    if (!NativeMethods.CreateRestrictedToken(current.Token, 5, 1, disabled, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted))
+                        NativeMethods.ThrowLastError("create restricted intended-user token");
+                    SetStandardUserDefaultDacl(restricted, current.User);
+                    mediumIntegrity = AllocateSid("S-1-16-8192");
+                    NativeMethods.SID_AND_ATTRIBUTES label = new NativeMethods.SID_AND_ATTRIBUTES { Sid = mediumIntegrity, Attributes = 0x20 };
+                    if (!NativeMethods.SetTokenInformation(restricted, 25, ref label,
+                        Marshal.SizeOf(typeof(NativeMethods.SID_AND_ATTRIBUTES)) + new SecurityIdentifier("S-1-16-8192").BinaryLength))
+                        NativeMethods.ThrowLastError("set standard-user medium integrity");
+                    using (WindowsIdentity identity = new WindowsIdentity(restricted))
+                    {
+                        if (identity.User == null || identity.User.Value != current.User.Value ||
+                            new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                            throw new InvalidOperationException("Restricted provisioning token changed user or retained administrator membership.");
+                    }
+                }
+                IntPtr result = restricted;
+                restricted = IntPtr.Zero;
+                return result;
+            }
+            finally
+            {
+                NativeMethods.CloseIfValid(restricted);
+                if (administrators != IntPtr.Zero) Marshal.FreeHGlobal(administrators);
+                if (mediumIntegrity != IntPtr.Zero) Marshal.FreeHGlobal(mediumIntegrity);
+            }
+        }
+
+        private static void SetStandardUserDefaultDacl(IntPtr token, SecurityIdentifier user)
+        {
+            // LUA restriction retains the elevated token's default DACL. Once BA
+            // is deny-only, its process/thread objects must still be usable by
+            // their intended user. Change this new token only, never desktop ACLs.
+            int length;
+            NativeMethods.GetTokenInformation(token, 6, IntPtr.Zero, 0, out length);
+            if (length == 0) NativeMethods.ThrowLastError("size restricted token default DACL");
+            IntPtr information = Marshal.AllocHGlobal(length);
+            IntPtr updatedAcl = IntPtr.Zero;
+            try
+            {
+                if (!NativeMethods.GetTokenInformation(token, 6, information, length, out length))
+                    NativeMethods.ThrowLastError("read restricted token default DACL");
+                IntPtr existingAcl = Marshal.ReadIntPtr(information);
+                if (existingAcl == IntPtr.Zero)
+                    throw new InvalidOperationException("Restricted token default DACL is absent.");
+                byte[] existing = new byte[unchecked((ushort)Marshal.ReadInt16(existingAcl, 2))];
+                Marshal.Copy(existingAcl, existing, 0, existing.Length);
+                RawAcl acl = new RawAcl(existing, 0);
+                acl.InsertAce(acl.Count, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, 0x10000000, user, false, null));
+                byte[] encoded = new byte[acl.BinaryLength];
+                acl.GetBinaryForm(encoded, 0);
+                updatedAcl = Marshal.AllocHGlobal(encoded.Length);
+                Marshal.Copy(encoded, 0, updatedAcl, encoded.Length);
+                Marshal.WriteIntPtr(information, updatedAcl);
+                if (!NativeMethods.SetTokenInformation(token, 6, information, IntPtr.Size))
+                    NativeMethods.ThrowLastError("set intended-user restricted token default DACL");
+            }
+            finally
+            {
+                if (updatedAcl != IntPtr.Zero) Marshal.FreeHGlobal(updatedAcl);
+                Marshal.FreeHGlobal(information);
+            }
+        }
+
+        private static IntPtr AllocateSid(string value)
+        {
+            SecurityIdentifier sid = new SecurityIdentifier(value);
+            byte[] bytes = new byte[sid.BinaryLength];
+            sid.GetBinaryForm(bytes, 0);
+            IntPtr result = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, result, bytes.Length);
+            return result;
         }
 
         public ProvisioningProcessResult Complete()
@@ -1031,6 +1148,7 @@ namespace HerdrSandbox
         internal const int JobObjectExtendedLimitInformation = 9;
         internal const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
         internal const int PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
+        internal const int PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
         internal const uint CREATE_SUSPENDED = 0x00000004;
         internal const uint CREATE_NEW_CONSOLE = 0x00000010;
         internal const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
@@ -1048,6 +1166,37 @@ namespace HerdrSandbox
         internal const uint WAIT_FAILED = 0xFFFFFFFF;
         internal const int WAIT_TIMEOUT = 258;
         internal const int ERROR_ACCESS_DENIED = 5;
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct SID_AND_ATTRIBUTES
+        {
+            internal IntPtr Sid;
+            internal uint Attributes;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount,
+            [In] SID_AND_ATTRIBUTES[] disabled, uint deletePrivilegeCount, IntPtr deletedPrivileges,
+            uint restrictedSidCount, IntPtr restrictedSids, out IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetTokenInformation(IntPtr token, int informationClass, ref SID_AND_ATTRIBUTES information, int length);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetTokenInformation(IntPtr token, int informationClass, IntPtr information, int length);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool GetTokenInformation(IntPtr token, int informationClass, IntPtr information, int length, out int requiredLength);
+
+        [DllImport("advapi32.dll", EntryPoint = "CreateProcessAsUserW", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool CreateProcessAsUserExtended(IntPtr token, string application, StringBuilder commandLine,
+            IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint creationFlags,
+            IntPtr environment, string currentDirectory, ref STARTUPINFOEX startup, out PROCESS_INFORMATION process);
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct SECURITY_ATTRIBUTES

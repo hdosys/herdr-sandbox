@@ -41,12 +41,14 @@ foreach ($package in @($nativeProfile.packages)) {
 }
 $nativeFailures = New-Object 'Collections.Generic.List[string]'
 $nativeResults = [ordered]@{}
-foreach ($directory in @('cache', 'staging', 'tools', 'state', 'build', 'toolchains')) {
-    $destination = Get-ProvisioningPath $directory
-    if (Test-Path -LiteralPath $destination) {
-        $item = Get-Item -LiteralPath $destination -Force
-        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Unsafe setup directory: $destination" }
-    } else { New-Item -ItemType Directory -Path $destination | Out-Null }
+if (-not $PlanOnly) {
+    foreach ($directory in @('cache', 'staging', 'tools', 'state', 'build', 'toolchains')) {
+        $destination = Get-ProvisioningPath $directory
+        if (Test-Path -LiteralPath $destination) {
+            $item = Get-Item -LiteralPath $destination -Force
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Unsafe setup directory: $destination" }
+        } else { New-Item -ItemType Directory -Path $destination | Out-Null }
+    }
 }
 $nativeState = Get-ProvisioningPath 'state\steps.json'
 try {

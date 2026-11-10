@@ -67,28 +67,34 @@ func TestWorkstationPrivateConfigurationRoundTripAndConflict(t *testing.T) {
 	source := t.TempDir()
 	nu := filepath.Join(source, "nushell")
 	opencode := filepath.Join(source, "opencode")
-	for _, directory := range []string{filepath.Join(nu, "scripts"), opencode} {
+	fragments := filepath.Join(source, "fragments")
+	for _, directory := range []string{filepath.Join(nu, "scripts"), opencode, filepath.Join(fragments, "nu"), filepath.Join(fragments, "personal")} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for name, contents := range map[string]string{
-		filepath.Join(nu, "config.nu"):               "source scripts/helper.nu\n",
-		filepath.Join(nu, "scripts", "helper.nu"):    "def hello [] { 'hello' }\n",
-		filepath.Join(opencode, "opencode.json"):     "{\"theme\":\"system\"}\n",
-		filepath.Join(opencode, "auth.json"):         "secret fixture must not export",
-		filepath.Join(opencode, ".usage-status.env"): "private fixture must not export",
+		filepath.Join(nu, "config.nu"):                     "source scripts/helper.nu\n",
+		filepath.Join(nu, "scripts", "helper.nu"):          "def hello [] { 'hello' }\n",
+		filepath.Join(opencode, "opencode.json"):           "{\"theme\":\"system\"}\n",
+		filepath.Join(opencode, "auth.json"):               "secret fixture must not export",
+		filepath.Join(opencode, ".usage-status.env"):       "private fixture must not export",
+		filepath.Join(fragments, "nu", "nu.json"):          `{"profiles":[{"commandline":"machine-specific Nushell installation"}]}`,
+		filepath.Join(fragments, "personal", "shell.json"): `{"profiles":[{"commandline":"nu.exe"}]}`,
 	} {
 		if err := os.WriteFile(name, []byte(contents), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	files, err := exportWorkstationSettings(t.Context(), map[string]string{"nushell": nu, "opencode": opencode})
+	files, err := exportWorkstationSettings(t.Context(), map[string]string{"nushell": nu, "opencode": opencode, "terminal-fragments": fragments})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 3 {
-		t.Fatalf("exported %d files, want exactly authored config plus nested Nu script", len(files))
+	if len(files) != 4 {
+		t.Fatalf("exported %d files, want authored config, nested Nu script and personal fragment only", len(files))
+	}
+	if slices.ContainsFunc(files, func(file WorkstationFile) bool { return file.Kind == "terminal-fragments" && file.Path == "nu/nu.json" }) {
+		t.Fatal("export captured Nushell's machine-specific installer fragment")
 	}
 	target := t.TempDir()
 	for _, file := range files {
@@ -318,6 +324,9 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		t.Fatal("unrelated package was invalidated by a Rust selection")
 	}
 	state := `{"schemaVersion":1,"steps":[{"name":"Visual Studio Build Tools","fingerprint":"` + strings.Repeat("a", 64) + `"}]}`
+	if err := os.MkdirAll(filepath.Join(root, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "state", "steps.json"), []byte(state), 0o600); err != nil {
 		t.Fatal(err)
 	}

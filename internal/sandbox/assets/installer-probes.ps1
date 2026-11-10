@@ -36,11 +36,18 @@ function Test-InstallerEffects {
     catch { $checks.Add([ordered]@{name='WinGet command';passed=$false}) }
     foreach ($package in @($Profile.packages)) {
         $passed = $false
-        try { $null = Invoke-InstallerProbe 'winget.exe' @('list','--id',[string]$package.id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity'); $passed = $true } catch {}
+        try {
+            if ($package.id -eq 'Anomaly.OpenCode') {
+                $passed = (Invoke-InstallerProbe 'opencode.exe' @('--version')).Trim() -match '^1\.\d+\.\d+$'
+            } else {
+                $null = Invoke-InstallerProbe 'winget.exe' @('list','--id',[string]$package.id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity')
+                $passed = $true
+            }
+        } catch {}
         $checks.Add([ordered]@{name=('package '+[string]$package.id);passed=$passed})
     }
     $commands = @{}
-    $packageCommands = @{'Microsoft.PowerShell'='pwsh.exe';'Nushell.Nushell'='nu.exe';'Starship.Starship'='starship.exe';'Git.Git'='git.exe';'GitHub.cli'='gh.exe';'junegunn.fzf'='fzf.exe';'BurntSushi.ripgrep.MSVC'='rg.exe';'rhysd.actionlint'='actionlint.exe';'SST.opencode'='opencode.exe'}
+    $packageCommands = @{'Microsoft.PowerShell'='pwsh.exe';'Nushell.Nushell'='nu.exe';'Starship.Starship'='starship.exe';'Git.Git'='git.exe';'GitHub.cli'='gh.exe';'junegunn.fzf'='fzf.exe';'BurntSushi.ripgrep.MSVC'='rg.exe';'rhysd.actionlint'='actionlint.exe';'Anomaly.OpenCode'='opencode.exe'}
     foreach ($package in @($Profile.packages)) { if ($packageCommands.ContainsKey([string]$package.id)) { $commands[$packageCommands[[string]$package.id]]=$true } }
     $stackCommands = @{'python'=@('python.exe');'python-ai'=@('python.exe','uv.exe');'uv'=@('uv.exe');'node'=@('node.exe');'hyperframes'=@('node.exe','ffmpeg.exe');'playwright-cli'=@('node.exe');'tradingview'=@('node.exe');'go'=@('go.exe');'rust-msvc'=@('rustc.exe','cargo.exe');'herdr'=@('rustc.exe','cargo.exe','zig.exe','bun.exe','python.exe','just.exe');'handy'=@('rustc.exe','cargo.exe','bun.exe','cmake.exe');'cpp'=@('cmake.exe');'dotnet'=@('dotnet.exe');'java'=@('java.exe');'nsis'=@('makensis.exe');'zig'=@('zig.exe');'bun'=@('bun.exe');'just'=@('just.exe');'cargo-nextest'=@('cargo-nextest.exe');'opensrc'=@('opensrc.exe');'android'=@('java.exe','adb.exe')}
     foreach ($stack in @($Profile.stacks)) { foreach ($command in @($stackCommands[[string]$stack])) { if ($command) { $commands[$command]=$true } } }

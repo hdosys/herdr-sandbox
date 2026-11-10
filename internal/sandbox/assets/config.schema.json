@@ -252,7 +252,7 @@
           "maxItems": 64,
           "uniqueItems": true,
           "default": [
-            "SST.opencode",
+            "Anomaly.OpenCode",
             "Anthropic.ClaudeCode",
             "OpenAI.Codex",
             "GitHub.Copilot"

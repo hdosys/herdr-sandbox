@@ -9,6 +9,14 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Workstation setup handles per-user Nushell and installed Python command paths,
+  keeps Visual Studio layouts below its path limit, and preserves Nushell's
+  target-generated terminal fragment instead of importing old machine paths.
+- OpenCode stable 1.x uses verified official release assets after its old WinGet
+  distribution became unavailable; OpenCode 2.x is not selected.
+- The complete installer output is retained in private `setup.log`, including
+  timestamped resumed attempts, alongside the summarized report.
+
 - Workstation setup initializes and verifies the WinGet community source before
   installing packages, preventing missing-source failures across the selected tools.
 - Personal installer tests display setup on the Sandbox desktop, with step status,

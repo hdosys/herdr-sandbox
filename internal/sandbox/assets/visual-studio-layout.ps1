@@ -584,6 +584,9 @@ $stableBootstrapper = Join-Path $cacheRoot 'bootstrapper\vs_BuildTools.exe'
 $lockPath = Join-Path $cacheRoot '.lock'
 $slotA = Join-Path $cacheRoot 'a'
 $slotB = Join-Path $cacheRoot 'b'
+if ((Join-Path $slotA 'layout').Length -ge 80) {
+    throw 'Visual Studio requires a layout directory shorter than 80 characters. Select a shorter package cache directory before downloading the layout.'
+}
 $lock = $null
 $stage = Join-Path $env:TEMP ('herdr-sandbox-vsbt-' + [Guid]::NewGuid().ToString('N'))
 try {

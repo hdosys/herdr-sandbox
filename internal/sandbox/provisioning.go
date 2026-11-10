@@ -96,7 +96,7 @@ var defaultGlobalConfiguration = []byte(`{
   "wingetPackages": {
     "remove": [],
     "add": [
-      "SST.opencode",
+      "Anomaly.OpenCode",
       "Anthropic.ClaudeCode",
       "OpenAI.Codex",
       "GitHub.Copilot"
@@ -158,7 +158,7 @@ var sampleGlobalConfiguration = []byte(`{
   "wingetPackages": {
     "remove": [],
     "add": [
-      "SST.opencode",
+      "Anomaly.OpenCode",
       "Anthropic.ClaudeCode",
       "OpenAI.Codex",
       "GitHub.Copilot"
