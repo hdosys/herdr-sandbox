@@ -14,7 +14,7 @@ Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $nativeUserSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Direct setup requires elevation for the intended Windows user.' }
+if (-not $PlanOnly -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Direct setup requires elevation for the intended Windows user.' }
 $nativeWindowsBuild = [string][Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'CurrentBuildNumber', '')
 if (-not [Environment]::Is64BitOperatingSystem -or $nativeWindowsBuild -notmatch '^\d+$' -or [int]$nativeWindowsBuild -lt 19041) { throw 'Direct setup requires Windows x64 build 19041 or newer (Windows 11 recommended).' }
 $env:HERDR_PROVISIONING_ROOT = $NativeRoot
@@ -194,12 +194,15 @@ if ($PlanOnly) {
 }
 Save-WorkstationReport
 try {
+    $stepNumber = 0
     foreach ($job in $nativeJobs) {
+        $stepNumber++
         $inputs = @(Get-WorkstationJobInputs $job)
         $nativeResults[$job.Name] = [ordered]@{ status='running'; message=('Started at ' + [DateTime]::UtcNow.ToString('o') + '; deadline ' + $job.Seconds + ' seconds.') }
         Save-WorkstationReport
-        Write-Output ('[' + [DateTime]::Now.ToString('HH:mm:ss') + '] Starting ' + $job.Name + ' (time limit ' + $job.Seconds + ' seconds)')
+        Write-Output ('[' + $stepNumber + '/' + $nativeJobs.Count + '] Checking ' + $job.Name)
         Invoke-ProvisioningIndependentStep -Name $job.Name -Requires $job.Requires -Results $nativeResults -Failures $nativeFailures -ContinueTerminalFailures -InputValues $inputs -Action {
+            Write-Output ('[' + [DateTime]::Now.ToString('HH:mm:ss') + '] Starting ' + $job.Name + ' (time limit ' + $job.Seconds + ' seconds)')
             $ready = @($nativeResults.Keys | Where-Object { $nativeResults[$_].status -in @('succeeded','retained') }) -join '|'
             $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',
                 (Join-Path $nativeInputDirectory 'workstation-action.ps1'), '-NativeProfilePath',$NativeProfilePath,'-NativeRoot',$NativeRoot,

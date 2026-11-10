@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = $PSHOME + '\Modules'
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
-$statusPath = Join-Path $StateRoot 'interactive.json'
+$statusPath = Join-Path (Split-Path -Parent $InstallerPath) 'interactive.json'
 function Publish-InteractiveResult {
     param($Value)
     $temporary = $statusPath + '.tmp'

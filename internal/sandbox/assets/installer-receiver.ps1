@@ -69,7 +69,7 @@ try {
     try {
         $null=$task.RunEx($null,4,$session,$null)
         $clock=[Diagnostics.Stopwatch]::StartNew()
-        $resultPath=Join-Path $stateRoot 'interactive.json'
+        $resultPath=Join-Path $privateRoot 'interactive.json'
         $started=$false
         while($true){
             if(Test-Path -LiteralPath $resultPath -PathType Leaf){
@@ -88,7 +88,7 @@ try {
         }
     } finally {
         try { $taskRoot.DeleteTask($taskName,0) }
-        catch { if(($_.Exception.HResult -band 0xFFFF) -ne 2){throw} }
+        catch { if(($_.Exception.GetBaseException().HResult -band 0xFFFF) -ne 2){throw} }
     }
     if($result.Stopped){throw [OperationCanceledException]::new('Installer acceptance cancelled.')}
     if($result.TimedOut){throw 'Installer acceptance exceeded its terminal deadline.'}
