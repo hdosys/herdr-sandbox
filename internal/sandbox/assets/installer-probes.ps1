@@ -94,9 +94,9 @@ function Test-InstallerEffects {
     if (@($Profile.stacks | Where-Object { $_ -in @('cpp','handy') }).Count -gt 0) {
         $passed=$false
         try {
-            $file=Join-Path $ProbeRoot 'main.c'
-            [IO.File]::WriteAllText($file,'#include <stdio.h>' + "`n" + 'int main(void){puts("installer-cpp-ok");return 0;}',(New-Object Text.UTF8Encoding($false)))
-            [IO.File]::WriteAllText((Join-Path $ProbeRoot 'CMakeLists.txt'),'cmake_minimum_required(VERSION 3.20)' + "`n" + 'project(installer_probe C)' + "`n" + 'add_executable(cpp-probe main.c)' + "`n",(New-Object Text.UTF8Encoding($false)))
+            $file=Join-Path $ProbeRoot 'main.cpp'
+            [IO.File]::WriteAllText($file,'#include <iostream>' + "`n" + '#include <string>' + "`n" + 'int main(){std::cout << std::string("installer-cpp-ok");}',(New-Object Text.UTF8Encoding($false)))
+            [IO.File]::WriteAllText((Join-Path $ProbeRoot 'CMakeLists.txt'),'cmake_minimum_required(VERSION 3.20)' + "`n" + 'project(installer_probe CXX)' + "`n" + 'add_executable(cpp-probe main.cpp)' + "`n",(New-Object Text.UTF8Encoding($false)))
             $build=Join-Path $ProbeRoot 'cpp-build'
             $null=Invoke-InstallerProbe 'cmake.exe' @('-S',$ProbeRoot,'-B',$build,'-A','x64') $ProbeRoot 180
             $null=Invoke-InstallerProbe 'cmake.exe' @('--build',$build,'--config','Release','--parallel',[string][Environment]::ProcessorCount) $ProbeRoot 180
@@ -118,7 +118,7 @@ function Test-InstallerEffects {
     }
     $roots = @{
         herdr=(Join-Path $env:APPDATA 'herdr'); opencode=(Join-Path $env:USERPROFILE '.config\opencode');
-        claude=(Join-Path $env:USERPROFILE '.claude');codex=(Join-Path $env:USERPROFILE '.codex');pi=(Join-Path $env:USERPROFILE '.pi\agent');
+        claude=(Join-Path $env:USERPROFILE '.claude');'claude-state'=$env:USERPROFILE;codex=(Join-Path $env:USERPROFILE '.codex');pi=(Join-Path $env:USERPROFILE '.pi\agent');
         copilot=(Join-Path $env:USERPROFILE '.copilot');'agent-skills'=(Join-Path $env:USERPROFILE '.agents\skills');
         git=$env:USERPROFILE;'git-config'=(Join-Path $env:USERPROFILE '.config\git');zed=(Join-Path $env:APPDATA 'Zed');
         starship=(Join-Path $env:USERPROFILE '.config');nushell=(Join-Path $env:APPDATA 'nushell');

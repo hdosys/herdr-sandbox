@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -70,6 +71,14 @@ func encodeCodingAgentSyncManifest(configuration codingAgentSyncConfiguration, c
 
 var copilotConfigurationFiles = []string{"settings.json", "copilot-instructions.md", "mcp-config.json", "lsp-config.json"}
 var copilotConfigurationDirectories = []string{"instructions", "agents", "skills", "hooks", "extensions"}
+var openCodeConfigurationFiles = []string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "herdr-tui-session.js", "package.json", "package-lock.json", "bun.lock", "bun.lockb"}
+var openCodeConfigurationDirectories = []string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"}
+var claudeConfigurationFiles = []string{"settings.json", "keybindings.json", "CLAUDE.md", "loop.md", "plugins/known_marketplaces.json", "hooks/herdr-agent-state.ps1"}
+var claudeConfigurationDirectories = []string{"agents", "commands", "rules", "skills", "output-styles", "themes", "workflows"}
+var piConfigurationFiles = []string{"settings.json", "models.json", "keybindings.json", "SYSTEM.md", "APPEND_SYSTEM.md", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"}
+var piConfigurationDirectories = []string{"prompts", "skills", "extensions", "themes"}
+var codexConfigurationFiles = []string{"config.toml", "AGENTS.md", "AGENTS.override.md", "hooks.json", "herdr-agent-state.ps1"}
+var codexConfigurationDirectories = []string{"agents", "rules", "hooks", "themes", "pets", "avatars"}
 
 func defaultCodingAgentConfigurationSources(userHome string, selection codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration) (codingAgentConfigurationSources, error) {
 	if !filepath.IsAbs(userHome) {
@@ -200,8 +209,7 @@ func archiveCodingAgentConfiguration(
 
 	if sources.Selection.OpenCode {
 		if err := archiveAllowedConfigurationRoot(sources.OpenCodeDirectory, "opencode",
-			[]string{"opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "AGENTS.md", "herdr-tui-session.js", "package.json", "package-lock.json", "bun.lock", "bun.lockb"},
-			[]string{"agent", "agents", "command", "commands", "mode", "modes", "plugin", "plugins", "skill", "skills", "theme", "themes", "tool", "tools"}, nil, addConfiguration); err != nil {
+			openCodeConfigurationFiles, openCodeConfigurationDirectories, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive OpenCode configuration: %w", err)
 		}
 		if err := archiveGit(sources.OpenCodeDirectory, "opencode"); err != nil {
@@ -221,15 +229,8 @@ func archiveCodingAgentConfiguration(
 
 	if sources.Selection.ClaudeCode {
 		if err := archiveAllowedConfigurationRoot(sources.ClaudeCodeDirectory, "claude-code",
-			[]string{"settings.json", "keybindings.json", "CLAUDE.md", "loop.md"},
-			[]string{"agents", "commands", "rules", "skills", "output-styles", "themes", "workflows"}, nil, addConfiguration); err != nil {
+			claudeConfigurationFiles, claudeConfigurationDirectories, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive Claude Code configuration: %w", err)
-		}
-		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "plugins", "known_marketplaces.json"), filepath.Join("claude-code", "plugins", "known_marketplaces.json"), addConfiguration); err != nil {
-			return fmt.Errorf("archive Claude Code marketplace configuration: %w", err)
-		}
-		if err := addOptionalConfigurationFile(filepath.Join(sources.ClaudeCodeDirectory, "hooks", "herdr-agent-state.ps1"), filepath.Join("claude-code", "hooks", "herdr-agent-state.ps1"), addConfiguration); err != nil {
-			return fmt.Errorf("archive Claude Code Herdr integration: %w", err)
 		}
 		if err := archiveGit(sources.ClaudeCodeDirectory, "claude-code"); err != nil {
 			return fmt.Errorf("archive Claude Code Git repository: %w", err)
@@ -282,8 +283,7 @@ func archiveCodingAgentConfiguration(
 
 	if sources.Selection.Pi {
 		if err := archiveAllowedConfigurationRoot(sources.PiDirectory, "pi",
-			[]string{"settings.json", "models.json", "keybindings.json", "SYSTEM.md", "APPEND_SYSTEM.md", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"},
-			[]string{"prompts", "skills", "extensions", "themes"}, nil, addConfiguration); err != nil {
+			piConfigurationFiles, piConfigurationDirectories, nil, addConfiguration); err != nil {
 			return fmt.Errorf("archive Pi configuration: %w", err)
 		}
 		if err := archiveFirstOptionalConfigurationFile(sources.PiDirectory, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, filepath.Join("pi", "AGENTS.md"), addConfiguration); err != nil {
@@ -322,16 +322,15 @@ func archiveCodexConfiguration(directory string, add func(string, string) error)
 	if err != nil || !exists {
 		return err
 	}
-	allowedFiles := map[string]bool{"config.toml": true, "AGENTS.md": true, "AGENTS.override.md": true, "hooks.json": true, "herdr-agent-state.ps1": true}
 	for _, entry := range entries {
-		if entry.IsDir() || (!allowedFiles[entry.Name()] && !strings.HasSuffix(entry.Name(), ".config.toml")) {
+		if entry.IsDir() || (!slices.Contains(codexConfigurationFiles, entry.Name()) && !strings.HasSuffix(entry.Name(), ".config.toml")) {
 			continue
 		}
 		if err := add(filepath.Join(directory, entry.Name()), filepath.Join("codex", entry.Name())); err != nil {
 			return fmt.Errorf("archive Codex config %s: %w", entry.Name(), err)
 		}
 	}
-	for _, name := range []string{"agents", "rules", "hooks", "themes", "pets", "avatars"} {
+	for _, name := range codexConfigurationDirectories {
 		if err := archiveOptionalConfigurationTree(filepath.Join(directory, name), filepath.Join("codex", name), nil, add); err != nil {
 			return err
 		}

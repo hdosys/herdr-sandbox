@@ -135,6 +135,11 @@ func selectedInstallerSettings(provisioning provisioningPlan) ([]WorkstationFile
 			roots[kind] = selected
 		}
 	}
+	if sources.ClaudeCodeState == "" {
+		delete(roots, "claude-state")
+	} else {
+		roots["claude-state"] = filepath.Dir(sources.ClaudeCodeState)
+	}
 	if !provisioning.Packages.enabled(packageGit) {
 		delete(roots, "git")
 		delete(roots, "git-config")

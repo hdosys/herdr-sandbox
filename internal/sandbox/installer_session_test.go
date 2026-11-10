@@ -39,6 +39,56 @@ func TestInstallerVerificationRejectsMissingAndContradictoryEvidence(t *testing.
 	}
 }
 
+func TestInstallerSettingsCaptureOnlyAuthoredAgentFilesAndPortableMCP(t *testing.T) {
+	root := t.TempDir()
+	for name, value := range map[string]string{
+		"claude/settings.json": "{}", "claude/skills/demo/SKILL.md": "authored",
+		"claude/debug/example.txt": "private", "claude/todos/example.json": "private",
+		"claude/projects/example/memory/MEMORY.md": "private", "claude/.credentials.json": "private",
+		"opencode/opencode.json": "{}", "opencode/projects/private.json": "private",
+		"codex/config.toml": "", "codex/sessions/private.json": "private",
+		"pi/settings.json": "{}", "pi/debug/private.txt": "private",
+		".claude.json": `{"mcpServers":{"test":{"command":"fixture"}},"projects":{"private":"history"},"oauthAccount":{"secret":"private"}}`,
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := exportWorkstationSettings(map[string]string{"claude": filepath.Join(root, "claude"), "claude-state": root, "opencode": filepath.Join(root, "opencode"), "codex": filepath.Join(root, "codex"), "pi": filepath.Join(root, "pi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 6 {
+		t.Fatalf("unexpected selected authored files: %+v", files)
+	}
+	for _, file := range files {
+		if bytes.Contains(file.Data, []byte("private")) {
+			t.Fatalf("runtime/private state exported: %s/%s", file.Kind, file.Path)
+		}
+		if file.Kind == "claude-state" {
+			var state map[string]json.RawMessage
+			if err := json.Unmarshal(file.Data, &state); err != nil || len(state) != 1 || state["mcpServers"] == nil {
+				t.Fatal("portable MCP extraction failed")
+			}
+			if !allowedWorkstationFile(file.Kind, file.Path) {
+				t.Fatal("portable MCP profile rejected")
+			}
+			destination := t.TempDir()
+			if err := importWorkstationFile(destination, file); err != nil {
+				t.Fatal(err)
+			}
+			actual, err := os.ReadFile(filepath.Join(destination, ".claude.json"))
+			if err != nil || !bytes.Equal(actual, file.Data) {
+				t.Fatal("portable MCP import differs")
+			}
+		}
+	}
+}
+
 // This opt-in uses the real framed receiver and exact NSIS candidate. Only a
 // synthetic configuration is installed, never SSH, Herdr or personal settings.
 func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
@@ -70,7 +120,7 @@ func TestInstallerReceiverNativeConfigurationAndConflict(t *testing.T) {
 		}
 	}
 	baseline := "$ErrorActionPreference='Stop'; . '" + strings.ReplaceAll(filepath.Join(bootstrap, "installer", "probes.ps1"), "'", "''") + "'; Get-InstallerBaseline | ConvertTo-Json -Compress"
-	query := hiddenCommandContext(t.Context(), mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(baseline))
+	query := hiddenCommandContext(t.Context(), mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(baseline))
 	baselineData, err := query.CombinedOutput()
 	if err != nil {
 		t.Fatalf("baseline: %v %s", err, baselineData)

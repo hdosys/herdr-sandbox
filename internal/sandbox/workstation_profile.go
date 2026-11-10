@@ -38,6 +38,8 @@ func allowedWorkstationFile(kind, relative string) bool {
 	switch kind {
 	case "herdr":
 		return relative == "config.toml"
+	case "claude-state":
+		return relative == ".claude.json"
 	case "git":
 		return slices.Contains([]string{".gitconfig", ".gitignore_global", ".gitattributes"}, relative)
 	case "git-config":
@@ -87,7 +89,7 @@ func workstationSettingsRoots() (map[string]string, error) {
 	}
 	return map[string]string{
 		"herdr": filepath.Join(appData, "herdr"), "opencode": openCode,
-		"claude": filepath.Join(home, ".claude"), "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
+		"claude": filepath.Join(home, ".claude"), "claude-state": home, "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
 		"copilot": filepath.Join(home, ".copilot"), "agent-skills": filepath.Join(home, ".agents", "skills"),
 		"git": home, "zed": filepath.Join(appData, "Zed"),
 		"git-config": filepath.Join(home, ".config", "git"),
@@ -240,6 +242,53 @@ func exportWorkstationSettings(roots map[string]string) ([]WorkstationFile, erro
 	for kind, root := range roots {
 		if err := validateWorkstationLocalPath(root); err != nil {
 			return nil, err
+		}
+		if kind == "claude-state" {
+			source := filepath.Join(root, ".claude.json")
+			if err := validateWorkstationLocalPath(source); err != nil {
+				return nil, err
+			}
+			data, found, err := buildClaudeCodeUserState(source)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				result = append(result, WorkstationFile{Kind: kind, Path: ".claude.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), Data: data})
+			}
+			continue
+		}
+		// Reuse the authored-configuration selector, not an extension-based walk
+		// over an agent's runtime, debug or project-state directories.
+		var files, directories []string
+		switch kind {
+		case "opencode":
+			files, directories = openCodeConfigurationFiles, openCodeConfigurationDirectories
+		case "claude":
+			files, directories = claudeConfigurationFiles, claudeConfigurationDirectories
+		case "copilot":
+			files, directories = copilotConfigurationFiles, copilotConfigurationDirectories
+		case "pi":
+			files, directories = piConfigurationFiles, piConfigurationDirectories
+		}
+		if files != nil || kind == "codex" {
+			capture := func(source, destination string) error {
+				return add(kind, strings.TrimPrefix(filepath.ToSlash(destination), kind+"/"), source)
+			}
+			var err error
+			if kind == "codex" {
+				err = archiveCodexConfiguration(root, capture)
+			} else {
+				err = archiveAllowedConfigurationRoot(root, kind, files, directories, nil, capture)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if kind == "pi" {
+				if err := archiveFirstOptionalConfigurationFile(root, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, "pi/AGENTS.md", capture); err != nil {
+					return nil, err
+				}
+			}
+			continue
 		}
 		if kind == "git" {
 			for _, name := range []string{".gitconfig", ".gitignore_global", ".gitattributes"} {
