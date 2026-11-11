@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -79,7 +80,7 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeTestFile(t, terminal.SettingsPath, `{"defaultProfile":"fixture"}`)
+	writeTestFile(t, terminal.SettingsPath, `{"copyOnSelect":true}`)
 	writeTestFile(t, filepath.Join(terminal.FragmentsPath, "fixture.json"), "{}")
 	packages, err := resolveWingetPackagePlan(wingetPackageConfiguration{Remove: []string{packageGit, packageGitHubCLI, packageStarship, packageZed}, Add: []string{}, Versions: map[string]string{}}, terminal)
 	if err != nil {
@@ -102,7 +103,13 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 	}
 	defer settings.Close()
 	data, err := io.ReadAll(settings)
-	if err != nil || !bytes.Contains(data, []byte(`"defaultProfile":"fixture"`)) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured struct {
+		CopyOnSelect bool `json:"copyOnSelect"`
+	}
+	if err := json.Unmarshal(data, &captured); err != nil || !captured.CopyOnSelect {
 		t.Fatal("unpackaged Terminal selection not preserved")
 	}
 }
