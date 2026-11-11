@@ -34,6 +34,12 @@ policy. Failed package integrity never activates that component; unrelated safe
 steps still continue. Packages, compiler tools and applications retain their own
 normal operating-system permissions and uninstall mechanisms.
 
+Use the private EXE and its matching data ZIP from the trusted build together.
+Normal setup does not pre-hash the entire ZIP or cryptographically bind every
+archive byte to the EXE. It processes entries during extraction and retains safe
+paths, entry error handling and the existing package checks before execution.
+Build/test provenance is separate from this runtime contract.
+
 The workstation build captures selected personal configuration **and supported
 authentication inside its private installer** through the same allowlisted
 exporters as normal Sandbox provisioning. Possession of the private artifact may

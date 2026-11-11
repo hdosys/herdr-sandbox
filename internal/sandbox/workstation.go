@@ -70,12 +70,11 @@ type WorkstationFile struct {
 }
 
 type WorkstationOptions struct {
-	Profile      string
-	Root         string
-	Refresh      bool
-	Inputs       string
-	InputsSHA256 string
-	Output       io.Writer
+	Profile string
+	Root    string
+	Refresh bool
+	Inputs  string
+	Output  io.Writer
 }
 
 type WorkstationStep struct {
@@ -314,8 +313,8 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
-	if options.Inputs == "" || options.InputsSHA256 == "" {
-		return "", errors.New("setup requires the complete installer set and its bound materialized inputs")
+	if options.Inputs == "" {
+		return "", errors.New("setup requires the installer data ZIP")
 	}
 	if options.Root == "" {
 		var err error
@@ -393,7 +392,7 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	if err := rejectMappedPathReparsePoints(input); err != nil {
 		return "", err
 	}
-	if err := applyWorkstationInputs(ctx, root, options.Inputs, options.InputsSHA256, options.Output); err != nil {
+	if err := applyWorkstationInputs(ctx, root, options.Inputs, options.Output); err != nil {
 		return "", err
 	}
 	preparedPath := filepath.Join(root, "prepared-inputs.json")

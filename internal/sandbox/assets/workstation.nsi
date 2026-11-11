@@ -147,7 +147,7 @@ Section "Workstation setup"
   ${If} $ProfilePath == ""
     StrCpy $ProfilePath "$PLUGINSDIR\payload\personal-profile.json"
   ${EndIf}
-  nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" --inputs $\"$EXEDIR\${INPUTS_FILENAME}$\" --inputs-sha256 ${INPUTS_SHA256} $RefreshArg'
+  nsExec::ExecToLog '$\"$PLUGINSDIR\payload\sandbox.exe$\" workstation setup --profile $\"$ProfilePath$\" --root $\"$StateRoot$\" --inputs $\"$EXEDIR\${INPUTS_FILENAME}$\" $RefreshArg'
   Pop $SetupExit
   ${If} $SetupExit == "0"
     StrCpy $FinishText "Setup completed. The report contains component and selected configuration/authentication results. Accounts without portable authentication and licensed applications may require sign-in. Re-run this installer to resume or refresh later."

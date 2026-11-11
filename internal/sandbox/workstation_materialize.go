@@ -350,13 +350,7 @@ func (reader workstationContextReader) Read(buffer []byte) (int, error) {
 	return reader.reader.Read(buffer)
 }
 
-func applyWorkstationInputs(ctx context.Context, root, sourcePath, expectedDigest string, output io.Writer) error {
-	if len(expectedDigest) != 64 {
-		return errors.New("materialized data requires its installer-bound SHA-256")
-	}
-	if _, err := hex.DecodeString(expectedDigest); err != nil {
-		return errors.New("materialized data SHA-256 is invalid")
-	}
+func applyWorkstationInputs(ctx context.Context, root, sourcePath string, output io.Writer) error {
 	if err := validateWorkstationLocalPath(sourcePath); err != nil {
 		return err
 	}
@@ -368,14 +362,6 @@ func applyWorkstationInputs(ctx context.Context, root, sourcePath, expectedDiges
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<30 {
 		return errors.New("materialized data is not a bounded regular file")
-	}
-	fmt.Fprintln(output, "Verifying materialized installer data...")
-	hash := sha256.New()
-	if _, err := io.Copy(hash, workstationContextReader{ctx, file}); err != nil {
-		return err
-	}
-	if fmt.Sprintf("%x", hash.Sum(nil)) != expectedDigest {
-		return errors.New("materialized installer data SHA-256 mismatch")
 	}
 	archive, err := zip.NewReader(file, info.Size())
 	if err != nil || len(archive.File) > 200000 {
@@ -399,7 +385,7 @@ func applyWorkstationInputs(ctx context.Context, root, sourcePath, expectedDiges
 	defer release()
 	seen := map[string]bool{}
 	var total uint64
-	fmt.Fprintf(output, "Applying %d verified data files without decompression...\n", len(archive.File))
+	fmt.Fprintf(output, "Applying %d data files without decompression...\n", len(archive.File))
 	for _, entry := range archive.File {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -458,6 +444,6 @@ func applyWorkstationInputs(ctx context.Context, root, sourcePath, expectedDiges
 	if !seen["prepared-inputs.json"] {
 		return errors.New("materialized input metadata is missing")
 	}
-	fmt.Fprintln(output, "Materialized input integrity and local cache publication completed.")
+	fmt.Fprintln(output, "Materialized input extraction and local cache publication completed.")
 	return nil
 }

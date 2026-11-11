@@ -618,8 +618,9 @@ installer, data ZIP and matching JSON provenance to persistent host storage. Tes
 the host with `sandbox workstation test --installer "C:\path\herdr-workstation_setup.exe"`.
 No separate profile is needed for this copied-installer path.
 
-Copy the private EXE, data ZIP and JSON provenance together to a local directory on
-the new computer, then run the EXE. Use NTFS or exFAT storage for data files larger
+Copy the private EXE and matching data ZIP together to a local directory on
+the new computer, then run the EXE. JSON provenance is only for development and
+Sandbox testing, not installation. Use NTFS or exFAT storage for data files larger
 than 4 GiB. No separate profile, source-computer connection or SSH is required on
 the target. For unattended installation:
 
@@ -637,14 +638,15 @@ private installer can grant access to those accounts. SSH private keys, project
 trees and Git history are not captured. Shared target transformations adapt shell
 paths and starting directories; source file hashes alone are not usability checks.
 
-The sidecar records the profile digest and file count; named builds identify their
+The development sidecar records the profile digest and file count; named builds identify their
 source as a saved installation, not a new live capture. Creating an installation
 inside a guest captures that guest's accessible settings, not an unseen complete
 host configuration. Create a new named installation
 on the source computer, then build it to capture later changes. Build preparation
 resolves and verifies the selected software inputs through the shared cache owners.
-The installer consumes the bound data companion rather than downloading those
-packages again. Unsupported or expired authentication and licences remain explicit
+The installer reads the data companion directly during extraction, without a
+whole-archive hash prepass or an intermediate ZIP copy, rather than downloading
+those packages again. Unsupported or expired authentication and licences remain explicit
 provider boundaries; copied data is not a guarantee of a successful account login.
 
 ### Completion, failures and resume

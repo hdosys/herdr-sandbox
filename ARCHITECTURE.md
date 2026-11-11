@@ -77,6 +77,11 @@ This file owns stable technical design: command ownership, host/guest boundaries
   Private staging stays outside the checkout; sidecars bind identities and counts
   without values. Protected resume state retains the snapshot rather than a
   pointer to temporary extraction files. Public Sandbox packaging excludes it.
+  Normal workstation setup reads the stored data ZIP directly once for extraction,
+  without a whole-archive SHA-256 prepass or whole-ZIP staging copy. Existing entry
+  errors, safe destination publication and package execution validation remain.
+  Artifact digests and JSON provenance belong to build/test snapshot ownership;
+  they are not an end-user installation prerequisite.
 - `workstation_build.go` owns saved personal installations and the single runtime
   NSIS builder. The template is embedded in the application; installed payload
   files supply its runtime, so no source checkout or Go compiler is needed.

@@ -27,7 +27,8 @@ test runs that exact installer in a fresh Sandbox from the Windows host. Existin
 guests are preserved; use sandbox down separately only after saving their work.
 After a successful test, sandbox attach opens the terminal.
 For an installer copied from another computer, use test --installer FILE and keep
-its matching JSON sidecar beside it. No separate profile is needed for that test.
+its matching data ZIP and development JSON beside it. No separate profile is needed
+for that test. Normal installation needs only the EXE and data ZIP.
 
 setup provisions Windows x64 build 19041 or newer without creating a Sandbox.
 Windows 11 is recommended. Setup state stays below ProgramData.
@@ -89,7 +90,6 @@ func runWorkstation(ctx context.Context, args []string, stdout, stderr io.Writer
 		flags.StringVar(&options.Root, "root", "", "owned local installation-state root")
 		flags.BoolVar(&options.Refresh, "refresh", false, "rerun completed steps intentionally")
 		flags.StringVar(&options.Inputs, "inputs", "", "materialized installer data archive")
-		flags.StringVar(&options.InputsSHA256, "inputs-sha256", "", "installer-bound data SHA-256")
 		execute = func() error {
 			report, err := sandbox.SetupWorkstation(ctx, options)
 			if err != nil && report == "" {

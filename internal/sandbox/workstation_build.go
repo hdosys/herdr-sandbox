@@ -191,7 +191,7 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	result.DataSHA256 = materializedDigest
 	buildContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	command := hiddenCommandContext(buildContext, compiler, "/WX", "/V2", "/NOCONFIG", "/DPACKAGE_DIR="+stage, "/DOUTPUT_FILE="+installer, "/DFIXED_VERSION="+options.Identity.Version+".0", "/DBUILD_FRESHNESS="+options.Identity.Freshness, "/DAPP_DISPLAY_NAME="+productidentity.WorkstationDisplayName, "/DAPP_APPLICATION_NAME="+productidentity.WorkstationApplicationName, "/DINPUTS_FILENAME="+result.DataFileName, "/DINPUTS_SHA256="+result.DataSHA256, script)
+	command := hiddenCommandContext(buildContext, compiler, "/WX", "/V2", "/NOCONFIG", "/DPACKAGE_DIR="+stage, "/DOUTPUT_FILE="+installer, "/DFIXED_VERSION="+options.Identity.Version+".0", "/DBUILD_FRESHNESS="+options.Identity.Freshness, "/DAPP_DISPLAY_NAME="+productidentity.WorkstationDisplayName, "/DAPP_APPLICATION_NAME="+productidentity.WorkstationApplicationName, "/DINPUTS_FILENAME="+result.DataFileName, script)
 	command.Stdout, command.Stderr = options.Output, options.Errors
 	fmt.Fprintln(options.Output, "Building the private installer with verified materialized data, without recompression.")
 	if err := command.Run(); err != nil {
@@ -260,7 +260,7 @@ func BuildWorkstationInstaller(ctx context.Context, options WorkstationBuildOpti
 	if err != nil {
 		return result, err
 	}
-	fmt.Fprintf(options.Output, "PRIVATE installer: %s\nSHA-256: %s\nRequired data: %s\nData SHA-256: %s\nKeep the installer, data and provenance together and private. Sandbox acceptance pending.\n", canonical, result.InstallerSHA256, filepath.Join(output, result.DataFileName), result.DataSHA256)
+	fmt.Fprintf(options.Output, "PRIVATE installer: %s\nSHA-256: %s\nRequired data: %s\nData SHA-256: %s\nFor installation, keep only the EXE and data ZIP together and private. JSON provenance is for development and Sandbox testing only.\n", canonical, result.InstallerSHA256, filepath.Join(output, result.DataFileName), result.DataSHA256)
 	return result, nil
 }
 
