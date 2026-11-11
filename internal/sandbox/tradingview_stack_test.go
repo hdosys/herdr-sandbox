@@ -27,7 +27,7 @@ func TestTVControlInputSetterRejectsUnknownSourceWithoutMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
-		path: defaultProvisioningPath(t, stackProvisioningName), names: []string{"Repair-TVControlInputSetter"},
+		path: defaultProvisioningPath(t, stackProvisioningName), names: []string{"Repair-TVControlSource", "Repair-TVControlInputSetter"},
 	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s

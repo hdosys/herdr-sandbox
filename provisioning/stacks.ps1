@@ -4181,23 +4181,25 @@ function Get-TradingViewDesktopPortablePackage {
     }
 }
 
-function Repair-TVControlInputSetter {
+function Repair-TVControlSource {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string]$PackageDirectory)
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageDirectory,
+        [string]$RelativePath, [string]$Role,
+        [string]$OriginalHash, [string]$CorrectedHash,
+        [string]$Before, [string]$After
+    )
 
-    # Whole-file identities of official 2.5.2 and the reviewed correction.
-    # These validate patch applicability; they never select the npm version.
-    $originalHash = '8922A45C867B078616D50B3376CB0FBA62831D4BE0482D4DBF4141E15C0F7325'
-    $correctedHash = '5AB3A6DFF57C3C36BB06D403968475C00CC06B985476B261A6B7A609032B5E4D'
-    $sourcePath = Join-Path $PackageDirectory 'src\core\indicators.js'
+    # Reviewed whole-file identities validate patch applicability, not npm version selection.
+    $sourcePath = Join-Path $PackageDirectory $RelativePath
     $item = Get-Item -LiteralPath $sourcePath -Force -ErrorAction Stop
     if ($item.PSIsContainer -or $item.Length -le 0 -or $item.Length -gt 1MB) {
-        throw 'TVControl input-setter source is not a bounded regular file.'
+        throw "TVControl $Role source is not a bounded regular file."
     }
     $entry = $item
     while ($null -ne $entry) {
         if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "TVControl input-setter source path contains a reparse point: $($entry.FullName)"
+            throw "TVControl $Role source path contains a reparse point: $($entry.FullName)"
         }
         $entry = if ($entry -is [IO.FileInfo]) { $entry.Directory } else { $entry.Parent }
     }
@@ -4205,19 +4207,41 @@ function Repair-TVControlInputSetter {
     $stream = $null
     try {
         $stream = [IO.File]::Open($sourcePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-        if ($stream.Length -le 0 -or $stream.Length -gt 1MB) { throw 'TVControl input-setter source size changed.' }
+        if ($stream.Length -le 0 -or $stream.Length -gt 1MB) { throw "TVControl $Role source size changed." }
         $hash = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
         if ($hash -ceq $correctedHash) {
-            Write-Output 'TVControl input setter: verified corrected source; no patch needed.'
+            Write-Output "TVControl ${Role}: verified corrected source; no patch needed."
             return
         }
         if ($hash -cne $originalHash) {
-            throw "TVControl input-setter source is unknown (SHA-256 $hash). Review the current official source before provisioning; no patch was applied."
+            throw "TVControl $Role source is unknown (SHA-256 $hash). Review the current official source before provisioning; no patch was applied."
         }
         $stream.Position = 0
         $reader = New-Object IO.StreamReader($stream, (New-Object Text.UTF8Encoding($false, $true)), $false, 4096, $true)
         try { $source = $reader.ReadToEnd() } finally { $reader.Dispose() }
-        $before = @'
+        $corrected = $source.Replace($before.Replace("`r`n", "`n"), $after.Replace("`r`n", "`n"))
+        $bytes = (New-Object Text.UTF8Encoding($false, $true)).GetBytes($corrected)
+        if ([BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '') -cne $correctedHash) {
+            throw "TVControl $Role patch did not produce the reviewed source; no patch was applied."
+        }
+        $stream.Position = 0
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.SetLength($bytes.Length)
+        $stream.Flush($true)
+        $stream.Position = 0
+        if ([BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') -cne $correctedHash) {
+            throw "TVControl $Role patch readback failed."
+        }
+        Write-Output "TVControl ${Role}: applied and verified reviewed correction."
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+        $sha256.Dispose()
+    }
+}
+
+function Repair-TVControlInputSetter {
+    param([Parameter(Mandatory = $true)][string]$PackageDirectory)
+    $before = @'
       var availableIds = [];
       for (var i = 0; i < currentInputs.length; i++) {
         availableIds.push(currentInputs[i].id);
@@ -4228,7 +4252,7 @@ function Repair-TVControlInputSetter {
       }
       study.setInputValues(currentInputs);
 '@
-        $after = @'
+    $after = @'
       var availableIds = [];
       var changedInputs = [];
       for (var i = 0; i < currentInputs.length; i++) {
@@ -4242,24 +4266,18 @@ function Repair-TVControlInputSetter {
       // Leave every input outside this request untouched.
       if (changedInputs.length > 0) study.setInputValues(changedInputs);
 '@
-        $corrected = $source.Replace($before.Replace("`r`n", "`n"), $after.Replace("`r`n", "`n"))
-        $bytes = (New-Object Text.UTF8Encoding($false, $true)).GetBytes($corrected)
-        if ([BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '') -cne $correctedHash) {
-            throw 'TVControl input-setter patch did not produce the reviewed source; no patch was applied.'
-        }
-        $stream.Position = 0
-        $stream.Write($bytes, 0, $bytes.Length)
-        $stream.SetLength($bytes.Length)
-        $stream.Flush($true)
-        $stream.Position = 0
-        if ([BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') -cne $correctedHash) {
-            throw 'TVControl input-setter patch readback failed.'
-        }
-        Write-Output 'TVControl input setter: applied and verified requested-input-only correction.'
-    } finally {
-        if ($null -ne $stream) { $stream.Dispose() }
-        $sha256.Dispose()
-    }
+    Repair-TVControlSource -PackageDirectory $PackageDirectory -RelativePath 'src\core\indicators.js' -Role 'input-setter' `
+        -OriginalHash '8922A45C867B078616D50B3376CB0FBA62831D4BE0482D4DBF4141E15C0F7325' `
+        -CorrectedHash '5AB3A6DFF57C3C36BB06D403968475C00CC06B985476B261A6B7A609032B5E4D' -Before $before -After $after
+}
+
+function Repair-TVControlLaunchPath {
+    param([Parameter(Mandatory = $true)][string]$PackageDirectory)
+    $before = '      tvPath = deps.execFileSync(cmd, [arg], { timeout: 3000 }).toString().trim().split(''\n'')[0];'
+    $after = '      tvPath = deps.execFileSync(cmd, [arg], { timeout: 3000 }).toString().trim().split(/\r?\n/)[0];'
+    Repair-TVControlSource -PackageDirectory $PackageDirectory -RelativePath 'src\core\health.js' -Role 'launch-path' `
+        -OriginalHash '6771C0B6CB311BB053CF47350102AF3C9127AC12CC1DCF466CA02FBB315E162D' `
+        -CorrectedHash '3AF02FA2CB1B3DA533191E49608D2EBC7BFE40532B1535D131A88C67433B4CD2' -Before $before -After $after
 }
 
 function Install-TradingViewStack {
@@ -4419,6 +4437,7 @@ function Install-TVControl {
         Write-Warning "TVControl installed successfully, but its package version does not match $TVControlVersion. Provisioning will continue to the CLI smoke."
     }
     Repair-TVControlInputSetter -PackageDirectory $packageDirectory
+    Repair-TVControlLaunchPath -PackageDirectory $packageDirectory
     $packageRootPath = [IO.Path]::GetFullPath($packageDirectory).TrimEnd('\') + '\'
     foreach ($bin in @($tvBin, $tvControlBin)) {
         if ([string]::IsNullOrWhiteSpace($bin) -or $bin -notmatch '^[A-Za-z0-9._/-]+\.js$' -or
