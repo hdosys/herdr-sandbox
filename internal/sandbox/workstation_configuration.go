@@ -230,7 +230,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 func mergeInstallerHerdrConfiguration(ctx context.Context, source, target []byte) ([]byte, error) {
 	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(source)))
 	if len(encoded) > 1024*1024 {
-		return nil, errors.New("Herdr configuration exceeds the native import boundary")
+		return nil, errors.New("portable Herdr configuration exceeds the native import boundary")
 	}
 	base64.StdEncoding.Encode(encoded, source)
 	defer clear(encoded)
@@ -272,11 +272,11 @@ func mergeInstallerHerdrConfiguration(ctx context.Context, source, target []byte
 	}
 	var outcome string
 	if json.Unmarshal(bytes.TrimSpace(result), &outcome) != nil || (outcome != "applied" && outcome != "unchanged") {
-		return nil, errors.New("Herdr did not confirm portable settings import")
+		return nil, errors.New("portable settings import was not confirmed by Herdr")
 	}
 	merged, found, err := readBoundedRegularFile(path, 1024*1024)
 	if err != nil || !found {
-		return nil, errors.New("Herdr did not publish the imported configuration")
+		return nil, errors.New("imported configuration was not published by Herdr")
 	}
 	return merged, nil
 }

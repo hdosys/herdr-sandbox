@@ -378,7 +378,7 @@ func configurationArchivePayloadFileCount(data []byte) (int, error) {
 	}
 	count := 0
 	for _, file := range reader.File {
-		if file.Name == "herdr/expected-sha256.txt" {
+		if file.Name == "herdr/expected-sha256.txt" || file.Name == "herdr/portable-config.toml" {
 			continue
 		}
 		if !file.FileInfo().IsDir() && file.Name != "herdr-sandbox/apify-access.ps1" && file.Name != windowsTerminalEditionArchivePath && file.Name != starshipPresetArchivePath && file.Name != githubCLIAuthenticationArchivePath && file.Name != tradingViewAuthenticationArchivePath && file.Name != configurationApplyScriptArchivePath && file.Name != configurationWorkspaceManifestPath && file.Name != configurationPackagePlanArchivePath && file.Name != configurationWorktreeDirectoryArchivePath && file.Name != configurationAgentWorktreeInstructionsArchivePath && file.Name != codingAgentSyncManifestArchivePath && file.Name != tradingViewCookieSyncSourceArchivePath && file.Name != tradingViewSettingsArchivePath {
