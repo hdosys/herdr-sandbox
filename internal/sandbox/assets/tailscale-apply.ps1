@@ -33,6 +33,7 @@ function Invoke-TailscaleApply {
             Start-TailscaleService
         }
     } elseif ([string]$request.mode -ceq 'enroll') {
+        $stateExistedBefore = Test-TailscaleStateExists
         $authPath = Join-Path 'C:\HerdrSandbox\staging' ('tailscale-auth-' + [Guid]::NewGuid().ToString('N'))
         $enrollmentAttempted = $false
         try {
@@ -48,10 +49,12 @@ function Invoke-TailscaleApply {
             $enrollmentAttempted = $true
             & $tailscale up ('--auth-key=file:' + $authPath) ('--hostname=' + $HerdrTailscaleHostName) '--unattended=true' '--timeout=2m' *> $null
             if ($LASTEXITCODE -ne 0) {
-                try { $identity = Wait-TailscaleIdentity -ExpectedSID $currentSID } catch { $identityNotEstablished = $true }
+                $identity = Wait-TailscaleIdentity -ExpectedSID $currentSID
             }
         } catch {
-            if (-not $enrollmentAttempted) { $identityNotEstablished = $true } else { throw }
+            if (Confirm-TailscaleNonEnrollment -EnrollmentAttempted $enrollmentAttempted -StateExistedBefore $stateExistedBefore) {
+                $identityNotEstablished = $true
+            } else { throw }
         } finally {
             $authBytes = $null
             if (Test-Path -LiteralPath $authPath) {

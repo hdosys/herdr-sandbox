@@ -206,10 +206,12 @@ explicitly stated otherwise.
 
 ### Failure, retention, and cleanup
 
-- A fresh, explicitly confirmed Tailscale non-enrollment remains recorded as
+- A fresh Tailscale failure before enrollment is attempted, with no prior or
+  newly created state, remains recorded as
   `tailscale-not-enrolled` after independent setup finishes. It does not publish
   full readiness. `down` can skip identity recovery only while no protected identity
-  exists; unknown failures and existing identities retain preservation checks.
+  exists; attempted enrollment, unknown failures, missing connection evidence and
+  existing identities retain preservation checks.
 
 - The shared failure-isolation contract above applies to every package and built-in
   stack, not a list of specially tolerated packages. Independent configuration and

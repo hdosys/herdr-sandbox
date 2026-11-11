@@ -481,13 +481,14 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 				if err != nil {
 					return DownResult{}, fmt.Errorf("read failed Sandbox connection status for Tailscale recovery: %w", err)
 				}
-				if found {
-					if err := connectable.validate(); err != nil {
-						return DownResult{}, fmt.Errorf("validate failed Sandbox connection status for Tailscale recovery: %w", err)
-					}
-					captureStatus = connectionStatus(connectable)
-					capture = true
+				if !found {
+					return DownResult{}, errors.New("Tailscale recovery requires connection evidence; no close request was sent")
 				}
+				if err := connectable.validate(); err != nil {
+					return DownResult{}, fmt.Errorf("validate failed Sandbox connection status for Tailscale recovery: %w", err)
+				}
+				captureStatus = connectionStatus(connectable)
+				capture = true
 			}
 		case SessionStarting:
 			_, connectable, err := readOptionalStatus[connectableStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", connectableFileName))

@@ -16,6 +16,18 @@ function Get-TailscaleService {
     return Get-Service -Name 'Tailscale' -ErrorAction Stop
 }
 
+function Test-TailscaleStateExists {
+    $path = Join-Path $env:ProgramData 'Tailscale\server-state.conf'
+    try { $null = Get-Item -LiteralPath $path -Force -ErrorAction Stop; return $true }
+    catch [Management.Automation.ItemNotFoundException] { return $false }
+}
+
+function Confirm-TailscaleNonEnrollment {
+    param([bool]$EnrollmentAttempted, [bool]$StateExistedBefore)
+    if ($EnrollmentAttempted -or $StateExistedBefore) { return $false }
+    return -not (Test-TailscaleStateExists)
+}
+
 function Stop-TailscaleService {
     $service = Get-TailscaleService
     if ($service.Status -ne [ServiceProcess.ServiceControllerStatus]::Stopped) {

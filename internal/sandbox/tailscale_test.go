@@ -12,7 +12,37 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestTailscaleNonEnrollmentProducerRejectsUncertainOutcomes(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "")
+	root := t.TempDir()
+	t.Setenv("ProgramData", root)
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: filepath.Join("assets", "tailscale-lifecycle.ps1"), names: []string{"Test-TailscaleStateExists", "Confirm-TailscaleNonEnrollment"},
+	})
+	script := "$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\\Modules'\n" + setup + `
+if (-not (Confirm-TailscaleNonEnrollment -EnrollmentAttempted $false -StateExistedBefore $false)) { throw 'Absent state before any attempt was not recognized.' }
+$directory = Join-Path $env:ProgramData 'Tailscale'
+$null = New-Item -ItemType Directory -Path $directory
+[IO.File]::WriteAllText((Join-Path $directory 'server-state.conf'), 'opaque existing state')
+if (Confirm-TailscaleNonEnrollment -EnrollmentAttempted $false -StateExistedBefore $false) { throw 'Existing state was ignored.' }
+function Test-TailscaleStateExists { throw 'controlled failed or malformed observation' }
+if (Confirm-TailscaleNonEnrollment -EnrollmentAttempted $true -StateExistedBefore $false) { throw 'Attempted enrollment was treated as absent.' }
+if (Confirm-TailscaleNonEnrollment -EnrollmentAttempted $false -StateExistedBefore $true) { throw 'Earlier state was forgotten.' }
+$failedClosed = $false
+try { $null = Confirm-TailscaleNonEnrollment -EnrollmentAttempted $false -StateExistedBefore $false } catch { $failedClosed=$true }
+if (-not $failedClosed) { throw 'Unknown state did not fail closed.' }
+'verified non-enrollment producer'
+`
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil || !bytes.Contains(output, []byte("verified non-enrollment producer")) {
+		t.Fatalf("non-enrollment producer: %v %s", err, output)
+	}
+}
 
 type testExitCodeError int
 
