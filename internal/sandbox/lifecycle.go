@@ -482,7 +482,7 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 					return DownResult{}, fmt.Errorf("read failed Sandbox connection status for Tailscale recovery: %w", err)
 				}
 				if !found {
-					return DownResult{}, errors.New("Tailscale recovery requires connection evidence; no close request was sent")
+					return DownResult{}, errors.New("recovery of Tailscale identity requires connection evidence; no close request was sent")
 				}
 				if err := connectable.validate(); err != nil {
 					return DownResult{}, fmt.Errorf("validate failed Sandbox connection status for Tailscale recovery: %w", err)
