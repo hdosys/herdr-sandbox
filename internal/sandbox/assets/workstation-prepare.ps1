@@ -27,7 +27,7 @@ foreach ($directory in @($CacheDirectory, (Get-ProvisioningPath 'staging'), (Get
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 $provisioningPackagePlan = [pscustomobject]@{Enabled=@{};Versions=@{}}
-$packageJobs = @(Get-ProvisioningPackageJobs -Packages (@([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($selection.packages)))
+$packageJobs = @(Get-ProvisioningPackageJobs -Packages @($selection.packages) -IncludeVCRuntime:($selection.stacks.Count -gt 0))
 foreach ($package in $packageJobs) {
     $provisioningPackagePlan.Enabled[[string]$package.id] = $true
     $provisioningPackagePlan.Versions[[string]$package.id] = [string]$package.version

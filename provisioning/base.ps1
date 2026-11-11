@@ -2803,7 +2803,8 @@ function Get-ProvisioningPackagePrerequisites {
 }
 
 function Get-ProvisioningPackageJobs {
-    param([object[]]$Packages)
+    param([object[]]$Packages, [switch]$IncludeVCRuntime)
+    if ($IncludeVCRuntime) { $Packages = @([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + $Packages }
     $versions = @{}
     foreach ($package in $Packages) { $versions[[string]$package.id] = [string]$package.version }
     $seen = @{}
@@ -4358,8 +4359,7 @@ Invoke-ProvisioningIndependentStep -Name 'WinGet' -Failures $DevelopmentFailures
 
 # Both targets use the same package dispatch and prerequisite declarations.
 # The normal target no longer has a separate handwritten chain of fail-fast calls.
-$selectedPackages = @([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($provisioningPackagePlan.Data.defaults) + @($provisioningPackagePlan.Data.additions)
-foreach ($package in @(Get-ProvisioningPackageJobs -Packages $selectedPackages)) {
+foreach ($package in @(Get-ProvisioningPackageJobs -Packages (@($provisioningPackagePlan.Data.defaults) + @($provisioningPackagePlan.Data.additions)) -IncludeVCRuntime)) {
     Invoke-ProvisioningIndependentStep -Name ('Package ' + $package.ID) -Failures $DevelopmentFailures -Requires $package.Requires `
         -InputValues @($package.Version) -Action { Install-ProvisioningPackage -Id $package.ID -Version $package.Version }
 }

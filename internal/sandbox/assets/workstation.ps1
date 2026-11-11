@@ -125,13 +125,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
 
     Add-WorkstationJob 'Windows desktop preferences' 'desktop' -Seconds 60
     Add-WorkstationJob 'WinGet' 'winget' -Seconds 600
-    $vcRuntimeID = 'Microsoft.VCRedist.2015+.x64'
-    $needsVCRuntime = $nativeProfile.stacks.Count -gt 0 -or $provisioningPackagePlan.Enabled.ContainsKey('hdosys.herdr-win') -or $provisioningPackagePlan.Enabled.ContainsKey($vcRuntimeID)
-    $packages = @($nativeProfile.packages)
-    if ($needsVCRuntime) {
-        $packages = @([pscustomobject]@{id=$vcRuntimeID;version=''}) + $packages
-    }
-    foreach ($package in @(Get-ProvisioningPackageJobs -Packages $packages)) {
+    foreach ($package in @(Get-ProvisioningPackageJobs -Packages @($nativeProfile.packages) -IncludeVCRuntime:($nativeProfile.stacks.Count -gt 0))) {
         Add-WorkstationJob -Name ('Package ' + $package.ID) -Action package -Requires $package.Requires -PackageID $package.ID -Version $package.Version -Seconds 600
     }
     if ($provisioningPackagePlan.Enabled.ContainsKey('Microsoft.PowerShell')) {

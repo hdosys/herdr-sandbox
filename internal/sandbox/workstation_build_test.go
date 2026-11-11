@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -10,10 +11,58 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"herdr-sandbox/internal/installerartifact"
 	"herdr-sandbox/internal/productidentity"
 )
+
+func TestWorkstationPreparationExecutesImplicitPackageJobs(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "")
+	root := t.TempDir()
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: defaultProvisioningPath(t, baseProvisioningName), names: []string{"Get-ProvisioningPackagePrerequisites", "Get-ProvisioningPackageJobs"},
+	})
+	base := "param($Phase,$PackageCacheDirectory,$ProcessOwnerPath)\n" + setup + `
+$script:PreparedPackageMetadata = @{}
+function Prepare-ProvisioningWinGet {}
+function Install-ProvisioningPackage {
+    param($Id,$Version)
+    $script:PreparedPackageMetadata[$Id] = @{metadata=@{Id=$Id;Version=$Version;InstallerType='fixture';Scope=''}}
+}
+`
+	for name, data := range map[string][]byte{
+		"base.ps1": []byte(base), "stacks.ps1": {},
+		"selection.json": []byte(`{"schemaVersion":1,"packages":[],"stacks":["go"],"tools":[]}`),
+		"prepare.ps1":    workstationPrepareScript,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	resultPath := filepath.Join(root, "result.json")
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", filepath.Join(root, "prepare.ps1"),
+		"-SelectionPath", filepath.Join(root, "selection.json"), "-BasePath", filepath.Join(root, "base.ps1"), "-StackPath", filepath.Join(root, "stacks.ps1"),
+		"-ProcessOwnerPath", "not-executed.cs", "-CacheDirectory", filepath.Join(root, "cache"), "-WorkDirectory", root, "-ResultPath", resultPath, "-PackagesOnly")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("actual preparation script: %v %s", err, output)
+	}
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Packages []struct{ Metadata struct{ ID string } }
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Packages) != 1 || result.Packages[0].Metadata.ID != "Microsoft.VCRedist.2015+.x64" {
+		t.Fatal("implicit VC runtime was planned but not prepared")
+	}
+}
 
 func TestWorkstationPublicationFailurePreservesPreviousPair(t *testing.T) {
 	if runtime.GOOS != "windows" {
