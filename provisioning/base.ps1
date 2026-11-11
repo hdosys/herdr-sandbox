@@ -2428,6 +2428,7 @@ function Install-ProvisioningCachedPackage {
     New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
     Assert-ProvisioningCachePath -Path $packageRoot
     $entryDirectory = Get-ProvisioningPackageCacheDirectory -Metadata $metadata
+    $entryName = Split-Path -Path $entryDirectory -Leaf
     $lockPath = Join-Path $packageRoot '.lock'
     $lock = $null
     $guestStage = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
