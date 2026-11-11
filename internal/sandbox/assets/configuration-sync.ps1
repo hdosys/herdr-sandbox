@@ -60,7 +60,9 @@ function Set-TerminalTargetProfiles {
         }
         if ($shell) {
             $resolved = Get-Command $shell -CommandType Application -ErrorAction Stop | Select-Object -First 1
-            Assert-ConfigurationDestinationPath -Path $resolved.Source
+            # This is a registered command to execute, not a file destination.
+            # Windows App Execution Aliases (including packaged pwsh.exe) are
+            # reparse points by design. Keep strict checks on files we write.
             $profile | Add-Member -NotePropertyName commandline -NotePropertyValue ('"' + $resolved.Source + '"' + $commandParts.Groups['arguments'].Value) -Force
         }
     }
