@@ -47,6 +47,14 @@ in the global OpenCode configuration, not this repository.
   exact path.
 - Never commit `.agent/`, generated run workspaces, logs, binaries, credentials,
   private keys/tokens, or local runtime state.
+- Before each installer test, check free capacity on the host and target volumes.
+  After a terminal test or superseding a candidate, remove its unneeded task-owned
+  run copies on both systems, including large data archives and extraction trees.
+  Keep concise required evidence, the current canonical artifact and useful verified
+  shared caches. Confirm process termination and exact ownership first; do not
+  delete active run mappings, installed tool locations, user data or uncertain
+  outputs, and never use cleanup as authority to close a ready Sandbox. Do not
+  accumulate obsolete runs until a volume is full or the user has to clean it.
 - Long/resumable work uses one `.agent/sessions/<session-id>/` unless
   `OPENCODE_SESSION_DIR` or `AGENT_SESSION_DIR` selects it. Never create root
   `TASK.md`, `STATE.md`, or `LOG.md`; never write another session's directory.
