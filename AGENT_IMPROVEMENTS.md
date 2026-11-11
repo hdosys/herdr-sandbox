@@ -34,9 +34,49 @@ cross-project workflow in the global OpenCode configuration repository.
   repeated long attempts. A temporary runner also waited on unbounded output
   reads after killing its child. Start transport work with one small framed-input
   smoke in the actual calling environment; give startup, execution, output drain,
-  and owned-tree cleanup a single finite total budget. Expected benefit: expose
-  environment-specific failures before cross-layer edits and avoid lengthy waits
+  and owned-tree cleanup a single finite total budget. Exercise the exact output
+  API used by the application: a promoted `exec.Cmd.Output` bypassed the owned
+  suspended-start/resume and cancellation path, despite lower-level runner checks.
+  A deadline is not evidence that the guest installer or its descendants stopped.
+  Expected benefit: expose environment-specific failures before cross-layer edits
+  and avoid lengthy waits
   without a usable installer.
+
+- **Status: proposed. Gate repeated long acceptance runs on a focused causal check.**
+  Evidence: repeated installer runs lasted 18 to 45 minutes while shared startup,
+  configuration and process-completion defects remained unresolved. After a failed
+  long run, require the last verified phase, the failing responsibility owner, one
+  discriminating check, and confirmation that the previous owned execution ended.
+  Run the complete acceptance path again only after the demonstrated correction
+  passes its focused check. Timebox startup, diagnosis and acceptance separately,
+  with evidence capture and owned cleanup defined before execution. Reaching a
+  deadline changes the next action; it does not trigger another identical run.
+  Expected benefit: avoid hour-scale diagnostic loops and overlapping installers.
+  Routing: retained here at the user's request for later adoption by the global
+  OpenCode workflow owner; no global files changed.
+
+- **Status: proposed. Keep prepared inputs immutable during a correction round.**
+  Evidence: rebuilding installer code re-resolved package versions, introducing a
+  changed Nushell manifest scope and additional downloads during unrelated fixes.
+  Bind a correction round to the existing verified dependency snapshot and reuse
+  it while changing code. Refresh dependencies only as an explicit new input
+  milestone, not as a side effect of every rebuild. Retain integrity validation;
+  do not substitute stale-cache fallbacks or permanently pin global defaults.
+  Expected benefit: reproducible failures, fewer downloads and faster rechecks.
+  Routing: proposed global workflow refinement, stored locally until the authorized
+  global owner can reconcile it with provisioning-version rules.
+
+- **Status: proposed. Prove shared-path parity before adding a delivery variant.**
+  Evidence: the private installer initially used direct package installation and
+  raw configuration copies instead of the existing cache adapters, target
+  transformations and credential exporters. Installation/version checks passed
+  while shell starts and authentication remained unusable. Identify the existing
+  input-to-effect owner and the exact allowed differences first; implement transport
+  differences around it. Include one real user-facing configuration/authentication
+  journey in initial acceptance, not just source hashes or producer success reports.
+  Expected benefit: prevent a second implementation and repeated per-tool repairs.
+  Routing: proposed global outcome/reuse rule; this file is temporary proposal
+  storage, not a second canonical workflow policy.
 
 - **Status: proposed. Verify external distribution identities before rename edits.**
   Evidence: the Herdr rename changed the version marker and repository name but
