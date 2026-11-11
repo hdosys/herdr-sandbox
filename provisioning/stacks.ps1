@@ -598,6 +598,7 @@ function Install-StackVisualStudioBuildTools {
         $RustToolchainTask = $null
     }
     $rustFailures = New-Object 'Collections.Generic.List[string]'
+    $rustExecution = [pscustomobject]@{Attempted=$false}
     Invoke-ProvisioningStackStep -Name 'Visual Studio Build Tools' -Action {
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $cacheRoot = Get-ProvisioningPath 'cache\vsbt'
@@ -656,13 +657,6 @@ function Install-StackVisualStudioBuildTools {
         $installedPath = Get-StackVisualStudioInstallation -Target $target
         if (-not [string]::IsNullOrWhiteSpace($installedPath)) {
             Write-Output "Visual Studio Build Tools already matches Current: $($target.BuildVersion)"
-            if ($null -ne $RustToolchainTask) {
-                Invoke-ProvisioningNative -Role ([string]$RustToolchainTask['Role']) `
-                    -FilePath $RustToolchainTask['FilePath'] `
-                    -ArgumentList ([string[]]@($RustToolchainTask['ArgumentList'])) `
-                    -WorkingDirectory ([string]$RustToolchainTask['WorkingDirectory']) `
-                    -TimeoutSeconds ([int]$RustToolchainTask['TimeoutSeconds']) | Out-Null
-            }
         } else {
             $layout = Join-Path $selectedSlot 'layout'
             $descriptor = [IO.File]::ReadAllText((Join-Path $selectedSlot 'complete.json')) | ConvertFrom-Json
@@ -700,6 +694,7 @@ function Install-StackVisualStudioBuildTools {
                     -FilePath $guestLayoutBootstrapper -ArgumentList $installationArguments `
                     -WorkingDirectory $guestLayout -TimeoutSeconds 900 | Out-Null
             } else {
+                $rustExecution.Attempted = $true
                 $installationGroup = Start-ProvisioningNativeGroup -Tasks @(
                     $RustToolchainTask,
                     [ordered]@{
@@ -753,6 +748,9 @@ function Install-StackVisualStudioBuildTools {
         throw $primaryFailure
     }
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+    }
+    if ($null -ne $RustToolchainTask -and -not $rustExecution.Attempted) {
+        Invoke-ProvisioningNative @RustToolchainTask | Out-Null
     }
     if ($rustFailures.Count -gt 0) { throw ($rustFailures -join [Environment]::NewLine) }
 }
@@ -4373,10 +4371,7 @@ function Install-StackTradingViewDesktop {
     }
     if ($null -ne $desktopInstallFailure) { throw $desktopInstallFailure }
     if ($null -ne $desktopCleanupFailure) { throw $desktopCleanupFailure }
-    if (Test-ProvisioningPreparation) {
-        Install-TVControl -NodeVersion $NodeVersion -Version $TVControlVersion
-        return
-    }
+    if (Test-ProvisioningPreparation) { return }
 
     $desktopRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $desktopPackageID)
     $desktopExecutables = @(Get-ChildItem -LiteralPath $desktopRoot -File -Recurse -Filter 'TradingView.exe')

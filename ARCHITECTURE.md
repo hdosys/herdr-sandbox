@@ -210,7 +210,11 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - One Windows PowerShell 5.1-compatible script owns the ordered guest setup.
 - No CMD/batch script or mixed shell pipeline is generated.
 - After validating mapped bootstrap inputs, bootstrap invokes the global Base's strict `Registry` phase as the first guest mutation.
-- Unless output was explicitly enabled in the fixed launch plan, that phase selects the No Sounds scheme and uses the inspected Core Audio COM contract to mute the default render endpoint at scalar zero with read-back.
+- Unless output was explicitly enabled, the Registry step selects the No Sounds
+  scheme. With microphone input enabled, it uses Core Audio to mute the render
+  endpoint at scalar zero while retaining shared audio services. With both off,
+  stopped/disabled services are the effective boundary; it does not query an audio
+  RPC endpoint that those services intentionally make unavailable.
 - When microphone input is also off, it then disables/stops `Audiosrv` and `AudioEndpointBuilder` and verifies both service contracts; when input is on, it retains those shared services because capture depends on them.
 - An absent render endpoint is acceptable.
 - The service-disabled path blocks ordinary application playback, while the input-enabled path starts muted but permits guest applications to unmute output; neither is an adversarial security boundary against administrator code in the guest.

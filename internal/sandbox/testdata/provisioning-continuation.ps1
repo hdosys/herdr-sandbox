@@ -157,6 +157,39 @@ Initialize-FixtureSteps $false
 Invoke-ProvisioningStep -Name 'Good' -Action { $script:goodRuns++ }
 if ($script:goodRuns -ne 3) { throw 'Explicit refresh incorrectly reused completion.' }
 
+# VS preflight and already-installed branches must preserve independent Rust work.
+Initialize-FixtureSteps $false
+$script:rustAttempts = 0
+$script:rustFails = $false
+$script:vsPathReads = 0
+function Get-ProvisioningPath { param($Relative); $script:vsPathReads++; if ($Relative -eq 'visual-studio\layout') { return 'C:\vs-fixture' }; return (Join-Path $PSScriptRoot 'vs-cache') }
+function Invoke-ProvisioningNative { param($Role,$FilePath,$ArgumentList,$TimeoutSeconds,$WorkingDirectory); $script:rustAttempts++; if ($script:rustFails) { throw 'controlled Rust failure' } }
+$rustTask = @{Role='controlled Rust';FilePath='not-executed.exe';ArgumentList=@();TimeoutSeconds=1}
+Install-StackVisualStudioBuildTools -RustToolchainTask $rustTask
+$firstReads = $script:vsPathReads
+Install-StackVisualStudioBuildTools -RustToolchainTask $rustTask
+if ($script:rustAttempts -ne 2 -or $script:vsPathReads -ne $firstReads -or
+    $global:HerdrSandboxStepState.Results['Visual Studio Build Tools'].status -ne 'failed') {
+    throw 'VS preflight failure skipped Rust or repeated the same VS attempt.'
+}
+$failures.Clear()
+Initialize-FixtureSteps $false
+$cache = Join-Path $PSScriptRoot 'vs-cache'
+$null = New-Item -ItemType Directory -Path (Join-Path $cache 'a')
+[IO.File]::WriteAllText((Join-Path $cache 'a\complete.json'), '{}')
+function Assert-ProvisioningCachePath { param($Path); if (-not $Path.StartsWith($PSScriptRoot)) { throw 'Fixture escaped its owned directory.' } }
+function ConvertFrom-StackVisualStudioLayoutDescriptor { param($Descriptor,$Slot); return [pscustomobject]@{BuildVersion='1.0.0';CurrentMetadata=$true} }
+function Test-StackVisualStudioLayoutSlot { param($Slot,$Target); return $true }
+function Get-StackVisualStudioInstallation { param($Target); return 'C:\verified-vs-fixture' }
+function Write-ProvisioningTiming { param($Role,$Seconds) }
+$script:rustFails = $true
+$rustRejected = $false
+try { Install-StackVisualStudioBuildTools -RustToolchainTask $rustTask } catch { $rustRejected=$true }
+if (-not $rustRejected -or $global:HerdrSandboxStepState.Results['Visual Studio Build Tools'].status -ne 'succeeded') {
+    throw 'Rust failure invalidated independently verified installed VS.'
+}
+$failures.Clear()
+
 # Online WinGet preparation must not leave later installation steps in prepare mode.
 function Get-ProvisioningPath { param($Relative) return $PSScriptRoot }
 function Get-ProvisioningGitHubAssetMetadata { param($Role,$Repository,$AssetName,$Id,$Version,$Architecture,$InstallerType,$PayloadName); return [pscustomobject]@{Id=$Id;Version='1.0.0'} }

@@ -27,7 +27,8 @@ foreach ($directory in @($CacheDirectory, (Get-ProvisioningPath 'staging'), (Get
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 $provisioningPackagePlan = [pscustomobject]@{Enabled=@{};Versions=@{}}
-foreach ($package in @(Get-ProvisioningPackageJobs -Packages (@([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($selection.packages)))) {
+$packageJobs = @(Get-ProvisioningPackageJobs -Packages (@([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($selection.packages)))
+foreach ($package in $packageJobs) {
     $provisioningPackagePlan.Enabled[[string]$package.id] = $true
     $provisioningPackagePlan.Versions[[string]$package.id] = [string]$package.version
 }
@@ -38,7 +39,7 @@ foreach ($tool in @($selection.tools)) {
     $global:HerdrSandboxToolVersionPlan.Owners[[string]$tool.tool] = @($tool.owners)
 }
 Prepare-ProvisioningWinGet
-foreach ($package in @($selection.packages)) {
+foreach ($package in $packageJobs) {
     Install-ProvisioningPackage -Id ([string]$package.id) -Version ([string]$package.version)
 }
 if (-not $PackagesOnly) {

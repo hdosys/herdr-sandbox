@@ -159,7 +159,7 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningStackStep", "Invoke-ProvisioningExtensionScript", "Get-ProvisioningPackagePrerequisites", "Get-ProvisioningPackageJobs", "Prepare-ProvisioningWinGet", "Test-ProvisioningPreparation", "Test-ProvisioningWorkstation"},
 	}, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
-		names: []string{"Install-HyperFramesStack", "Install-StackHyperFramesOptionalTTS", "Assert-StackSupertonicRuntime"},
+		names: []string{"Install-HyperFramesStack", "Install-StackHyperFramesOptionalTTS", "Assert-StackSupertonicRuntime", "Install-StackVisualStudioBuildTools"},
 	})
 	fixture, err := os.ReadFile(filepath.Join("testdata", "provisioning-continuation.ps1"))
 	if err != nil {

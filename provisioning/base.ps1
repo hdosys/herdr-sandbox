@@ -3521,8 +3521,7 @@ function Ensure-ProvisioningStartShortcut {
 }
 
 function Ensure-ProvisioningFilePilotStartShortcut {
-    $filePilotExecutable = Join-Path $env:LOCALAPPDATA `
-        'Microsoft\WinGet\Packages\Voidstar.FilePilot_Microsoft.Winget.Source_8wekyb3d8bbwe\FPilot.exe'
+    $filePilotExecutable = [string](Get-Command 'FPilot.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     Ensure-ProvisioningStartShortcut -DisplayName 'File Pilot' -Executable $filePilotExecutable
 }
 
@@ -3905,6 +3904,7 @@ function Disable-ProvisioningAudioPlayback {
     }
 
     $endpointFound = $false
+    if ($KeepAudioServices) {
     try {
         Initialize-ProvisioningAudioEndpointType
         $endpointFound = [bool][HerdrSandbox.AudioPolicy]::SilenceDefaultRenderEndpoint()
@@ -3912,12 +3912,15 @@ function Disable-ProvisioningAudioPlayback {
         [void]$failures.Add('default render endpoint: ' +
             (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
     }
+    }
 
     if (-not $KeepAudioServices) {
         $serviceNames = @('Audiosrv', 'AudioEndpointBuilder')
         foreach ($serviceName in $serviceNames) {
             try {
-                Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+                if ([string](Get-Service -Name $serviceName -ErrorAction Stop).StartType -cne 'Disabled') {
+                    Set-Service -Name $serviceName -StartupType Disabled -ErrorAction Stop
+                }
             } catch {
                 [void]$failures.Add("disable $serviceName startup: " +
                     (Get-ProvisioningBoundedDiagnosticText -Text $_.Exception.Message -MaximumBytes 1024))
@@ -3951,13 +3954,7 @@ function Disable-ProvisioningAudioPlayback {
         foreach ($serviceName in $serviceNames) {
             try {
                 $service = Get-Service -Name $serviceName -ErrorAction Stop
-                $wmiServices = @(Get-CimInstance -ClassName Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop)
-                if ($wmiServices.Count -ne 1 -or
-                    [string]$service.Status -cne 'Stopped' -or
-                    [string]$service.StartType -cne 'Disabled' -or
-                    [string]$wmiServices[0].State -cne 'Stopped' -or
-                    [bool]$wmiServices[0].Started -or
-                    [string]$wmiServices[0].StartMode -cne 'Disabled') {
+                if ([string]$service.Status -cne 'Stopped' -or [string]$service.StartType -cne 'Disabled') {
                     throw "$serviceName service read-back did not match Disabled/Stopped."
                 }
             } catch {
@@ -3977,7 +3974,7 @@ function Disable-ProvisioningAudioPlayback {
     } elseif ($endpointFound) {
         Write-Host 'Audio playback disabled: default render endpoint muted at volume 0; services stopped.'
     } else {
-        Write-Host 'Audio playback disabled: no default render endpoint was present; services stopped.'
+        Write-Host 'Audio playback disabled: services stopped.'
     }
     return [bool]$schemeChanged
 }
@@ -4541,8 +4538,14 @@ if (Test-Path -LiteralPath $packageStageRoot -PathType Container) {
             -DelayMilliseconds 0 -BestEffort | Out-Null
     }
 }
-Invoke-ProvisioningIndependentStep -Name 'Desktop shortcuts' -Failures $DevelopmentFailures -InputFiles @($PackagePlanPath) -Action {
+Invoke-ProvisioningIndependentStep -Name 'Apify access shortcut' -Failures $DevelopmentFailures -Action {
     Install-ProvisioningAccessShortcut -Name 'apify-access' -DisplayName 'Apify access'
+}
+$taskbarRequires = @()
+foreach ($id in @('Voidstar.FilePilot', $terminalPackageID)) {
+    if (Test-ProvisioningPackageEnabled -Id $id) { $taskbarRequires += 'Package ' + $id }
+}
+Invoke-ProvisioningIndependentStep -Name 'Taskbar layout' -Failures $DevelopmentFailures -Requires $taskbarRequires -InputFiles @($PackagePlanPath) -Action {
     Ensure-ProvisioningTaskbarPins -Edition $WindowsTerminalEdition `
         -TerminalPackageFamily $terminalPackageFamily
 }
