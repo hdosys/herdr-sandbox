@@ -494,50 +494,6 @@ function Get-GitHubReleaseAsset {
     return [pscustomobject]@{ Name = [string]$asset.name; Url = $url; SHA256 = $sha256 }
 }
 
-function Get-PowerShell7Installation {
-    $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell-LTS' -ErrorAction SilentlyContinue)
-    if ($packages.Count -ne 1) {
-        throw "Expected one registered stable PowerShell 7 package, found $($packages.Count)."
-    }
-    $package = $packages[0]
-    $packageVersion = [string]$package.Version
-    if ([string]$package.Name -cne 'Microsoft.PowerShell-LTS' -or
-        [string]$package.Architecture -cne 'X64' -or
-        [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
-        throw "PowerShell 7 package identity is unexpected: name=$($package.Name) version=$packageVersion architecture=$($package.Architecture)"
-    }
-    $version = $null
-    if ([Version]::TryParse($packageVersion, [ref]$version)) {
-        $displayVersion = "$($version.Major).$($version.Minor).$($version.Build)"
-    } else {
-        $displayVersion = 'unverified'
-        Write-Warning "PowerShell 7 package version is not recognized: $packageVersion. Provisioning will continue with the registered Microsoft package."
-    }
-    $executable = Join-Path ([string]$package.InstallLocation) 'pwsh.exe'
-    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
-        throw "PowerShell 7 package is missing pwsh.exe: $executable"
-    }
-    $file = Get-Item -LiteralPath $executable -Force
-    if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "PowerShell 7 executable is a reparse point: $executable"
-    }
-    if ($null -ne $version -and
-        (-not ([string]$file.VersionInfo.FileVersion).StartsWith($displayVersion + '.', [StringComparison]::Ordinal) -or
-        -not ([string]$file.VersionInfo.ProductVersion).StartsWith($displayVersion + ' ', [StringComparison]::Ordinal))) {
-        Write-Warning "PowerShell 7 executable metadata does not match package version $packageVersion. Provisioning will continue with the signed executable."
-    }
-    $signature = Get-AuthenticodeSignature -LiteralPath $executable
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
-        $null -eq $signature.SignerCertificate -or
-        $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
-        throw "PowerShell 7 executable signature is invalid: $($signature.Status)"
-    }
-    return [pscustomobject]@{
-        DisplayVersion = $displayVersion
-        Executable = $executable
-    }
-}
-
 $wingetDependenciesDirectory = $null
 try {
     if (-not (Test-Path -LiteralPath $InputDirectory -PathType Container)) {
@@ -755,10 +711,11 @@ try {
     }
 
     Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing only the PowerShell shell required for SSH'
+    $powerShell7 = $null
     & $baseProvisioning -Phase 'Core' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner
-    $powerShell7 = Get-PowerShell7Installation
+        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner -PowerShellInstallation ([ref]$powerShell7)
+    if ($null -eq $powerShell7) { throw 'Core provisioning did not return a verified PowerShell installation.' }
     $powerShell7Executable = $powerShell7.Executable
     } else {
         Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'

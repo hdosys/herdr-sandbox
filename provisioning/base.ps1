@@ -7,6 +7,7 @@ param(
     [string]$PackagePlanPath = '',
     [string]$PackageCacheDirectory = '',
     [string]$PreparedInputsPath = '',
+    [ref]$PowerShellInstallation,
     [string]$UserProvisioningPath = '',
     [Parameter(Mandatory = $true)]
     [string]$ProcessOwnerPath,
@@ -2388,7 +2389,8 @@ function Install-ProvisioningCachedPackage {
         [string]$PortableVersionSource = 'Command',
         [switch]$DeferCommandReadiness,
         [switch]$RequireAuthenticodeSignature,
-        [string]$ResolvedDirectPayloadPath = ''
+        [string]$ResolvedDirectPayloadPath = '',
+        [ref]$VerifiedMsixIdentity
     )
 
     $packageStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -2397,7 +2399,11 @@ function Install-ProvisioningCachedPackage {
         throw "$Role resolved direct payload requires the Direct download owner."
     }
     Update-ProvisioningPath
-    if (-not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
+    if ($null -ne $VerifiedMsixIdentity) {
+        if ($Adapter -cne 'MSIX') { throw 'Verified MSIX identity requires the MSIX adapter.' }
+        $VerifiedMsixIdentity.Value = $null
+    }
+    if ($null -eq $VerifiedMsixIdentity -and -not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
             -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource)) {
         Write-Host "$Role is already installed; resolved version for this run: $($metadata.Version)"
         $packageStopwatch.Stop()
@@ -2449,6 +2455,14 @@ function Install-ProvisioningCachedPackage {
                     Copy-ProvisioningPackageToGuest -Source $ResolvedDirectPayloadPath -Destination $guestPayload `
                         -ExpectedSHA256 $metadata.Sha256
                 }
+            }
+        }
+        if ($null -ne $VerifiedMsixIdentity) {
+            $VerifiedMsixIdentity.Value = Get-ProvisioningSignedMSIXIdentity -PayloadPath $guestPayload `
+                -Publisher 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+            if (-not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName)) {
+                Write-Host "$Role is already installed; selected payload identity verified: $($VerifiedMsixIdentity.Value.Name)"
+                return
             }
         }
         if ($RequireAuthenticodeSignature) {
@@ -2569,12 +2583,12 @@ function Install-ProvisioningWinGetPackage {
         -RequireAuthenticodeSignature:$RequireAuthenticodeSignature
 }
 
-function Get-ProvisioningSignedMSIXMetadata {
-    param([string]$PayloadPath, [string]$Id, [string]$Url, [string]$PackageName, [string]$Publisher, [string]$Architecture)
+function Get-ProvisioningSignedMSIXIdentity {
+    param([string]$PayloadPath, [string]$Publisher)
     Assert-ProvisioningPathAncestors $PayloadPath
     $signature = Get-AuthenticodeSignature -LiteralPath $PayloadPath
     if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or $signature.SignerCertificate.Subject -cne $Publisher) {
-        throw "$Id MSIX publisher verification failed."
+        throw 'MSIX publisher verification failed.'
     }
     Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
     $stream = [IO.File]::OpenRead($PayloadPath)
@@ -2582,8 +2596,8 @@ function Get-ProvisioningSignedMSIXMetadata {
     $reader = $null
     try {
         $archive = [IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$false)
-        $entries = @($archive.Entries | Where-Object {$_.FullName -ceq 'AppxManifest.xml'})
-        if ($entries.Count -ne 1 -or $entries[0].Length -le 0 -or $entries[0].Length -gt 1048576) { throw "$Id MSIX manifest is not bounded and unique." }
+        $entries = @($archive.Entries | Where-Object {$_.FullName -ceq 'AppxManifest.xml' -or $_.FullName -ceq 'AppxMetadata/AppxBundleManifest.xml'})
+        if ($entries.Count -ne 1 -or $entries[0].Length -le 0 -or $entries[0].Length -gt 1048576) { throw 'MSIX manifest is not bounded and unique.' }
         $reader = [IO.StreamReader]::new($entries[0].Open())
         [xml]$manifest = $reader.ReadToEnd()
     } finally {
@@ -2591,7 +2605,16 @@ function Get-ProvisioningSignedMSIXMetadata {
         if ($null -ne $archive) { $archive.Dispose() }
         $stream.Dispose()
     }
-    $identity = $manifest.Package.Identity
+    $identity = $manifest.DocumentElement.Identity
+    if ($identity.Name -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]+$' -or $identity.Publisher -cne $Publisher -or $identity.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+        throw 'MSIX package identity is invalid.'
+    }
+    return $identity
+}
+
+function Get-ProvisioningSignedMSIXMetadata {
+    param([string]$PayloadPath, [string]$Id, [string]$Url, [string]$PackageName, [string]$Publisher, [string]$Architecture)
+    $identity = Get-ProvisioningSignedMSIXIdentity -PayloadPath $PayloadPath -Publisher $Publisher
     if ($identity.Name -cne $PackageName -or $identity.Publisher -cne $Publisher -or
         $identity.ProcessorArchitecture -cne $Architecture -or $identity.Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
         throw "$Id MSIX package identity is invalid."
@@ -2705,9 +2728,13 @@ function Install-ProvisioningPackage {
     param([Parameter(Mandatory=$true)][string]$Id, [string]$Version = '', [switch]$AsStandardUser)
     switch ($Id) {
         'Microsoft.PowerShell' {
-            Install-ProvisioningWinGetPackage -Role 'PowerShell 7' -Id $Id -Version $Version -InstallerType 'msix' -Adapter 'MSIX' -ExecutableName 'pwsh.exe'
+            $metadata = Get-ProvisioningWinGetMetadata -Role 'PowerShell 7' -Id $Id -Version $Version -InstallerType 'msix'
+            $identity = $null
+            Install-ProvisioningCachedPackage -Role 'PowerShell 7' -Metadata $metadata -DownloadSource 'WinGet' `
+                -Adapter 'MSIX' -ExecutableName 'pwsh.exe' -VerifiedMsixIdentity ([ref]$identity)
             if (Test-ProvisioningPreparation) { return }
-            $installation = Get-ProvisioningPowerShell7Installation
+            $installation = Get-ProvisioningPowerShell7Installation -Identity $identity
+            if ($null -ne $PowerShellInstallation) { $PowerShellInstallation.Value = $installation }
             Write-Output ('PowerShell 7 ready: ' + $installation.DisplayVersion)
         }
         'Nushell.Nushell' { Install-ProvisioningNushell -Version $Version }
@@ -2925,13 +2952,14 @@ function Assert-ProvisioningVulkanDevice {
 }
 
 function Get-ProvisioningPowerShell7Installation {
-    $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell-LTS' -ErrorAction SilentlyContinue)
+    param([Parameter(Mandatory=$true)][object]$Identity)
+    $packages = @(Get-AppxPackage -Name ([string]$Identity.Name) -ErrorAction Stop)
     if ($packages.Count -ne 1) {
         throw "Expected one registered stable PowerShell 7 package, found $($packages.Count)."
     }
     $package = $packages[0]
     $packageVersion = [string]$package.Version
-    if ([string]$package.Name -cne 'Microsoft.PowerShell-LTS' -or
+    if ([string]$package.Name -cne [string]$Identity.Name -or
         [string]$package.Architecture -cne 'X64' -or
         [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
         throw "PowerShell 7 package identity is unexpected: name=$($package.Name) version=$packageVersion architecture=$($package.Architecture)"
