@@ -565,7 +565,7 @@ try {
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
     $wingetVersion = ''
-    $powerShell7Executable = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $sshDefaultShell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if (-not $InstallerProvisioning) {
     $workspaceManifest = [IO.File]::ReadAllText($workspaceManifestPath) | ConvertFrom-Json
     $manifestProperties = @($workspaceManifest.PSObject.Properties.Name | Sort-Object)
@@ -710,13 +710,15 @@ try {
         Write-Warning "VC++ runtime installation succeeded, but WinGet did not report resolved version $($vcVersions[0]). Provisioning will continue with the installed runtime."
     }
 
-    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing only the PowerShell shell required for SSH'
+    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing PowerShell for guest development tools'
     $powerShell7 = $null
     & $baseProvisioning -Phase 'Core' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner -PowerShellInstallation ([ref]$powerShell7)
     if ($null -eq $powerShell7) { throw 'Core provisioning did not return a verified PowerShell installation.' }
-    $powerShell7Executable = $powerShell7.Executable
+    # MSIX PowerShell cannot serve as an inbound SSH shell. Keep the transport
+    # on the inbox byte-stream shell; Herdr owns the user's interactive shell.
+    $sshDefaultShell = Join-Path $env:WINDIR 'System32\cmd.exe'
     } else {
         Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'
     }
@@ -799,7 +801,7 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
 
     & {
         . $baseProvisioning -Phase Library -ProcessOwnerPath $processOwner
-        Set-ProvisioningOpenSSHDefaultShell -Executable $powerShell7Executable
+        Set-ProvisioningOpenSSHDefaultShell -Executable $sshDefaultShell
     }
 
     Stop-Service -Name sshd -Force -ErrorAction SilentlyContinue

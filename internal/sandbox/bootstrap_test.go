@@ -143,7 +143,7 @@ func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
 		strings.Count(registryCall, "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") != 1 {
 		t.Fatalf("Base Registry audio handoff = %q", registryCall)
 	}
-	developmentEnd := strings.Index(script[developmentStart:], "$powerShell7Executable = $powerShell7.Executable")
+	developmentEnd := strings.Index(script[developmentStart:], "$sshDefaultShell = Join-Path $env:WINDIR 'System32\\cmd.exe'")
 	if developmentEnd < 0 {
 		t.Fatal("Base Development call boundary is missing")
 	}

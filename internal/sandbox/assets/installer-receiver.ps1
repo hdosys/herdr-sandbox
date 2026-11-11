@@ -116,15 +116,16 @@ try {
         # Only Sandbox transport is finalized here. The workstation installer
         # never configures SSH, and a failed installation leaves its shell alone.
         & {
-            . (Join-Path $bootstrapRoot 'provisioning\base.ps1') -Phase Library -ProcessOwnerPath $processOwner `
-                -PreparedInputsPath (Join-Path $stateRoot 'input\prepared-inputs.json') `
-                -PackageCacheDirectory (Join-Path $env:ProgramData 'herdr-workstation\cache')
-            $installedShell = Get-ProvisioningPreparedPowerShell7Installation
-            Set-ProvisioningOpenSSHDefaultShell -Executable $installedShell.Executable
+            . (Join-Path $bootstrapRoot 'provisioning\base.ps1') -Phase Library -ProcessOwnerPath $processOwner
+            Set-ProvisioningOpenSSHDefaultShell -Executable (Join-Path $env:WINDIR 'System32\cmd.exe')
         }
     }
     $probes.checks += [pscustomobject]@{name='interactive SSH shell';passed=$passed}
     Write-Output ([ordered]@{schemaVersion=1;installerSHA256=$installerDigest;profileSHA256=$profileDigest;exitCode=$result.ExitCode;complete=$complete;passed=$passed;checks=$probes.checks;wingetVersion=$probes.wingetVersion;herdrVersion=$probes.herdrVersion;herdrClient=$probes.herdrClient;reportPath=(Join-Path $stateRoot 'report.html')}|ConvertTo-Json -Depth 7 -Compress)
+} catch {
+    $safeFailure = 'Installer receiver failed: ' + $_.Exception.GetBaseException().GetType().FullName + ' line=' + $_.InvocationInfo.ScriptLineNumber
+    Publish-InstallerProgress ([ordered]@{schemaVersion=1;phase='installer-failed';message=$safeFailure})
+    throw [InvalidOperationException]::new($safeFailure)
 } finally {
     # Only this receiver's private test copy is disposable. The user's source
     # installer/data, reports, resume state and installed tools remain intact.
