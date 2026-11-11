@@ -69,6 +69,11 @@ This file owns stable technical design: command ownership, host/guest boundaries
   archive through the shared local transformation owner. Cached payloads retain
   the existing identity, digest and installation-adapter contracts. Transport
   selection must not change package execution or configuration semantics.
+  Portable Herdr settings use Herdr's native `config provision-import --overwrite`
+  in an isolated configuration file during capture and target merging. Herdr owns
+  filtering and target-local exclusions; the existing atomic archive publisher
+  writes the merged result. Local setup reloads an already-running server's
+  configuration without starting, upgrading or restarting it.
   Private staging stays outside the checkout; sidecars bind identities and counts
   without values. Protected resume state retains the snapshot rather than a
   pointer to temporary extraction files. Public Sandbox packaging excludes it.

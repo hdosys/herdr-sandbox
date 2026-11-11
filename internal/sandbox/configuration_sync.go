@@ -316,6 +316,7 @@ type hostConfigurationSources struct {
 	CodingAgents              codingAgentConfigurationSources
 	HerdrConfig               string
 	GuestHerdrConfig          []byte
+	PortableHerdrConfig       []byte
 	WorktreeDirectory         string
 	WindowsTerminalSettings   string
 	WindowsTerminalFragments  string
@@ -1124,6 +1125,11 @@ func buildDevelopmentConfigurationArchive(ctx context.Context, sources hostConfi
 	}
 	if err := addData(herdrConfig, filepath.Join("herdr", "config.toml"), sources.HerdrConfig); err != nil {
 		return nil, fmt.Errorf("archive Herdr config: %w", err)
+	}
+	if sources.PortableHerdrConfig != nil {
+		if err := addData(sources.PortableHerdrConfig, "herdr/portable-config.toml", "portable Herdr settings"); err != nil {
+			return nil, err
+		}
 	}
 	expectedHerdrConfig := "missing"
 	if sources.GuestHerdrConfig != nil {

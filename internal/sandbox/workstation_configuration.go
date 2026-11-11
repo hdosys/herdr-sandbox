@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +24,18 @@ func captureInstallerConfiguration(ctx context.Context, selection provisioningPl
 	sources, err := defaultHostConfigurationSources(selection.WindowsTerminal, selection.Packages, selection.CodingAgentSync, credentials, tradingView)
 	if err != nil {
 		return nil, err
+	}
+	herdrSource, found, err := readBoundedRegularFile(sources.HerdrConfig, maximumConfigurationFileSize)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(herdrSource)
+	if found {
+		sources.PortableHerdrConfig, err = mergeInstallerHerdrConfiguration(ctx, herdrSource, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer clear(sources.PortableHerdrConfig)
 	}
 	// Windows Terminal expands this on the target rather than retaining a source
 	// drive or source-user directory. Managed Sandbox uses its workspace manifest.
@@ -121,8 +135,8 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 			return err
 		}
 	}
-	// The captured document carries the source shell preference. Merge it into
-	// target-owned Herdr settings now, exactly as the SSH path does before transfer.
+	// Preserve target-local settings through Herdr's native import owner, then
+	// apply the same shell override used by the managed SSH path.
 	herdrTarget := filepath.Join(os.Getenv("APPDATA"), "herdr", "config.toml")
 	if err := validateWorkstationLocalPath(herdrTarget); err != nil {
 		return err
@@ -133,7 +147,20 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	}
 	defer clear(targetConfiguration)
 	herdrSource := filepath.Join(expanded, "herdr", "config.toml")
-	merged, err := buildGuestHerdrConfig(herdrSource, targetConfiguration, "")
+	portable, found, err := readBoundedRegularFile(filepath.Join(expanded, "herdr", "portable-config.toml"), maximumConfigurationFileSize)
+	if err != nil {
+		return err
+	}
+	defer clear(portable)
+	imported := targetConfiguration
+	if found {
+		imported, err = mergeInstallerHerdrConfiguration(ctx, portable, targetConfiguration)
+		if err != nil {
+			return err
+		}
+	}
+	defer clear(imported)
+	merged, err := buildGuestHerdrConfig(herdrSource, imported, "")
 	if err != nil {
 		return err
 	}
@@ -196,4 +223,60 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	}
 	fmt.Fprintln(output, "Shared configuration and authentication applied; configured provider checks completed.")
 	return nil
+}
+
+// Herdr owns the transferable-setting filter and target-local merge. Importing
+// into an isolated file also filters the host snapshot without touching live state.
+func mergeInstallerHerdrConfiguration(ctx context.Context, source, target []byte) ([]byte, error) {
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(source)))
+	if len(encoded) > 1024*1024 {
+		return nil, errors.New("Herdr configuration exceeds the native import boundary")
+	}
+	base64.StdEncoding.Encode(encoded, source)
+	defer clear(encoded)
+	directory, err := os.MkdirTemp("", "herdr-installer-settings-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(directory)
+	path := filepath.Join(directory, "config.toml")
+	if target != nil {
+		if err := os.WriteFile(path, target, 0o600); err != nil {
+			return nil, err
+		}
+	}
+	powerShell, err := windowsPowerShellExecutable()
+	if err != nil {
+		return nil, err
+	}
+	commandContext, stop := context.WithTimeout(ctx, 30*time.Second)
+	defer stop()
+	script := `$ErrorActionPreference='Stop'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); $herdr=Get-Command herdr.exe -CommandType Application -ErrorAction Stop; $payload=[Console]::In.ReadToEnd(); $payload | & $herdr.Source config provision-import --overwrite; exit $LASTEXITCODE`
+	command := hiddenCommandContext(commandContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	environment := attachEnvironment(childProcessEnvironment(os.Environ()))
+	for _, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(name, "HERDR_CONFIG_PATH") && !strings.EqualFold(name, "HERDR_REMOTE_SIDECAR_V1") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	command.Env = append(command.Env, "HERDR_CONFIG_PATH="+path)
+	command.Stdin = bytes.NewReader(encoded)
+	var diagnostics bytes.Buffer
+	command.Stderr = &diagnostics
+	defer func() { clear(diagnostics.Bytes()) }()
+	result, err := command.Output()
+	defer clear(result)
+	if err != nil {
+		return nil, fmt.Errorf("import portable Herdr settings: %w (private diagnostics withheld)", err)
+	}
+	var outcome string
+	if json.Unmarshal(bytes.TrimSpace(result), &outcome) != nil || (outcome != "applied" && outcome != "unchanged") {
+		return nil, errors.New("Herdr did not confirm portable settings import")
+	}
+	merged, found, err := readBoundedRegularFile(path, 1024*1024)
+	if err != nil || !found {
+		return nil, errors.New("Herdr did not publish the imported configuration")
+	}
+	return merged, nil
 }

@@ -71,7 +71,6 @@ func TestInstallerSettingsCaptureResolvedUnpackagedTerminal(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("APPDATA", filepath.Join(root, "roaming"))
 	t.Setenv("HERDR_CONFIG_PATH", filepath.Join(root, "herdr.toml"))
-	writeTestFile(t, filepath.Join(root, "herdr.toml"), "[terminal]\ndefault_shell = \"nu\"\n")
 	terminal := testStableWindowsTerminalConfiguration()
 	terminal.SettingsPath = filepath.Join(root, "unpackaged", "settings.json")
 	terminal.FragmentsPath = filepath.Join(root, "fragments")

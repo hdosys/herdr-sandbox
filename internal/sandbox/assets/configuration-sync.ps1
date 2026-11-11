@@ -1476,6 +1476,17 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         throw 'Guest Herdr configuration snapshot digest is invalid.'
     }
     Set-AtomicConfigurationFile -Source $herdrConfigSource -Destination $herdrConfigDestination -ExpectedSHA256 $herdrExpectedSHA256
+    if ($LocalTarget) {
+        $localHerdr = Get-Command herdr.exe -CommandType Application -ErrorAction Stop
+        $localHerdrStatusText = (& $localHerdr.Source status server --json) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) { throw 'Local Herdr server status inspection failed.' }
+        $localHerdrStatus = $localHerdrStatusText | ConvertFrom-Json
+        if ($localHerdrStatus.running -isnot [bool]) { throw 'Local Herdr server status is invalid.' }
+        if ($localHerdrStatus.running) {
+            $null = & $localHerdr.Source server reload-config
+            if ($LASTEXITCODE -ne 0) { throw 'Local Herdr configuration reload failed.' }
+        }
+    }
 
     if ($starshipEnabled) {
     [Console]::Error.WriteLine('[config-sync] apply-starship')

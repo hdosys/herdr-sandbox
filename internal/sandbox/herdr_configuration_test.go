@@ -171,6 +171,30 @@ if (-not $rejected) { throw 'A stale guest snapshot overwrote a newer configurat
 	}
 }
 
+func TestWorkstationHerdrPortableSnapshotAndTargetMerge(t *testing.T) {
+	if os.Getenv("HERDR_SANDBOX_TEST_CONFIG_IMPORT_HERDR") == "" {
+		t.Skip("requires the installed matching Herdr import owner")
+	}
+	source := []byte("onboarding = true\n[theme]\nname = 'dracula'\n[terminal]\ndefault_shell = 'host-shell'\n[agent]\nargs = ['host-private']\n")
+	portable, err := mergeInstallerHerdrConfiguration(t.Context(), source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(portable, []byte("dracula")) || bytes.Contains(portable, []byte("host-private")) || bytes.Contains(portable, []byte("host-shell")) {
+		t.Fatal("portable snapshot did not use native Herdr transfer exclusions")
+	}
+	target := []byte("onboarding = false\n[terminal]\ndefault_shell = 'nu.exe'\n[agent]\nargs = ['target-local']\n")
+	merged, err := mergeInstallerHerdrConfiguration(t.Context(), portable, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"dracula", "nu.exe", "target-local", "onboarding = false"} {
+		if !bytes.Contains(merged, []byte(want)) {
+			t.Fatalf("native target merge lost %q", want)
+		}
+	}
+}
+
 func TestGuestHerdrOverridesSurviveNativeProvisionImport(t *testing.T) {
 	executable := os.Getenv("HERDR_SANDBOX_TEST_CONFIG_IMPORT_HERDR")
 	if executable == "" {
