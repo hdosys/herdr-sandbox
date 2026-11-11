@@ -3971,8 +3971,6 @@ function Disable-ProvisioningAudioPlayback {
         Write-Host 'Audio playback muted at volume 0; shared audio services retained for microphone input.'
     } elseif ($KeepAudioServices) {
         Write-Host 'No default render endpoint was present; shared audio services retained for microphone input.'
-    } elseif ($endpointFound) {
-        Write-Host 'Audio playback disabled: default render endpoint muted at volume 0; services stopped.'
     } else {
         Write-Host 'Audio playback disabled: services stopped.'
     }
