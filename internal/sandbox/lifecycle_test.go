@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -105,14 +106,43 @@ func TestActiveSessionMatchesExactProcessIdentity(t *testing.T) {
 
 func TestTailscaleFailurePhaseIdentifiesPreIdentityFailures(t *testing.T) {
 	for _, phase := range []string{"guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled"} {
-		if !tailscaleFailurePrecedesIdentity(phase) {
+		if !tailscaleFailurePrecedesIdentity(phase, false) {
 			t.Fatalf("phase %q should precede Tailscale identity setup", phase)
 		}
 	}
 	for _, phase := range []string{"tailscale-identity", "configuration-sync", "configuration-timeout"} {
-		if tailscaleFailurePrecedesIdentity(phase) {
+		if tailscaleFailurePrecedesIdentity(phase, false) {
 			t.Fatalf("phase %q can follow or overlap Tailscale identity setup", phase)
 		}
+	}
+}
+
+func TestTailscaleNonEnrollmentSurvivesCompletionWithoutBypassingIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		existing *tailscaleIdentity
+		wasReady bool
+		cause    error
+		wantSkip bool
+	}{
+		{"known fresh non-enrollment", nil, false, errTailscaleIdentityNotEstablished, true},
+		{"protected identity", &tailscaleIdentity{}, false, errTailscaleIdentityNotEstablished, false},
+		{"previously ready", nil, true, errTailscaleIdentityNotEstablished, false},
+		{"unknown failure", nil, false, errors.New("capture unavailable"), false},
+		{"enrolled", nil, false, nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bootstrap := tailscaleBootstrap{Enabled: true, Existing: test.existing}
+			failure := &developmentProvisioningError{failures: []string{"fixture"}, tailscaleNotEnrolled: bootstrap.confirmedNotEnrolled(test.wasReady, test.cause)}
+			phase := ""
+			_, err := finishDevelopmentProvisioning(Connection{}, failure, func(next, _ string) error { phase = next; return nil }, io.Discard)
+			if err == nil || tailscaleFailurePrecedesIdentity(phase, test.existing != nil) != test.wantSkip {
+				t.Fatalf("completion lost identity-preservation decision: phase=%q error=%v", phase, err)
+			}
+		})
+	}
+	if tailscaleFailurePrecedesIdentity("tailscale-not-enrolled", true) {
+		t.Fatal("later protected identity bypassed capture")
 	}
 }
 

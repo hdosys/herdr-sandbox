@@ -269,6 +269,29 @@ command = [
 // This executes the production archive, launcher and apply script together.
 // Optional tools are absent from the child PATH, and every destination is a
 // synthetic profile. It covers metadata/count drift missed by helper tests.
+func TestLocalConfigurationTargetOverridesInWindowsPowerShell51(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "")
+	root := t.TempDir()
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path:  filepath.Join("assets", "configuration-sync.ps1"),
+		names: []string{"Resolve-ConfigurationTargetPath", "Assert-ConfigurationDestinationPath", "Set-AtomicConfigurationFile"},
+	})
+	fixture, err := os.ReadFile(filepath.Join("testdata", "local-configuration-targets.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "targets.ps1")
+	if err := os.WriteFile(path, []byte("$ErrorActionPreference='Stop'\nSet-StrictMode -Version 2\n"+setup+string(fixture)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", path)
+	if output, err := command.CombinedOutput(); err != nil || !bytes.Contains(output, []byte("verified selected local configuration targets")) {
+		t.Fatalf("local target contract: %v %s", err, output)
+	}
+}
+
 func TestHerdrAndZedConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
 	requireExternalBoundaryTest(t, "isolated configuration archive application")
 	root := t.TempDir()

@@ -249,7 +249,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackJust:
 		return "Casey.Just"
 	case stackNode:
-		return "OpenJS.NodeJS"
+		return "OpenJS.NodeJS + Playwright + Chromium"
 	case stackNSIS:
 		return packageNSIS
 	case stackPlaywrightCLI:

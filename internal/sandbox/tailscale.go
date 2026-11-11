@@ -39,6 +39,10 @@ type tailscaleBootstrap struct {
 	AuthKey  []byte
 }
 
+func (bootstrap tailscaleBootstrap) confirmedNotEnrolled(wasReady bool, err error) bool {
+	return bootstrap.Enabled && !wasReady && bootstrap.Existing == nil && errors.Is(err, errTailscaleIdentityNotEstablished)
+}
+
 type tailscaleApplyRequest struct {
 	SchemaVersion  int    `json:"schemaVersion"`
 	Mode           string `json:"mode"`

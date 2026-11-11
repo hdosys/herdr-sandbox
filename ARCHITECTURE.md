@@ -324,7 +324,10 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 ### Run State And Published Contracts
 
 - Per-run files are ephemeral operational state.
-- Closing Windows Sandbox discards all guest state; the next valid CLI command removes stale host run diagnostics only after the lifecycle evidence above proves that no Sandbox process remains.
+- Closing Windows Sandbox discards all guest state. Cleanup-capable lifecycle and
+  inspection commands remove stale host run diagnostics only after the lifecycle
+  evidence above proves that no Sandbox process remains. Help, version, config,
+  plan, and init do not trigger that cleanup.
 - The optional stable Tailscale identity and mobile SSH server identity are separate durable credential state.
 - Each uses one strict envelope encrypted for the current host user with Windows DPAPI and atomically stored below the existing machine-local identity root; the mobile public key supplies the stable fingerprint while its private key exists in plaintext only in bounded host memory and over the verified management SSH channel.
 - Automatic and explicit cleanup share one run planner/remover: they delete only child directories whose names match the exact run-ID contract and whose complete trees contain no reparse points; the runs root, unknown entries, unsafe candidates, SSH identities, Tailscale identity, user configuration/provisioning, workspaces, and package/tool cache are never followed or removed.
@@ -554,7 +557,21 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - Host Herdr inspection fingerprints the PATH command separately from the physical executable reported by `status client --json`, plus either zero or all four known adjacent app-local ConPTY files. These bytes remain host-side identity and race evidence only. Herdr's own SSH transfer, payload lease, validation, pruning, storage layout, and server lifecycle remain authoritative in the guest; Sandbox persists only the returned executable identity.
 - GUI-subsystem installer adapters (Inno, MSI/Wix, and Burn) use the existing native invocation owner with an explicit process-tree wait and the returned process exit code. Zero is the default sole success code; only the .NET owner explicitly adds documented restart-required `3010` before mandatory CLI readback. They never infer success from a stale PowerShell `$LASTEXITCODE` left by the preceding WinGet probe.
 - Base phases and concrete package/font/taskbar adapters are idempotent deployment owners. They inspect exact realized state first, skip downloads, reinstalls, rewrites, and shell restarts when that state already matches, and read back every changed state before success. During development the changed phase is rerun inside the existing ready Sandbox; one fresh Sandbox remains the final reproducibility gate rather than the edit-test loop.
-- The taskbar pin-layout adapter uses the current-user `MDM_Policy_User_Config01_Start02` WMI Bridge class in `root\cimv2\mdm\dmmap`, with `ParentID=./Vendor/MSFT/Policy/Config` and `InstanceID=Start`. One `CustomTaskbarLayoutCollection PinListPlacement="Replace"` owns the complete order as Microsoft Edge's `MSEdge` desktop application ID, File Explorer's `Microsoft.Windows.Explorer` desktop application ID, File Pilot's app-owned Start-menu link, the selected TradingView Desktop link, the selected Terminal package AUMID, then WinDirStat's installer-owned `WinDirStat` desktop application ID; complete ownership is required because appended policy pins do not reorder existing/default pins reliably. Base idempotently writes and verifies its managed Start-menu links against installed regular executables and exact arguments before referencing them through the supported `DesktopApplicationLinkPath` field. File Pilot retains empty arguments. TradingView's already resolved portable executable creates its link during stack provisioning with only `--remote-debugging-port=9222`, and the tool-version plan conditionally includes that link in the later complete layout. Provider writes receive HTML-encoded XML and provider read-back must equal the decoded canonical XML; only a changed and verified layout triggers a taskbar-owned Explorer restart after the independent early Registry-phase restart. Interactive bootstrap retains its synchronous restart path. Retained SSH provisioning atomically publishes a pending restart record and registers one randomly named one-shot Task Scheduler action with the existing user's interactive token. The action waits for its owning SSH PowerShell process to exit, stops the desktop shell once, verifies Winlogon's replacement PID in that session, deletes its task definition, and atomically publishes terminal evidence through `C:\SandboxStatus`; Go waits on the mapped host status owner before continuing. It never launches the shell into SSH session 0 or stores a password. No Taskband blob, shell pin verb, or UI-automation fallback exists.
+- The taskbar adapter uses the current-user `MDM_Policy_User_Config01_Start02` WMI
+  Bridge class in `root\cimv2\mdm\dmmap`, with `ParentID=./Vendor/MSFT/Policy/Config`
+  and `InstanceID=Start`. One replacing layout owns this order: Edge, available
+  Playwright browser access and Apify access links, File Explorer, selected File
+  Pilot, available TradingView, selected Terminal, then selected WinDirStat.
+  Appending policy pins cannot reliably reorder existing/default pins.
+- Managed Start links are checked against installed regular executables and exact
+  arguments. File Pilot uses no arguments; TradingView uses only
+  `--remote-debugging-port=9222`. Provider writes are HTML-encoded XML, and readback
+  must match the canonical decoded layout before an Explorer restart is scheduled.
+- SSH provisioning uses one task-owned, one-shot interactive-user restart action.
+  It waits for the owning SSH process to exit, verifies the replacement Explorer
+  PID, deletes its task, and publishes terminal evidence through `C:\SandboxStatus`.
+  Go waits on that owner. No shell launch into session 0, stored password, Taskband
+  blob, shell pin verb, or UI-automation fallback is used.
 
 ### Visual Studio And Configuration Transfer
 

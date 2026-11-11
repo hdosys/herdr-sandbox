@@ -30,6 +30,11 @@ The current product contract is:
 
 ### Direct Windows workstation setup
 
+- Local configuration import honors absolute target overrides for
+  `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `PI_CODING_AGENT_DIR`, and
+  `HERDR_CONFIG_PATH`. Configuration and supported credentials share the resolved
+  destination; managed Sandbox destinations remain unchanged.
+
 - The private installer is an alternative delivery path for the same provisioned
   development system, including selected settings and supported authentication.
   Its target need not be reachable over SSH. Installation is entirely local;
@@ -200,6 +205,11 @@ explicitly stated otherwise.
 - The CLI does not create a host-side Herdr workspace or pane as a substitute for remote attach.
 
 ### Failure, retention, and cleanup
+
+- A fresh, explicitly confirmed Tailscale non-enrollment remains recorded as
+  `tailscale-not-enrolled` after independent setup finishes. It does not publish
+  full readiness. `down` can skip identity recovery only while no protected identity
+  exists; unknown failures and existing identities retain preservation checks.
 
 - The shared failure-isolation contract above applies to every package and built-in
   stack, not a list of specially tolerated packages. Independent configuration and

@@ -41,8 +41,9 @@ type reprovisionResult struct {
 }
 
 type developmentProvisioningError struct {
-	failures []string
-	optional []string
+	failures             []string
+	optional             []string
+	tailscaleNotEnrolled bool
 }
 
 func (err *developmentProvisioningError) Error() string {
@@ -98,6 +99,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			state = operationFailureState(ctx, resultErr)
 			phase = operation.Phase
 			message = resultErr.Error()
+		}
+		if developmentFailure != nil && developmentFailure.tailscaleNotEnrolled {
+			phase = "tailscale-not-enrolled"
+			if state == operationStateSucceeded {
+				state = operationStateFailed
+			}
 		}
 		finished, finishErr := finishSessionOperation(plan.RunDirectory, operation, state, phase, message)
 		if finishErr != nil {
@@ -260,6 +267,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 				return Connection{}, ctx.Err()
 			}
 			recordFailure("Tailscale", err)
+			developmentFailure.tailscaleNotEnrolled = tailscaleBootstrap.confirmedNotEnrolled(wasReady, err)
 		}
 	}
 	if err := updateOperation("configuration-sync", "Reapplying and verifying selected development configuration."); err != nil {
@@ -359,7 +367,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 		return Connection{}, err
 	}
-	if !wasReady {
+	if !wasReady && (developmentFailure == nil || !developmentFailure.tailscaleNotEnrolled) {
 		if err := writeReadyStatus(plan.StatusDirectory, ready); err != nil {
 			return Connection{}, err
 		}
@@ -368,6 +376,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 }
 
 func finishDevelopmentProvisioning(connection Connection, failure *developmentProvisioningError, update func(string, string) error, output io.Writer) (Connection, error) {
+	if failure != nil && failure.tailscaleNotEnrolled {
+		if err := update("tailscale-not-enrolled", "Independent setup completed; Tailscale enrollment did not establish an identity. Guest preserved."); err != nil {
+			return Connection{}, err
+		}
+		return connection, failure
+	}
 	if failure != nil && len(failure.failures) > 0 {
 		if err := update("development-incomplete", "Terminal ready; independent development steps failed."); err != nil {
 			return Connection{}, err

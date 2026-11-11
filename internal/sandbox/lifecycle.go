@@ -467,7 +467,16 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 				}
 				hostPhase = operation.Phase
 			}
-			if !tailscaleFailurePrecedesIdentity(hostPhase) {
+			hasProtectedIdentity := false
+			if hostPhase == "tailscale-not-enrolled" {
+				identity, found, err := loadTailscaleIdentity(dataDirectory)
+				if err != nil {
+					return DownResult{}, fmt.Errorf("verify non-enrollment before down: %w", err)
+				}
+				clear(identity.State)
+				hasProtectedIdentity = found
+			}
+			if !tailscaleFailurePrecedesIdentity(hostPhase, hasProtectedIdentity) {
 				connectable, found, err := readOptionalStatus[connectableStatus](filepath.Join(dataDirectory, "runs", active.RunID, "status", connectableFileName))
 				if err != nil {
 					return DownResult{}, fmt.Errorf("read failed Sandbox connection status for Tailscale recovery: %w", err)
@@ -523,9 +532,11 @@ func downAtWithExecutable(ctx context.Context, dataDirectory, executable string)
 	return DownResult{RunID: active.RunID}, nil
 }
 
-func tailscaleFailurePrecedesIdentity(phase string) bool {
+func tailscaleFailurePrecedesIdentity(phase string, hasProtectedIdentity bool) bool {
 	switch phase {
-	case "guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight", "tailscale-not-enrolled":
+	case "tailscale-not-enrolled":
+		return !hasProtectedIdentity
+	case "guest-identity", "ssh-material", "ssh-verification", "ssh-alias", "herdr-verification", "tailscale-preflight":
 		return true
 	case "bootstrap", "connection-verification", "preparing", "visual-studio-layout", "development-provisioning", "credential-sync":
 		return true

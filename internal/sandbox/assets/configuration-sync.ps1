@@ -11,6 +11,19 @@ if ([string]::IsNullOrWhiteSpace($archive) -or [string]::IsNullOrWhiteSpace($exp
 }
 $script:CopiedConfigurationFiles = 0
 $script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
+function Resolve-ConfigurationTargetPath {
+    param([string]$EnvironmentName, [string]$DefaultPath)
+    $selected = $DefaultPath
+    if ($LocalTarget) {
+        $override = [Environment]::GetEnvironmentVariable($EnvironmentName, 'Process')
+        if (-not [string]::IsNullOrWhiteSpace($override)) { $selected = $override.Trim() }
+    }
+    $root = [IO.Path]::GetPathRoot($selected)
+    if ($root -notmatch '^[A-Za-z]:[\\/]' -and -not $root.StartsWith('\\', [StringComparison]::Ordinal)) {
+        throw "$EnvironmentName target must be absolute."
+    }
+    return [IO.Path]::GetFullPath($selected)
+}
 function Assert-ConfigurationDestinationPath {
     param([Parameter(Mandatory = $true)][string]$Path)
     $fullPath = [IO.Path]::GetFullPath($Path)
@@ -939,9 +952,21 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         $openCodeTVControlMCPConfigured = $openCodeConfigurationVerified -and $tradingViewStackEnabled
     }
 
+    if ([bool]$agentSync.claudeCode -or [bool]$agentSync.credentialSync.claudeCode) {
+        $claudeDestination = Resolve-ConfigurationTargetPath 'CLAUDE_CONFIG_DIR' (Join-Path $env:USERPROFILE '.claude')
+    }
+    if ([bool]$agentSync.codex -or [bool]$agentSync.credentialSync.codex) {
+        $codexDestination = Resolve-ConfigurationTargetPath 'CODEX_HOME' (Join-Path $env:USERPROFILE '.codex')
+    }
+    if ([bool]$agentSync.githubCopilot) {
+        $copilotDestination = Resolve-ConfigurationTargetPath 'COPILOT_HOME' (Join-Path $env:USERPROFILE '.copilot')
+    }
+    if ([bool]$agentSync.pi -or [bool]$agentSync.credentialSync.pi) {
+        $piDestination = Resolve-ConfigurationTargetPath 'PI_CODING_AGENT_DIR' (Join-Path $env:USERPROFILE '.pi\agent')
+    }
+
     if ([bool]$agentSync.claudeCode) {
         [Console]::Error.WriteLine('[config-sync] apply-claude-code')
-        $claudeDestination = Join-Path $env:USERPROFILE '.claude'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'claude-code') -Destination $claudeDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $claudeDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'claude-code')
         $claudeHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['claude']
@@ -950,16 +975,17 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
                 -SourceHookPath ([string]$claudeHookSource.Value) `
                 -DestinationHookPath (Join-Path $claudeDestination 'hooks\herdr-agent-state.ps1')
         }
-        Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination (Join-Path $env:USERPROFILE '.claude.json')
+        $claudeStateDestination = Join-Path $env:USERPROFILE '.claude.json'
+        if ($LocalTarget -and -not [string]::IsNullOrWhiteSpace($env:CLAUDE_CONFIG_DIR)) { $claudeStateDestination = Join-Path $claudeDestination '.claude.json' }
+        Sync-ClaudeCodeUserState -Source (Join-Path $expanded 'claude-code-state\.claude.json') -Destination $claudeStateDestination
     }
     if ([bool]$agentSync.credentialSync.claudeCode) {
         [Console]::Error.WriteLine('[config-sync] apply-claude-code-authentication')
-        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $env:USERPROFILE '.claude\.credentials.json')
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'claude-code-auth\.credentials.json') -Destination (Join-Path $claudeDestination '.credentials.json')
     }
 
     if ([bool]$agentSync.codex) {
         [Console]::Error.WriteLine('[config-sync] apply-codex')
-        $codexDestination = Join-Path $env:USERPROFILE '.codex'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'codex') -Destination $codexDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $codexDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'codex')
         $codexHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['codex']
@@ -971,14 +997,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     }
     if ([bool]$agentSync.credentialSync.codex) {
         [Console]::Error.WriteLine('[config-sync] apply-codex-authentication')
-        $codexDestination = Join-Path $env:USERPROFILE '.codex'
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\auth.json') -Destination (Join-Path $codexDestination 'auth.json')
         Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'codex-auth\.credentials.json') -Destination (Join-Path $codexDestination '.credentials.json')
     }
 
     if ([bool]$agentSync.githubCopilot) {
         [Console]::Error.WriteLine('[config-sync] apply-github-copilot')
-        $copilotDestination = Join-Path $env:USERPROFILE '.copilot'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'github-copilot') -Destination $copilotDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $copilotDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'github-copilot')
         $copilotHookSource = $agentSync.herdrHookSourcePaths.PSObject.Properties['copilot']
@@ -991,13 +1015,12 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
 
     if ([bool]$agentSync.pi) {
         [Console]::Error.WriteLine('[config-sync] apply-pi')
-        $piDestination = Join-Path $env:USERPROFILE '.pi\agent'
         Sync-VerifiedConfigurationRoot -Source (Join-Path $expanded 'pi') -Destination $piDestination
         Remove-VerifiedTrackedConfigurationFiles -Destination $piDestination -Paths @(Get-AgentGitTrackedDeletions -Name 'pi')
     }
     if ([bool]$agentSync.credentialSync.pi) {
         [Console]::Error.WriteLine('[config-sync] apply-pi-authentication')
-        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $env:USERPROFILE '.pi\agent\auth.json')
+        Sync-OptionalConfigurationFile -Source (Join-Path $expanded 'pi-auth\auth.json') -Destination (Join-Path $piDestination 'auth.json')
     }
 
     if ([bool]$agentSync.codex -or [bool]$agentSync.githubCopilot -or [bool]$agentSync.pi) {
@@ -1041,7 +1064,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             }
         }
         if ([bool]$agentSync.claudeCode) {
-            $root = Join-Path $env:USERPROFILE '.claude'
+            $root = $claudeDestination
             $agentWorktreeDestinations += (Join-Path $root 'CLAUDE.md')
             $agentWorktreeProtectionTargets += [pscustomobject]@{
                 Root = $root
@@ -1050,7 +1073,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             }
         }
         if ([bool]$agentSync.codex) {
-            $root = Join-Path $env:USERPROFILE '.codex'
+            $root = $codexDestination
             $agentWorktreeDestinations += (Join-Path $root 'AGENTS.md')
             $agentWorktreeProtectionTargets += [pscustomobject]@{
                 Root = $root
@@ -1059,7 +1082,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             }
         }
         if ([bool]$agentSync.githubCopilot) {
-            $root = Join-Path $env:USERPROFILE '.copilot'
+            $root = $copilotDestination
             $relative = 'instructions/herdr-sandbox-worktrees.instructions.md'
             $agentWorktreeDestinations += (Join-Path $root ($relative.Replace('/', '\')))
             $agentWorktreeProtectionTargets += [pscustomobject]@{
@@ -1069,7 +1092,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
             }
         }
         if ([bool]$agentSync.pi) {
-            $root = Join-Path $env:USERPROFILE '.pi\agent'
+            $root = $piDestination
             $agentWorktreeDestinations += (Join-Path $root 'AGENTS.md')
             $agentWorktreeProtectionTargets += [pscustomobject]@{
                 Root = $root
@@ -1470,7 +1493,7 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
 
     [Console]::Error.WriteLine('[config-sync] apply-herdr')
     $herdrConfigSource = Join-Path $expanded 'herdr\config.toml'
-    $herdrConfigDestination = Join-Path $env:APPDATA 'herdr\config.toml'
+    $herdrConfigDestination = Resolve-ConfigurationTargetPath 'HERDR_CONFIG_PATH' (Join-Path $env:APPDATA 'herdr\config.toml')
     $herdrExpectedSHA256 = [IO.File]::ReadAllText((Join-Path $expanded 'herdr\expected-sha256.txt'))
     if ($herdrExpectedSHA256 -cne 'missing' -and $herdrExpectedSHA256 -cnotmatch '^[a-f0-9]{64}$') {
         throw 'Guest Herdr configuration snapshot digest is invalid.'

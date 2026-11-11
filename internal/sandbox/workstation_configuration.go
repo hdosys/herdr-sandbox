@@ -137,7 +137,13 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	}
 	// Preserve target-local settings through Herdr's native import owner, then
 	// apply the same shell override used by the managed SSH path.
-	herdrTarget := filepath.Join(os.Getenv("APPDATA"), "herdr", "config.toml")
+	if value, exists := os.LookupEnv("HERDR_CONFIG_PATH"); exists && strings.TrimSpace(value) == "" {
+		return errors.New("HERDR_CONFIG_PATH is empty")
+	}
+	herdrTarget, err := configuredAgentRoot(os.Getenv("APPDATA"), "HERDR_CONFIG_PATH", "herdr", "config.toml")
+	if err != nil {
+		return err
+	}
 	if err := validateWorkstationLocalPath(herdrTarget); err != nil {
 		return err
 	}
@@ -191,7 +197,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	defer stop()
 	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); try { & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget } catch { $failure=$_.Exception.GetBaseException(); [Console]::Error.WriteLine('[config-failure] '+$failure.GetType().FullName+' line='+$_.InvocationInfo.ScriptLineNumber); exit 1 }`
 	command := hiddenCommandContext(applyContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
-	command.Env = append(attachEnvironment(childProcessEnvironment(os.Environ())), "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
+	command.Env = append(attachEnvironment(childProcessEnvironment(os.Environ())), "HERDR_CONFIG_PATH="+herdrTarget, "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
 	// Provider tools can include account material in errors. Keep their diagnostics
 	// in memory, just as the authenticated transfer boundary does, never setup.log.
 	var diagnostics bytes.Buffer
