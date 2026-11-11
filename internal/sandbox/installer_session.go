@@ -34,6 +34,7 @@ type installerVerification struct {
 	Checks          []installerCheck `json:"checks"`
 	WinGetVersion   string           `json:"wingetVersion"`
 	HerdrVersion    string           `json:"herdrVersion"`
+	HerdrExecutable string           `json:"herdrExecutable"`
 	HerdrClient     json.RawMessage  `json:"herdrClient"`
 	ReportPath      string           `json:"reportPath"`
 }
@@ -207,12 +208,17 @@ func provisionInstallerSession(ctx context.Context, options Options, plan runPla
 	if err := validateGuestHerdrBinary(client.Binary); err != nil {
 		return connection, err
 	}
+	if err := validateGuestHerdrBinary(result.HerdrExecutable); err != nil {
+		return connection, fmt.Errorf("installed Herdr launcher: %w", err)
+	}
+	// Status reports the leased runtime identity; execution must retain the
+	// installed launcher that produced that status, not bypass its lease owner.
 	connection.guestHerdrPath = client.Binary
 	connection.HerdrVersion = result.HerdrVersion
 	connection.HerdrProtocol = client.Protocol
 	connection.herdrRuntimeVersion = client.Version
 	connection.WinGetVersion = result.WinGetVersion
-	if err := publishGuestHerdrExecutable(ctx, connection, client.Binary); err != nil {
+	if err := publishGuestHerdrExecutable(ctx, connection, result.HerdrExecutable); err != nil {
 		return connection, err
 	}
 	// Starting the installed application and opening selected workspaces are target

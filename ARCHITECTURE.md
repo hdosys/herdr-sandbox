@@ -103,7 +103,9 @@ itself contains the selected settings; no separate plaintext host profile is sta
 The persisted installer-mode bit is part of active/connectable/ready identity and
 prevents normal retained provisioning from contaminating acceptance. Only after
 independent success does the coordinator start the installed matching Herdr and
-reuse workspace finalization. It never calls Herdr remote provisioning, normal
+reuse workspace finalization. It publishes the installed launcher actually used
+by the probes; the reported managed runtime path remains identity evidence, never
+an executable shortcut around Herdr's lease owner. It never calls Herdr remote provisioning, normal
 configuration sync or a package repair path. Cold transport, full selected-stack
 installation and console-backed remote attach require the explicit host-side
 `native-installer-sandbox` gate; isolated receiver evidence is not that gate.

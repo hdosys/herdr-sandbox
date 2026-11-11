@@ -145,18 +145,20 @@ function Test-InstallerEffects {
         } catch {$configurationPassed=$false}
     }
     $checks.Add([ordered]@{name='selected authored configuration hashes';passed=$configurationPassed})
-    $herdrVersion='';$herdrClient=$null
+    $herdrVersion='';$herdrExecutable='';$herdrClient=$null
     if (@($Profile.packages | Where-Object { [string]$_.id -ieq 'hdosys.herdr-win' }).Count -gt 0) {
         $passed=$false
         try {
             $command=@(Get-Command herdr.exe -CommandType Application -ErrorAction Stop)[0]
+            $herdrExecutable=[string]$command.Source
+            $launcher=Get-Item -LiteralPath $herdrExecutable -Force
             $herdrVersion=Invoke-InstallerProbe $command.Source @('--version')
             $herdrClient=(Invoke-InstallerProbe $command.Source @('status','client','--json'))|ConvertFrom-Json
             $binary=Get-Item -LiteralPath ([string]$herdrClient.binary) -Force
-            $passed=($herdrVersion -match '^herdr-ext ' -and -not $binary.PSIsContainer -and ($binary.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)
+            $passed=($herdrVersion -match '^herdr-ext ' -and -not $launcher.PSIsContainer -and ($launcher.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and -not $binary.PSIsContainer -and ($binary.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)
             $null=Invoke-InstallerProbe $command.Source @('config','check')
         } catch {$passed=$false}
         $checks.Add([ordered]@{name='installer-owned Herdr and configuration';passed=$passed})
     }
-    return [pscustomobject]@{ checks=@($checks.ToArray()); wingetVersion=$wingetVersion; herdrVersion=$herdrVersion; herdrClient=$herdrClient }
+    return [pscustomobject]@{ checks=@($checks.ToArray()); wingetVersion=$wingetVersion; herdrVersion=$herdrVersion; herdrExecutable=$herdrExecutable; herdrClient=$herdrClient }
 }

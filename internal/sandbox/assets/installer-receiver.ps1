@@ -121,7 +121,7 @@ try {
         }
     }
     $probes.checks += [pscustomobject]@{name='interactive SSH shell';passed=$passed}
-    Write-Output ([ordered]@{schemaVersion=1;installerSHA256=$installerDigest;profileSHA256=$profileDigest;exitCode=$result.ExitCode;complete=$complete;passed=$passed;checks=$probes.checks;wingetVersion=$probes.wingetVersion;herdrVersion=$probes.herdrVersion;herdrClient=$probes.herdrClient;reportPath=(Join-Path $stateRoot 'report.html')}|ConvertTo-Json -Depth 7 -Compress)
+    Write-Output ([ordered]@{schemaVersion=1;installerSHA256=$installerDigest;profileSHA256=$profileDigest;exitCode=$result.ExitCode;complete=$complete;passed=$passed;checks=$probes.checks;wingetVersion=$probes.wingetVersion;herdrVersion=$probes.herdrVersion;herdrExecutable=$probes.herdrExecutable;herdrClient=$probes.herdrClient;reportPath=(Join-Path $stateRoot 'report.html')}|ConvertTo-Json -Depth 7 -Compress)
 } catch {
     $safeFailure = 'Installer receiver failed: ' + $_.Exception.GetBaseException().GetType().FullName + ' line=' + $_.InvocationInfo.ScriptLineNumber
     Publish-InstallerProgress ([ordered]@{schemaVersion=1;phase='installer-failed';message=$safeFailure})
