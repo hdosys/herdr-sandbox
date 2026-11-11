@@ -495,13 +495,13 @@ function Get-GitHubReleaseAsset {
 }
 
 function Get-PowerShell7Installation {
-    $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell' -ErrorAction SilentlyContinue)
+    $packages = @(Get-AppxPackage -Name 'Microsoft.PowerShell-LTS' -ErrorAction SilentlyContinue)
     if ($packages.Count -ne 1) {
         throw "Expected one registered stable PowerShell 7 package, found $($packages.Count)."
     }
     $package = $packages[0]
     $packageVersion = [string]$package.Version
-    if ([string]$package.Name -cne 'Microsoft.PowerShell' -or
+    if ([string]$package.Name -cne 'Microsoft.PowerShell-LTS' -or
         [string]$package.Architecture -cne 'X64' -or
         [string]$package.Publisher -cne 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US') {
         throw "PowerShell 7 package identity is unexpected: name=$($package.Name) version=$packageVersion architecture=$($package.Architecture)"
