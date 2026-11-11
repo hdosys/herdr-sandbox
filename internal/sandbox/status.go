@@ -368,7 +368,7 @@ func validateConnectionStatus(status connectionStatus, expectedSchemaVersion int
 		return fmt.Errorf("decode sshHostKey: %w", err)
 	}
 	if !status.InstallerProvisioning || expectedSchemaVersion == readyStatusSchemaVersion {
-		if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); err != nil {
+		if err := validateTerminalText("wingetVersion", status.WinGetVersion, 256); status.WinGetVersion != "" && err != nil {
 			return err
 		}
 	} else if status.WinGetVersion != "" {

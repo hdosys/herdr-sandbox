@@ -891,13 +891,13 @@ function Install-CppStack {
     param()
 
     if (Test-ProvisioningPreparation) { Install-StackCMake; return }
-    Write-Output 'Installing Visual Studio C/C++ Build Tools...'
-    Install-StackVisualStudioBuildTools
-    $cmakeVersion = Install-StackCMake
+    Invoke-ProvisioningStackStep -Name 'Visual Studio Build Tools' -Requires @('WinGet') -Action { Install-StackVisualStudioBuildTools }
+    Invoke-ProvisioningStackStep -Name 'CMake' -Requires @('WinGet') -Action { Install-StackCMake }
+    Invoke-ProvisioningStackStep -Name 'C and C++' -Requires @('Visual Studio Build Tools','CMake') -Action {
     $environment = Enable-StackVisualStudioDeveloperEnvironment
     Assert-StackCppToolchain -Compiler $environment.Compiler -Linker $environment.Linker
     Write-Output "C/C++ ready: $($environment.Compiler)"
-    Write-Output "CMake ready: $cmakeVersion"
+    }
 }
 
 function Get-StackRustSHA256 {
@@ -1546,6 +1546,8 @@ function Install-AndroidStack {
     [CmdletBinding()]
     param()
 
+    if (-not (Test-ProvisioningDependencyReady 'Java')) { Install-JavaStack }
+    Invoke-ProvisioningStackStep -Name 'Android' -Requires @('Java') -Action {
     $androidCLIMetadata = Get-ProvisioningPreparedMetadata -Id 'Google.AndroidCommandLineTools' -Architecture 'x64' -InstallerType 'zip'
     if ($null -ne $androidCLIMetadata) { $androidCLIRevision = [string]$androidCLIMetadata.Version }
     else {
@@ -1597,7 +1599,6 @@ function Install-AndroidStack {
         throw 'Android Platform Tools package metadata is invalid.'
     }
 
-    if (-not (Test-ProvisioningDependencyReady 'Java')) { Install-JavaStack }
     if (-not (Test-ProvisioningPreparation)) {
     $jdkRoot = [string][Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
     if ([string]::IsNullOrWhiteSpace($jdkRoot)) { throw 'Android Java stack did not publish JAVA_HOME.' }
@@ -1672,6 +1673,7 @@ function Install-AndroidStack {
         }
     }
     Write-Output "Android ready: Command-line Tools $androidCLIRevision, Platform Tools $platformToolsVersion, Microsoft OpenJDK $jdkVersion"
+    }
 }
 
 function Get-StackAudioGridderFiles {
@@ -2230,8 +2232,8 @@ function Install-AudioStack {
     [CmdletBinding()]
     param()
 
-    Install-StackREAPER
-    Install-StackAudioGridder
+    Invoke-ProvisioningStackStep -Name 'REAPER' -Requires @('WinGet') -Action { Install-StackREAPER }
+    Invoke-ProvisioningStackStep -Name 'AudioGridder' -Action { Install-StackAudioGridder }
 }
 
 function Install-StackREAPER {
@@ -2375,6 +2377,7 @@ function Install-DotNetStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name '.NET SDK' -Requires @('WinGet') -InputValues @($Version) -Action {
     $tool = 'Microsoft.DotNet.SDK'
     $Version = Get-ProvisioningToolVersion -Tool $tool -Requested $Version
     $packageID = if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -2414,6 +2417,7 @@ function Install-DotNetStack {
         Write-Warning ".NET SDK command checks succeeded, but dotnet --list-sdks did not report $Version exactly once. Provisioning will continue with the installed SDK."
     }
     Write-Output ".NET SDK ready: $dotnetVersion"
+    }
 }
 
 function Get-StackJavaInstalledVersions {
@@ -2472,6 +2476,7 @@ function Install-JavaStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Java' -Requires @('WinGet') -InputValues @($Version) -Action {
     $tool = 'Microsoft.OpenJDK'
     $Version = Get-ProvisioningToolVersion -Tool $tool -Requested $Version
     $packageID = if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -2565,6 +2570,7 @@ public final class HerdrJavaStackProbe {
         }
     }
     Write-Output "Java ready: Microsoft OpenJDK $Version"
+    }
 }
 
 function Install-NSISStack {
@@ -2574,6 +2580,7 @@ function Install-NSISStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'NSIS' -Requires @('WinGet') -InputValues @($Version) -Action {
     $packageID = 'NSIS.NSIS'
     $Version = Get-ProvisioningToolVersion -Tool $packageID -Requested $Version
     $metadata = Get-ProvisioningWinGetMetadata -Role 'NSIS' -Id $packageID -Version $Version `
@@ -2643,6 +2650,7 @@ SectionEnd
         }
     }
     Write-Output "NSIS ready: $Version"
+    }
 }
 
 function Install-GoStack {
@@ -2652,6 +2660,7 @@ function Install-GoStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Go' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'GoLang.Go' -Requested $Version
     Write-Output 'Installing Go...'
     Install-ProvisioningWinGetPackage -Role 'Go' -Id 'GoLang.Go' -Version $Version -InstallerType 'wix' `
@@ -2665,6 +2674,7 @@ function Install-GoStack {
     $goVersion = Assert-ProvisioningCommand -Role 'Go' -Name 'go.exe' `
         -VersionArguments @('version') -ExpectedPattern $goPattern
     Write-Output "Go ready: $goVersion"
+    }
 }
 
 function Install-NodeRuntime {
@@ -2674,6 +2684,7 @@ function Install-NodeRuntime {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Node.js' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $Version
     if (-not (Test-ProvisioningDependencyReady 'Node.js')) {
     Write-Output 'Installing Node.js...'
@@ -2690,6 +2701,7 @@ function Install-NodeRuntime {
     $nodeVersion = Assert-ProvisioningCommand -Role 'Node.js' -Name 'node.exe' `
         -VersionArguments @('--version') -ExpectedPattern $nodePattern
     Write-Output "Node.js ready: $nodeVersion"
+    }
 }
 
 function Get-StackNodeTools {
@@ -2856,7 +2868,9 @@ function Install-NodeStack {
     )
 
     Install-NodeRuntime -Version $Version
-    Install-PlaywrightChromium -Version $PlaywrightVersion
+    Invoke-ProvisioningStackStep -Name 'Node browser tools' -Requires @('Node.js') -InputValues @($PlaywrightVersion) -Action {
+        Install-PlaywrightChromium -Version $PlaywrightVersion
+    }
 }
 
 function Install-PlaywrightBrowserAccess {
@@ -2872,8 +2886,9 @@ function Install-PlaywrightCLIStack {
         [string]$Version = ''
     )
 
-    $Version = Get-ProvisioningToolVersion -Tool '@playwright/cli' -Requested $Version
     Install-NodeRuntime -Version $NodeVersion
+    Invoke-ProvisioningStackStep -Name 'Playwright CLI' -Requires @('Node.js') -InputValues @($Version) -Action {
+    $Version = Get-ProvisioningToolVersion -Tool '@playwright/cli' -Requested $Version
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
@@ -3027,6 +3042,7 @@ function Install-PlaywrightCLIStack {
 
     Install-PlaywrightBrowserAccess
     Write-Output "Playwright CLI ready: $Version"
+    }
     Write-Output 'Use the Playwright browser access taskbar icon to paste the extension token whenever ready. Browser setup is optional and does not pause provisioning.'
 }
 
@@ -3507,12 +3523,12 @@ function Install-StackHyperFramesVoxCPM2 {
     }
 
     if (-not ((Test-ProvisioningDependencyReady 'Python') -and (Test-ProvisioningDependencyReady 'uv'))) {
-    Invoke-ProvisioningStep -Name 'TTS Python and uv' -InputValues @($global:HerdrSandboxStepState.StackImplementation,
-        (Get-ProvisioningToolVersion -Tool 'Python' -Requested ''),
-        (Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested '')) -Action {
         Install-PythonStack
         Install-Uv
-    }
+        if (-not (Test-ProvisioningWorkstation) -and
+            -not ((Test-ProvisioningDependencyReady 'Python') -and (Test-ProvisioningDependencyReady 'uv'))) {
+            throw 'TTS requires successful Python and uv setup.'
+        }
     }
     $supertonic = Install-StackHyperFramesSupertonic -BundleRoot $destination -ModelRoot $modelRoot
     $qwen3 = Install-StackHyperFramesQwen3 -BundleRoot $destination -ModelRoot $modelRoot -Python $supertonic.Python
@@ -3771,14 +3787,14 @@ function Install-HyperFramesStack {
         }
         return
     }
-    Invoke-ProvisioningStep -Name 'HyperFrames rendering' `
+    Invoke-ProvisioningIndependentStep -Name 'HyperFrames rendering' -Failures $DevelopmentFailures `
         -InputValues @($global:HerdrSandboxStepState.StackImplementation, $NodeVersion, $FFmpegVersion, $Version,
             (Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion),
             (Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion),
             (Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version)) -Action {
         Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
     }
-    Install-StackHyperFramesOptionalTTS
+    Invoke-ProvisioningStackStep -Name 'HyperFrames TTS' -Requires @('HyperFrames rendering') -Action { Install-StackHyperFramesOptionalTTS }
 }
 
 function Install-StackHyperFramesOptionalTTS {
@@ -3794,7 +3810,6 @@ function Install-StackHyperFramesOptionalTTS {
             if ($cause.Data['OptionalTTSUnavailable'] -eq $true) { $optional = $true }
         }
         if (-not $optional -or (Test-ProvisioningTerminalError -Exception $_.Exception)) {
-            $_.Exception.Data['ProvisioningTerminal'] = $true
             throw
         }
         $message = Get-ProvisioningBoundedDiagnosticText -Text "TTS unavailable: $($_.Exception.Message)" -MaximumBytes 3000
@@ -4289,6 +4304,7 @@ function Install-TradingViewStack {
         [string]$TVControlVersion = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'TradingView' -InputValues @($NodeVersion,$TVControlVersion) -Action {
     $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
     $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
     $desktopPackageID = 'TradingView.TradingViewDesktop'
@@ -4490,6 +4506,7 @@ function Install-TVControl {
 
     Write-Output "TVControl ready: $TVControlVersion"
     Write-Output 'TradingView remains stopped after provisioning. Its managed shortcut and TVControl launch command enable local CDP on port 9222 when explicitly launched.'
+    }
 }
 
 function Resolve-StackPythonPackage {
@@ -4529,6 +4546,7 @@ function Install-PythonStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Python' -Requires @('WinGet') -InputValues @($Series,$Version) -Action {
     $Series = Get-ProvisioningToolSeries -Tool 'Python' -Requested $Series
     $Version = Get-ProvisioningToolVersion -Tool 'Python' -Requested $Version
     $pythonSelection = Resolve-StackPythonPackage -Series $Series -Version $Version
@@ -4646,6 +4664,7 @@ function Install-PythonStack {
     }
     Write-Output "App-local Python command ready: $runtimeVersion"
     Write-Output "Python 3 command ready: $runtimeVersion"
+    }
 }
 
 function Install-Uv {
@@ -4655,6 +4674,7 @@ function Install-Uv {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'uv' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'astral-sh.uv' -Requested $Version
     Write-Output 'Installing uv...'
     Install-ProvisioningWinGetPackage -Role 'uv' -Id 'astral-sh.uv' -Version $Version `
@@ -4698,6 +4718,7 @@ function Install-Uv {
         throw "uv cache directory is unexpected: $reportedCache"
     }
     Write-Output "uv ready: $uvVersion"
+    }
 }
 
 function Install-PythonAIStack {
@@ -4706,7 +4727,7 @@ function Install-PythonAIStack {
 
     Install-PythonStack
     Install-Uv
-    Write-Output 'Python AI development toolchain ready.'
+    Invoke-ProvisioningStackStep -Name 'Python AI' -Requires @('Python','uv') -Action { Write-Output 'Python AI development toolchain ready.' }
 }
 
 function Install-ZigStack {
@@ -4716,6 +4737,7 @@ function Install-ZigStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Zig' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'zig.zig' -Requested $Version
     Write-Output 'Installing Zig...'
     Install-ProvisioningWinGetPackage -Role 'Zig' -Id 'zig.zig' -Version $Version `
@@ -4738,6 +4760,7 @@ function Install-ZigStack {
     [Environment]::SetEnvironmentVariable('ZIG_LOCAL_CACHE_DIR', $env:ZIG_LOCAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
     [Environment]::SetEnvironmentVariable('ZIG_GLOBAL_CACHE_DIR', $env:ZIG_GLOBAL_CACHE_DIR, (Get-ProvisioningEnvironmentTarget))
     Write-Output "Zig ready: $zigVersion"
+    }
 }
 
 function Copy-StackRustDistributionMirror {
@@ -4806,6 +4829,9 @@ function Install-RustMSVCStack {
             }
         }
     }
+    # The merged plan permits one Rust selection. Validate each project binding
+    # above, but provision that shared SDK only once in this process.
+    Invoke-ProvisioningStackStep -Name 'Rust MSVC' -Requires @('WinGet') -Action {
     $requestedChannel = if ([string]::IsNullOrWhiteSpace($Toolchain)) { 'stable' } else { $Toolchain }
 
 $rustTriple = 'x86_64-pc-windows-msvc'
@@ -4942,6 +4968,7 @@ $cargoVersion = Assert-ProvisioningCommand -Role 'Cargo' -Name 'cargo.exe' `
 Write-Output "Rustup ready: $rustupVersion"
 Write-Output "Rust ready: $rustVersion"
 Write-Output "Cargo ready: $cargoVersion"
+    }
 }
 
 function Install-CargoNextest {
@@ -4951,6 +4978,7 @@ function Install-CargoNextest {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Cargo Nextest' -Requires @('WinGet','Rust MSVC') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'nextest.cargo-nextest' -Requested $Version
     Write-Output 'Installing Cargo Nextest...'
     Install-ProvisioningWinGetPackage -Role 'Cargo Nextest' -Id 'nextest.cargo-nextest' -Version $Version `
@@ -4964,6 +4992,7 @@ function Install-CargoNextest {
     $nextestVersion = Assert-ProvisioningCommand -Role 'Cargo Nextest' -Name 'cargo-nextest.exe' `
         -VersionArguments @('--version') -ExpectedPattern $nextestPattern
     Write-Output "Cargo Nextest ready: $nextestVersion"
+    }
 }
 
 function Install-Just {
@@ -4973,6 +5002,7 @@ function Install-Just {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Just' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'Casey.Just' -Requested $Version
     Write-Output 'Installing Just...'
     Install-ProvisioningWinGetPackage -Role 'Just' -Id 'Casey.Just' -Version $Version `
@@ -4986,6 +5016,7 @@ function Install-Just {
     $justVersion = Assert-ProvisioningCommand -Role 'Just' -Name 'just.exe' `
         -VersionArguments @('--version') -ExpectedPattern $justPattern
     Write-Output "Just ready: $justVersion"
+    }
 }
 
 function Install-BunStack {
@@ -4995,6 +5026,7 @@ function Install-BunStack {
         [string]$Version = ''
     )
 
+    Invoke-ProvisioningStackStep -Name 'Bun' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'Oven-sh.Bun' -Requested $Version
     Write-Output 'Installing Bun...'
     Install-ProvisioningWinGetPackage -Role 'Bun' -Id 'Oven-sh.Bun' -Version $Version `
@@ -5008,6 +5040,7 @@ function Install-BunStack {
     $bunVersion = Assert-ProvisioningCommand -Role 'Bun' -Name 'bun.exe' `
         -VersionArguments @('--version') -ExpectedPattern $bunPattern
     Write-Output "Bun ready: $bunVersion"
+    }
 }
 
 function Get-HandyWebView2Runtime {
@@ -5254,22 +5287,25 @@ function Install-HandyStack {
         throw "Handy Cargo package identity is unexpected: $cargoPath"
     }
 
-    $cmakeVersion = Install-StackCMake
-
     $vulkanRoot = ''
     $vulkanVersion = ''
     $webView = $null
-    Install-StackVulkanSDK -InstalledRoot ([ref]$vulkanRoot) -InstalledVersion ([ref]$vulkanVersion)
-    Install-StackWebView2 -InstalledRuntime ([ref]$webView)
+    $vulkanRootReference = [ref]$vulkanRoot
+    $vulkanVersionReference = [ref]$vulkanVersion
+    $webViewReference = [ref]$webView
+    Invoke-ProvisioningStackStep -Name 'CMake' -Requires @('WinGet') -Action { Install-StackCMake }
+    Invoke-ProvisioningStackStep -Name 'Vulkan SDK' -Requires @('WinGet','Package Microsoft.VCRedist.2015+.x64') -Action { Install-StackVulkanSDK -InstalledRoot $vulkanRootReference -InstalledVersion $vulkanVersionReference }
+    Invoke-ProvisioningStackStep -Name 'WebView2' -Requires @('WinGet') -Action { Install-StackWebView2 -InstalledRuntime $webViewReference }
     Install-BunStack
     Install-RustMSVCStack -ProjectDirectory $rustRoot
+    Invoke-ProvisioningStackStep -Name 'Handy native headers' -Requires @('Vulkan SDK','CMake','WebView2','Bun','Rust MSVC') -Action {
     $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
     Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
 
-    Write-Output "Handy CMake ready: $cmakeVersion"
     Write-Output "Handy Vulkan SDK ready: $vulkanVersion"
     Write-Output "Handy WebView2 ready: $($webView.Version)"
     Write-Output 'Handy development toolchain ready.'
+    }
 }
 
 function Install-StackVulkanSDK {
@@ -5364,7 +5400,11 @@ function Install-HerdrStack {
     Install-PythonStack
     Install-ZigStack
     Install-RustMSVCStack -ProjectDirectory $projectRoot
+    Install-BunStack
+    Install-CargoNextest
+    Install-Just
 
+    Invoke-ProvisioningStackStep -Name 'Herdr development environment' -Requires @('Python','Zig','Rust MSVC','Bun','Cargo Nextest','Just') -InputValues @($projectRoot) -Action {
     $expectedCargoTarget = Get-ProvisioningPath 'build\cargo-target'
     if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR) -or
         [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR).TrimEnd('\') -cne $expectedCargoTarget) {
@@ -5385,8 +5425,6 @@ function Install-HerdrStack {
         throw 'Herdr libghostty output environment verification failed.'
     }
 
-    Install-BunStack
-    Install-CargoNextest
-    Install-Just
     Write-Output 'Herdr development toolchain ready.'
+    }
 }

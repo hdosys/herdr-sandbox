@@ -46,7 +46,7 @@ type developmentProvisioningError struct {
 }
 
 func (err *developmentProvisioningError) Error() string {
-	return fmt.Sprintf("development setup incomplete (failed steps: %d); Sandbox is running and Herdr is ready: use `sandbox attach`", len(err.failures))
+	return fmt.Sprintf("development setup incomplete (failed steps: %d)", len(err.failures))
 }
 
 func writeDevelopmentIncompleteGuidance(output io.Writer) {
@@ -69,6 +69,14 @@ type explorerRestartStatus struct {
 func provisionSession(ctx context.Context, options Options, plan runPlan, ready readyStatus, provisioning provisioningPlan, hostHerdr HostHerdr, tailscaleBootstrap tailscaleBootstrap) (connection Connection, resultErr error) {
 	wasReady := ready.SchemaVersion != 0
 	var developmentFailure *developmentProvisioningError
+	recordFailure := func(role string, failure error) {
+		if developmentFailure == nil {
+			developmentFailure = &developmentProvisioningError{}
+		}
+		message := fmt.Sprintf("%s: %v", role, failure)
+		developmentFailure.failures = append(developmentFailure.failures, message)
+		fmt.Fprintf(options.Output, "Provisioning failed: %s. Independent work continues.\n", message)
+	}
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
 	fmt.Fprintf(options.Output, "Provisioning Sandbox run %s; matching installed tools will be reused...\n", plan.ID)
@@ -160,7 +168,10 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		}
 		fmt.Fprintln(options.Output, "Preparing the required Visual Studio Build Tools layout on the host...")
 		if err := prepareVisualStudioLayout(ctx, plan, options.Output); err != nil {
-			return Connection{}, err
+			if ctx.Err() != nil {
+				return Connection{}, ctx.Err()
+			}
+			recordFailure("Visual Studio layout", err)
 		}
 	}
 
@@ -174,7 +185,11 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, codingAgentSyncConfiguration{}, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, options.Output)
 		cancelSync()
 		if err != nil {
-			return Connection{}, err
+			if ctx.Err() != nil {
+				return Connection{}, ctx.Err()
+			}
+			recordFailure("Early credential sync", err)
+			credentialsSyncedEarly = false
 		}
 	}
 	if err := updateOperation("development-provisioning", "Running the current Base, user, and project provisioning."); err != nil {
@@ -184,7 +199,14 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		return updateOperation(progress.Phase, progress.Message)
 	}, func(progressContext context.Context) error {
 		err := runGuestProvisioning(progressContext, connection, snapshot, false)
-		if errors.As(err, &developmentFailure) {
+		var guestFailure *developmentProvisioningError
+		if errors.As(err, &guestFailure) {
+			if developmentFailure == nil {
+				developmentFailure = guestFailure
+			} else {
+				developmentFailure.failures = append(developmentFailure.failures, guestFailure.failures...)
+				developmentFailure.optional = append(developmentFailure.optional, guestFailure.optional...)
+			}
 			return nil
 		}
 		return err
@@ -220,6 +242,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		}
 		return finishDevelopmentProvisioning(connection, developmentFailure, updateOperation, options.Output)
 	}
+	tailscaleReady := !plan.Tailscale
 	if plan.Tailscale {
 		if err := updateOperation("tailscale-identity", "Capturing and verifying the retained Tailscale identity."); err != nil {
 			return Connection{}, err
@@ -232,8 +255,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap)
 		}
 		cancelTailscale()
+		tailscaleReady = err == nil
 		if err != nil {
-			return Connection{}, err
+			if ctx.Err() != nil {
+				return Connection{}, ctx.Err()
+			}
+			recordFailure("Tailscale", err)
 		}
 	}
 	if err := updateOperation("configuration-sync", "Reapplying and verifying selected development configuration."); err != nil {
@@ -248,7 +275,10 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
 	cancelSync()
 	if err != nil {
-		return Connection{}, err
+		if ctx.Err() != nil {
+			return Connection{}, ctx.Err()
+		}
+		recordFailure("Configuration sync", err)
 	}
 	if err := updateOperation("herdr-provision", "Provisioning and activating the matching guest Herdr runtime."); err != nil {
 		return Connection{}, err
@@ -275,7 +305,10 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	}
 	installedIntegrations, err := installMissingGuestHerdrIntegrations(ctx, connection, provisioning.CodingAgentSync)
 	if err != nil {
-		return Connection{}, err
+		if ctx.Err() != nil {
+			return Connection{}, ctx.Err()
+		}
+		recordFailure("Herdr integrations", err)
 	}
 	if len(installedIntegrations) > 0 {
 		fmt.Fprintf(options.Output, "Herdr integrations installed: %s\n", strings.Join(installedIntegrations, ", "))
@@ -299,7 +332,10 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			return Connection{}, err
 		}
 	}
-	if len(plan.MobileSSHAuthorizedKeys) > 0 {
+	if len(plan.MobileSSHAuthorizedKeys) > 0 && !tailscaleReady {
+		recordFailure("Mobile SSH", errors.New("blocked because Tailscale setup failed"))
+	}
+	if len(plan.MobileSSHAuthorizedKeys) > 0 && tailscaleReady {
 		if !wasReady {
 			if err := updateOperation("mobile-ssh-preparation", "Preparing the private mobile Herdr endpoint."); err != nil {
 				return Connection{}, err

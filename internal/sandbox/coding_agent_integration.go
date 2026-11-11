@@ -50,40 +50,44 @@ func installMissingGuestHerdrIntegrations(ctx context.Context, connection Connec
 		return nil, nil
 	}
 
-	operationContext, cancel := context.WithTimeout(ctx, guestHerdrIntegrationTimeout)
-	defer cancel()
-	statuses, err := readGuestHerdrIntegrationStatuses(operationContext, connection, specs)
+	statuses, err := readGuestHerdrIntegrationStatuses(ctx, connection, specs)
 	if err != nil {
 		return nil, err
 	}
 
 	missing := missingGuestHerdrIntegrations(specs, statuses)
 	installed := make([]guestHerdrIntegrationSpec, 0, len(missing))
+	var failures []error
 	for _, spec := range missing {
-		available, err := installGuestHerdrIntegration(operationContext, connection, spec)
+		available, err := installGuestHerdrIntegration(ctx, connection, spec)
 		if err != nil {
-			return nil, fmt.Errorf("install missing %s Herdr integration: %w", spec.target, err)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			failures = append(failures, fmt.Errorf("install missing %s Herdr integration: %w", spec.target, err))
+			continue
 		}
 		if available {
 			installed = append(installed, spec)
 		}
 	}
 	if len(installed) == 0 {
-		return nil, nil
+		return nil, errors.Join(failures...)
 	}
 
-	verified, err := readGuestHerdrIntegrationStatuses(operationContext, connection, specs)
+	verified, err := readGuestHerdrIntegrationStatuses(ctx, connection, specs)
 	if err != nil {
-		return nil, fmt.Errorf("verify installed Herdr integrations: %w", err)
+		return nil, errors.Join(append(failures, fmt.Errorf("verify installed Herdr integrations: %w", err))...)
 	}
 	targets := make([]string, 0, len(installed))
 	for _, spec := range installed {
 		if verified[spec.target] != guestHerdrIntegrationCurrent {
-			return nil, fmt.Errorf("verify installed Herdr integration %s: status = %q, want %q", spec.target, verified[spec.target], guestHerdrIntegrationCurrent)
+			failures = append(failures, fmt.Errorf("verify installed Herdr integration %s: status = %q, want %q", spec.target, verified[spec.target], guestHerdrIntegrationCurrent))
+			continue
 		}
 		targets = append(targets, spec.target)
 	}
-	return targets, nil
+	return targets, errors.Join(failures...)
 }
 
 func missingGuestHerdrIntegrations(specs []guestHerdrIntegrationSpec, statuses map[string]guestHerdrIntegrationState) []guestHerdrIntegrationSpec {
@@ -97,6 +101,8 @@ func missingGuestHerdrIntegrations(specs []guestHerdrIntegrationSpec, statuses m
 }
 
 func readGuestHerdrIntegrationStatuses(ctx context.Context, connection Connection, specs []guestHerdrIntegrationSpec) (map[string]guestHerdrIntegrationState, error) {
+	ctx, cancel := context.WithTimeout(ctx, guestHerdrIntegrationTimeout)
+	defer cancel()
 	output, err := runSSHPowerShell(ctx, connection, nil, guestHerdrIntegrationStatusScript(), "inspect guest Herdr integrations", maximumRemoteProvisionOutput)
 	if err != nil {
 		return nil, err
@@ -162,6 +168,8 @@ func classifyGuestHerdrIntegrationStatus(detail string) (guestHerdrIntegrationSt
 }
 
 func installGuestHerdrIntegration(ctx context.Context, connection Connection, spec guestHerdrIntegrationSpec) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, guestHerdrIntegrationTimeout)
+	defer cancel()
 	script := guestHerdrIntegrationInstallScript(spec)
 	output, err := runSSHPowerShell(ctx, connection, nil, script, "install guest "+spec.target+" Herdr integration", maximumRemoteProvisionOutput)
 	if err != nil {

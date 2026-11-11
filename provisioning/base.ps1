@@ -1,13 +1,12 @@
 # herdr-sandbox-base-contract: 60
 param(
-    [ValidateSet('Registry', 'Core', 'Development', 'Library', 'Prepare')]
+    [ValidateSet('Registry', 'Development', 'Library', 'Prepare')]
     [string]$Phase = 'Development',
     [string]$ProjectProvisioningDirectory = '',
     [string]$WorkspacesDirectory = 'C:\Workspaces',
     [string]$PackagePlanPath = '',
     [string]$PackageCacheDirectory = '',
     [string]$PreparedInputsPath = '',
-    [ref]$PowerShellInstallation,
     [string]$UserProvisioningPath = '',
     [Parameter(Mandatory = $true)]
     [string]$ProcessOwnerPath,
@@ -461,7 +460,7 @@ function Initialize-ProvisioningPowerShellProfile {
     $lines = @'
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 '@
-    if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
+    if ((Test-ProvisioningPackageEnabled -Id 'Starship.Starship') -and (Test-ProvisioningDependencyReady 'Package Starship.Starship')) {
         $lines += "`r`nInvoke-Expression (&starship init powershell)"
     }
     if (-not (Test-ProvisioningWorkstation)) {
@@ -525,7 +524,7 @@ function Initialize-ProvisioningNushell {
     $nushellInitializationLines = New-Object 'Collections.Generic.List[string]'
     $nushellInitializationLines.Add('$env.config.show_banner = false')
     $expectedStarshipShell = ''
-    if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
+    if ((Test-ProvisioningPackageEnabled -Id 'Starship.Starship') -and (Test-ProvisioningDependencyReady 'Package Starship.Starship')) {
         $starshipCommand = Get-Command 'starship.exe' -CommandType Application -ErrorAction Stop |
             Select-Object -First 1
         $starshipInitialization = @(Invoke-ProvisioningNative -Role 'Nushell Starship initialization generation' `
@@ -756,7 +755,7 @@ function Test-ProvisioningTerminalError {
     for ($cause = $Exception; $null -ne $cause; $cause = $cause.InnerException) {
         if ($cause -is [OperationCanceledException] -or
             $cause -is [Management.Automation.PipelineStoppedException] -or
-            $cause -is [Security.SecurityException] -or $cause.Data['ProvisioningTerminal'] -eq $true) { return $true }
+            $cause.Data['ProvisioningTerminal'] -eq $true) { return $true }
     }
     return $false
 }
@@ -784,6 +783,7 @@ function Initialize-ProvisioningSteps {
     $global:HerdrSandboxStepState = @{
         Path = $Path
         Steps = @{}
+        Results = [ordered]@{}
         Implementation = Get-ProvisioningStepFingerprint -Files $ImplementationFiles
         StackImplementation = ''
     }
@@ -845,8 +845,11 @@ function Invoke-ProvisioningStep {
         [Parameter(Mandatory = $true)][scriptblock]$Action,
         [string[]]$InputFiles = @(),
         [string[]]$InputValues = @(),
-        [ref]$Disposition
+        [ref]$Disposition,
+        [AllowEmptyCollection()][Collections.Generic.List[string]]$Failures,
+        [switch]$Transient
     )
+    if (-not $Transient) {
     $fingerprint = Get-ProvisioningStepFingerprint -Files $InputFiles `
         -Values (@($global:HerdrSandboxStepState.Implementation) + $InputValues)
     if ($global:HerdrSandboxStepState.Steps[$Name] -ceq $fingerprint) {
@@ -857,14 +860,19 @@ function Invoke-ProvisioningStep {
     # Invalidate before execution, so interruption cannot retain old success.
     $global:HerdrSandboxStepState.Steps.Remove($Name)
     Save-ProvisioningSteps
+    }
     $optionalCount = $OptionalFailures.Count
+    $failureCount = if ($null -ne $Failures) { $Failures.Count } else { 0 }
     & $Action
-    if ($OptionalFailures.Count -eq $optionalCount) {
-        $global:HerdrSandboxStepState.Steps[$Name] = $fingerprint
-        Save-ProvisioningSteps
+    $developmentFailed = $null -ne $Failures -and $Failures.Count -gt $failureCount
+    if ($OptionalFailures.Count -eq $optionalCount -and -not $developmentFailed) {
+        if (-not $Transient) {
+            $global:HerdrSandboxStepState.Steps[$Name] = $fingerprint
+            Save-ProvisioningSteps
+        }
         if ($null -ne $Disposition) { $Disposition.Value = 'succeeded' }
     } elseif ($null -ne $Disposition) {
-        $Disposition.Value = 'unavailable'
+        $Disposition.Value = if ($developmentFailed) { 'failed' } else { 'unavailable' }
     }
 }
 
@@ -877,9 +885,10 @@ function Invoke-ProvisioningIndependentStep {
         [string[]]$InputValues = @(),
         [System.Collections.IDictionary]$Results,
         [string[]]$Requires = @(),
-        [switch]$ContinueTerminalFailures
+        [switch]$Transient
     )
 
+    if ($null -eq $Results) { $Results = $global:HerdrSandboxStepState.Results }
     if ($null -ne $Results) {
         $blocked = @($Requires | Where-Object { -not $Results.Contains($_) -or $Results[$_].status -notin @('succeeded', 'retained') })
         if ($blocked.Count -gt 0) {
@@ -892,16 +901,36 @@ function Invoke-ProvisioningIndependentStep {
     }
     try {
         $disposition = 'succeeded'
-        Invoke-ProvisioningStep -Name $Name -Action $Action -InputFiles $InputFiles -InputValues $InputValues -Disposition ([ref]$disposition)
+        Invoke-ProvisioningStep -Name $Name -Action $Action -InputFiles $InputFiles -InputValues $InputValues -Disposition ([ref]$disposition) -Failures $Failures -Transient:$Transient
         if ($null -ne $Results) { $Results[$Name] = [ordered]@{ status = $disposition; message = '' } }
     } catch {
-        if ((Test-ProvisioningTerminalError -Exception $_.Exception) -and -not $ContinueTerminalFailures) { throw }
-        if ($_.Exception -is [OperationCanceledException] -or $_.Exception -is [Management.Automation.PipelineStoppedException]) { throw }
+        if (Test-ProvisioningTerminalError -Exception $_.Exception) { throw }
         $message = Get-ProvisioningBoundedDiagnosticText -Text "$Name`: $($_.Exception.Message)" -MaximumBytes 3000
         $Failures.Add($message)
         if ($null -ne $Results) { $Results[$Name] = [ordered]@{ status = 'failed'; message = $message } }
         Write-Warning "$message Independent provisioning will continue."
     }
+}
+
+function Invoke-ProvisioningStackStep {
+    param([string]$Name, [scriptblock]$Action, [string[]]$Requires = @(), [string[]]$InputValues = @())
+    # Stack actions also restore process-local environments. Their enclosing
+    # profile owns durable completion; package adapters retain installed work.
+    $failureOwner = Get-Variable -Name DevelopmentFailures -ErrorAction SilentlyContinue
+    if ($null -eq $failureOwner -or $null -eq $failureOwner.Value) { & $Action; return }
+    if ((Test-ProvisioningPreparation) -or (Test-ProvisioningWorkstation)) { & $Action; return }
+    $inputs = @($global:HerdrSandboxStepState.StackImplementation) + $InputValues
+    foreach ($dependency in $Requires) { $inputs += @($dependency, [string](Test-ProvisioningDependencyReady $dependency)) }
+    $fingerprint = Get-ProvisioningStepFingerprint -Values $inputs
+    $results = $global:HerdrSandboxStepState.Results
+    if ($results.Contains($Name) -and $results[$Name].Contains('inputs') -and $results[$Name].inputs -ceq $fingerprint) {
+        if ($results[$Name].status -in @('failed','blocked')) { $failureOwner.Value.Add("$Name remains unavailable in this run; no repeated attempt.") }
+        elseif ($results[$Name].status -eq 'unavailable') { $OptionalFailures.Add("$Name remains unavailable in this run.") }
+        return
+    }
+    Invoke-ProvisioningIndependentStep -Name $Name -Action $Action -Requires $Requires -Transient `
+        -Failures $failureOwner.Value -InputValues $inputs
+    $results[$Name].inputs = $fingerprint
 }
 
 function Start-ProvisioningNativeGroup {
@@ -962,7 +991,7 @@ function Complete-ProvisioningNativeGroup {
         if (-not $result.Succeeded) {
             $state = "exit code $($result.ExitCode)"
             if ($result.TimedOut) { $state = 'timeout' }
-            elseif ($result.Stopped) { $state = 'stopped after sibling failure' }
+            elseif ($result.Stopped) { $state = 'stopped' }
             $detail = Get-ProvisioningBoundedDiagnosticText -Text ([string]$result.Output) -MaximumBytes 3000
             $failures += "$($result.Role): $state. $detail"
         }
@@ -1144,8 +1173,19 @@ function Get-ProvisioningPreparedMetadata {
 }
 
 function Test-ProvisioningDependencyReady {
-    param([string]$Name)
-    if (-not (Test-ProvisioningWorkstation)) { return $false }
+    param([string]$Name, [string]$Version = '')
+    if ((Test-ProvisioningPreparation) -and $Name.StartsWith('Package ', [StringComparison]::Ordinal)) {
+        $id = $Name.Substring(8)
+        if ($Version -eq '') { $Version = Get-ProvisioningPackageVersion -Id $id }
+        $prepared = @($script:PreparedPackageMetadata.Values | Where-Object {
+            $_.metadata.Id -ieq $id -and ($Version -eq '' -or $_.metadata.Version -ceq $Version)
+        })
+        return $prepared.Count -eq 1
+    }
+    if (-not (Test-ProvisioningWorkstation)) {
+        $state = Get-Variable -Name HerdrSandboxStepState -Scope Global -ErrorAction SilentlyContinue
+        return $null -ne $state -and $state.Value.Results.Contains($Name) -and $state.Value.Results[$Name].status -in @('succeeded','retained')
+    }
     $ready = Get-Variable -Name HerdrWorkstationReadySteps -Scope Global -ErrorAction SilentlyContinue
     return $null -ne $ready -and $Name -in @($ready.Value)
 }
@@ -2724,8 +2764,24 @@ function Install-ProvisioningOpenSrc {
     Write-Output "opensrc ready: $openSrcVersion"
 }
 
+function Get-ProvisioningPackagePrerequisites {
+    param([string]$Id)
+    switch ($Id) {
+        'GitHub.Copilot' { 'Microsoft.PowerShell' }
+        'OpenAI.Codex' { 'BurntSushi.ripgrep.MSVC'; 'Microsoft.VCRedist.2015+.x64' }
+        'hdosys.herdr-win' { 'Microsoft.VCRedist.2015+.x64' }
+        { $_ -in @('Microsoft.WindowsTerminal','Microsoft.WindowsTerminal.Preview') } { 'Microsoft.UI.Xaml.2.8' }
+    }
+}
+
 function Install-ProvisioningPackage {
     param([Parameter(Mandatory=$true)][string]$Id, [string]$Version = '', [switch]$AsStandardUser)
+    if ((Test-ProvisioningPreparation) -and (Test-ProvisioningDependencyReady -Name ('Package ' + $Id) -Version $Version)) { return }
+    foreach ($dependency in @(Get-ProvisioningPackagePrerequisites -Id $Id)) {
+        if (-not (Test-ProvisioningDependencyReady ('Package ' + $dependency))) {
+            Install-ProvisioningPackage -Id $dependency -Version (Get-ProvisioningPackageVersion -Id $dependency)
+        }
+    }
     switch ($Id) {
         'Microsoft.PowerShell' {
             $metadata = Get-ProvisioningWinGetMetadata -Role 'PowerShell 7' -Id $Id -Version $Version -InstallerType 'msix'
@@ -2734,7 +2790,6 @@ function Install-ProvisioningPackage {
                 -Adapter 'MSIX' -ExecutableName 'pwsh.exe' -VerifiedMsixIdentity ([ref]$identity)
             if (Test-ProvisioningPreparation) { return }
             $installation = Get-ProvisioningPowerShell7Installation -Identity $identity
-            if ($null -ne $PowerShellInstallation) { $PowerShellInstallation.Value = $installation }
             Write-Output ('PowerShell 7 ready: ' + $installation.DisplayVersion)
         }
         'Nushell.Nushell' { Install-ProvisioningNushell -Version $Version }
@@ -2774,17 +2829,15 @@ function Install-ProvisioningPackage {
         'Anomaly.OpenCode' { Install-ProvisioningOpenCode -Version $Version }
         'Voidstar.FilePilot' {
             Install-ProvisioningWinGetPackage -Role 'File Pilot' -Id $Id -Version $Version -InstallerType 'portable' -Adapter 'PortableExecutable' -ExecutableName 'FPilot.exe' -PayloadExtension '.exe' -PortableVersionSource 'File'
+            if (-not (Test-ProvisioningPreparation)) { Ensure-ProvisioningFilePilotStartShortcut }
         }
         'Anthropic.ClaudeCode' {
             Install-ProvisioningWinGetPackage -Role 'Claude Code' -Id $Id -Version $Version -InstallerType 'portable' -Adapter 'PortableExecutable' -ExecutableName 'claude.exe'
         }
         'GitHub.Copilot' {
-            Install-ProvisioningPackage -Id 'Microsoft.PowerShell'
             Install-ProvisioningWinGetPackage -Role 'GitHub Copilot' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'copilot.exe'
         }
         'OpenAI.Codex' {
-            Install-ProvisioningPackage -Id 'BurntSushi.ripgrep.MSVC'
-            Install-ProvisioningPackage -Id 'Microsoft.VCRedist.2015+.x64'
             Install-ProvisioningWinGetPackage -Role 'Codex' -Id $Id -Version $Version -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'codex-x86_64-pc-windows-msvc.exe' -CommandAlias 'codex.exe'
         }
         'Microsoft.VCRedist.2015+.x64' {
@@ -2954,8 +3007,14 @@ function Assert-ProvisioningVulkanDevice {
 function Set-ProvisioningOpenSSHDefaultShell {
     param([Parameter(Mandatory = $true)][string]$Executable)
     if (-not [IO.Path]::IsPathRooted($Executable)) { throw 'OpenSSH default shell must use an absolute executable path.' }
-    Assert-ProvisioningPathAncestors $Executable
+    Assert-ProvisioningPathAncestors (Split-Path -Parent $Executable)
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw 'OpenSSH default shell executable is missing.' }
+    $item = Get-Item -LiteralPath $Executable -Force
+    $powerShellAlias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
+        -not [string]::Equals($Executable, $powerShellAlias, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'OpenSSH default shell is an unexpected reparse point.'
+    }
     New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
     New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value $Executable -PropertyType String -Force | Out-Null
     $configured = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\OpenSSH').DefaultShell
@@ -3003,10 +3062,15 @@ function Get-ProvisioningPowerShell7Installation {
         $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
         throw "PowerShell 7 executable signature is invalid: $($signature.Status)"
     }
+    # The registered alias activates MSIX correctly under sshd; starting its
+    # physical image directly can fail before process creation.
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
+    Assert-ProvisioningPathAncestors (Split-Path -Parent $alias)
+    if (-not (Test-Path -LiteralPath $alias -PathType Leaf)) { throw 'Registered PowerShell application alias is missing.' }
     return [pscustomobject]@{
         PackageVersion = $packageVersion
         DisplayVersion = $displayVersion
-        Executable = $executable
+        Executable = $alias
     }
 }
 
@@ -4244,13 +4308,32 @@ if (-not $returnDevelopmentFailures) { $DevelopmentFailures = New-Object 'Collec
 if ($null -eq $OptionalFailures) { $OptionalFailures = New-Object 'Collections.Generic.List[string]' }
 Initialize-ProvisioningSteps -Path $StepStatePath -Resume $Resume.IsPresent `
     -ImplementationFiles @($PSCommandPath, $ProcessOwnerPath)
-Invoke-ProvisioningStep -Name 'PowerShell' -InputValues (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell') -Action {
-Write-Output 'Installing PowerShell 7...'
-Install-ProvisioningPackage -Id 'Microsoft.PowerShell' -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.PowerShell')
+Invoke-ProvisioningIndependentStep -Name 'WinGet' -Failures $DevelopmentFailures -Action {
+    Assert-ProvisioningCommand -Role 'WinGet' -Name 'winget.exe' -VersionArguments @('--version') -ExpectedPattern '^v?\d+\.' | Out-Null
 }
-if ($Phase -eq 'Core') { return }
 
-Invoke-ProvisioningStep -Name 'Shell configuration' -InputFiles @($PackagePlanPath) -Action {
+# Both targets use the same package dispatch and prerequisite declarations.
+# The normal target no longer has a separate handwritten chain of fail-fast calls.
+$selectedPackages = @([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($provisioningPackagePlan.Data.defaults) + @($provisioningPackagePlan.Data.additions)
+foreach ($selectedPackage in $selectedPackages) {
+    $packageIDs = @(Get-ProvisioningPackagePrerequisites -Id ([string]$selectedPackage.id)) + @([string]$selectedPackage.id)
+    foreach ($packageID in $packageIDs) {
+        $name = 'Package ' + $packageID
+        if ($global:HerdrSandboxStepState.Results.Contains($name)) { continue }
+        $requires = @(Get-ProvisioningPackagePrerequisites -Id $packageID | ForEach-Object { 'Package ' + $_ })
+        if ($packageID -ine 'Anomaly.OpenCode') { $requires += 'WinGet' }
+        Invoke-ProvisioningIndependentStep -Name $name -Failures $DevelopmentFailures -Requires $requires `
+            -InputValues (Get-ProvisioningPackageVersion -Id $packageID) -Action {
+                Install-ProvisioningPackage -Id $packageID -Version (Get-ProvisioningPackageVersion -Id $packageID)
+            }
+    }
+}
+
+Invoke-ProvisioningIndependentStep -Name 'PowerShell SSH shell' -Failures $DevelopmentFailures -Requires @('Package Microsoft.PowerShell') -Action {
+    Set-ProvisioningOpenSSHDefaultShell -Executable (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')
+}
+
+Invoke-ProvisioningIndependentStep -Name 'Shell configuration' -Failures $DevelopmentFailures -InputFiles @($PackagePlanPath) -Action {
 $openCodeCopyOnSelectEnvironment = 'OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT'
 [Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Machine')
 [Environment]::SetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'false', 'Process')
@@ -4259,113 +4342,17 @@ if ([Environment]::GetEnvironmentVariable($openCodeCopyOnSelectEnvironment, 'Mac
     throw 'OpenCode copy-on-select environment verification failed.'
 }
 
-$powerShellProfilePath = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\PowerShell\profile.ps1'))
-$expectedProfileRoot = [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\') + '\'
-if (-not $powerShellProfilePath.StartsWith($expectedProfileRoot, [StringComparison]::OrdinalIgnoreCase) -or
-    -not $powerShellProfilePath.EndsWith('\PowerShell\profile.ps1', [StringComparison]::OrdinalIgnoreCase)) {
-    throw "PowerShell 7 all-host profile path is outside the expected guest user profile: $powerShellProfilePath"
-}
-$starshipInitialization = ''
-if (Test-ProvisioningPackageEnabled -Id 'Starship.Starship') {
-    Write-Output 'Installing Starship...'
-    Install-ProvisioningPackage -Id 'Starship.Starship' -Version (Get-ProvisioningPackageVersion -Id 'Starship.Starship')
-    $starshipInitialization = 'Invoke-Expression (&starship init powershell)' + [Environment]::NewLine
-}
-Install-ProvisioningPackage -Id 'Nushell.Nushell' -Version (Get-ProvisioningPackageVersion -Id 'Nushell.Nushell')
-Initialize-ProvisioningNushell
-
-Initialize-ProvisioningPowerShellProfile
 }
 
-if (Test-ProvisioningPackageEnabled -Id 'junegunn.fzf') {
-    Invoke-ProvisioningIndependentStep -Name 'fzf' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'junegunn.fzf') -Action {
-    Install-ProvisioningPackage -Id 'junegunn.fzf' -Version (Get-ProvisioningPackageVersion -Id 'junegunn.fzf')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'BurntSushi.ripgrep.MSVC') {
-    Invoke-ProvisioningIndependentStep -Name 'ripgrep' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC') -Action {
-    Install-ProvisioningPackage -Id 'BurntSushi.ripgrep.MSVC' -Version (Get-ProvisioningPackageVersion -Id 'BurntSushi.ripgrep.MSVC')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'rhysd.actionlint') {
-    Invoke-ProvisioningIndependentStep -Name 'actionlint' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint') -Action {
-    Install-ProvisioningPackage -Id 'rhysd.actionlint' -Version (Get-ProvisioningPackageVersion -Id 'rhysd.actionlint')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
-    Invoke-ProvisioningStep -Name 'Git' -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
-    Install-ProvisioningPackage -Id 'Git.Git' -Version (Get-ProvisioningPackageVersion -Id 'Git.Git')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'GitHub.cli') {
-    Invoke-ProvisioningStep -Name 'GitHub CLI' -InputValues (Get-ProvisioningPackageVersion -Id 'GitHub.cli') -Action {
-    Install-ProvisioningPackage -Id 'GitHub.cli' -Version (Get-ProvisioningPackageVersion -Id 'GitHub.cli')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'Tailscale.Tailscale') {
-    Invoke-ProvisioningStep -Name 'Tailscale' -InputValues (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale') -Action {
-    Install-ProvisioningPackage -Id 'Tailscale.Tailscale' -Version (Get-ProvisioningPackageVersion -Id 'Tailscale.Tailscale')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'Anomaly.OpenCode') {
-    Invoke-ProvisioningStep -Name 'OpenCode' -InputValues (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode') -Action {
-    Install-ProvisioningPackage -Id 'Anomaly.OpenCode' -Version (Get-ProvisioningPackageVersion -Id 'Anomaly.OpenCode')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'ZedIndustries.Zed') {
-    Invoke-ProvisioningIndependentStep -Name 'Zed' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed') -Action {
-        Install-ProvisioningPackage -Id 'ZedIndustries.Zed' -Version (Get-ProvisioningPackageVersion -Id 'ZedIndustries.Zed')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'WinDirStat.WinDirStat') {
-    Invoke-ProvisioningIndependentStep -Name 'WinDirStat' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat') -Action {
-    Install-ProvisioningPackage -Id 'WinDirStat.WinDirStat' -Version (Get-ProvisioningPackageVersion -Id 'WinDirStat.WinDirStat')
-    }
-}
-
-if (Test-ProvisioningPackageEnabled -Id 'Voidstar.FilePilot') {
-    Invoke-ProvisioningIndependentStep -Name 'File Pilot' -Failures $DevelopmentFailures -InputValues (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot') -Action {
-    Write-Output 'Installing File Pilot...'
-    Install-ProvisioningPackage -Id 'Voidstar.FilePilot' -Version (Get-ProvisioningPackageVersion -Id 'Voidstar.FilePilot')
-    Ensure-ProvisioningFilePilotStartShortcut
-    Write-Output 'File Pilot ready: FPilot.exe'
-    }
-}
+$shellInputs = @([string](Test-ProvisioningDependencyReady 'Package Starship.Starship'))
+Invoke-ProvisioningIndependentStep -Name 'Nushell profile' -Failures $DevelopmentFailures -Requires @('Package Nushell.Nushell') -InputFiles @($PackagePlanPath) -InputValues $shellInputs -Action { Initialize-ProvisioningNushell }
+Invoke-ProvisioningIndependentStep -Name 'PowerShell profile' -Failures $DevelopmentFailures -Requires @('Package Microsoft.PowerShell') -InputFiles @($PackagePlanPath) -InputValues $shellInputs -Action { Initialize-ProvisioningPowerShellProfile }
 
 $terminalPackageID = [string]$provisioningPackagePlan.TerminalID
 $terminalPackageFamily = ''
 if (Test-ProvisioningPackageEnabled -Id $terminalPackageID) {
     $terminalPackageFamily = if ($WindowsTerminalEdition -eq 'preview') { 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe' } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe' }
-    Invoke-ProvisioningStep -Name 'Windows Terminal' -InputValues @($terminalPackageID,
-        (Get-ProvisioningPackageVersion -Id $terminalPackageID),
-        (Get-ProvisioningPackageVersion -Id 'Microsoft.UI.Xaml.2.8')) -Action {
-    Write-Output 'Installing GeistMono Nerd Font...'
-    Install-ProvisioningGeistMonoNerdFont
-
-    Write-Output 'Installing Windows Terminal...'
-    Install-ProvisioningPackage -Id 'Microsoft.UI.Xaml.2.8' -Version (Get-ProvisioningPackageVersion -Id 'Microsoft.UI.Xaml.2.8')
-    Install-ProvisioningPackage -Id $terminalPackageID -Version (Get-ProvisioningPackageVersion -Id $terminalPackageID)
-    Write-Output 'GeistMono Nerd Font ready: GeistMono Nerd Font'
-    Write-Output "Windows Terminal $WindowsTerminalEdition ready"
-    }
-}
-
-foreach ($package in @($provisioningPackagePlan.Data.additions)) {
-    $packageID = [string]$package.id
-    if ($packageID -ieq 'Anomaly.OpenCode') {
-        continue
-    }
-    Invoke-ProvisioningIndependentStep -Name "additional WinGet package $packageID" -Failures $DevelopmentFailures -InputValues ([string]$package.version) -Action {
-        Install-ProvisioningPackage -Id $packageID -Version ([string]$package.version)
-    }
+    Invoke-ProvisioningIndependentStep -Name 'GeistMono font' -Failures $DevelopmentFailures -Action { Install-ProvisioningGeistMonoNerdFont }
 }
 
 if (Test-ProvisioningPackageEnabled -Id 'KhronosGroup.VulkanRT') {
@@ -4412,7 +4399,7 @@ if ($activeWorkspaceMatches -ne 1) {
     throw 'Workspace manifest active workspace is invalid for Base provisioning.'
 }
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
-    Invoke-ProvisioningStep -Name 'Git configuration' -InputFiles @($workspaceManifestPath) -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
+    Invoke-ProvisioningIndependentStep -Name 'Git configuration' -Failures $DevelopmentFailures -Requires @('Package Git.Git') -InputFiles @($workspaceManifestPath) -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
     Wait-ProvisioningCommandAvailable -Role 'Git' -Name 'git.exe' | Out-Null
     $gitVersion = Assert-ProvisioningCommand -Role 'Git' -Name 'git.exe' `
         -VersionArguments @('--version') -ExpectedPattern '^git version '

@@ -8,6 +8,26 @@ Herdr Sandbox exposes the `sandbox` Windows command for running development and 
 
 The current product contract is:
 
+### Failure isolation in every provisioning target
+
+- A package lookup, download, checksum, signature, installation or capability
+  failure stops that component, never the whole provisioning run. Every selected
+  independent step must still be attempted, including independent parallel work.
+- Dependent actions run only after their prerequisites succeed. Rejected payloads
+  are never executed, and a failed or blocked component is never recorded as
+  successful or retained as complete on the next attempt.
+- Normal Sandbox provisioning and direct workstation setup share this contract.
+  They finish with a truthful report of successful, retained, failed, unavailable
+  and dependency-blocked work. Completed work is preserved for selective retry;
+  a package failure never requires recreating the Sandbox or starting from zero.
+- Explicit cancellation, an untrusted shared execution/state boundary, or loss of
+  the required transport can prevent further work. These are not package errors
+  and must be reported separately. A custom script that throws can be isolated
+  from other profiles, but execution cannot resume at its next statement.
+- Development incompleteness is separate from Sandbox connection readiness.
+  Preserve a usable guest and connection whenever their actual prerequisites work,
+  while reporting unavailable components rather than claiming full success.
+
 ### Direct Windows workstation setup
 
 - The private installer is an alternative delivery path for the same provisioned
@@ -19,15 +39,8 @@ The current product contract is:
   intended user's elevated account; Windows 11 is recommended. The existing
   Sandbox product remains intact. Protected control state is separate from
   user-writable runtime caches and toolchain homes.
-- Every selected independent provisioning step is attempted even after another
-  step fails. Only dependent steps are skipped when their prerequisites fail.
-  Integrity failures never activate a component and never become success, but
-  unrelated safe steps continue. Explicit cancellation and inability to trust
-  the installer/input boundary remain run-level stop conditions.
-- The installer reaches a final report rather than aborting on a package error.
-  The report distinguishes successful, retained, failed, unavailable and
-  dependency-blocked steps. An incomplete run remains a nonzero CLI outcome,
-  not a false successful installation. Re-running resumes unfinished/changed work.
+- An incomplete installer run returns a nonzero CLI outcome with the complete
+  report described above. Re-running resumes unfinished or changed work.
 - `setup.log` beside the report records the complete installer output and appends
   timestamped attempts during resume. It stays private; the report links to it.
   Hash-verified download caches use the short machine-local
@@ -188,20 +201,16 @@ explicitly stated otherwise.
 
 ### Failure, retention, and cleanup
 
-- Independent development failures no longer discard otherwise usable work.
-  Base continues after a failed fzf, ripgrep, actionlint, WinDirStat, File Pilot,
-  additional WinGet package, Vulkan check, opensrc, desktop shortcut, global user
-  script, or project script, and reports every failed step. A failed script stops
-  at its error; subsequent independent project scripts still run. Core shell,
-  shared configuration prerequisites, archive integrity, credential transfer,
-  SSH and Herdr verification remain strict. After all required readiness checks
+- The shared failure-isolation contract above applies to every package and built-in
+  stack, not a list of specially tolerated packages. Independent configuration and
+  integration phases also continue after a component failure. After readiness checks
   succeed, the guest is `ready` even when its provisioning operation is `failed`.
   Required development failures return nonzero and print `sandbox attach` for work.
   An unavailable Supertonic CPU runtime instead leaves the Sandbox and rendering
   ready, reports TTS unavailable, and allows normal attach. The latest operation
   retains that incomplete optional outcome, so `up` resumes it after correction.
-  Integrity, unsafe input, SSH, Herdr, cancellation and unclassified TTS failures
-  remain errors; failed TTS validation removes its environment and command-path
+  Rejected package data and unclassified TTS failures remain component errors;
+  failed TTS validation removes its environment and command-path
   activation rather than selecting another provider. Existing processes may retain
   their inherited environment until restarted.
 

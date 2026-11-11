@@ -189,8 +189,9 @@ namespace HerdrSandbox
                     {
                         int timedOutIndex = FindExpiredTask(pending);
                         tasks[timedOutIndex].Stop(true);
-                        StopPending(pending, timedOutIndex);
-                        break;
+                        results[timedOutIndex] = tasks[timedOutIndex].WaitAfterStop();
+                        pending.Remove(timedOutIndex);
+                        continue;
                     }
 
                     Task<ProvisioningProcessResult>[] completions = new Task<ProvisioningProcessResult>[pending.Count];
@@ -203,8 +204,9 @@ namespace HerdrSandbox
                     {
                         int timedOutIndex = FindExpiredTask(pending);
                         tasks[timedOutIndex].Stop(true);
-                        StopPending(pending, timedOutIndex);
-                        break;
+                        results[timedOutIndex] = tasks[timedOutIndex].WaitAfterStop();
+                        pending.Remove(timedOutIndex);
+                        continue;
                     }
 
                     int completedIndex = pending[completedPosition];
@@ -219,11 +221,6 @@ namespace HerdrSandbox
                         break;
                     }
                     pending.RemoveAt(completedPosition);
-                    if (!results[completedIndex].Succeeded)
-                    {
-                        StopPending(pending, -1);
-                        break;
-                    }
                 }
 
                 for (int index = 0; index < tasks.Length; index++)

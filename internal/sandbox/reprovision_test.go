@@ -26,10 +26,13 @@ func TestDevelopmentIncompleteGuidanceKeepsUsabilityAndFailureDistinct(t *testin
 		}
 	}
 	failure := &developmentProvisioningError{failures: []string{"project audio: REAPER failed"}}
-	for _, want := range []string{"development setup incomplete", "failed steps: 1", "Sandbox is running", "Herdr is ready", "`sandbox attach`"} {
+	for _, want := range []string{"development setup incomplete", "failed steps: 1"} {
 		if !strings.Contains(failure.Error(), want) {
-			t.Fatalf("final error hides failure or usability: %q", failure.Error())
+			t.Fatalf("error hides incomplete development: %q", failure.Error())
 		}
+	}
+	if strings.Contains(failure.Error(), "ready") {
+		t.Fatal("component failure claims readiness before the connection was verified")
 	}
 	t.Log(output.String() + "sandbox: " + failure.Error())
 }
@@ -153,7 +156,7 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 	t.Setenv(fastTestsEnvironment, "")
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
-		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningExtensionScript", "Test-ProvisioningPreparation"},
+		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningStackStep", "Invoke-ProvisioningExtensionScript", "Test-ProvisioningPreparation", "Test-ProvisioningWorkstation"},
 	}, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
 		names: []string{"Install-HyperFramesStack", "Install-StackHyperFramesOptionalTTS", "Assert-StackSupertonicRuntime"},

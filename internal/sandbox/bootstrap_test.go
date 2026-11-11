@@ -132,25 +132,15 @@ if ([string](Initialize-PlaywrightExtensionToken -Enabled $false) -cne '') { thr
 func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
 	script := string(bootstrapScript)
 	registryStart := strings.Index(script, "& $baseProvisioning -Phase 'Registry'")
-	developmentStart := strings.Index(script, "& $baseProvisioning -Phase 'Core'")
 	if strings.Count(script, "[ValidateSet('Disabled', 'Enabled')]") < 2 ||
 		!strings.Contains(script, "[string]$AudioPlayback") || !strings.Contains(script, "[string]$AudioInput") ||
-		registryStart < 0 || developmentStart <= registryStart {
-		t.Fatalf("bootstrap audio handoff boundaries are missing: registry=%d development=%d", registryStart, developmentStart)
+		registryStart < 0 {
+		t.Fatal("bootstrap audio handoff boundary is missing")
 	}
-	registryCall := script[registryStart:developmentStart]
-	if strings.Count(registryCall, "-AudioOutputEnabled:($AudioPlayback -ceq 'Enabled')") != 1 ||
-		strings.Count(registryCall, "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") != 1 {
-		t.Fatalf("Base Registry audio handoff = %q", registryCall)
-	}
-	developmentEnd := strings.Index(script[developmentStart:], "$sshDefaultShell = $powerShell7.Executable")
-	if developmentEnd < 0 {
-		t.Fatal("Base Development call boundary is missing")
-	}
-	developmentCall := script[developmentStart : developmentStart+developmentEnd]
-	if strings.Contains(developmentCall, "AudioPlayback") || strings.Contains(developmentCall, "AudioInput") ||
-		strings.Contains(developmentCall, "AudioOutputEnabled") {
-		t.Fatal("Base Development unexpectedly owns the audio selection")
+	if strings.Count(script, "-AudioOutputEnabled:($AudioPlayback -ceq 'Enabled')") != 1 ||
+		strings.Count(script, "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") != 1 ||
+		!strings.Contains(script[registryStart:], "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") {
+		t.Fatal("audio selections are not passed once to the Registry owner")
 	}
 }
 

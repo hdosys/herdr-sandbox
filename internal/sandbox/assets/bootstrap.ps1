@@ -522,17 +522,6 @@ try {
         Write-AtomicJson -Path (Join-Path $StatusDirectory 'installer-baseline.json') -Value (Get-InstallerBaseline)
     }
 
-    if (-not $InstallerProvisioning) {
-    $wingetRelease = Get-LatestGitHubRelease -Repository 'microsoft/winget-cli'
-    $ExpectedWinGetVersion = [string]$wingetRelease.tag_name
-    if ($ExpectedWinGetVersion -notmatch '^v\d+\.\d+\.\d+$') {
-        throw "WinGet latest release tag is invalid: $ExpectedWinGetVersion"
-    }
-    $wingetBundleAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
-        -NamePattern '^Microsoft\.DesktopAppInstaller_8wekyb3d8bbwe\.msixbundle$' -Role 'WinGet bundle'
-    $wingetDependenciesAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
-        -NamePattern '^DesktopAppInstaller_Dependencies\.zip$' -Role 'WinGet dependencies'
-    }
     $openSSHSelection = Get-OpenSSHRelease
     $openSSHRelease = $openSSHSelection.Release
     $OpenSSHVersion = $openSSHSelection.Version
@@ -603,12 +592,24 @@ try {
     }
 
     Write-ProgressStatus -Phase 'registry-customization' -Message 'Applying registry settings before package installation'
+    try {
     & $baseProvisioning -Phase 'Registry' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner `
         -AudioOutputEnabled:($AudioPlayback -ceq 'Enabled') `
         -AudioInputEnabled:($AudioInput -ceq 'Enabled')
+    } catch {
+        Write-Warning "Desktop customization failed; SSH bootstrap continues: $($_.Exception.Message)"
+    }
 
+    try {
+    $wingetRelease = Get-LatestGitHubRelease -Repository 'microsoft/winget-cli'
+    $ExpectedWinGetVersion = [string]$wingetRelease.tag_name
+    if ($ExpectedWinGetVersion -notmatch '^v\d+\.\d+\.\d+$') { throw "WinGet latest release tag is invalid: $ExpectedWinGetVersion" }
+    $wingetBundleAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
+        -NamePattern '^Microsoft\.DesktopAppInstaller_8wekyb3d8bbwe\.msixbundle$' -Role 'WinGet bundle'
+    $wingetDependenciesAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
+        -NamePattern '^DesktopAppInstaller_Dependencies\.zip$' -Role 'WinGet dependencies'
     $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
     $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
     Write-ProgressStatus -Phase 'winget-download' -Message "Restoring Microsoft WinGet $ExpectedWinGetVersion"
@@ -629,8 +630,8 @@ try {
     Expand-Archive -LiteralPath $wingetDependenciesArchive -DestinationPath $wingetDependenciesDirectory
     $wingetDependencyPaths = @(Get-ChildItem -LiteralPath (Join-Path $wingetDependenciesDirectory 'x64') -File -Filter '*.appx' |
         ForEach-Object { $_.FullName })
-    if ($wingetDependencyPaths.Count -ne 3) {
-        throw "Expected 3 x64 WinGet dependencies but found $($wingetDependencyPaths.Count)."
+    if ($wingetDependencyPaths.Count -eq 0 -or $wingetDependencyPaths.Count -gt 16) {
+        throw "WinGet dependency set is empty or oversized: $($wingetDependencyPaths.Count)."
     }
     for ($attempt = 1; $attempt -le 4; $attempt += 1) {
         try {
@@ -674,49 +675,10 @@ try {
         Write-Warning "WinGet installed successfully, but reports $wingetVersion instead of $ExpectedWinGetVersion. Provisioning will continue with the working command."
     }
 
-    Write-ProgressStatus -Phase 'development-provisioning' `
-        -Message 'Installing the current stable Microsoft VC++ runtime required by development tools and Herdr'
-    $vcMetadata = @(Invoke-Native -Role 'VC++ runtime metadata resolution' -FilePath $wingetPath -ArgumentList @(
-        'show', '--id', 'Microsoft.VCRedist.2015+.x64', '--exact', '--source', 'winget', '--architecture', 'x64',
-        '--accept-source-agreements', '--disable-interactivity'))
-    $vcVersions = @($vcMetadata | Where-Object { $_ -match '^Version:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
-    $vcURLs = @($vcMetadata | Where-Object { $_ -match '^\s*Installer Url:\s*(\S+)\s*$' } | ForEach-Object { $Matches[1] })
-    $vcDigests = @($vcMetadata | Where-Object { $_ -match '^\s*Installer SHA256:\s*([A-Fa-f0-9]{64})\s*$' } | ForEach-Object { $Matches[1] })
-    if ($vcVersions.Count -ne 1 -or $vcURLs.Count -ne 1 -or $vcDigests.Count -ne 1) {
-        throw 'VC++ runtime metadata is incomplete.'
+    } catch {
+        $wingetVersion = ''
+        Write-Warning "WinGet setup failed; SSH and independent provisioning continue: $($_.Exception.Message)"
     }
-    $vcRuntimeURI = [Uri][string]$vcURLs[0]
-    if ($vcRuntimeURI.Scheme -cne 'https' -or $vcRuntimeURI.Host -cne 'download.visualstudio.microsoft.com' -or
-        $vcRuntimeURI.AbsolutePath -notmatch '/(?<sha>[A-Fa-f0-9]{64})/VC_redist\.x64\.exe$' -or
-        [string]$Matches['sha'] -ine [string]$vcDigests[0]) {
-        throw "VC++ runtime metadata URL is unexpected: $vcRuntimeURI"
-    }
-    $vcRuntimeInstaller = Join-Path $env:TEMP 'VC_redist.x64.exe'
-    $vcRuntimeInstaller = Get-ResolvedBootstrapAsset -Role 'VC++ runtime' -CacheKey 'vc-runtime' `
-        -Uri ([string]$vcRuntimeURI.AbsoluteUri) -ExpectedSHA256 ([string]$vcDigests[0]) `
-        -FileName 'VC_redist.x64.exe' -DestinationPath $vcRuntimeInstaller `
-        -CacheRoot $bootstrapCacheRoot -CacheTrustRoot $bootstrapCacheTrustRoot
-    $vcRuntimeProcess = Start-Process -FilePath $vcRuntimeInstaller `
-        -ArgumentList @('/install', '/quiet', '/norestart') -WindowStyle Hidden -Wait -PassThru
-    if ($vcRuntimeProcess.ExitCode -notin @(0, 1638)) {
-        throw "VC++ runtime installer exited with code $($vcRuntimeProcess.ExitCode)."
-    }
-    $vcInstalled = @(Invoke-Native -Role 'VC++ runtime installed-package verification' -FilePath $wingetPath -ArgumentList @(
-        'list', '--id', 'Microsoft.VCRedist.2015+.x64', '--exact', '--source', 'winget',
-        '--accept-source-agreements', '--disable-interactivity'))
-    $vcInstalledPattern = '(?:^|\s)' + [regex]::Escape('Microsoft.VCRedist.2015+.x64') + '\s+' +
-        [regex]::Escape([string]$vcVersions[0]) + '(?:\s|$)'
-    if (@($vcInstalled | Where-Object { [string]$_ -match $vcInstalledPattern }).Count -lt 1) {
-        Write-Warning "VC++ runtime installation succeeded, but WinGet did not report resolved version $($vcVersions[0]). Provisioning will continue with the installed runtime."
-    }
-
-    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing only the PowerShell shell required for SSH'
-    $powerShell7 = $null
-    & $baseProvisioning -Phase 'Core' -ProjectProvisioningDirectory $projectProvisioningDirectory `
-        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner -PowerShellInstallation ([ref]$powerShell7)
-    if ($null -eq $powerShell7) { throw 'Core provisioning did not return a verified PowerShell installation.' }
-    $sshDefaultShell = $powerShell7.Executable
     } else {
         Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'
     }

@@ -1,5 +1,6 @@
 $OptionalFailures = New-Object 'Collections.Generic.List[string]'
 $failures = New-Object 'Collections.Generic.List[string]'
+$DevelopmentFailures = $failures
 $statePath = Join-Path $PSScriptRoot 'steps.json'
 $inputPath = Join-Path $PSScriptRoot 'input.txt'
 [IO.File]::WriteAllText($inputPath, 'first')
@@ -67,22 +68,65 @@ Initialize-ProvisioningSteps -Path $statePath -Resume $true -ImplementationFiles
 Invoke-ProvisioningStep -Name 'Good' -Action { $script:goodRuns++ }
 if ($script:goodRuns -ne 2) { throw 'Interrupted step retained stale success.' }
 
-# Integrity and cancellation are never independent warnings.
-foreach ($exception in @([Security.SecurityException]::new('checksum mismatch'), [OperationCanceledException]::new('cancelled'))) {
+# Failed packages block dependants, not independent work or the containing profile.
+$results = [ordered]@{}
+$script:compositeRuns = 0
+$script:dependentRuns = 0
+$script:independentRuns = 0
+$script:packageBroken = $true
+$compositeAction = {
+    $script:compositeRuns++
+    Invoke-ProvisioningIndependentStep -Name 'Fixture package' -Results $results -Failures $failures -Action {
+        if ($script:packageBroken) { throw [Security.SecurityException]::new('controlled package checksum mismatch') }
+    }
+    Invoke-ProvisioningIndependentStep -Name 'Fixture dependant' -Requires @('Fixture package') -Results $results -Failures $failures -Action { $script:dependentRuns++ }
+    Invoke-ProvisioningIndependentStep -Name 'Fixture independent effect' -Results $results -Failures $failures -Action { $script:independentRuns++ }
+}
+Invoke-ProvisioningIndependentStep -Name 'Fixture composite' -Results $results -Failures $failures -Action $compositeAction
+if ($failures.Count -eq 0 -or $results['Fixture package'].status -ne 'failed' -or
+    $results['Fixture dependant'].status -ne 'blocked' -or $script:dependentRuns -ne 0 -or
+    $results['Fixture independent effect'].status -ne 'succeeded' -or $script:independentRuns -ne 1) {
+    throw 'Package failure escaped its boundary, ran a blocked dependant, or suppressed independent work.'
+}
+Initialize-ProvisioningSteps -Path $statePath -Resume $true -ImplementationFiles @($PSCommandPath)
+$failures.Clear()
+$results = [ordered]@{}
+$script:packageBroken = $false
+Invoke-ProvisioningIndependentStep -Name 'Fixture composite' -Results $results -Failures $failures -Action $compositeAction
+if ($script:compositeRuns -ne 2 -or $script:dependentRuns -ne 1 -or
+    $script:independentRuns -ne 1 -or $failures.Count -ne 0 -or
+    $results['Fixture package'].status -ne 'succeeded' -or $results['Fixture dependant'].status -ne 'succeeded') {
+    throw 'Failed composite was retained or successful independent work repeated.'
+}
+
+# Both direct and wrapped cancellation must still stop nested execution.
+foreach ($exception in @([OperationCanceledException]::new('cancelled'), [Exception]::new('wrapped cancellation', [OperationCanceledException]::new('cancelled')))) {
     $terminal = $false
-    try { Invoke-ProvisioningIndependentStep -Name 'Terminal' -Failures $failures -Action { throw $exception } }
+    try {
+        Invoke-ProvisioningIndependentStep -Name 'Terminal parent' -Failures $failures -Action {
+            Invoke-ProvisioningIndependentStep -Name 'Terminal child' -Failures $failures -Action { throw $exception }
+        }
+    }
     catch { $terminal = Test-ProvisioningTerminalError -Exception $_.Exception }
     if (-not $terminal -or $failures.Count -ne 0) { throw 'Terminal failure was hidden.' }
 }
 
 # TTS validation failure deactivates it, and cannot become optional availability.
+Initialize-ProvisioningSteps -Path $statePath -Resume $true -ImplementationFiles @($PSCommandPath)
 function Install-StackHyperFramesVoxCPM2 { param($Node) throw 'controlled archive checksum mismatch' }
-$terminal = $false
-try { Invoke-ProvisioningIndependentStep -Name 'Bad TTS' -Failures $failures -Action { Install-HyperFramesStack } }
-catch { $terminal = Test-ProvisioningTerminalError -Exception $_.Exception }
-if (-not $terminal -or $global:activated -or $OptionalFailures.Count -ne 0 -or $failures.Count -ne 0) {
+Invoke-ProvisioningIndependentStep -Name 'Bad TTS' -Failures $failures -Action { Install-HyperFramesStack }
+if ($global:activated -or $OptionalFailures.Count -ne 0 -or $failures.Count -ne 1) {
     throw 'TTS integrity failure was activated or downgraded.'
 }
+$failures.Clear()
+
+# Multiple profiles must not repeatedly retry the same failed package in one run.
+$script:failedStackAttempts = 0
+$failedStack = { $script:failedStackAttempts++; throw 'controlled WinGet lookup failure' }
+Invoke-ProvisioningStackStep -Name 'Shared failed stack' -Action $failedStack
+Invoke-ProvisioningStackStep -Name 'Shared failed stack' -Action $failedStack
+if ($script:failedStackAttempts -ne 1 -or $failures.Count -ne 2) { throw 'Shared failed stack was retried or hidden from its callers.' }
+$failures.Clear()
 
 Initialize-ProvisioningSteps -Path $statePath -Resume $false -ImplementationFiles @($PSCommandPath)
 Invoke-ProvisioningStep -Name 'Good' -Action { $script:goodRuns++ }

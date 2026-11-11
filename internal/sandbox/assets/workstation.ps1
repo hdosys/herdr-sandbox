@@ -98,6 +98,10 @@ function Add-WorkstationJob {
 function Get-WorkstationJobInputs {
     param($Job)
     $inputs = @($NativeRoot, $nativeUserSID, $Job.Action, $Job.PackageID, $Job.Version)
+    if ($Job.Action -in @('shell','nushell')) {
+        $promptReady = $nativeResults.Contains('Package Starship.Starship') -and $nativeResults['Package Starship.Starship'].status -in @('succeeded','retained')
+        $inputs += [string]$promptReady
+    }
     foreach ($tool in $Job.Tools) {
         $inputs += @($tool, [string]$global:HerdrSandboxToolVersionPlan.Versions[$tool],
             [string]$global:HerdrSandboxToolVersionPlan.Series[$tool], [string]$global:HerdrSandboxToolVersionPlan.Sources[$tool])
@@ -122,23 +126,27 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     Add-WorkstationJob 'Windows desktop preferences' 'desktop' -Seconds 60
     Add-WorkstationJob 'WinGet' 'winget' -Seconds 600
     $vcRuntimeID = 'Microsoft.VCRedist.2015+.x64'
+    $plannedPackages = @{}
     $needsVCRuntime = $nativeProfile.stacks.Count -gt 0 -or $provisioningPackagePlan.Enabled.ContainsKey('hdosys.herdr-win') -or $provisioningPackagePlan.Enabled.ContainsKey($vcRuntimeID)
     if ($needsVCRuntime) {
         $vcVersion = [string]$provisioningPackagePlan.Versions[$vcRuntimeID]
         Add-WorkstationJob -Name ('Package ' + $vcRuntimeID) -Action package -Requires @('WinGet') -PackageID $vcRuntimeID -Version $vcVersion -Seconds 600
+        $plannedPackages[$vcRuntimeID] = $true
     }
     foreach ($package in @($nativeProfile.packages)) {
-        if ([string]$package.id -ieq $vcRuntimeID) { continue }
-        $packageRequirements = @('WinGet')
-        if ([string]$package.id -ieq 'hdosys.herdr-win') { $packageRequirements += 'Package ' + $vcRuntimeID }
-        Add-WorkstationJob -Name ('Package ' + [string]$package.id) -Action package -Requires $packageRequirements -PackageID ([string]$package.id) -Version ([string]$package.version) -Seconds 600
+        foreach ($packageID in (@(Get-ProvisioningPackagePrerequisites -Id ([string]$package.id)) + @([string]$package.id))) {
+            if ($plannedPackages.ContainsKey($packageID)) { continue }
+            $packageRequirements = @(Get-ProvisioningPackagePrerequisites -Id $packageID | ForEach-Object { 'Package ' + $_ })
+            if ($packageID -ine 'Anomaly.OpenCode') { $packageRequirements += 'WinGet' }
+            Add-WorkstationJob -Name ('Package ' + $packageID) -Action package -Requires $packageRequirements -PackageID $packageID -Version ([string]$provisioningPackagePlan.Versions[$packageID]) -Seconds 600
+            $plannedPackages[$packageID] = $true
+        }
     }
     if ($provisioningPackagePlan.Enabled.ContainsKey('Microsoft.PowerShell')) {
         Add-WorkstationJob 'PowerShell profile' 'shell' -Requires @('Package Microsoft.PowerShell') -Seconds 60
     }
     if ($provisioningPackagePlan.Enabled.ContainsKey('Nushell.Nushell')) {
         $requirements = @('Package Nushell.Nushell')
-        if ($provisioningPackagePlan.Enabled.ContainsKey('Starship.Starship')) { $requirements += 'Package Starship.Starship' }
         Add-WorkstationJob 'Nushell profile' 'nushell' -Requires $requirements -Seconds 90
     }
     if ($needsVisualStudio) {
@@ -178,7 +186,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         Add-WorkstationJob 'Git shell' 'git-sh' -Requires @('Package Git.Git') -Seconds 60
     }
     if ($selected.ContainsKey('handy')) {
-        Add-WorkstationJob 'Vulkan SDK' 'vulkan-sdk' -Requires @('WinGet') -Tools @('KhronosGroup.VulkanSDK') -Seconds 1200
+        Add-WorkstationJob 'Vulkan SDK' 'vulkan-sdk' -Requires @('WinGet','Package Microsoft.VCRedist.2015+.x64') -Tools @('KhronosGroup.VulkanSDK') -Seconds 1200
         Add-WorkstationJob 'WebView2' 'webview2' -Requires @('WinGet') -Tools @('Microsoft.EdgeWebView2Runtime')
         Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','C and C++')
     }
@@ -201,7 +209,7 @@ try {
         $nativeResults[$job.Name] = [ordered]@{ status='running'; message=('Started at ' + [DateTime]::UtcNow.ToString('o') + '; deadline ' + $job.Seconds + ' seconds.') }
         Save-WorkstationReport
         Write-Output ('[' + $stepNumber + '/' + $nativeJobs.Count + '] Checking ' + $job.Name)
-        Invoke-ProvisioningIndependentStep -Name $job.Name -Requires $job.Requires -Results $nativeResults -Failures $nativeFailures -ContinueTerminalFailures -InputValues $inputs -Action {
+        Invoke-ProvisioningIndependentStep -Name $job.Name -Requires $job.Requires -Results $nativeResults -Failures $nativeFailures -InputValues $inputs -Action {
             Write-Output ('[' + [DateTime]::Now.ToString('HH:mm:ss') + '] Starting ' + $job.Name + ' (time limit ' + $job.Seconds + ' seconds)')
             $ready = @($nativeResults.Keys | Where-Object { $nativeResults[$_].status -in @('succeeded','retained') }) -join '|'
             $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',

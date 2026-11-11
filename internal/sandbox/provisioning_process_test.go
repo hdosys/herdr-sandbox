@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestProvisioningProcessOwnerQuotesRunsParallelAndKillsSiblingTreeInWindowsPowerShell51(t *testing.T) {
+func TestProvisioningProcessOwnerQuotesRunsParallelAndIsolatesTaskFailuresInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows Job Object provisioning process regression")
 	}
@@ -52,13 +52,15 @@ while (-not (Test-Path -LiteralPath (Join-Path $Root $other) -PathType Leaf)) {
 }
 [Console]::Out.Write('BARRIER:' + $Role)
 `)
-	grandchildFixture := write("grandchild.ps1", `param([string]$Root)
+	grandchildFixture := write("grandchild.ps1", `param([string]$Root, [int]$Seconds = 3)
+[IO.File]::WriteAllText((Join-Path $Root 'grandchild.pid'), [string]$PID)
 [IO.File]::WriteAllText((Join-Path $Root 'grandchild.started'), 'started')
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds $Seconds
 [IO.File]::WriteAllText((Join-Path $Root 'grandchild.survived'), 'survived')
 `)
-	siblingFixture := write("sibling.ps1", `param([string]$Root, [string]$PowerShell, [string]$Grandchild)
-$child = Start-Process -FilePath $PowerShell -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $Grandchild, $Root) -WindowStyle Hidden -PassThru
+	siblingFixture := write("sibling.ps1", `param([string]$Root, [string]$PowerShell, [string]$Grandchild, [string]$Mode = 'complete')
+$duration = if ($Mode -eq 'hold') { 60 } else { 3 }
+$child = Start-Process -FilePath $PowerShell -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $Grandchild, $Root, $duration) -WindowStyle Hidden -PassThru
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     while (-not (Test-Path -LiteralPath (Join-Path $Root 'grandchild.started') -PathType Leaf)) {
@@ -66,7 +68,9 @@ try {
         Start-Sleep -Milliseconds 20
     }
     [IO.File]::WriteAllText((Join-Path $Root 'sibling.ready'), 'ready')
-    Start-Sleep -Seconds 60
+    if ($Mode -eq 'hold') { Start-Sleep -Seconds 60 }
+    if (-not $child.WaitForExit(10000) -or $child.ExitCode -ne 0) { exit 74 }
+    [IO.File]::WriteAllText((Join-Path $Root 'sibling.completed'), 'complete')
 } finally {
     if ($null -ne $child) { $child.Dispose() }
 }
@@ -78,6 +82,17 @@ while (-not (Test-Path -LiteralPath (Join-Path $Root 'sibling.ready') -PathType 
     Start-Sleep -Milliseconds 20
 }
 exit 23
+`)
+	timeoutWitness := write("timeout-witness.ps1", `param([string]$Root)
+$deadline = [DateTime]::UtcNow.AddSeconds(10)
+while (-not (Test-Path -LiteralPath (Join-Path $Root 'sibling.ready'))) {
+    if ([DateTime]::UtcNow -ge $deadline) { exit 75 }
+    Start-Sleep -Milliseconds 20
+}
+$childID = [int][IO.File]::ReadAllText((Join-Path $Root 'grandchild.pid'))
+$child = Get-Process -Id $childID -ErrorAction Stop
+try { if (-not $child.WaitForExit(20000)) { exit 76 } } finally { $child.Dispose() }
+[IO.File]::WriteAllText((Join-Path $Root 'independent.completed'), 'complete')
 `)
 	groupCallerFixture := write("group-caller.ps1", `param(
     [string]$PowerShell,
@@ -171,30 +186,62 @@ if ($barrierResults.Count -ne 2 -or @($barrierResults | Where-Object { -not $_.S
     throw "Barrier group failed: $($barrierResults | Format-List | Out-String)"
 }
 
+$failureRoot = Join-Path $argumentSpec.WorkingDirectory 'failure'
+$timeoutRoot = Join-Path $argumentSpec.WorkingDirectory 'timeout'
+$cancelRoot = Join-Path $argumentSpec.WorkingDirectory 'cancel'
+foreach ($directory in @($failureRoot,$timeoutRoot,$cancelRoot)) { $null = New-Item -ItemType Directory -Path $directory }
+$failureScript = '%s'
+$siblingScript = '%s'
+$grandchildScript = '%s'
+$timeoutWitness = '%s'
 $failureSpecs = [HerdrSandbox.ProvisioningProcessSpec[]]@(
-    (New-Spec -Role 'failure' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s', '%s')),
-    (New-Spec -Role 'sibling' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s', '%s', '%s', '%s'))
+    (New-Spec -Role 'failure' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $failureScript, $failureRoot)),
+    (New-Spec -Role 'sibling' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $siblingScript, $failureRoot, $argumentSpec.FilePath, $grandchildScript))
 )
 $failureGroup = [HerdrSandbox.ProvisioningProcess]::StartGroup($failureSpecs)
 try { $failureResults = @($failureGroup.Complete()) } finally { $failureGroup.Dispose() }
 if ($failureResults.Count -ne 2 -or $failureResults[0].ExitCode -ne 23 -or $failureResults[0].Succeeded -or
-    -not $failureResults[1].Stopped -or $failureResults[1].Succeeded) {
+    -not $failureResults[1].Succeeded -or $failureResults[1].Stopped -or $failureResults[1].TimedOut) {
     throw "Failure group result is invalid: $($failureResults | Format-List | Out-String)"
 }
-Start-Sleep -Milliseconds 3500
-if (Test-Path -LiteralPath (Join-Path '%s' 'grandchild.survived') -PathType Leaf) {
-    throw 'Cancelled sibling grandchild survived its task Job Object.'
+if (-not (Test-Path -LiteralPath (Join-Path $failureRoot 'grandchild.survived')) -or
+    -not (Test-Path -LiteralPath (Join-Path $failureRoot 'sibling.completed'))) {
+    throw 'Independent sibling did not finish after another task failed.'
 }
 
-$timeoutSpec = New-Spec -Role 'timeout' -Arguments @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') -Timeout 1000
-$timeoutResult = [HerdrSandbox.ProvisioningProcess]::Run($timeoutSpec)
-if (-not $timeoutResult.TimedOut -or $timeoutResult.Succeeded) {
-    throw "Timeout result is invalid: $($timeoutResult | Format-List | Out-String)"
+$timeoutSpecs = [HerdrSandbox.ProvisioningProcessSpec[]]@(
+    (New-Spec -Role 'timeout' -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-File',$siblingScript,$timeoutRoot,$argumentSpec.FilePath,$grandchildScript,'hold') -Timeout 10000),
+    (New-Spec -Role 'independent witness' -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-File',$timeoutWitness,$timeoutRoot) -Timeout 30000)
+)
+$timeoutGroup = [HerdrSandbox.ProvisioningProcess]::StartGroup($timeoutSpecs)
+try { $timeoutResults = @($timeoutGroup.Complete()) } finally { $timeoutGroup.Dispose() }
+if (-not $timeoutResults[0].TimedOut -or $timeoutResults[0].Succeeded -or
+    -not $timeoutResults[1].Succeeded -or $timeoutResults[1].Stopped -or
+    -not (Test-Path -LiteralPath (Join-Path $timeoutRoot 'independent.completed')) -or
+    (Test-Path -LiteralPath (Join-Path $timeoutRoot 'grandchild.survived'))) {
+    throw 'Timeout stopped an independent task or failed to stop its own tree.'
+}
+
+$cancelGroup = Start-ProvisioningNativeGroup -Tasks @(
+    @{Role='cancel tree'; FilePath=$argumentSpec.FilePath; ArgumentList=@('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-File',$siblingScript,$cancelRoot,$argumentSpec.FilePath,$grandchildScript,'hold'); TimeoutSeconds=30},
+    @{Role='cancel peer'; FilePath=$argumentSpec.FilePath; ArgumentList=@('-NoLogo','-NoProfile','-NonInteractive','-WindowStyle','Hidden','-Command','Start-Sleep -Seconds 30'); TimeoutSeconds=30}
+)
+try {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Test-Path -LiteralPath (Join-Path $cancelRoot 'sibling.ready'))) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Cancellation fixture did not start.' }
+        Start-Sleep -Milliseconds 20
+    }
+} finally { Stop-ProvisioningNativeGroup -Group $cancelGroup }
+$cancelledPID = [int][IO.File]::ReadAllText((Join-Path $cancelRoot 'grandchild.pid'))
+if ($null -ne (Get-Process -Id $cancelledPID -ErrorAction SilentlyContinue) -or
+    (Test-Path -LiteralPath (Join-Path $cancelRoot 'grandchild.survived'))) {
+    throw 'Explicit cancellation left an owned descendant alive.'
 }
 `, quote(processSource), quote(baseScript), quote(powerShell), quote(root), strings.Join(powerShellValues, ", "), quote(argumentFixture), expectedArguments,
 		quote(rawOutputFixture), quote(rawOutputFixture),
-		quote(groupCallerFixture), quote(powerShell), quote(barrierFixture), quote(root), quote(failureFixture), quote(root),
-		quote(siblingFixture), quote(root), quote(powerShell), quote(grandchildFixture), quote(root))
+		quote(groupCallerFixture), quote(powerShell), quote(barrierFixture), quote(root),
+		quote(failureFixture), quote(siblingFixture), quote(grandchildFixture), quote(timeoutWitness))
 	harnessPath := write("process-owner-regression.ps1", harness)
 	command := hiddenCommand(powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", harnessPath)
 	if output, err := command.CombinedOutput(); err != nil {

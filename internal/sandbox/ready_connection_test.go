@@ -25,6 +25,11 @@ func TestConnectionValidationRequiresCompleteAbsoluteIdentity(t *testing.T) {
 	if err := valid.validate(); err != nil {
 		t.Fatalf("valid connection: %v", err)
 	}
+	withoutWinGet := valid
+	withoutWinGet.WinGetVersion = ""
+	if err := withoutWinGet.validate(); err != nil {
+		t.Fatalf("unavailable package manager blocked an otherwise ready connection: %v", err)
+	}
 	tests := map[string]func(*Connection){
 		"run":      func(value *Connection) { value.RunDirectory = "relative" },
 		"status":   func(value *Connection) { value.StatusDirectory = "" },

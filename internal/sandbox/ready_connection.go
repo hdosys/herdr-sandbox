@@ -132,7 +132,7 @@ func (connection Connection) validate() error {
 			return fmt.Errorf("connection for Herdr has non-absolute %s: %q", role, path)
 		}
 	}
-	if connection.SSHTarget != sshTargetName || connection.GuestIP == "" || connection.WinGetVersion == "" ||
+	if connection.SSHTarget != sshTargetName || connection.GuestIP == "" ||
 		connection.HerdrVersion == "" || connection.herdrRuntimeVersion == "" || connection.HerdrProtocol < 1 {
 		return errors.New("connection identity for Herdr is incomplete")
 	}
