@@ -46,7 +46,7 @@ if(@($result.checks|Where-Object{-not $_.passed}).Count -ne 0){exit 1}`
 func TestInstallerVerificationRejectsMissingAndContradictoryEvidence(t *testing.T) {
 	profile := WorkstationProfile{Packages: []wingetPackagePlanEntry{{ID: "hdosys.herdr-win"}}}
 	result := installerVerification{SchemaVersion: 1, InstallerSHA256: "installer", ProfileSHA256: "profile", Complete: true, Passed: true, ReportPath: `C:\ProgramData\fixture\report.html`}
-	for _, name := range []string{"native report identity", "WinGet command", "selected authored configuration hashes", "package hdosys.herdr-win", "installer-owned Herdr and configuration"} {
+	for _, name := range []string{"native report identity", "WinGet command", "selected authored configuration hashes", "interactive SSH shell", "package hdosys.herdr-win", "installer-owned Herdr and configuration"} {
 		result.Checks = append(result.Checks, installerCheck{name, true})
 	}
 	if err := validateInstallerVerification(result, "installer", "profile", profile); err != nil {

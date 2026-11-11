@@ -112,6 +112,18 @@ try {
     $probes=Test-InstallerEffects -Profile $profile -Report $report -ExpectedProfileHash $profileDigest -ProbeRoot $transferRoot -StateRoot $stateRoot
     $complete=[bool]$report.complete -and @($report.steps).Count -gt 0 -and @($report.steps|Where-Object{$_.status -notin @('succeeded','retained')}).Count -eq 0
     $passed=$complete -and $result.ExitCode -eq 0 -and @($probes.checks|Where-Object{-not $_.passed}).Count -eq 0
+    if ($passed) {
+        # Only Sandbox transport is finalized here. The workstation installer
+        # never configures SSH, and a failed installation leaves its shell alone.
+        & {
+            . (Join-Path $bootstrapRoot 'provisioning\base.ps1') -Phase Library -ProcessOwnerPath $processOwner `
+                -PreparedInputsPath (Join-Path $stateRoot 'input\prepared-inputs.json') `
+                -PackageCacheDirectory (Join-Path $env:ProgramData 'herdr-workstation\cache')
+            $installedShell = Get-ProvisioningPreparedPowerShell7Installation
+            Set-ProvisioningOpenSSHDefaultShell -Executable $installedShell.Executable
+        }
+    }
+    $probes.checks += [pscustomobject]@{name='interactive SSH shell';passed=$passed}
     Write-Output ([ordered]@{schemaVersion=1;installerSHA256=$installerDigest;profileSHA256=$profileDigest;exitCode=$result.ExitCode;complete=$complete;passed=$passed;checks=$probes.checks;wingetVersion=$probes.wingetVersion;herdrVersion=$probes.herdrVersion;herdrClient=$probes.herdrClient;reportPath=(Join-Path $stateRoot 'report.html')}|ConvertTo-Json -Depth 7 -Compress)
 } finally {
     # Only this receiver's private test copy is disposable. The user's source

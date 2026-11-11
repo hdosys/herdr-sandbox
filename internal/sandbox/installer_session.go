@@ -94,7 +94,12 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	if err != nil {
 		return err
 	}
+	baseScript, err := readProvisioningScript(provisioning.BaseScript, "base provisioning script", maximumBaseScriptSize)
+	if err != nil {
+		return err
+	}
 	for path, data := range map[string][]byte{
+		filepath.Join(transport, baseProvisioningName):    baseScript,
 		filepath.Join(input, "setup.json"):                evidenceData,
 		filepath.Join(input, "probes.ps1"):                installerProbeScript,
 		filepath.Join(input, "interactive.ps1"):           installerInteractiveScript,
@@ -266,7 +271,7 @@ func validateInstallerVerification(result installerVerification, installerHash, 
 		seen[check.Name] = true
 		all = all && check.Passed
 	}
-	required := []string{"native report identity", "WinGet command", "selected authored configuration hashes"}
+	required := []string{"native report identity", "WinGet command", "selected authored configuration hashes", "interactive SSH shell"}
 	for _, entry := range profile.Packages {
 		required = append(required, "package "+entry.ID)
 		if strings.EqualFold(entry.ID, "hdosys.herdr-win") {

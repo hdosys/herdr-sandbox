@@ -2366,6 +2366,12 @@ function Get-ProvisioningDirectPackage {
     }
 }
 
+function Get-ProvisioningPackageCacheDirectory {
+    param([Parameter(Mandatory = $true)][object]$Metadata)
+    $entryName = (Get-ProvisioningSafeCacheName -Value $Metadata.Version) + '-' + $Metadata.Sha256.Substring(0, 16).ToLowerInvariant()
+    return Get-ProvisioningPath ('cache\packages\' + (Get-ProvisioningSafeCacheName -Value $Metadata.Id) + '\' + $entryName)
+}
+
 function Install-ProvisioningCachedPackage {
     param(
         [Parameter(Mandatory = $true)]
@@ -2421,8 +2427,7 @@ function Install-ProvisioningCachedPackage {
     $packageRoot = Join-Path $cacheRoot (Get-ProvisioningSafeCacheName -Value $metadata.Id)
     New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
     Assert-ProvisioningCachePath -Path $packageRoot
-    $entryName = (Get-ProvisioningSafeCacheName -Value $metadata.Version) + '-' + $metadata.Sha256.Substring(0, 16).ToLowerInvariant()
-    $entryDirectory = Join-Path $packageRoot $entryName
+    $entryDirectory = Get-ProvisioningPackageCacheDirectory -Metadata $metadata
     $lockPath = Join-Path $packageRoot '.lock'
     $lock = $null
     $guestStage = Join-Path (Get-ProvisioningPath 'staging\packages') ([Guid]::NewGuid().ToString('N'))
@@ -2949,6 +2954,39 @@ function Assert-ProvisioningVulkanDevice {
         throw 'Vulkan Runtime did not expose a physical device.'
     }
     return $deviceNames
+}
+
+function Get-ProvisioningPreparedPowerShell7Installation {
+    $metadata = Get-ProvisioningPreparedMetadata -Id 'Microsoft.PowerShell' -Architecture 'x64' -InstallerType 'msix'
+    if ($null -eq $metadata) { throw 'Verified prepared PowerShell input is required for interactive SSH activation.' }
+    $directory = Join-Path ([IO.Path]::GetTempPath()) ('herdr-ssh-shell-' + [Guid]::NewGuid().ToString('N'))
+    Assert-ProvisioningPathAncestors $directory
+    $null = New-Item -ItemType Directory -Path $directory
+    try {
+        if ([string]$metadata.PayloadName -cne [IO.Path]::GetFileName([string]$metadata.PayloadName)) { throw 'Prepared PowerShell payload name is unsafe.' }
+        $payload = Join-Path $directory $metadata.PayloadName
+        $cacheDirectory = Get-ProvisioningPackageCacheDirectory -Metadata $metadata
+        if (-not (Copy-ProvisioningCachedPackage -Directory $cacheDirectory -Metadata $metadata -Destination $payload)) {
+            throw 'Prepared PowerShell payload failed cache identity verification; SSH configuration is unchanged.'
+        }
+        $identity = Get-ProvisioningSignedMSIXIdentity -PayloadPath $payload -Publisher 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'
+        return Get-ProvisioningPowerShell7Installation -Identity $identity
+    } finally {
+        Remove-Item -LiteralPath $directory -Recurse -Force
+    }
+}
+
+function Set-ProvisioningOpenSSHDefaultShell {
+    param([Parameter(Mandatory = $true)][string]$Executable)
+    if (-not [IO.Path]::IsPathRooted($Executable)) { throw 'OpenSSH default shell must use an absolute executable path.' }
+    Assert-ProvisioningPathAncestors $Executable
+    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw 'OpenSSH default shell executable is missing.' }
+    New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
+    New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value $Executable -PropertyType String -Force | Out-Null
+    $configured = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\OpenSSH').DefaultShell
+    if (-not [string]::Equals($configured, $Executable, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'OpenSSH default shell verification failed.'
+    }
 }
 
 function Get-ProvisioningPowerShell7Installation {

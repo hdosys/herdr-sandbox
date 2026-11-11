@@ -108,6 +108,13 @@ configuration sync or a package repair path. Cold transport, full selected-stack
 installation and console-backed remote attach require the explicit host-side
 `native-installer-sandbox` gate; isolated receiver evidence is not that gate.
 
+Before readiness, the successful installer receiver selects PowerShell from the
+candidate's prepared, hash-verified and signed MSIX input and uses Base's existing
+installed-package validator. Normal bootstrap and installer-test completion share
+`Set-ProvisioningOpenSSHDefaultShell` for the registry write and readback. Library
+loading performs no package installation. A failed acceptance never switches the
+shell, and this finalization neither restarts SSH/Herdr nor changes firewall rules.
+
 - Go owns the host product: CLI parsing, configuration, path/mapping validation, run/status contracts, `.wsb` generation, SSH/Herdr lifecycle, configuration sync, cache-policy decisions, subprocess bounds, and final error reporting.
 - Every noninteractive host subprocess, including repository task/test adapters, uses one shared Windows hidden process-tree console with captured output so compiler/test/installer descendants inherit that invisible console instead of allocating visible windows; noninteractive guest PowerShell launched through SSH also uses `-WindowStyle Hidden`.
 - Only the user-facing Herdr attach, a real interactive terminal check, and the Windows Sandbox application/bootstrap console remain intentionally visible.

@@ -797,13 +797,9 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     Invoke-Native -Role 'SSH host-key generation' -FilePath $sshKeygen -ArgumentList @('-A') | Out-Null
     Invoke-Native -Role 'sshd configuration validation' -FilePath $sshd -ArgumentList @('-t', '-f', $sshdConfigPath) | Out-Null
 
-    New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
-    New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell `
-        -Value $powerShell7Executable `
-        -PropertyType String -Force | Out-Null
-    $configuredDefaultShell = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\OpenSSH').DefaultShell
-    if (-not [string]::Equals($configuredDefaultShell, $powerShell7Executable, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "OpenSSH default shell verification failed: $configuredDefaultShell"
+    & {
+        . $baseProvisioning -Phase Library -ProcessOwnerPath $processOwner
+        Set-ProvisioningOpenSSHDefaultShell -Executable $powerShell7Executable
     }
 
     Stop-Service -Name sshd -Force -ErrorAction SilentlyContinue

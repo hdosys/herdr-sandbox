@@ -128,8 +128,11 @@ The current product contract is:
   selected compiler/runtime and configuration-hash checks. No normal provisioning
   runs before it or repairs its result afterward. Protected guest-local input and
   native reports remain available until the guest is explicitly discarded.
-- Successful installation is distinct from terminal readiness. Only matching
-  installed host/guest Herdr identities permit server startup, workspace opening
+- Successful installation is distinct from terminal readiness. Independent
+  installer acceptance permits switching OpenSSH from its initial PowerShell
+  5.1 transport to the installed, verified PowerShell 7 executable. This step
+  belongs only to Sandbox testing; the workstation installer never sets up SSH.
+  Only matching installed host/guest Herdr identities permit server startup, workspace opening
   and ready publication. An incompatible runtime is reported, never replaced.
   `--no-attach` skips only the interactive terminal, not these readiness checks.
 - The mode's outer deadline is 49 hours, with a 48-hour installer ceiling and the

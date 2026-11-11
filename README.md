@@ -712,7 +712,9 @@ Independent checks validate installed effects and settings hashes. The command
 prints each result and preserves native reports in the guest. It never runs normal
 provisioning to conceal a failure. Host and installed guest Herdr must match before
 the server/workspaces become ready; a mismatch is reported without replacement.
-Then use `sandbox attach` in a real terminal. Server keybindings are selected, so
+After successful installer checks, the test Sandbox switches SSH to its verified
+PowerShell 7 installation. The workstation installer itself does not configure SSH.
+Then use `sandbox attach` or `herdr --remote sandbox` in a real terminal. Server keybindings are selected, so
 custom commands run in the guest and their tools/scripts must exist there.
 
 The outer default deadline is 49 hours; individual steps remain bounded and
