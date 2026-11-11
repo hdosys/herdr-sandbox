@@ -6,6 +6,7 @@ $requires = $env:WORKSTATION_TEST_DEPENDENCIES | ConvertFrom-Json
 $results = [ordered]@{
     'Vulkan SDK' = @{ status='succeeded' }
     'C and C++' = @{ status='succeeded' }
+    'CMake' = @{ status='succeeded' }
     'Rust MSVC' = @{ status='failed' }
     'Stack bun' = @{ status='failed' }
     'WebView2' = @{ status='failed' }

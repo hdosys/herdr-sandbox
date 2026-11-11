@@ -129,21 +129,6 @@ if ([string](Initialize-PlaywrightExtensionToken -Enabled $false) -cne '') { thr
 	}
 }
 
-func TestBootstrapPassesAudioSelectionsOnlyToBaseRegistry(t *testing.T) {
-	script := string(bootstrapScript)
-	registryStart := strings.Index(script, "& $baseProvisioning -Phase 'Registry'")
-	if strings.Count(script, "[ValidateSet('Disabled', 'Enabled')]") < 2 ||
-		!strings.Contains(script, "[string]$AudioPlayback") || !strings.Contains(script, "[string]$AudioInput") ||
-		registryStart < 0 {
-		t.Fatal("bootstrap audio handoff boundary is missing")
-	}
-	if strings.Count(script, "-AudioOutputEnabled:($AudioPlayback -ceq 'Enabled')") != 1 ||
-		strings.Count(script, "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") != 1 ||
-		!strings.Contains(script[registryStart:], "-AudioInputEnabled:($AudioInput -ceq 'Enabled')") {
-		t.Fatal("audio selections are not passed once to the Registry owner")
-	}
-}
-
 func TestResolvedBootstrapAssetCachesRepairsAndStagesInWindowsPowerShell51(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows PowerShell 5.1 regression")
@@ -222,22 +207,6 @@ exit 0
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("bootstrap cache HTTP requests = %d, want 2 (miss + corrupt repair)", got)
-	}
-}
-
-func TestBootstrapBoundsWinGetRegistrationRaceRetries(t *testing.T) {
-	script := string(bootstrapScript)
-	for _, required := range []string{
-		"for ($attempt = 1; $attempt -le 4; $attempt += 1)",
-		"$diagnostic.IndexOf('0x80073CF3'",
-		"$diagnostic.IndexOf('0x80070003'",
-		"$diagnostic.IndexOf('AppxManifest.xml'",
-		"if (-not $registrationNotReady -or $attempt -eq 4)",
-		"Start-Sleep -Seconds (5 * $attempt)",
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("bootstrap WinGet retry contract is missing %q", required)
-		}
 	}
 }
 

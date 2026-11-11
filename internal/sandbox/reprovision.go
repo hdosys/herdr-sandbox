@@ -199,8 +199,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		return updateOperation(progress.Phase, progress.Message)
 	}, func(progressContext context.Context) error {
 		err := runGuestProvisioning(progressContext, connection, snapshot, false)
-		var guestFailure *developmentProvisioningError
-		if errors.As(err, &guestFailure) {
+		if guestFailure, ok := errors.AsType[*developmentProvisioningError](err); ok {
 			if developmentFailure == nil {
 				developmentFailure = guestFailure
 			} else {
@@ -594,7 +593,7 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 	defer clear(archive)
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 	projectCount := workspaceProvisioningProfileCount(snapshot.Workspaces)
-	launcher := buildReprovisionLauncher(digest, len(archive), projectCount, restartID, restartTaskName, finalize, snapshot.Resume)
+	launcher := buildReprovisionLauncher(digest, len(archive), projectCount, restartID, restartTaskName, finalize, snapshot)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcher, "run guest provisioning")
 	if err != nil {
 		return finishError(err)
@@ -610,8 +609,11 @@ func runGuestProvisioning(ctx context.Context, connection Connection, snapshot p
 		return finishError(errors.New("guest finalization returned development failures"))
 	}
 	developmentResult := func(restartErr error) error {
-		if restartErr != nil || (len(result.Failures) == 0 && len(result.OptionalFailures) == 0) {
-			return restartErr
+		if restartErr != nil {
+			result.Failures = append(result.Failures, "Explorer restart: "+restartErr.Error())
+		}
+		if len(result.Failures) == 0 && len(result.OptionalFailures) == 0 {
+			return nil
 		}
 		return &developmentProvisioningError{failures: result.Failures, optional: result.OptionalFailures}
 	}
@@ -836,7 +838,7 @@ func workspaceProvisioningProfileCount(workspaces []workspacePlan) int {
 	return count
 }
 
-func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int, explorerRestartID, explorerRestartTaskName string, finalize, resume bool) string {
+func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount int, explorerRestartID, explorerRestartTaskName string, finalize bool, snapshot provisioningSnapshot) string {
 	staging := guestArchiveStagingPowerShell("provisioning-"+explorerRestartID, "Guest provisioning", true)
 	phase := "Development"
 	if finalize {
@@ -844,7 +846,7 @@ func buildReprovisionLauncher(expectedDigest string, archiveLength, projectCount
 	}
 	return fmt.Sprintf("%s\n$expectedArchiveLength = [long]%d\n$expectedArchiveDigest = '%s'\n$expectedProjectCount = %d\n$explorerRestartID = '%s'\n$explorerRestartTaskName = '%s'\n$provisioningPhase = '%s'\n%s",
 		staging, archiveLength, expectedDigest, projectCount, explorerRestartID, explorerRestartTaskName, phase,
-		fmt.Sprintf("$resumeProvisioning = $%t\n", resume)+guestProvisioningScript)
+		fmt.Sprintf("$resumeProvisioning = $%t\n$audioOutputEnabled = $%t\n$audioInputEnabled = $%t\n", snapshot.Resume, snapshot.AudioOutput, snapshot.AudioInput)+guestProvisioningScript)
 }
 
 func decodeReprovisionResult(data []byte) (reprovisionResult, error) {

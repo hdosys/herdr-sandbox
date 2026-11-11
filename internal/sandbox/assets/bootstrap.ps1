@@ -394,20 +394,6 @@ function Get-ResolvedBootstrapAsset {
     return $destination
 }
 
-function Get-LatestGitHubRelease {
-    param([Parameter(Mandatory = $true)][string]$Repository)
-
-    if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-        throw "GitHub release repository is invalid: $Repository"
-    }
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" `
-        -Headers @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'herdr-sandbox-bootstrap' }
-    if ([bool]$release.draft -or [bool]$release.prerelease -or [string]::IsNullOrWhiteSpace([string]$release.tag_name)) {
-        throw "GitHub latest release is not published: $Repository"
-    }
-    return $release
-}
-
 function Get-OpenSSHRelease {
     $repository = 'PowerShell/Win32-OpenSSH'
     $releaseResponse = Invoke-RestMethod -Uri "https://api.github.com/repos/$repository/releases?per_page=100" `
@@ -591,94 +577,9 @@ try {
         throw 'Workspace manifest does not match the selected project scripts and active workspace.'
     }
 
-    Write-ProgressStatus -Phase 'registry-customization' -Message 'Applying registry settings before package installation'
-    try {
-    & $baseProvisioning -Phase 'Registry' -ProjectProvisioningDirectory $projectProvisioningDirectory `
-        -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
-        -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner `
-        -AudioOutputEnabled:($AudioPlayback -ceq 'Enabled') `
-        -AudioInputEnabled:($AudioInput -ceq 'Enabled')
-    } catch {
-        Write-Warning "Desktop customization failed; SSH bootstrap continues: $($_.Exception.Message)"
-    }
+    # Audio selections remain part of the fixed .wsb launch identity. Base applies
+    # their snapshot with desktop preferences after SSH, under the step owner.
 
-    try {
-    $wingetRelease = Get-LatestGitHubRelease -Repository 'microsoft/winget-cli'
-    $ExpectedWinGetVersion = [string]$wingetRelease.tag_name
-    if ($ExpectedWinGetVersion -notmatch '^v\d+\.\d+\.\d+$') { throw "WinGet latest release tag is invalid: $ExpectedWinGetVersion" }
-    $wingetBundleAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
-        -NamePattern '^Microsoft\.DesktopAppInstaller_8wekyb3d8bbwe\.msixbundle$' -Role 'WinGet bundle'
-    $wingetDependenciesAsset = Get-GitHubReleaseAsset -Release $wingetRelease -Repository 'microsoft/winget-cli' `
-        -NamePattern '^DesktopAppInstaller_Dependencies\.zip$' -Role 'WinGet dependencies'
-    $bootstrapCacheTrustRoot = 'C:\HerdrSandbox\cache'
-    $bootstrapCacheRoot = Join-Path $bootstrapCacheTrustRoot 'bootstrap'
-    Write-ProgressStatus -Phase 'winget-download' -Message "Restoring Microsoft WinGet $ExpectedWinGetVersion"
-    $wingetBundle = Join-Path $env:TEMP 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
-    $wingetDependenciesArchive = Join-Path $env:TEMP 'DesktopAppInstaller_Dependencies.zip'
-    $wingetBundle = Get-ResolvedBootstrapAsset -Role 'WinGet bundle' -CacheKey 'winget-bundle' `
-        -Uri $wingetBundleAsset.Url -ExpectedSHA256 $wingetBundleAsset.SHA256 `
-        -FileName 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' `
-        -DestinationPath $wingetBundle -CacheRoot $bootstrapCacheRoot -CacheTrustRoot $bootstrapCacheTrustRoot
-    $wingetDependenciesArchive = Get-ResolvedBootstrapAsset -Role 'WinGet dependencies' `
-        -CacheKey 'winget-dependencies' -Uri $wingetDependenciesAsset.Url `
-        -ExpectedSHA256 $wingetDependenciesAsset.SHA256 -FileName 'DesktopAppInstaller_Dependencies.zip' `
-        -DestinationPath $wingetDependenciesArchive -CacheRoot $bootstrapCacheRoot `
-        -CacheTrustRoot $bootstrapCacheTrustRoot
-
-    Write-ProgressStatus -Phase 'winget-install' -Message 'Installing the resolved WinGet package and dependencies'
-    $wingetDependenciesDirectory = Join-Path $env:TEMP ('herdr-sandbox-winget-' + [Guid]::NewGuid().ToString('N'))
-    Expand-Archive -LiteralPath $wingetDependenciesArchive -DestinationPath $wingetDependenciesDirectory
-    $wingetDependencyPaths = @(Get-ChildItem -LiteralPath (Join-Path $wingetDependenciesDirectory 'x64') -File -Filter '*.appx' |
-        ForEach-Object { $_.FullName })
-    if ($wingetDependencyPaths.Count -eq 0 -or $wingetDependencyPaths.Count -gt 16) {
-        throw "WinGet dependency set is empty or oversized: $($wingetDependencyPaths.Count)."
-    }
-    for ($attempt = 1; $attempt -le 4; $attempt += 1) {
-        try {
-            Add-AppxPackage -Path $wingetBundle -DependencyPath $wingetDependencyPaths -ErrorAction Stop
-            break
-        } catch {
-            $diagnostic = [string]$_.Exception.Message
-            $registrationNotReady =
-                $diagnostic.IndexOf('0x80073CF3', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-                $diagnostic.IndexOf('0x80070003', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-                $diagnostic.IndexOf('AppxManifest.xml', [StringComparison]::OrdinalIgnoreCase) -ge 0
-            if (-not $registrationNotReady -or $attempt -eq 4) {
-                throw
-            }
-            $nextAttempt = $attempt + 1
-            Write-ProgressStatus -Phase 'winget-install' -Message "WinGet package registration retry $nextAttempt of 4"
-            Start-Sleep -Seconds (5 * $attempt)
-        }
-    }
-
-    $wingetPath = $null
-    for ($attempt = 0; $attempt -lt 60; $attempt += 1) {
-        $command = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($null -ne $command -and (Test-Path -LiteralPath $command.Source -PathType Leaf)) {
-            $wingetPath = $command.Source
-            break
-        }
-        $appAlias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
-        if (Test-Path -LiteralPath $appAlias -PathType Leaf) {
-            $wingetPath = $appAlias
-            break
-        }
-        Start-Sleep -Seconds 1
-    }
-    if ([string]::IsNullOrWhiteSpace($wingetPath)) {
-        throw 'WinGet was not found after Repair-WinGetPackageManager completed.'
-    }
-    $wingetVersionOutput = Invoke-Native -Role 'winget version check' -FilePath $wingetPath -ArgumentList @('--version')
-    $wingetVersion = ($wingetVersionOutput -join ' ').Trim()
-    if ($wingetVersion -ne $ExpectedWinGetVersion) {
-        Write-Warning "WinGet installed successfully, but reports $wingetVersion instead of $ExpectedWinGetVersion. Provisioning will continue with the working command."
-    }
-
-    } catch {
-        $wingetVersion = ''
-        Write-Warning "WinGet setup failed; SSH and independent provisioning continue: $($_.Exception.Message)"
-    }
     } else {
         Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'
     }

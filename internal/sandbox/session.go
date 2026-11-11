@@ -107,6 +107,8 @@ type runPlan struct {
 
 type provisioningSnapshot struct {
 	Resume                     bool
+	AudioOutput                bool
+	AudioInput                 bool
 	Directory                  string
 	ProcessOwnerPath           string
 	ProjectScriptsDirectory    string
@@ -345,7 +347,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	}
 
 	fmt.Fprintln(options.Output, "Sandbox ready")
-	fmt.Fprintf(options.Output, "  WinGet: %s\n", connection.WinGetVersion)
+	if connection.WinGetVersion != "" {
+		fmt.Fprintf(options.Output, "  WinGet: %s\n", connection.WinGetVersion)
+	}
 	fmt.Fprintf(options.Output, "  Herdr: %s\n", connection.HerdrVersion)
 	fmt.Fprintf(options.Output, "  Herdr protocol: %d\n", connection.HerdrProtocol)
 	fmt.Fprintf(options.Output, "  SSH config: %s\n", connection.SSHConfigPath)
@@ -791,6 +795,8 @@ func prepareProvisioningSnapshot(ctx context.Context, inspectionDirectory, snaps
 		return provisioningSnapshot{}, fmt.Errorf("write workspace manifest: %w", err)
 	}
 	return provisioningSnapshot{
+		AudioOutput:                provisioning.AudioOutput,
+		AudioInput:                 provisioning.AudioInput,
 		Directory:                  snapshotDirectory,
 		ProcessOwnerPath:           processOwnerPath,
 		ProjectScriptsDirectory:    projectScriptsDirectory,

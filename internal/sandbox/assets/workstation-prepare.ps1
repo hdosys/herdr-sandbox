@@ -27,7 +27,7 @@ foreach ($directory in @($CacheDirectory, (Get-ProvisioningPath 'staging'), (Get
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
 }
 $provisioningPackagePlan = [pscustomobject]@{Enabled=@{};Versions=@{}}
-foreach ($package in @($selection.packages)) {
+foreach ($package in @(Get-ProvisioningPackageJobs -Packages (@([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($selection.packages)))) {
     $provisioningPackagePlan.Enabled[[string]$package.id] = $true
     $provisioningPackagePlan.Versions[[string]$package.id] = [string]$package.version
 }
@@ -41,7 +41,6 @@ Prepare-ProvisioningWinGet
 foreach ($package in @($selection.packages)) {
     Install-ProvisioningPackage -Id ([string]$package.id) -Version ([string]$package.version)
 }
-Install-ProvisioningPackage -Id 'Microsoft.VCRedist.2015+.x64'
 if (-not $PackagesOnly) {
     $stackSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($stack in @($selection.stacks)) { $null = $stackSet.Add([string]$stack) }

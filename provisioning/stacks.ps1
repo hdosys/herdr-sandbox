@@ -582,6 +582,23 @@ function Install-StackVisualStudioBuildTools {
         [Collections.IDictionary]$RustToolchainTask = $null
     )
 
+    if ($null -ne $RustToolchainTask -and (Test-ProvisioningWorkstation)) {
+        # The installer owns VS as a separate job; run the independent Rust work
+        # here without installing or rechecking that other job.
+        Invoke-ProvisioningNative @RustToolchainTask | Out-Null
+        return
+    }
+    if (Test-ProvisioningDependencyReady 'Visual Studio Build Tools') {
+        if ($null -ne $RustToolchainTask) { Invoke-ProvisioningNative @RustToolchainTask | Out-Null }
+        return
+    }
+    $state = Get-Variable -Name HerdrSandboxStepState -Scope Global -ErrorAction SilentlyContinue
+    if ($null -ne $RustToolchainTask -and $null -ne $state -and $state.Value.Results.Contains('Visual Studio Build Tools')) {
+        Invoke-ProvisioningNative @RustToolchainTask | Out-Null
+        $RustToolchainTask = $null
+    }
+    $rustFailures = New-Object 'Collections.Generic.List[string]'
+    Invoke-ProvisioningStackStep -Name 'Visual Studio Build Tools' -Action {
     $visualStudioStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $cacheRoot = Get-ProvisioningPath 'cache\vsbt'
     $guestLayout = Get-ProvisioningPath 'visual-studio\layout'
@@ -695,7 +712,15 @@ function Install-StackVisualStudioBuildTools {
                 )
                 $installationCompleted = $false
                 try {
-                    Complete-ProvisioningNativeGroup -Group $installationGroup | Out-Null
+                    $taskResults = @()
+                    try { Complete-ProvisioningNativeGroup -Group $installationGroup -TaskResults ([ref]$taskResults) | Out-Null }
+                    catch {
+                        if ($taskResults.Count -ne 2) { throw }
+                        if (-not $taskResults[0].Succeeded) {
+                            $rustFailures.Add((Get-ProvisioningBoundedDiagnosticText -Text ('Rust toolchain installation: exit ' + $taskResults[0].ExitCode + '; ' + $taskResults[0].Output) -MaximumBytes 3000))
+                        }
+                        if (-not $taskResults[1].Succeeded) { throw }
+                    }
                     $installationCompleted = $true
                 } finally {
                     if (-not $installationCompleted) {
@@ -728,6 +753,8 @@ function Install-StackVisualStudioBuildTools {
         throw $primaryFailure
     }
     if ($null -ne $cleanupFailure) { throw $cleanupFailure }
+    }
+    if ($rustFailures.Count -gt 0) { throw ($rustFailures -join [Environment]::NewLine) }
 }
 
 function Enable-StackVisualStudioDeveloperEnvironment {
@@ -891,13 +918,15 @@ function Install-CppStack {
     param()
 
     if (Test-ProvisioningPreparation) { Install-StackCMake; return }
-    Invoke-ProvisioningStackStep -Name 'Visual Studio Build Tools' -Requires @('WinGet') -Action { Install-StackVisualStudioBuildTools }
+    Install-StackVisualStudioBuildTools
     Invoke-ProvisioningStackStep -Name 'CMake' -Requires @('WinGet') -Action { Install-StackCMake }
-    Invoke-ProvisioningStackStep -Name 'C and C++' -Requires @('Visual Studio Build Tools','CMake') -Action {
+    Invoke-ProvisioningStackStep -Name 'C and C++' -Requires @('Visual Studio Build Tools') -Action { Initialize-StackCppEnvironment }
+}
+
+function Initialize-StackCppEnvironment {
     $environment = Enable-StackVisualStudioDeveloperEnvironment
     Assert-StackCppToolchain -Compiler $environment.Compiler -Linker $environment.Linker
     Write-Output "C/C++ ready: $($environment.Compiler)"
-    }
 }
 
 function Get-StackRustSHA256 {
@@ -3780,19 +3809,23 @@ function Install-HyperFramesStack {
         try {
             $env:HOME = $preparationHome
             $env:USERPROFILE = $preparationHome
-            Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
+            Install-StackFFmpeg -Version $FFmpegVersion
+            Install-NodeRuntime -Version $NodeVersion
+            Install-StackHyperFramesRendering -NodeVersion $NodeVersion -Version $Version
         } finally {
             $env:HOME = $previousHome
             $env:USERPROFILE = $previousUserProfile
         }
         return
     }
-    Invoke-ProvisioningIndependentStep -Name 'HyperFrames rendering' -Failures $DevelopmentFailures `
+    Invoke-ProvisioningStackStep -Name 'FFmpeg' -Requires @('WinGet') -InputValues @($FFmpegVersion) -Action { Install-StackFFmpeg -Version $FFmpegVersion }
+    Install-NodeRuntime -Version $NodeVersion
+    Invoke-ProvisioningStackStep -Name 'HyperFrames rendering' -Retain -Requires @('Node.js','FFmpeg','Package Git.Git') `
         -InputValues @($global:HerdrSandboxStepState.StackImplementation, $NodeVersion, $FFmpegVersion, $Version,
             (Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion),
             (Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion),
             (Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version)) -Action {
-        Install-StackHyperFramesRendering -NodeVersion $NodeVersion -FFmpegVersion $FFmpegVersion -Version $Version
+        Install-StackHyperFramesRendering -NodeVersion $NodeVersion -Version $Version
     }
     Invoke-ProvisioningStackStep -Name 'HyperFrames TTS' -Requires @('HyperFrames rendering') -Action { Install-StackHyperFramesOptionalTTS }
 }
@@ -3818,35 +3851,9 @@ function Install-StackHyperFramesOptionalTTS {
     }
 }
 
-function Install-StackHyperFramesRendering {
-    [CmdletBinding()]
-    param(
-        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-        [string]$NodeVersion = '',
-        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))?$')]
-        [string]$FFmpegVersion = '',
-        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
-        [string]$Version = ''
-    )
-
-    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
-    $FFmpegVersion = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $FFmpegVersion
-    $Version = Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version
-
-    if (-not [string]::IsNullOrWhiteSpace($NodeVersion) -and
-        ($NodeVersion -notmatch '^(?<major>\d+)\.\d+\.\d+$' -or [int]$Matches['major'] -lt 22)) {
-        throw "HyperFrames requires Node.js 22 or newer; requested $NodeVersion."
-    }
-
-    Install-NodeRuntime -Version $NodeVersion
-    $nodeTools = Get-StackNodeTools
-    $node = $nodeTools.Node
-    $npmCLI = $nodeTools.NpmCLI
-    $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $git) {
-        throw 'HyperFrames OpenCode activation skills require Base package Git.Git.'
-    }
-
+function Install-StackFFmpeg {
+    param([string]$Version = '')
+    $FFmpegVersion = Get-ProvisioningToolVersion -Tool 'Gyan.FFmpeg' -Requested $Version
     $ffmpegMetadata = Get-ProvisioningWinGetMetadata -Role 'HyperFrames FFmpeg full build' `
         -Id 'Gyan.FFmpeg' -Version $FFmpegVersion -Architecture 'x64' -InstallerType 'zip'
     $ffmpegURI = [Uri][string]$ffmpegMetadata.Url
@@ -3864,19 +3871,48 @@ function Install-StackHyperFramesRendering {
     Install-ProvisioningCachedPackage -Role 'HyperFrames FFmpeg full build' -Metadata $ffmpegMetadata `
         -DownloadSource 'WinGet' -Adapter 'Portable' -ExecutableName 'ffmpeg.exe' `
         -PortableVersionArguments @('-version')
-    if (-not (Test-ProvisioningPreparation)) {
+    if (Test-ProvisioningPreparation) { return }
     $ffmpeg = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $ffprobe = Get-Command 'ffprobe.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     if ((Split-Path -Parent $ffmpeg.Source) -ine (Split-Path -Parent $ffprobe.Source)) {
         throw [Security.SecurityException]::new('HyperFrames FFmpeg and FFprobe resolved from different distributions.')
     }
-    $ffmpegSuffix = '(?:[-+][^ ]*)? Copyright \(c\) \d{4}-\d{4} the FFmpeg developers'
-    $ffmpegVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFmpeg' -Name 'ffmpeg.exe' `
-        -VersionArguments @('-version') `
-        -ExpectedPattern ('^ffmpeg version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
-    $ffprobeVersionText = Assert-ProvisioningCommand -Role 'HyperFrames FFprobe' -Name 'ffprobe.exe' `
-        -VersionArguments @('-version') `
-        -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $ffmpegSuffix)
+    $suffix = '(?:[-+][^ ]*)? Copyright \(c\) \d{4}-\d{4} the FFmpeg developers'
+    Assert-ProvisioningCommand -Role 'HyperFrames FFmpeg' -Name 'ffmpeg.exe' -VersionArguments @('-version') `
+        -ExpectedPattern ('^ffmpeg version ' + [regex]::Escape($FFmpegVersion) + $suffix) | Out-Null
+    Assert-ProvisioningCommand -Role 'HyperFrames FFprobe' -Name 'ffprobe.exe' -VersionArguments @('-version') `
+        -ExpectedPattern ('^ffprobe version ' + [regex]::Escape($FFmpegVersion) + $suffix) | Out-Null
+    Write-Output "FFmpeg and FFprobe ready: $FFmpegVersion"
+}
+
+function Install-StackHyperFramesRendering {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$NodeVersion = '',
+        [ValidatePattern('^$|^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$')]
+        [string]$Version = ''
+    )
+
+    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
+    $Version = Get-ProvisioningToolVersion -Tool 'hyperframes' -Requested $Version
+
+    if (-not [string]::IsNullOrWhiteSpace($NodeVersion) -and
+        ($NodeVersion -notmatch '^(?<major>\d+)\.\d+\.\d+$' -or [int]$Matches['major'] -lt 22)) {
+        throw "HyperFrames requires Node.js 22 or newer; requested $NodeVersion."
+    }
+
+    $nodeTools = Get-StackNodeTools
+    $node = $nodeTools.Node
+    $npmCLI = $nodeTools.NpmCLI
+    $git = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $git) {
+        throw 'HyperFrames OpenCode activation skills require Base package Git.Git.'
+    }
+
+    if (-not (Test-ProvisioningPreparation)) {
+    $ffmpeg = Get-Command 'ffmpeg.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $ffprobe = Get-Command 'ffprobe.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1
     }
 
     $toolsRoot = Get-ProvisioningPath 'tools'
@@ -4138,8 +4174,6 @@ function Install-StackHyperFramesRendering {
         Write-Output "HyperFrames managed Chrome Headless Shell ready: $browserPath"
         Write-Output "HyperFrames skills ready for manual OpenCode activation: $($skillNames.Count)"
         Write-Output 'Run hyperframes-opencode to start an OpenCode session with HyperFrames skills.'
-        Write-Output "HyperFrames FFmpeg ready: $($ffmpegVersionText.Split([Environment]::NewLine)[0])"
-        Write-Output "HyperFrames FFprobe ready: $($ffprobeVersionText.Split([Environment]::NewLine)[0])"
         Write-Output 'HyperFrames rendering ready with verified libx264 software encoding. Browser GPU acceleration may be available; FFmpeg hardware encoding is not claimed.'
     } finally {
         foreach ($name in $environmentNames) {
@@ -4304,9 +4338,11 @@ function Install-TradingViewStack {
         [string]$TVControlVersion = ''
     )
 
-    Invoke-ProvisioningStackStep -Name 'TradingView' -InputValues @($NodeVersion,$TVControlVersion) -Action {
-    $NodeVersion = Get-ProvisioningToolVersion -Tool 'OpenJS.NodeJS' -Requested $NodeVersion
-    $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $TVControlVersion
+    Invoke-ProvisioningStackStep -Name 'TradingView Desktop' -Action { Install-StackTradingViewDesktop }
+    Install-TVControl -NodeVersion $NodeVersion -Version $TVControlVersion
+}
+
+function Install-StackTradingViewDesktop {
     $desktopPackageID = 'TradingView.TradingViewDesktop'
     $desktopPackage = Get-TradingViewDesktopPortablePackage
     $desktopMetadata = $desktopPackage.Metadata
@@ -4372,14 +4408,14 @@ function Install-TradingViewStack {
     Ensure-ProvisioningStartShortcut -DisplayName 'TradingView' -Executable $desktopExecutable `
         -ShortcutArguments '--remote-debugging-port=9222'
 
-    Install-TVControl -NodeVersion $NodeVersion -Version $TVControlVersion
     Write-Output "TradingView Desktop ready: $($desktopMetadata.Version)"
 }
 
 function Install-TVControl {
     param([string]$NodeVersion = '', [string]$Version = '')
-    $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $Version
     Install-NodeRuntime -Version $NodeVersion
+    Invoke-ProvisioningStackStep -Name 'TVControl' -Requires @('Node.js') -InputValues @($Version) -Action {
+    $TVControlVersion = Get-ProvisioningToolVersion -Tool '@ferroxlabs/tvcontrol' -Requested $Version
     $nodeTools = Get-StackNodeTools
     $node = $nodeTools.Node
     $npmCLI = $nodeTools.NpmCLI
@@ -4978,7 +5014,7 @@ function Install-CargoNextest {
         [string]$Version = ''
     )
 
-    Invoke-ProvisioningStackStep -Name 'Cargo Nextest' -Requires @('WinGet','Rust MSVC') -InputValues @($Version) -Action {
+    Invoke-ProvisioningStackStep -Name 'Cargo Nextest' -Requires @('WinGet') -InputValues @($Version) -Action {
     $Version = Get-ProvisioningToolVersion -Tool 'nextest.cargo-nextest' -Requested $Version
     Write-Output 'Installing Cargo Nextest...'
     Install-ProvisioningWinGetPackage -Role 'Cargo Nextest' -Id 'nextest.cargo-nextest' -Version $Version `
@@ -5287,24 +5323,17 @@ function Install-HandyStack {
         throw "Handy Cargo package identity is unexpected: $cargoPath"
     }
 
-    $vulkanRoot = ''
-    $vulkanVersion = ''
-    $webView = $null
-    $vulkanRootReference = [ref]$vulkanRoot
-    $vulkanVersionReference = [ref]$vulkanVersion
-    $webViewReference = [ref]$webView
     Invoke-ProvisioningStackStep -Name 'CMake' -Requires @('WinGet') -Action { Install-StackCMake }
-    Invoke-ProvisioningStackStep -Name 'Vulkan SDK' -Requires @('WinGet','Package Microsoft.VCRedist.2015+.x64') -Action { Install-StackVulkanSDK -InstalledRoot $vulkanRootReference -InstalledVersion $vulkanVersionReference }
-    Invoke-ProvisioningStackStep -Name 'WebView2' -Requires @('WinGet') -Action { Install-StackWebView2 -InstalledRuntime $webViewReference }
+    Invoke-ProvisioningStackStep -Name 'Vulkan SDK' -Requires @('WinGet','Package Microsoft.VCRedist.2015+.x64') -Action { Install-StackVulkanSDK }
+    Invoke-ProvisioningStackStep -Name 'WebView2' -Requires @('WinGet') -Action { Install-StackWebView2 }
     Install-BunStack
     Install-RustMSVCStack -ProjectDirectory $rustRoot
-    Invoke-ProvisioningStackStep -Name 'Handy native headers' -Requires @('Vulkan SDK','CMake','WebView2','Bun','Rust MSVC') -Action {
+    Invoke-ProvisioningStackStep -Name 'Handy native headers' -Requires @('Vulkan SDK','CMake','Visual Studio Build Tools') -Action {
+    $vulkanRoot = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
     $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
     Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
 
-    Write-Output "Handy Vulkan SDK ready: $vulkanVersion"
-    Write-Output "Handy WebView2 ready: $($webView.Version)"
-    Write-Output 'Handy development toolchain ready.'
+    Write-Output 'Handy native headers ready.'
     }
 }
 

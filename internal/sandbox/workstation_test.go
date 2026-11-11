@@ -233,7 +233,7 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		if job.Name == "Visual Studio layout" {
 			t.Fatal("target installation must consume the prepared layout, not materialize it again")
 		}
-		if job.Name == "Handy native headers" && (!slices.Equal(job.Requires, []string{"Vulkan SDK", "C and C++"})) {
+		if job.Name == "Handy native headers" && (!slices.Equal(job.Requires, []string{"Vulkan SDK", "CMake", "C and C++"})) {
 			t.Fatalf("unrelated tools can suppress Handy header preparation: %v", job.Requires)
 		}
 		if job.Name == "Handy native headers" {
@@ -277,7 +277,7 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := readPlan()
-	if fingerprint(plan, "Rust MSVC") == fingerprint(changed, "Rust MSVC") {
+	if fingerprint(plan, "Rust toolchain") == fingerprint(changed, "Rust toolchain") {
 		t.Fatal("changed Rust toolchain retained the old fingerprint")
 	}
 	if fingerprint(plan, "Package Git.Git") != fingerprint(changed, "Package Git.Git") {

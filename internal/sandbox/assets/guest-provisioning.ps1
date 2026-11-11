@@ -42,7 +42,7 @@ try {
         if ($provisioningPhase -ceq 'Finalize') {
             $captured = @(& (Join-Path $expanded 'finalize-provisioning.ps1') -WorkspaceManifestPath (Join-Path $expanded 'workspaces.json') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') *>&1)
         } else {
-            $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') -DevelopmentFailures $developmentFailures -OptionalFailures $optionalFailures -StepStatePath 'C:\SandboxStatus\development-steps.json' -Resume:$resumeProvisioning *>&1)
+            $captured = @(& (Join-Path $expanded 'base.ps1') -Phase 'Development' -ProjectProvisioningDirectory $projectsDirectory -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath (Join-Path $expanded 'winget-packages.json') -UserProvisioningPath (Join-Path $expanded 'user.ps1') -ProcessOwnerPath (Join-Path $expanded 'provisioning-process.cs') -DevelopmentFailures $developmentFailures -OptionalFailures $optionalFailures -StepStatePath 'C:\SandboxStatus\development-steps.json' -Resume:$resumeProvisioning -AudioOutputEnabled:$audioOutputEnabled -AudioInputEnabled:$audioInputEnabled *>&1)
         }
     } catch {
         $detail = @($developmentFailures.ToArray())

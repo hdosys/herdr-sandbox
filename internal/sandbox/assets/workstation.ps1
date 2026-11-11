@@ -126,21 +126,13 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     Add-WorkstationJob 'Windows desktop preferences' 'desktop' -Seconds 60
     Add-WorkstationJob 'WinGet' 'winget' -Seconds 600
     $vcRuntimeID = 'Microsoft.VCRedist.2015+.x64'
-    $plannedPackages = @{}
     $needsVCRuntime = $nativeProfile.stacks.Count -gt 0 -or $provisioningPackagePlan.Enabled.ContainsKey('hdosys.herdr-win') -or $provisioningPackagePlan.Enabled.ContainsKey($vcRuntimeID)
+    $packages = @($nativeProfile.packages)
     if ($needsVCRuntime) {
-        $vcVersion = [string]$provisioningPackagePlan.Versions[$vcRuntimeID]
-        Add-WorkstationJob -Name ('Package ' + $vcRuntimeID) -Action package -Requires @('WinGet') -PackageID $vcRuntimeID -Version $vcVersion -Seconds 600
-        $plannedPackages[$vcRuntimeID] = $true
+        $packages = @([pscustomobject]@{id=$vcRuntimeID;version=''}) + $packages
     }
-    foreach ($package in @($nativeProfile.packages)) {
-        foreach ($packageID in (@(Get-ProvisioningPackagePrerequisites -Id ([string]$package.id)) + @([string]$package.id))) {
-            if ($plannedPackages.ContainsKey($packageID)) { continue }
-            $packageRequirements = @(Get-ProvisioningPackagePrerequisites -Id $packageID | ForEach-Object { 'Package ' + $_ })
-            if ($packageID -ine 'Anomaly.OpenCode') { $packageRequirements += 'WinGet' }
-            Add-WorkstationJob -Name ('Package ' + $packageID) -Action package -Requires $packageRequirements -PackageID $packageID -Version ([string]$provisioningPackagePlan.Versions[$packageID]) -Seconds 600
-            $plannedPackages[$packageID] = $true
-        }
+    foreach ($package in @(Get-ProvisioningPackageJobs -Packages $packages)) {
+        Add-WorkstationJob -Name ('Package ' + $package.ID) -Action package -Requires $package.Requires -PackageID $package.ID -Version $package.Version -Seconds 600
     }
     if ($provisioningPackagePlan.Enabled.ContainsKey('Microsoft.PowerShell')) {
         Add-WorkstationJob 'PowerShell profile' 'shell' -Requires @('Package Microsoft.PowerShell') -Seconds 60
@@ -150,7 +142,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
         Add-WorkstationJob 'Nushell profile' 'nushell' -Requires $requirements -Seconds 90
     }
     if ($needsVisualStudio) {
-        Add-WorkstationJob 'Visual Studio Build Tools' 'vs' -Requires @('WinGet') -Seconds 960
+        Add-WorkstationJob 'Visual Studio Build Tools' 'vs' -Seconds 960
     }
     if ($selected.ContainsKey('node-runtime')) { Add-WorkstationJob 'Node.js' 'node-runtime' -Requires @('WinGet') -Tools @('OpenJS.NodeJS') }
     if ($selected.ContainsKey('java')) { Add-WorkstationJob 'Java' 'java' -Requires @('WinGet') -Tools @('Microsoft.OpenJDK') }
@@ -167,9 +159,15 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
             Add-WorkstationJob -Name ('Stack ' + $stack) -Action $stack -Requires @('WinGet') -Tools @($stackTools[$stack])
         }
     }
-    if ($selected.ContainsKey('cpp')) { Add-WorkstationJob 'C and C++' 'cpp' -Requires @('WinGet','Visual Studio Build Tools') -Tools @('Kitware.CMake') }
-    if ($selected.ContainsKey('rust-msvc')) { Add-WorkstationJob 'Rust MSVC' 'rust-msvc' -Requires @('WinGet','Visual Studio Build Tools') -Tools @('Rustlang.Rustup','rust-toolchain') -Seconds 1800 }
-    if ($selected.ContainsKey('cargo-nextest')) { Add-WorkstationJob 'Cargo Nextest' 'cargo-nextest' -Requires @('WinGet','Rust MSVC') -Tools @('nextest.cargo-nextest') }
+    if ($selected.ContainsKey('cpp')) {
+        Add-WorkstationJob 'CMake' 'cmake' -Requires @('WinGet') -Tools @('Kitware.CMake')
+        Add-WorkstationJob 'C and C++' 'cpp' -Requires @('Visual Studio Build Tools')
+    }
+    if ($selected.ContainsKey('rust-msvc')) {
+        Add-WorkstationJob 'Rust toolchain' 'rust-msvc' -Requires @('WinGet') -Tools @('Rustlang.Rustup','rust-toolchain') -Seconds 1800
+        Add-WorkstationJob 'Rust MSVC' 'rust-msvc-ready' -Requires @('Rust toolchain','Visual Studio Build Tools') -Seconds 30
+    }
+    if ($selected.ContainsKey('cargo-nextest')) { Add-WorkstationJob 'Cargo Nextest' 'cargo-nextest' -Requires @('WinGet') -Tools @('nextest.cargo-nextest') }
     if ($selected.ContainsKey('android')) { Add-WorkstationJob 'Android' 'android' -Requires @('WinGet','Java') -Tools @('Google.AndroidCommandLineTools','Google.PlatformTools') }
     if ($selected.ContainsKey('audio')) {
         Add-WorkstationJob 'REAPER' 'reaper' -Requires @('WinGet') -Tools @('Cockos.REAPER')
@@ -177,9 +175,13 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     }
     if ($selected.ContainsKey('node')) { Add-WorkstationJob 'Node browser tools' 'node' -Requires @('Node.js') -Tools @('playwright') }
     if ($selected.ContainsKey('playwright-cli')) { Add-WorkstationJob 'Playwright CLI' 'playwright-cli' -Requires @('Node.js') -Tools @('@playwright/cli') }
-    if ($selected.ContainsKey('tradingview')) { Add-WorkstationJob 'TradingView' 'tradingview' -Requires @('Node.js') -Tools @('TradingView.TradingViewDesktop','@ferroxlabs/tvcontrol') }
+    if ($selected.ContainsKey('tradingview')) {
+        Add-WorkstationJob 'TradingView Desktop' 'tradingview-desktop' -Tools @('TradingView.TradingViewDesktop')
+        Add-WorkstationJob 'TVControl' 'tvcontrol' -Requires @('Node.js') -Tools @('@ferroxlabs/tvcontrol')
+    }
     if ($selected.ContainsKey('hyperframes')) {
-        Add-WorkstationJob 'HyperFrames rendering' 'hyperframes' -Requires @('Node.js','WinGet') -Tools @('hyperframes','Gyan.FFmpeg')
+        Add-WorkstationJob 'FFmpeg' 'ffmpeg' -Requires @('WinGet') -Tools @('Gyan.FFmpeg')
+        Add-WorkstationJob 'HyperFrames rendering' 'hyperframes' -Requires @('Node.js','FFmpeg','Package Git.Git') -Tools @('hyperframes')
         Add-WorkstationJob 'HyperFrames TTS' 'tts' -Requires @('HyperFrames rendering','Python','uv')
     }
     if ($selected.ContainsKey('git-sh')) {
@@ -188,7 +190,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     if ($selected.ContainsKey('handy')) {
         Add-WorkstationJob 'Vulkan SDK' 'vulkan-sdk' -Requires @('WinGet','Package Microsoft.VCRedist.2015+.x64') -Tools @('KhronosGroup.VulkanSDK') -Seconds 1200
         Add-WorkstationJob 'WebView2' 'webview2' -Requires @('WinGet') -Tools @('Microsoft.EdgeWebView2Runtime')
-        Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','C and C++')
+        Add-WorkstationJob 'Handy native headers' 'handy-headers' -Requires @('Vulkan SDK','CMake','C and C++')
     }
 
 if ($PlanOnly) {

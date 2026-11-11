@@ -101,7 +101,7 @@ func TestGuestProvisioningRetriesCorrectedProfileInWindowsPowerShell51(t *testin
 		}
 		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
 		attempt := fmt.Sprintf("20261002-12000%d-abcdef12", index)
-		launcherScript := buildReprovisionLauncher(digest, len(archive), 2, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false, index > 0)
+		launcherScript := buildReprovisionLauncher(digest, len(archive), 2, attempt, "HerdrSandbox-ExplorerRestart-"+attempt, false, provisioningSnapshot{Resume: index > 0})
 		launcherScript = strings.ReplaceAll(launcherScript, guestWorkspacesDirectory, workspaces)
 		launcherScript = strings.ReplaceAll(launcherScript, `C:\SandboxStatus`, statusRoot)
 		launcher := sshArchiveLauncherBytes(launcherScript)
@@ -156,7 +156,7 @@ func TestProvisioningStepContinuationInWindowsPowerShell51(t *testing.T) {
 	t.Setenv(fastTestsEnvironment, "")
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "base.ps1"),
-		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningStackStep", "Invoke-ProvisioningExtensionScript", "Test-ProvisioningPreparation", "Test-ProvisioningWorkstation"},
+		names: []string{"Get-ProvisioningBoundedDiagnosticText", "Test-ProvisioningTerminalError", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Invoke-ProvisioningStackStep", "Invoke-ProvisioningExtensionScript", "Get-ProvisioningPackagePrerequisites", "Get-ProvisioningPackageJobs", "Prepare-ProvisioningWinGet", "Test-ProvisioningPreparation", "Test-ProvisioningWorkstation"},
 	}, provisioningPowerShellFunctionSource{
 		path:  filepath.Join("..", "..", "provisioning", "stacks.ps1"),
 		names: []string{"Install-HyperFramesStack", "Install-StackHyperFramesOptionalTTS", "Assert-StackSupertonicRuntime"},
@@ -487,7 +487,10 @@ func TestBuildReprovisionLauncherUsesBoundedArchiveInputAndHiddenGuestState(t *t
 	digest := strings.Repeat("a", 64)
 	restartID := "20260801-080000-1234abcd"
 	taskName := "HerdrSandbox-ExplorerRestart-" + restartID
-	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName, false, false)
+	launcher := buildReprovisionLauncher(digest, 1234, 2, restartID, taskName, false, provisioningSnapshot{AudioOutput: true})
+	if !strings.Contains(launcher, "$audioOutputEnabled = $true") || !strings.Contains(launcher, "$audioInputEnabled = $false") {
+		t.Fatal("desktop preferences lost the fixed audio selections")
+	}
 	for _, required := range []string{
 		"[Console]::OpenStandardInput()",
 		"$expectedArchiveLength = [long]1234",

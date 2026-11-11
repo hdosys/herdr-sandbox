@@ -70,16 +70,20 @@ switch ($Action) {
     'zig' { Install-ZigStack }
     'bun' { Install-BunStack }
     'just' { Install-Just }
-    'cpp' { Install-CppStack }
+    'cpp' { Initialize-StackCppEnvironment }
+    'cmake' { Install-StackCMake }
     'rust-msvc' { Install-RustMSVCStack }
+    'rust-msvc-ready' { Write-Output 'Rust toolchain and MSVC prerequisites are ready.' }
     'cargo-nextest' { Install-CargoNextest }
     'android' { Install-AndroidStack }
     'reaper' { Install-StackREAPER }
     'audiogridder' { Install-StackAudioGridder }
     'node' { Install-NodeStack }
     'playwright-cli' { Install-PlaywrightCLIStack }
-    'tradingview' { Install-TradingViewStack }
+    'tradingview-desktop' { Install-StackTradingViewDesktop }
+    'tvcontrol' { Install-TVControl }
     'hyperframes' { Install-StackHyperFramesRendering }
+    'ffmpeg' { Install-StackFFmpeg }
     'tts' { Install-StackHyperFramesOptionalTTS }
     'git-sh' {
         $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source

@@ -913,12 +913,16 @@ function Invoke-ProvisioningIndependentStep {
 }
 
 function Invoke-ProvisioningStackStep {
-    param([string]$Name, [scriptblock]$Action, [string[]]$Requires = @(), [string[]]$InputValues = @())
+    param([string]$Name, [scriptblock]$Action, [string[]]$Requires = @(), [string[]]$InputValues = @(), [switch]$Retain)
     # Stack actions also restore process-local environments. Their enclosing
     # profile owns durable completion; package adapters retain installed work.
+    if (Test-ProvisioningPreparation) { & $Action; return }
+    if (Test-ProvisioningWorkstation) {
+        if (-not (Test-ProvisioningDependencyReady $Name)) { & $Action }
+        return
+    }
     $failureOwner = Get-Variable -Name DevelopmentFailures -ErrorAction SilentlyContinue
     if ($null -eq $failureOwner -or $null -eq $failureOwner.Value) { & $Action; return }
-    if ((Test-ProvisioningPreparation) -or (Test-ProvisioningWorkstation)) { & $Action; return }
     $inputs = @($global:HerdrSandboxStepState.StackImplementation) + $InputValues
     foreach ($dependency in $Requires) { $inputs += @($dependency, [string](Test-ProvisioningDependencyReady $dependency)) }
     $fingerprint = Get-ProvisioningStepFingerprint -Values $inputs
@@ -928,7 +932,7 @@ function Invoke-ProvisioningStackStep {
         elseif ($results[$Name].status -eq 'unavailable') { $OptionalFailures.Add("$Name remains unavailable in this run.") }
         return
     }
-    Invoke-ProvisioningIndependentStep -Name $Name -Action $Action -Requires $Requires -Transient `
+    Invoke-ProvisioningIndependentStep -Name $Name -Action $Action -Requires $Requires -Transient:(-not $Retain) `
         -Failures $failureOwner.Value -InputValues $inputs
     $results[$Name].inputs = $fingerprint
 }
@@ -972,7 +976,8 @@ function Start-ProvisioningNativeGroup {
 function Complete-ProvisioningNativeGroup {
     param(
         [Parameter(Mandatory = $true)]
-        [HerdrSandbox.ProvisioningProcessGroup]$Group
+        [HerdrSandbox.ProvisioningProcessGroup]$Group,
+        [ref]$TaskResults
     )
 
     if (-not [object]::ReferenceEquals($global:HerdrSandboxActiveProvisioningNativeGroup, $Group)) {
@@ -980,6 +985,7 @@ function Complete-ProvisioningNativeGroup {
     }
     try {
         $results = @($Group.Complete())
+        if ($null -ne $TaskResults) { $TaskResults.Value = $results }
     } finally {
         $Group.Dispose()
         $global:HerdrSandboxActiveProvisioningNativeGroup = $null
@@ -1161,9 +1167,9 @@ function Test-ProvisioningPreparation {
 }
 
 function Get-ProvisioningPreparedMetadata {
-    param([string]$Id, [string]$Architecture, [string]$InstallerType, [string]$Scope = '', [string]$Version = '')
-    if ($null -eq $global:HerdrSandboxPreparedInputs) { return $null }
-    $preparedMatches = @($global:HerdrSandboxPreparedInputs.packages | Where-Object {
+    param([string]$Id, [string]$Architecture, [string]$InstallerType, [string]$Scope = '', [string]$Version = '', [object]$Inputs = $global:HerdrSandboxPreparedInputs)
+    if ($null -eq $Inputs) { return $null }
+    $preparedMatches = @($Inputs.packages | Where-Object {
         $_.metadata.Id -ieq $Id -and $_.metadata.Architecture -ieq $Architecture -and
         $_.metadata.InstallerType -ieq $InstallerType -and $_.metadata.Scope -ieq $Scope -and
         ($Version -eq '' -or $_.metadata.Version -ceq $Version)
@@ -1176,7 +1182,7 @@ function Test-ProvisioningDependencyReady {
     param([string]$Name, [string]$Version = '')
     if ((Test-ProvisioningPreparation) -and $Name.StartsWith('Package ', [StringComparison]::Ordinal)) {
         $id = $Name.Substring(8)
-        if ($Version -eq '') { $Version = Get-ProvisioningPackageVersion -Id $id }
+        if ($Version -eq '') { $Version = [string]$provisioningPackagePlan.Versions[$id] }
         $prepared = @($script:PreparedPackageMetadata.Values | Where-Object {
             $_.metadata.Id -ieq $id -and ($Version -eq '' -or $_.metadata.Version -ceq $Version)
         })
@@ -2663,7 +2669,15 @@ function Get-ProvisioningSignedMSIXMetadata {
 }
 
 function Prepare-ProvisioningWinGet {
-    if (-not (Test-ProvisioningPreparation)) { throw 'WinGet materialization requires preparation mode.' }
+    param([ref]$Distribution)
+    $preparing = Test-ProvisioningPreparation
+    $previousMetadata = Get-Variable -Name PreparedPackageMetadata -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $previousMetadata) { $previousMetadata = $previousMetadata.Value }
+    if (-not $preparing) {
+        $script:ProvisioningPreparation = $true
+        $script:PreparedPackageMetadata = @{}
+    }
+    try {
     $bundle = Get-ProvisioningGitHubAssetMetadata -Role 'WinGet' -Repository 'microsoft/winget-cli' `
         -AssetName 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' -Id 'Microsoft.DesktopAppInstaller' `
         -Architecture 'neutral' -InstallerType 'msixbundle' -PayloadName 'payload.msixbundle'
@@ -2680,12 +2694,26 @@ function Prepare-ProvisioningWinGet {
             -PackageName 'Microsoft.Winget.Source' -Publisher 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US' -Architecture 'neutral'
         Install-ProvisioningCachedPackage -Role 'WinGet catalog' -Metadata $metadata -DownloadSource Direct -Adapter MSIX -ResolvedDirectPayloadPath $source
     } finally { if (Test-Path -LiteralPath $source) { Remove-Item -LiteralPath $source -Force } }
+    if ($null -ne $Distribution) { $Distribution.Value = [pscustomobject]@{packages=@($script:PreparedPackageMetadata.Values)} }
+    } finally {
+        if (-not $preparing) {
+            $script:ProvisioningPreparation = $false
+            $script:PreparedPackageMetadata = $previousMetadata
+        }
+    }
+}
+
+function Install-ProvisioningWinGet {
+    $distribution = $null
+    Prepare-ProvisioningWinGet -Distribution ([ref]$distribution)
+    Install-ProvisioningMaterializedWinGet -Inputs $distribution
 }
 
 function Install-ProvisioningMaterializedWinGet {
-    $bundle = Get-ProvisioningPreparedMetadata -Id 'Microsoft.DesktopAppInstaller' -Architecture 'neutral' -InstallerType 'msixbundle'
-    $dependencies = Get-ProvisioningPreparedMetadata -Id 'Microsoft.DesktopAppInstaller.Dependencies' -Architecture 'neutral' -InstallerType 'zip'
-    $catalog = Get-ProvisioningPreparedMetadata -Id 'Microsoft.Winget.Source' -Architecture 'neutral' -InstallerType 'msix'
+    param([object]$Inputs = $global:HerdrSandboxPreparedInputs)
+    $bundle = Get-ProvisioningPreparedMetadata -Inputs $Inputs -Id 'Microsoft.DesktopAppInstaller' -Architecture 'neutral' -InstallerType 'msixbundle'
+    $dependencies = Get-ProvisioningPreparedMetadata -Inputs $Inputs -Id 'Microsoft.DesktopAppInstaller.Dependencies' -Architecture 'neutral' -InstallerType 'zip'
+    $catalog = Get-ProvisioningPreparedMetadata -Inputs $Inputs -Id 'Microsoft.Winget.Source' -Architecture 'neutral' -InstallerType 'msix'
     if ($null -eq $bundle -or $null -eq $dependencies -or $null -eq $catalog) { throw 'WinGet requires its verified materialized distribution.' }
     $stage = Join-Path (Get-ProvisioningPath 'staging\packages') ('winget-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
@@ -2774,12 +2802,28 @@ function Get-ProvisioningPackagePrerequisites {
     }
 }
 
+function Get-ProvisioningPackageJobs {
+    param([object[]]$Packages)
+    $versions = @{}
+    foreach ($package in $Packages) { $versions[[string]$package.id] = [string]$package.version }
+    $seen = @{}
+    foreach ($package in $Packages) {
+        foreach ($id in (@(Get-ProvisioningPackagePrerequisites -Id ([string]$package.id)) + @([string]$package.id))) {
+            if ($seen.ContainsKey($id)) { continue }
+            $seen[$id] = $true
+            $requires = @(Get-ProvisioningPackagePrerequisites -Id $id | ForEach-Object { 'Package ' + $_ })
+            if ($id -ine 'Anomaly.OpenCode') { $requires += 'WinGet' }
+            [pscustomobject]@{ ID=$id; Version=[string]$versions[$id]; Requires=$requires }
+        }
+    }
+}
+
 function Install-ProvisioningPackage {
     param([Parameter(Mandatory=$true)][string]$Id, [string]$Version = '', [switch]$AsStandardUser)
     if ((Test-ProvisioningPreparation) -and (Test-ProvisioningDependencyReady -Name ('Package ' + $Id) -Version $Version)) { return }
     foreach ($dependency in @(Get-ProvisioningPackagePrerequisites -Id $Id)) {
         if (-not (Test-ProvisioningDependencyReady ('Package ' + $dependency))) {
-            Install-ProvisioningPackage -Id $dependency -Version (Get-ProvisioningPackageVersion -Id $dependency)
+            Install-ProvisioningPackage -Id $dependency -Version ([string]$provisioningPackagePlan.Versions[$dependency])
         }
     }
     switch ($Id) {
@@ -4308,25 +4352,21 @@ if (-not $returnDevelopmentFailures) { $DevelopmentFailures = New-Object 'Collec
 if ($null -eq $OptionalFailures) { $OptionalFailures = New-Object 'Collections.Generic.List[string]' }
 Initialize-ProvisioningSteps -Path $StepStatePath -Resume $Resume.IsPresent `
     -ImplementationFiles @($PSCommandPath, $ProcessOwnerPath)
+Invoke-ProvisioningIndependentStep -Name 'Windows desktop preferences' -Failures $DevelopmentFailures `
+    -InputValues @([string]$AudioOutputEnabled.IsPresent, [string]$AudioInputEnabled.IsPresent) -Action {
+        & $PSCommandPath -Phase Registry -ProcessOwnerPath $ProcessOwnerPath `
+            -AudioOutputEnabled:$AudioOutputEnabled -AudioInputEnabled:$AudioInputEnabled
+    }
 Invoke-ProvisioningIndependentStep -Name 'WinGet' -Failures $DevelopmentFailures -Action {
-    Assert-ProvisioningCommand -Role 'WinGet' -Name 'winget.exe' -VersionArguments @('--version') -ExpectedPattern '^v?\d+\.' | Out-Null
+    Install-ProvisioningWinGet
 }
 
 # Both targets use the same package dispatch and prerequisite declarations.
 # The normal target no longer has a separate handwritten chain of fail-fast calls.
 $selectedPackages = @([pscustomobject]@{id='Microsoft.VCRedist.2015+.x64';version=''}) + @($provisioningPackagePlan.Data.defaults) + @($provisioningPackagePlan.Data.additions)
-foreach ($selectedPackage in $selectedPackages) {
-    $packageIDs = @(Get-ProvisioningPackagePrerequisites -Id ([string]$selectedPackage.id)) + @([string]$selectedPackage.id)
-    foreach ($packageID in $packageIDs) {
-        $name = 'Package ' + $packageID
-        if ($global:HerdrSandboxStepState.Results.Contains($name)) { continue }
-        $requires = @(Get-ProvisioningPackagePrerequisites -Id $packageID | ForEach-Object { 'Package ' + $_ })
-        if ($packageID -ine 'Anomaly.OpenCode') { $requires += 'WinGet' }
-        Invoke-ProvisioningIndependentStep -Name $name -Failures $DevelopmentFailures -Requires $requires `
-            -InputValues (Get-ProvisioningPackageVersion -Id $packageID) -Action {
-                Install-ProvisioningPackage -Id $packageID -Version (Get-ProvisioningPackageVersion -Id $packageID)
-            }
-    }
+foreach ($package in @(Get-ProvisioningPackageJobs -Packages $selectedPackages)) {
+    Invoke-ProvisioningIndependentStep -Name ('Package ' + $package.ID) -Failures $DevelopmentFailures -Requires $package.Requires `
+        -InputValues @($package.Version) -Action { Install-ProvisioningPackage -Id $package.ID -Version $package.Version }
 }
 
 Invoke-ProvisioningIndependentStep -Name 'PowerShell SSH shell' -Failures $DevelopmentFailures -Requires @('Package Microsoft.PowerShell') -Action {
