@@ -51,11 +51,11 @@ cross-project workflow in the global OpenCode configuration repository.
   passes its focused check. Timebox startup, diagnosis and acceptance separately,
   with evidence capture and owned cleanup defined before execution. Reaching a
   deadline changes the next action; it does not trigger another identical run.
-  Reuse a verified existing installation root when testing recovery with unchanged
-  inputs: repeated fresh test roots consumed gigabytes of installed tools, while
-  the real `/ROOT` recovery retained 38 completed steps and ran setup in 14 seconds.
-  Verify terminal ownership and input identity before reuse; preserve fresh-install
-  evidence separately rather than repeating it for an unrelated configuration fix.
+  Use a retained installation only for the smallest causal check or an explicit
+  recovery scenario, not repeated full acceptance rounds. Repeated installations
+  grew the Sandbox disk and accumulated gigabyte-sized input copies. Prefer a
+  fresh Sandbox for full installer acceptance when replacement is authorized;
+  promptly remove terminal task-owned input copies on both sides.
   Expected benefit: avoid hour-scale diagnostic loops and overlapping installers.
   Routing: retained here at the user's request for later adoption by the global
   OpenCode workflow owner; no global files changed.

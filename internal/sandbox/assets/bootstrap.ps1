@@ -710,15 +710,13 @@ try {
         Write-Warning "VC++ runtime installation succeeded, but WinGet did not report resolved version $($vcVersions[0]). Provisioning will continue with the installed runtime."
     }
 
-    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing PowerShell for guest development tools'
+    Write-ProgressStatus -Phase 'core-provisioning' -Message 'Installing only the PowerShell shell required for SSH'
     $powerShell7 = $null
     & $baseProvisioning -Phase 'Core' -ProjectProvisioningDirectory $projectProvisioningDirectory `
         -WorkspacesDirectory 'C:\Workspaces' -PackagePlanPath $packagePlanPath `
         -UserProvisioningPath $userProvisioning -ProcessOwnerPath $processOwner -PowerShellInstallation ([ref]$powerShell7)
     if ($null -eq $powerShell7) { throw 'Core provisioning did not return a verified PowerShell installation.' }
-    # MSIX PowerShell cannot serve as an inbound SSH shell. Keep the transport
-    # on the inbox byte-stream shell; Herdr owns the user's interactive shell.
-    $sshDefaultShell = Join-Path $env:WINDIR 'System32\cmd.exe'
+    $sshDefaultShell = $powerShell7.Executable
     } else {
         Write-ProgressStatus -Phase 'installer-transport' -Message 'Preparing only OpenSSH with inbox PowerShell 5.1; no tested development tools or policies are installed by bootstrap'
     }

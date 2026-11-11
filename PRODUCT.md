@@ -135,8 +135,9 @@ The current product contract is:
   Only matching installed host/guest Herdr identities permit server startup, workspace opening
   and ready publication. An incompatible runtime is reported, never replaced.
   `--no-attach` skips only the interactive terminal, not these readiness checks.
-  Normal Sandbox SSH uses the same byte-stream shell. This does not change the
-  interactive shell selected in Herdr or the PowerShell 5.1 provisioning owner.
+  Normal Sandbox SSH retains its existing PowerShell 7 selection. The test-only
+  transport choice changes neither Herdr's interactive shell nor the PowerShell
+  5.1 provisioning owner.
 - The mode's outer deadline is 49 hours, with a 48-hour installer ceiling and the
   installer's existing graph-derived per-step deadlines; `--timeout` overrides the
   outer deadline. Cancellation preserves the guest and terminates the owned

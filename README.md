@@ -713,8 +713,9 @@ prints each result and preserves native reports in the guest. It never runs norm
 provisioning to conceal a failure. Host and installed guest Herdr must match before
 the server/workspaces become ready; a mismatch is reported without replacement.
 After successful installer checks, the test Sandbox switches SSH to the inbox
-`cmd.exe` transport shell, as normal Sandbox provisioning does. Your interactive
-shell inside Herdr is unchanged. The workstation installer itself does not configure SSH.
+`cmd.exe` test transport shell. Normal Sandbox provisioning retains PowerShell 7;
+your interactive shell inside Herdr is unchanged. The workstation installer itself
+does not configure SSH.
 Then use `sandbox attach` or `herdr --remote sandbox --remote-keybindings server`
 in a real terminal. Server keybindings are selected, so
 custom commands run in the guest and their tools/scripts must exist there.

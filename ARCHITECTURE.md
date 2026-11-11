@@ -111,9 +111,9 @@ installation and console-backed remote attach require the explicit host-side
 `native-installer-sandbox` gate; isolated receiver evidence is not that gate.
 
 Before readiness, the successful installer receiver selects the inbox `cmd.exe`
-transport shell. MSIX PowerShell does not provide the required inbound SSH process
-boundary; no second PowerShell distribution or alias fallback is installed.
-Normal bootstrap and installer-test completion share
+test transport shell, without adding another PowerShell distribution or an alias
+fallback. Normal bootstrap retains its existing verified PowerShell 7 selection.
+The two targets share
 `Set-ProvisioningOpenSSHDefaultShell` for the registry write and readback. Library
 loading performs no package installation. A failed acceptance never switches the
 shell, and this finalization neither restarts SSH/Herdr nor changes firewall rules.
