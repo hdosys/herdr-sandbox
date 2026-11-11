@@ -142,7 +142,7 @@ func TestWorkstationRetainedSandboxAcceptance(t *testing.T) {
 	if run == "" || installer == "" || IsCurrentWindowsSandbox() {
 		t.Skip("requires explicit host-side retained test run and private installer")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	evidence, err := installerartifact.Read(strings.TrimSuffix(installer, filepath.Ext(installer)) + ".json")
 	if err != nil {
