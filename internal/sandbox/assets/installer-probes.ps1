@@ -134,30 +134,14 @@ function Test-InstallerEffects {
         } catch {}
         $checks.Add([ordered]@{name='REAPER registration and AudioGridder payload';passed=$passed})
     }
-    $roots = @{
-        herdr=(Join-Path $env:APPDATA 'herdr'); opencode=(Join-Path $env:USERPROFILE '.config\opencode');
-        claude=(Join-Path $env:USERPROFILE '.claude');'claude-state'=$env:USERPROFILE;codex=(Join-Path $env:USERPROFILE '.codex');pi=(Join-Path $env:USERPROFILE '.pi\agent');
-        copilot=(Join-Path $env:USERPROFILE '.copilot');'agent-skills'=(Join-Path $env:USERPROFILE '.agents\skills');
-        'github-cli'=$(if($env:GH_CONFIG_DIR){$env:GH_CONFIG_DIR}elseif($env:XDG_CONFIG_HOME){Join-Path $env:XDG_CONFIG_HOME 'gh'}else{Join-Path $env:APPDATA 'GitHub CLI'});
-        git=$env:USERPROFILE;'git-config'=(Join-Path $env:USERPROFILE '.config\git');zed=(Join-Path $env:APPDATA 'Zed');
-        starship=(Join-Path $env:USERPROFILE '.config');nushell=(Join-Path $env:APPDATA 'nushell');
-        terminal=(Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState');
-        'terminal-preview'=(Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState');
-        'terminal-fragments'=(Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragments')
-    }
-    if ($env:XDG_CONFIG_HOME) { $roots.opencode=Join-Path $env:XDG_CONFIG_HOME 'opencode' }
     $configurationPassed=$true
     foreach ($file in @($Profile.files)) {
         try {
-            if ($file.kind -eq 'configuration-archive') {
-                $result = [IO.File]::ReadAllText((Join-Path $StateRoot 'configuration-result.json')) | ConvertFrom-Json
-                if ($result.schemaVersion -ne 9 -or $result.archiveSha256 -cne $file.sha256 -or -not $result.herdrConfigurationPublished) { throw 'Shared configuration publication did not match the private snapshot.' }
-                continue
+            if ($file.kind -cne 'configuration-archive' -or $file.path -cne 'configuration.zip') {
+                throw 'Unsupported configuration archive.'
             }
-            if (-not $roots.ContainsKey([string]$file.kind)) {throw 'Unsupported configuration destination.'}
-            $path=Join-Path $roots[[string]$file.kind] ([string]$file.path).Replace('/','\')
-            $item=Get-Item -LiteralPath $path -Force -ErrorAction Stop
-            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine [string]$file.sha256) {throw 'Configuration did not match.'}
+            $result = [IO.File]::ReadAllText((Join-Path $StateRoot 'configuration-result.json')) | ConvertFrom-Json
+            if ($result.schemaVersion -ne 9 -or $result.archiveSha256 -cne $file.sha256 -or -not $result.herdrConfigurationPublished) { throw 'Shared configuration publication did not match the private snapshot.' }
         } catch {$configurationPassed=$false}
     }
     $checks.Add([ordered]@{name='selected authored configuration hashes';passed=$configurationPassed})

@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -109,72 +108,6 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 		}
 	}
 	return nil
-}
-
-func selectedInstallerSettings(ctx context.Context, provisioning provisioningPlan) ([]WorkstationFile, error) {
-	selected, err := defaultHostConfigurationSources(provisioning.WindowsTerminal, provisioning.Packages, provisioning.CodingAgentSync, credentialSyncConfiguration{}, false)
-	if err != nil {
-		return nil, err
-	}
-	roots := map[string]string{}
-	sources := selected.CodingAgents
-	if selected.GitHubCLIConfiguration != "" {
-		roots["github-cli"] = selected.GitHubCLIConfiguration
-	}
-	for kind, selected := range map[string]string{"opencode": sources.OpenCodeDirectory, "claude": sources.ClaudeCodeDirectory, "codex": sources.CodexDirectory, "pi": sources.PiDirectory, "copilot": sources.GitHubCopilotDirectory, "agent-skills": sources.SharedSkillsDirectory} {
-		if selected == "" {
-			delete(roots, kind)
-		} else {
-			roots[kind] = selected
-		}
-	}
-	if sources.ClaudeCodeState == "" {
-		delete(roots, "claude-state")
-	} else {
-		roots["claude-state"] = filepath.Dir(sources.ClaudeCodeState)
-	}
-	if selected.GitConfig != "" {
-		roots["git"] = filepath.Dir(selected.GitConfig)
-		roots["git-config"] = selected.GitConfigDirectory
-	}
-	if selected.StarshipPreset != "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		roots["starship"] = filepath.Join(home, ".config")
-	}
-	if provisioning.Packages.enabled(packageNushell) {
-		roots["nushell"] = filepath.Join(os.Getenv("APPDATA"), "nushell")
-	}
-	if selected.ZedConfiguration != "" {
-		roots["zed"] = selected.ZedConfiguration
-	}
-	if selected.WindowsTerminalSettings != "" {
-		kind := "terminal"
-		if selected.WindowsTerminalEdition == windowsTerminalPreviewEdition {
-			kind = "terminal-preview"
-		}
-		roots[kind] = filepath.Dir(selected.WindowsTerminalSettings)
-	}
-	if selected.WindowsTerminalFragments != "" {
-		roots["terminal-fragments"] = selected.WindowsTerminalFragments
-	}
-	files, err := exportWorkstationSettings(ctx, roots)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateWorkstationLocalPath(selected.HerdrConfig); err != nil {
-		return nil, err
-	}
-	data, found, err := readBoundedRegularFile(selected.HerdrConfig, 4*1024*1024)
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		files = append(files, WorkstationFile{Kind: "herdr", Path: "config.toml", Data: data, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
-	}
-	return files, nil
 }
 
 func provisionInstallerSession(ctx context.Context, options Options, plan runPlan, provisioning provisioningPlan, hostHerdr HostHerdr) (connection Connection, resultErr error) {

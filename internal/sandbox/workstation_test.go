@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -41,8 +42,20 @@ func TestWorkstationDefaultProfileAndSavedSelectionRoundTrip(t *testing.T) {
 	if err != nil || problem != "" || len(first.Packages) != len(second.Packages) || len(first.Stacks) != len(second.Stacks) {
 		t.Fatalf("resume selection: %v %s", err, problem)
 	}
-	settings := []byte("{\"theme\":\"system\"}")
-	profile.Files = []WorkstationFile{{Kind: "opencode", Path: "opencode.json", Data: settings, SHA256: fmt.Sprintf("%x", sha256.Sum256(settings))}}
+	var archive bytes.Buffer
+	writer := zip.NewWriter(&archive)
+	entry, err := writer.Create("herdr/config.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(entry, "[terminal]\ndefault_shell = \"nu\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	settings := archive.Bytes()
+	profile.Files = []WorkstationFile{{Kind: "configuration-archive", Path: "configuration.zip", Data: settings, SHA256: fmt.Sprintf("%x", sha256.Sum256(settings))}}
 	data, err = json.Marshal(profile)
 	if err != nil {
 		t.Fatal(err)
@@ -63,83 +76,30 @@ func TestWorkstationDefaultProfileAndSavedSelectionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWorkstationPrivateConfigurationRoundTripAndConflict(t *testing.T) {
-	source := t.TempDir()
-	nu := filepath.Join(source, "nushell")
-	opencode := filepath.Join(source, "opencode")
-	fragments := filepath.Join(source, "fragments")
-	for _, directory := range []string{filepath.Join(nu, "scripts"), opencode, filepath.Join(fragments, "nu"), filepath.Join(fragments, "personal")} {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for name, contents := range map[string]string{
-		filepath.Join(nu, "config.nu"):                     "source scripts/helper.nu\n",
-		filepath.Join(nu, "scripts", "helper.nu"):          "def hello [] { 'hello' }\n",
-		filepath.Join(opencode, "opencode.json"):           "{\"theme\":\"system\"}\n",
-		filepath.Join(opencode, "auth.json"):               "secret fixture must not export",
-		filepath.Join(opencode, ".usage-status.env"):       "private fixture must not export",
-		filepath.Join(fragments, "nu", "nu.json"):          `{"profiles":[{"commandline":"machine-specific Nushell installation"}]}`,
-		filepath.Join(fragments, "personal", "shell.json"): `{"profiles":[{"commandline":"nu.exe"}]}`,
-	} {
-		if err := os.WriteFile(name, []byte(contents), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	files, err := exportWorkstationSettings(t.Context(), map[string]string{"nushell": nu, "opencode": opencode, "terminal-fragments": fragments})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 4 {
-		t.Fatalf("exported %d files, want authored config, nested Nu script and personal fragment only", len(files))
-	}
-	if slices.ContainsFunc(files, func(file WorkstationFile) bool { return file.Kind == "terminal-fragments" && file.Path == "nu/nu.json" }) {
-		t.Fatal("export captured Nushell's machine-specific installer fragment")
-	}
-	target := t.TempDir()
-	for _, file := range files {
-		root := filepath.Join(target, file.Kind)
-		if err := importWorkstationFile(root, file); err != nil {
-			t.Fatal(err)
-		}
-		if err := importWorkstationFile(root, file); err != nil {
-			t.Fatalf("unchanged retry: %v", err)
-		}
-		actual, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file.Path)))
-		if err != nil || !bytes.Equal(actual, file.Data) {
-			t.Fatalf("import differs: %v", err)
-		}
-	}
-	file := files[0]
-	destination := filepath.Join(target, file.Kind, filepath.FromSlash(file.Path))
-	if err := os.WriteFile(destination, []byte("user change"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := importWorkstationFile(filepath.Join(target, file.Kind), file); err == nil {
-		t.Fatal("different user configuration was overwritten")
-	}
-	actual, _ := os.ReadFile(destination)
-	if string(actual) != "user change" {
-		t.Fatal("user change lost")
-	}
-	file.Data = []byte("tampered")
-	if err := importWorkstationFile(filepath.Join(target, file.Kind), file); err == nil {
-		t.Fatal("hash mismatch accepted")
-	}
-}
-
-func TestWorkstationProfileRejectsUnsafeFilesAndDuplicateInputs(t *testing.T) {
+func TestWorkstationProfileRejectsInvalidArchivesAndDuplicateInputs(t *testing.T) {
 	profile := DefaultWorkstationProfile()
-	for _, name := range []string{"../escape.json", "a/../../escape.json", "C:/escape.json", "a.json:stream", "NUL.json", "x./a.json", "auth.json", ".env", ".git/config"} {
-		profile.Files = []WorkstationFile{{Kind: "opencode", Path: name, Data: []byte("{}"), SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("{}")))}}
+	file := WorkstationFile{Kind: "configuration-archive", Path: "configuration.zip", Data: []byte("fixture"), SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("fixture")))}
+	profile.Files = []WorkstationFile{file}
+	data, _ := json.Marshal(profile)
+	if _, err := decodeWorkstationProfile(data); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*WorkstationProfile){
+		func(p *WorkstationProfile) { p.Files[0].Data = []byte("tampered") },
+		func(p *WorkstationProfile) { p.Files[0].Kind = "opencode" },
+		func(p *WorkstationProfile) { p.Files[0].Path = "../configuration.zip" },
+		func(p *WorkstationProfile) { p.Files = append(p.Files, file) },
+	} {
+		profile.Files = []WorkstationFile{file}
+		mutate(&profile)
 		data, _ := json.Marshal(profile)
 		if _, err := decodeWorkstationProfile(data); err == nil {
-			t.Errorf("accepted unsafe file %q", name)
+			t.Error("invalid configuration archive accepted")
 		}
 	}
 	profile.Files = []WorkstationFile{}
 	profile.Packages = append(profile.Packages, wingetPackagePlanEntry{ID: "HDOSYS.HERDR-WIN"})
-	data, _ := json.Marshal(profile)
+	data, _ = json.Marshal(profile)
 	if _, err := decodeWorkstationProfile(data); err == nil {
 		t.Fatal("case-colliding package selections accepted")
 	}
@@ -392,12 +352,10 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	private := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(private, "config"))
 	profilePath := filepath.Join(private, "profile.json")
-	settings := []byte("{\"theme\":\"system\"}\n")
 	profile := WorkstationProfile{SchemaVersion: 1, Packages: []wingetPackagePlanEntry{
 		{ID: "HerdrWorkstation.NonexistentAcceptancePackage"}, {ID: "rhysd.actionlint"},
-	}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{{Kind: "opencode", Path: "opencode.json", Data: settings, SHA256: fmt.Sprintf("%x", sha256.Sum256(settings))}}}
+	}, Stacks: []string{}, Tools: []resolvedToolVersion{}, Files: []WorkstationFile{}}
 	writeProfile := func() {
 		t.Helper()
 		encoded, err := json.Marshal(profile)
@@ -467,7 +425,7 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 	for _, step := range first.Steps {
 		statuses[step.Name] = step.Status
 	}
-	if statuses["Package HerdrWorkstation.NonexistentAcceptancePackage"] != "failed" || statuses["Package rhysd.actionlint"] != "succeeded" || statuses["Configuration opencode/opencode.json"] != "succeeded" {
+	if statuses["Package HerdrWorkstation.NonexistentAcceptancePackage"] != "failed" || statuses["Package rhysd.actionlint"] != "succeeded" {
 		t.Fatalf("independent work was not completed: %+v", first.Steps)
 	}
 	files := installedFiles()
@@ -484,10 +442,6 @@ func TestWorkstationInstallerContinuesAndResumes(t *testing.T) {
 		t.Fatalf("installed utility capability: %v %s", err, output)
 	} else {
 		t.Logf("installed utility reports: %s", strings.TrimSpace(string(output)))
-	}
-	imported, err := os.ReadFile(filepath.Join(private, "config", "opencode", "opencode.json"))
-	if err != nil || !bytes.Equal(imported, settings) {
-		t.Fatalf("actual configuration import: %v", err)
 	}
 	profile.Packages = profile.Packages[1:]
 	writeProfile()

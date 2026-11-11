@@ -1,119 +1,19 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 )
 
-func allowedWorkstationFile(kind, relative string) bool {
-	if relative == "" || len(relative) > 240 || path.Clean(relative) != relative || strings.HasPrefix(relative, "/") || strings.ContainsAny(relative, `\:`+"\x00\r\n") {
-		return false
-	}
-	for component := range strings.SplitSeq(strings.ToLower(relative), "/") {
-		if component == ".." || component == "." || strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
-			return false
-		}
-		if slices.Contains([]string{".git", ".agent", ".ssh", ".venv", "node_modules", "__pycache__", "sessions", "logs", "cache", "auth", "credentials"}, component) {
-			return false
-		}
-		if strings.Contains(component, ".env") || slices.Contains([]string{"auth.json", ".credentials.json", "credentials.json", "oauth_creds.json", "hosts.yml", "accounts.json", "id_rsa", "id_ed25519", "sandbox-allow-all.js"}, component) {
-			return false
-		}
-		stem, _, _ := strings.Cut(component, ".")
-		if slices.Contains([]string{"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"}, stem) {
-			return false
-		}
-	}
-	switch kind {
-	case "configuration-archive":
-		return relative == "configuration.zip"
-	case "herdr":
-		return relative == "config.toml"
-	case "github-cli":
-		return relative == "config.yml"
-	case "claude-state":
-		return relative == ".claude.json"
-	case "git":
-		return slices.Contains([]string{".gitconfig", ".gitignore_global", ".gitattributes"}, relative)
-	case "git-config":
-		return true
-	case "terminal", "terminal-preview":
-		return relative == "settings.json"
-	case "starship":
-		return relative == "starship.toml"
-	case "nushell":
-		return relative == "config.nu" || relative == "env.nu" || (strings.HasPrefix(relative, "scripts/") && path.Ext(relative) == ".nu")
-	case "terminal-fragments":
-		// Nushell's installer owns this machine-specific fragment. Its executable
-		// and icon paths must come from the target installation, not the old PC.
-		return !strings.EqualFold(relative, "nu/nu.json") && strings.EqualFold(path.Ext(relative), ".json")
-	case "zed":
-		return slices.Contains([]string{"settings.json", "keymap.json", "tasks.json"}, relative) || ((strings.HasPrefix(relative, "snippets/") || strings.HasPrefix(relative, "themes/")) && strings.EqualFold(path.Ext(relative), ".json"))
-	case "copilot":
-		if slices.Contains(copilotConfigurationFiles, relative) {
-			return true
-		}
-		for _, directory := range copilotConfigurationDirectories {
-			if strings.HasPrefix(relative, directory+"/") {
-				return true
-			}
-		}
-		return false
-	case "opencode", "claude", "codex", "pi", "agent-skills":
-		// Export selects authored roots through the normal configuration owner.
-		// Referenced skill scripts/assets must not disappear by file extension.
-		return true
-	default:
-		return false
-	}
-}
-
-func workstationSettingsRoots() (map[string]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	appData, local := os.Getenv("APPDATA"), os.Getenv("LOCALAPPDATA")
-	for _, root := range []string{home, appData, local} {
-		if !filepath.IsAbs(root) {
-			return nil, errors.New("settings require absolute user profile, APPDATA and LOCALAPPDATA")
-		}
-	}
-	openCode, _, err := defaultOpenCodeDirectories(home)
-	if err != nil {
-		return nil, err
-	}
-	github, err := defaultGitHubCLIConfigurationDirectory(home, appData)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"github-cli": github,
-		"herdr":      filepath.Join(appData, "herdr"), "opencode": openCode,
-		"claude": filepath.Join(home, ".claude"), "claude-state": home, "codex": filepath.Join(home, ".codex"), "pi": filepath.Join(home, ".pi", "agent"),
-		"copilot": filepath.Join(home, ".copilot"), "agent-skills": filepath.Join(home, ".agents", "skills"),
-		"git": home, "zed": filepath.Join(appData, "Zed"),
-		"git-config": filepath.Join(home, ".config", "git"),
-		"starship":   filepath.Join(home, ".config"), "nushell": filepath.Join(appData, "nushell"),
-		"terminal":           filepath.Join(local, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState"),
-		"terminal-preview":   filepath.Join(local, "Packages", "Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe", "LocalState"),
-		"terminal-fragments": filepath.Join(local, "Microsoft", "Windows Terminal", "Fragments"),
-	}, nil
-}
-
-// ExportWorkstationProfile performs explicit capture only. It never follows Git
-// repositories/history or dedicated auth stores and never runs exported scripts.
+// ExportWorkstationProfile captures the selected software and optional shared
+// configuration snapshot. Credential capture follows the selected sync settings.
 func ExportWorkstationProfile(ctx context.Context, destination string, includeSettings, defaults bool, output io.Writer) error {
 	profile := DefaultWorkstationProfile()
 	var selection provisioningPlan
@@ -147,16 +47,43 @@ func ExportWorkstationProfile(ctx context.Context, destination string, includeSe
 		}
 	}
 	if includeSettings {
-		var err error
 		if defaults {
-			var roots map[string]string
-			roots, err = workstationSettingsRoots()
-			if err == nil {
-				profile.Files, err = exportWorkstationSettings(ctx, roots)
+			local := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+			if !filepath.IsAbs(local) {
+				return errors.New("settings require absolute LOCALAPPDATA")
 			}
-		} else {
-			profile.Files, err = captureInstallerConfiguration(ctx, selection, slices.Contains(profile.Stacks, "tradingview"))
+			terminal := windowsTerminalConfiguration{
+				Edition:           windowsTerminalStableEdition,
+				Theme:             windowsTerminalDarkTheme,
+				WinGetPackageID:   packageTerminalStable,
+				PackageFamilyName: "Microsoft.WindowsTerminal_8wekyb3d8bbwe",
+				SettingsPath:      filepath.Join(local, "Packages", "Microsoft.WindowsTerminal_8wekyb3d8bbwe", "LocalState", "settings.json"),
+				FragmentsPath:     filepath.Join(local, "Microsoft", "Windows Terminal", "Fragments"),
+			}
+			found, err := regularFileExists(terminal.SettingsPath)
+			if err != nil {
+				return err
+			}
+			if found {
+				terminal.Theme, err = readHostWindowsTerminalTheme(terminal.SettingsPath)
+				if err != nil {
+					return err
+				}
+			} else {
+				terminal.SettingsPath = ""
+			}
+			packages, err := resolveWingetPackagePlan(defaultWingetPackageConfiguration(), terminal)
+			if err != nil {
+				return err
+			}
+			selection = provisioningPlan{
+				Packages: packages, WindowsTerminal: terminal,
+				CodingAgentSync: defaultCodingAgentSyncConfiguration(),
+				CredentialSync:  credentialSyncConfiguration{},
+			}
 		}
+		var err error
+		profile.Files, err = captureInstallerConfiguration(ctx, selection, slices.Contains(profile.Stacks, "tradingview"))
 		if err != nil {
 			return err
 		}
@@ -234,219 +161,4 @@ func workstationSelectionFromPlan(ctx context.Context, selection provisioningPla
 		}
 	}
 	return profile, workspaces, nil
-}
-
-func exportWorkstationSettings(ctx context.Context, roots map[string]string) ([]WorkstationFile, error) {
-	result := []WorkstationFile{}
-	seen := map[string]bool{}
-	add := func(kind, relative, source string) error {
-		if !allowedWorkstationFile(kind, relative) {
-			return nil
-		}
-		identity := strings.ToLower(kind + "/" + relative)
-		if seen[identity] {
-			return nil
-		}
-		if err := validateWorkstationLocalPath(source); err != nil {
-			return err
-		}
-		data, found, err := readBoundedRegularFile(source, 4*1024*1024)
-		if err != nil {
-			return fmt.Errorf("read selected configuration %s/%s: %w", kind, relative, err)
-		}
-		if !found {
-			return nil
-		}
-		result = append(result, WorkstationFile{Kind: kind, Path: relative, SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), Data: data})
-		seen[identity] = true
-		if len(result) > 512 {
-			return errors.New("too many configuration files for one workstation profile")
-		}
-		return nil
-	}
-	for kind, root := range roots {
-		if err := validateWorkstationLocalPath(root); err != nil {
-			return nil, err
-		}
-		if kind == "claude-state" {
-			source := filepath.Join(root, ".claude.json")
-			if err := validateWorkstationLocalPath(source); err != nil {
-				return nil, err
-			}
-			data, found, err := buildClaudeCodeUserState(source)
-			if err != nil {
-				return nil, err
-			}
-			if found {
-				result = append(result, WorkstationFile{Kind: kind, Path: ".claude.json", SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), Data: data})
-			}
-			continue
-		}
-		// Reuse the authored-configuration selector, not an extension-based walk
-		// over an agent's runtime, debug or project-state directories.
-		var files, directories []string
-		switch kind {
-		case "opencode":
-			files, directories = openCodeConfigurationFiles, openCodeConfigurationDirectories
-		case "claude":
-			files, directories = claudeConfigurationFiles, claudeConfigurationDirectories
-		case "copilot":
-			files, directories = copilotConfigurationFiles, copilotConfigurationDirectories
-		case "pi":
-			files, directories = piConfigurationFiles, piConfigurationDirectories
-		}
-		if files != nil || kind == "codex" {
-			capture := func(source, destination string) error {
-				_, relative, _ := strings.Cut(filepath.ToSlash(destination), "/")
-				return add(kind, relative, source)
-			}
-			var err error
-			if kind == "codex" {
-				err = archiveCodexConfiguration(root, capture)
-			} else {
-				err = archiveAllowedConfigurationRoot(root, kind, files, directories, nil, capture)
-			}
-			if err != nil {
-				return nil, err
-			}
-			if kind == "pi" {
-				if err := archiveFirstOptionalConfigurationFile(root, []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}, "pi/AGENTS.md", capture); err != nil {
-					return nil, err
-				}
-			}
-			archiveRoot := kind
-			if kind == "copilot" {
-				archiveRoot = "github-copilot"
-			}
-			if _, err := archiveAgentGitSelection(ctx, root, archiveRoot, false, capture); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if kind == "git" {
-			for _, name := range []string{".gitconfig", ".gitignore_global", ".gitattributes"} {
-				if err := add(kind, name, filepath.Join(root, name)); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		if kind == "herdr" {
-			source := filepath.Join(root, "config.toml")
-			if selected, ok := os.LookupEnv("HERDR_CONFIG_PATH"); ok {
-				if selected == "" {
-					return nil, errors.New("HERDR_CONFIG_PATH is empty")
-				}
-				source = selected
-			}
-			if err := add(kind, "config.toml", source); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if kind == "starship" || kind == "terminal" || kind == "terminal-preview" {
-			name := "settings.json"
-			if kind == "starship" {
-				name = "starship.toml"
-			}
-			if err := add(kind, name, filepath.Join(root, name)); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		err := filepath.WalkDir(root, func(source string, entry fs.DirEntry, walkErr error) error {
-			if errors.Is(walkErr, os.ErrNotExist) && source == root {
-				return nil
-			}
-			if walkErr != nil {
-				return walkErr
-			}
-			if source == root {
-				return nil
-			}
-			relative, err := filepath.Rel(root, source)
-			if err != nil {
-				return err
-			}
-			relative = filepath.ToSlash(relative)
-			if entry.IsDir() {
-				// A synthetic extension checks directory exclusions without reading data.
-				syntheticLeaf := "/selection.json"
-				if kind == "nushell" {
-					syntheticLeaf = "/selection.nu"
-				}
-				if kind == "git-config" {
-					syntheticLeaf = "/config"
-				}
-				if !allowedWorkstationFile(kind, relative+syntheticLeaf) {
-					return filepath.SkipDir
-				}
-				if err := validateWorkstationLocalPath(source); err != nil {
-					return err
-				}
-				return nil
-			}
-			return add(kind, relative, source)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("export selected %s configuration: %w", kind, err)
-		}
-	}
-	slices.SortFunc(result, func(left, right WorkstationFile) int {
-		return strings.Compare(left.Kind+"/"+left.Path, right.Kind+"/"+right.Path)
-	})
-	return result, nil
-}
-
-func importWorkstationSettings(files []WorkstationFile) []WorkstationStep {
-	results := []WorkstationStep{}
-	if len(files) == 0 {
-		return results
-	}
-	roots, err := workstationSettingsRoots()
-	if err != nil {
-		return []WorkstationStep{{"Personal configuration", "failed", err.Error()}}
-	}
-	for _, file := range files {
-		step := WorkstationStep{Name: "Configuration " + file.Kind + "/" + file.Path, Status: "succeeded"}
-		err := importWorkstationFile(roots[file.Kind], file)
-		if err != nil {
-			step.Status, step.Message = "failed", err.Error()
-		}
-		results = append(results, step)
-	}
-	return results
-}
-
-func importWorkstationFile(root string, file WorkstationFile) error {
-	if root == "" || !allowedWorkstationFile(file.Kind, file.Path) || fmt.Sprintf("%x", sha256.Sum256(file.Data)) != file.SHA256 {
-		return errors.New("configuration selection or integrity is invalid")
-	}
-	destination := filepath.Join(root, filepath.FromSlash(file.Path))
-	if err := validateWorkstationLocalPath(destination); err != nil {
-		return err
-	}
-	data, found, err := readBoundedRegularFile(destination, 4*1024*1024)
-	if err != nil {
-		return err
-	}
-	if found {
-		defer clear(data)
-		if bytes.Equal(data, file.Data) {
-			return nil
-		}
-		return errors.New("different existing configuration was preserved; reconcile it explicitly before retrying")
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		return err
-	}
-	if err := validateWorkstationLocalPath(destination); err != nil {
-		return err
-	}
-	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := output.Write(file.Data)
-	return errors.Join(writeErr, output.Sync(), output.Close())
 }

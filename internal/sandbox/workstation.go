@@ -164,7 +164,7 @@ func decodeWorkstationProfile(data []byte) (WorkstationProfile, error) {
 	if err := decodeStrictJSON(data, &result); err != nil {
 		return result, fmt.Errorf("decode workstation profile: %w", err)
 	}
-	if result.SchemaVersion != 1 || result.Packages == nil || result.Stacks == nil || result.Tools == nil || result.Files == nil || len(result.Packages) > 64 || len(result.Stacks) > 32 || len(result.Tools) > 64 || len(result.Files) > 512 {
+	if result.SchemaVersion != 1 || result.Packages == nil || result.Stacks == nil || result.Tools == nil || result.Files == nil || len(result.Packages) > 64 || len(result.Stacks) > 32 || len(result.Tools) > 64 || len(result.Files) > 1 {
 		return result, errors.New("unsupported or oversized workstation profile")
 	}
 	// Reject ambiguous objects before crossing into PowerShell's JSON decoder.
@@ -215,18 +215,10 @@ func decodeWorkstationProfile(data []byte) (WorkstationProfile, error) {
 		}
 		seen[key] = true
 	}
-	seen = map[string]bool{}
-	total := 0
 	for _, file := range result.Files {
-		key := strings.ToLower(file.Kind + "/" + file.Path)
-		if !allowedWorkstationFile(file.Kind, file.Path) || len(file.Data) > 4*1024*1024 || seen[key] || fmt.Sprintf("%x", sha256.Sum256(file.Data)) != file.SHA256 {
-			return result, errors.New("invalid, unsafe, duplicate or hash-mismatched workstation configuration file")
+		if file.Kind != "configuration-archive" || file.Path != "configuration.zip" || len(file.Data) > maximumConfigurationFileSize || fmt.Sprintf("%x", sha256.Sum256(file.Data)) != file.SHA256 {
+			return result, errors.New("invalid or hash-mismatched workstation configuration archive")
 		}
-		seen[key] = true
-		total += len(file.Data)
-	}
-	if total > 32*1024*1024 {
-		return result, errors.New("workstation configuration exceeds 32 MiB")
 	}
 	return result, nil
 }
@@ -538,15 +530,11 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	}
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		for _, file := range profile.Files {
-			if file.Kind == "configuration-archive" {
-				step := WorkstationStep{Name: "Configuration and authentication", Status: "succeeded", Message: "Applied and verified through the shared configuration owner."}
-				if err := applyInstallerConfiguration(ctx, root, file, options.Output); err != nil {
-					step.Status, step.Message = "failed", err.Error()
-				}
-				report.Steps = append(report.Steps, step)
-			} else {
-				report.Steps = append(report.Steps, importWorkstationSettings([]WorkstationFile{file})...)
+			step := WorkstationStep{Name: "Configuration and authentication", Status: "succeeded", Message: "Applied and verified through the shared configuration owner."}
+			if err := applyInstallerConfiguration(ctx, root, file, options.Output); err != nil {
+				step.Status, step.Message = "failed", err.Error()
 			}
+			report.Steps = append(report.Steps, step)
 		}
 	}
 	if configurationProblem != "" {
