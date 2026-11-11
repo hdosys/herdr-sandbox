@@ -9,7 +9,7 @@ function Get-InstallerBaseline {
 }
 
 function Invoke-InstallerProbe {
-    param([string]$File, [string[]]$Arguments, [string]$Directory = $env:TEMP, [int]$Seconds = 45)
+    param([string]$File, [string[]]$Arguments, [string]$Directory = $env:TEMP, [int]$Seconds = 45, [switch]$TerminateDescendantsAfterRootExit)
     $spec = New-Object HerdrSandbox.ProvisioningProcessSpec
     $spec.Role = 'Independent installer capability verification'
     $spec.FilePath = @(Get-Command $File -CommandType Application -ErrorAction Stop)[0].Source
@@ -17,6 +17,7 @@ function Invoke-InstallerProbe {
     $spec.WorkingDirectory = $Directory
     $spec.TimeoutMilliseconds = $Seconds * 1000
     $spec.SuccessExitCodes = [int[]]@(0)
+    $spec.TerminateDescendantsAfterRootExit = $TerminateDescendantsAfterRootExit.IsPresent
     $result = [HerdrSandbox.ProvisioningProcess]::Run($spec)
     if (-not $result.Succeeded -or $result.OutputTruncated) { throw 'Installed capability failed its independent probe.' }
     return ([string]$result.Output).Trim()
@@ -101,7 +102,9 @@ function Test-InstallerEffects {
             $file=Join-Path $ProbeRoot 'main.rs'
             [IO.File]::WriteAllText($file,'fn main(){println!("installer-rust-ok");}',(New-Object Text.UTF8Encoding($false)))
             $executable=Join-Path $ProbeRoot 'rust-probe.exe'
-            $null=Invoke-InstallerProbe 'rustc.exe' @($file,'-o',$executable) $ProbeRoot 180
+            # rustc finishes compilation/linking before returning; its owned MSVC
+            # telemetry uploader is not part of the compiler capability contract.
+            $null=Invoke-InstallerProbe 'rustc.exe' @($file,'-o',$executable) $ProbeRoot 180 -TerminateDescendantsAfterRootExit
             $passed=(Invoke-InstallerProbe $executable @() $ProbeRoot 30) -ceq 'installer-rust-ok'
         } catch {}
         $checks.Add([ordered]@{name='Rust compile, link and executable';passed=$passed})

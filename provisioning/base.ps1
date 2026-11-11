@@ -434,12 +434,13 @@ function Get-ProvisioningPackageVersion {
 }
 
 function Install-ProvisioningNushell {
+    param([string]$Version = '')
     $packageID = 'Nushell.Nushell'
-    $Version = Get-ProvisioningPackageVersion -Id $packageID
+    if ($Version -eq '') { $Version = Get-ProvisioningPackageVersion -Id $packageID }
     $metadata = Get-ProvisioningWinGetMetadata -Role 'Nushell' -Id $packageID -Version $Version `
-        -Architecture 'x64' -InstallerType 'wix' -Scope 'machine'
+        -Architecture 'x64' -InstallerType 'wix'
     if ([string]$metadata.Id -cne $packageID -or [string]$metadata.Architecture -cne 'x64' -or
-        [string]$metadata.InstallerType -cne 'wix' -or [string]$metadata.Scope -cne 'machine' -or
+        [string]$metadata.InstallerType -cne 'wix' -or
         [string]$metadata.Version -notmatch '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$') {
         throw "Nushell metadata is unsupported: $($metadata.Id) $($metadata.Version) $($metadata.Architecture)"
     }
