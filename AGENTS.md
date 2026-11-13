@@ -88,6 +88,11 @@ in the global OpenCode configuration, not this repository.
 - Treat every ready Sandbox as active production state. Never close, restart, or
   replace it without explicit approval from the current user; report or defer a
   fresh-native gate instead of consuming that instance.
+- Development-build delivery also installs the ordinary Herdr Sandbox installer
+  on the Windows target reached through SSH alias `a`, in addition to any selected
+  private Workstation setup. Serialize target installations, preserve running user
+  processes, and report the exact installed build. Do not reboot or launch a guest
+  automatically; pending optional-feature restarts remain explicit.
 - Executable wiring belongs under `cmd/`, testable behavior under `internal/`, and
   recurring repository automation under `cmd/task`.
 - Start standard-library-only; prefer pure Go and avoid CGO/helper runtimes unless
