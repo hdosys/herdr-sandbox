@@ -3340,7 +3340,13 @@ function Install-StackHyperFramesSupertonic {
         if ($venvConfig -notmatch '(?m)^version_info = (3\.\d+)(?:\.\d+)?\s*$') {
             throw 'Supertonic Python environment has no valid creation version.'
         }
-        if ($Matches[1] -cne $pythonSeries) {
+        $creationSeries = $Matches[1]
+        if ($venvConfig -notmatch '(?m)^home = (.+?)\s*$' -or -not [IO.Path]::IsPathRooted($Matches[1])) {
+            throw 'Supertonic Python environment has no valid base runtime.'
+        }
+        $environmentHome = [IO.Path]::GetFullPath($Matches[1]).TrimEnd('\')
+        $managedHome = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($python)).TrimEnd('\')
+        if ($creationSeries -cne $pythonSeries -or $environmentHome -ine $managedHome) {
             $createEnvironment = $true
             $venvArguments += '--clear'
         }
