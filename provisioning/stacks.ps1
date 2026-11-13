@@ -1548,7 +1548,7 @@ function Assert-StackAndroidPlatformTools {
         $reportedVersion -notmatch ('(?m)^Version ' + [regex]::Escape($version) + '-')) {
         Write-Warning "Android ADB started successfully, but its version output does not match source version $version. Provisioning will continue after wireless command checks."
     }
-    if ($help -notmatch '(?m)^\s*pair HOST\[:PORT\]' -or
+    if ($help -notmatch '(?m)^\s*pair [^\r\n]*HOST\[:PORT\]' -or
         $help -notmatch '(?m)^\s*connect HOST\[:PORT\]') {
         throw 'Android wireless ADB commands are unavailable.'
     }

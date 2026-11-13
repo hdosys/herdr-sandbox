@@ -13,6 +13,8 @@ represent failed tag attempts; this changelog does not recreate them.
   `sandbox attach` and preserving guest custom shortcuts.
 - Sandbox Java downloads use the selected package's verified HTTPS payload rather
   than Delivery Optimization, which could return an HTML page for its redirect.
+- Android provisioning recognizes ADB's current pairing syntax with QR support
+  instead of rejecting the available wireless pairing command.
 - Supertonic uses an isolated compatible Python runtime, so newer project Python
   releases do not break installation of its hash-locked CPU dependencies.
 
