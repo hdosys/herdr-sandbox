@@ -3337,7 +3337,7 @@ function Install-StackHyperFramesSupertonic {
             throw 'Supertonic Python environment contains a reparse point.'
         }
         $venvConfig = [IO.File]::ReadAllText($configuration)
-        if ($venvConfig -notmatch '(?m)^version_info = (3\.\d+)\.\d+\s*$') {
+        if ($venvConfig -notmatch '(?m)^version_info = (3\.\d+)(?:\.\d+)?\s*$') {
             throw 'Supertonic Python environment has no valid creation version.'
         }
         if ($Matches[1] -cne $pythonSeries) {

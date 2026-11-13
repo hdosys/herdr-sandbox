@@ -353,7 +353,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	fmt.Fprintf(options.Output, "  Herdr: %s\n", connection.HerdrVersion)
 	fmt.Fprintf(options.Output, "  Herdr protocol: %d\n", connection.HerdrProtocol)
 	fmt.Fprintf(options.Output, "  SSH config: %s\n", connection.SSHConfigPath)
-	fmt.Fprintf(options.Output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
+	fmt.Fprintf(options.Output, "  Attach: herdr --remote %s --remote-keybindings server\n", connection.SSHTarget)
 	return connection, nil
 }
 

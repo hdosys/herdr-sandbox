@@ -9,6 +9,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- The printed manual attach command selects server keybindings, matching
+  `sandbox attach` and preserving guest custom shortcuts.
 - Sandbox Java downloads use the selected package's verified HTTPS payload rather
   than Delivery Optimization, which could return an HTML page for its redirect.
 - Supertonic uses an isolated compatible Python runtime, so newer project Python
