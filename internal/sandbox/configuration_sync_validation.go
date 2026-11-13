@@ -14,7 +14,7 @@ import (
 
 // Validate the same selected effects for either archive transport. Provider
 // expectations come from the already-bound archive, never from success wording.
-func verifyDevelopmentConfigurationResult(data []byte, actual developmentConfigurationSyncResult, localTarget bool) error {
+func verifyDevelopmentConfigurationResult(data []byte, actual developmentConfigurationSyncResult, localTarget, tradingViewEnabled bool) error {
 	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return errors.New("configuration expectation archive is invalid")
@@ -88,11 +88,11 @@ func verifyDevelopmentConfigurationResult(data []byte, actual developmentConfigu
 		}
 		expected.TradingViewAuthenticatedCookies = len(authentication.Cookies)
 		expected.TradingViewAuthenticationVerified = manifest.CredentialSync.TradingView
-		expected.OpenCodeTVControlMCPConfigured = plan.enabled(packageOpenCode) || actual.OpenCodePermissionVerified
-		if localTarget && !plan.enabled(packageOpenCode) {
-			// An existing, unselected OpenCode may also receive the selected MCP.
-			expected.OpenCodeTVControlMCPConfigured = actual.OpenCodeTVControlMCPConfigured
-		}
+	}
+	expected.OpenCodeTVControlMCPConfigured = tradingViewEnabled && (plan.enabled(packageOpenCode) || actual.OpenCodePermissionVerified)
+	if tradingViewEnabled && localTarget && !plan.enabled(packageOpenCode) {
+		// An existing, unselected OpenCode may also receive the selected MCP.
+		expected.OpenCodeTVControlMCPConfigured = actual.OpenCodeTVControlMCPConfigured
 	}
 	if localTarget && actual.OpenCodePermissionVerified {
 		return errors.New("local configuration unexpectedly applied Sandbox permission policy")

@@ -348,7 +348,7 @@ func TestHerdrAndZedConfigurationArchiveAppliesInIsolatedProfile(t *testing.T) {
 			t.Fatal(err)
 		}
 		digest := fmt.Sprintf("%x", sha256.Sum256(archive))
-		launcherScript := strings.ReplaceAll(buildDevelopmentConfigurationLauncher(digest, len(archive)), guestRootDirectory, guestRoot)
+		launcherScript := strings.ReplaceAll(buildDevelopmentConfigurationLauncher(digest, len(archive), false), guestRootDirectory, guestRoot)
 		launcher := sshArchiveLauncherBytes(launcherScript)
 		command := buildSSHArchiveTransportCommand(digest, len(archive), launcher, 30*time.Second, fmt.Sprintf("config-%d", attempt))
 		command = strings.ReplaceAll(command, guestRootDirectory, guestRoot)

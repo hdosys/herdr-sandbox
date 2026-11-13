@@ -754,7 +754,7 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	}
 	defer clear(archive)
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(archive))
-	launcherScript := buildDevelopmentConfigurationLauncher(expectedDigest, len(archive))
+	launcherScript := buildDevelopmentConfigurationLauncher(expectedDigest, len(archive), tradingViewEnabled)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive, launcherScript, "transfer development configuration")
 	if err != nil {
 		return err
@@ -763,13 +763,13 @@ func syncDevelopmentConfiguration(ctx context.Context, connection Connection, te
 	if err != nil {
 		return err
 	}
-	if err := verifyDevelopmentConfigurationResult(archive, result, false); err != nil {
+	if err := verifyDevelopmentConfigurationResult(archive, result, false, tradingViewEnabled); err != nil {
 		return err
 	}
 	return writeCredentialTransferReport(reportOutput, archive, credentialSync, packages.enabled(packageGitHubCLI), expectedGitHubAccounts, tradingViewEnabled, tradingViewCredentialsFound)
 }
 
-func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int) string {
+func buildDevelopmentConfigurationLauncher(expectedDigest string, expectedArchiveLength int, tradingViewEnabled bool) string {
 	staging := guestArchiveStagingPowerShell("configuration-"+expectedDigest[:16], "Development configuration", true)
 	return fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -805,13 +805,13 @@ try {
     [Console]::Error.WriteLine('[config-sync] invoke-apply-script')
     $env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE = $archive
     $env:HERDR_SANDBOX_CONFIGURATION_EXPANDED = $expanded
-    & $applyScript
+    & $applyScript -TradingViewEnabled:$%t
 } finally {
     Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE -ErrorAction SilentlyContinue
     Remove-Item Env:HERDR_SANDBOX_CONFIGURATION_EXPANDED -ErrorAction SilentlyContinue
     Remove-GuestArchiveStaging
 }
-exit 0`, staging, expectedArchiveLength, expectedDigest)
+exit 0`, staging, expectedArchiveLength, expectedDigest, tradingViewEnabled)
 }
 
 func defaultHostConfigurationSources(terminal windowsTerminalConfiguration, packages wingetPackagePlan, codingAgents codingAgentSyncConfiguration, credentialSync credentialSyncConfiguration, tradingViewEnabled bool) (hostConfigurationSources, error) {

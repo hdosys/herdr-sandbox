@@ -530,7 +530,7 @@ func SetupWorkstation(ctx context.Context, options WorkstationOptions) (reportFi
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		for _, file := range profile.Files {
 			step := WorkstationStep{Name: "Configuration and authentication", Status: "succeeded", Message: "Applied and verified through the shared configuration owner."}
-			if err := applyInstallerConfiguration(ctx, root, file, options.Output); err != nil {
+			if err := applyInstallerConfiguration(ctx, root, file, slices.Contains(profile.Stacks, string(stackTradingView)), options.Output); err != nil {
 				step.Status, step.Message = "failed", err.Error()
 			}
 			report.Steps = append(report.Steps, step)

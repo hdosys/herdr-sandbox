@@ -244,7 +244,7 @@ func TestWorkstationPlanIncludesHandyAndCompleteDeadline(t *testing.T) {
 			t.Setenv("WORKSTATION_TEST_DEPENDENCIES", string(dependencies))
 		}
 	}
-	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{path: base, names: []string{"Get-ProvisioningBoundedDiagnosticText", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Test-ProvisioningTerminalError", "Set-ProvisioningDesktopUsability"}})
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{path: base, names: []string{"Get-ProvisioningBoundedDiagnosticText", "Get-ProvisioningStepFingerprint", "Initialize-ProvisioningSteps", "Save-ProvisioningSteps", "Invoke-ProvisioningStep", "Invoke-ProvisioningIndependentStep", "Test-ProvisioningTerminalError", "Set-ProvisioningDesktopUsability", "Test-ProvisioningXamlFrameworkInstalled", "Test-ProvisioningPackageInstalled"}})
 	fixture, err := os.ReadFile(filepath.Join("testdata", "workstation-dependencies.ps1"))
 	if err != nil {
 		t.Fatal(err)

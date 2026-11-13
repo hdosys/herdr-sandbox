@@ -9,6 +9,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Workstation setup preserves protected Windows Feeds preferences and compatible
+  newer Xaml frameworks. Captured TradingView logins no longer require an
+  unselected Node/TVControl stack during configuration import.
 - WinGet provisioning uses a contained hidden PowerShell launch on Windows hosts
   where direct packaged-app process creation is denied. Workstation setup leaves
   the protected Widgets policy unchanged while applying the other desktop settings.

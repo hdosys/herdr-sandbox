@@ -1,4 +1,4 @@
-param([switch]$LocalTarget)
+param([switch]$LocalTarget, [Parameter(Mandatory = $true)][bool]$TradingViewEnabled)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $archive = [string]$env:HERDR_SANDBOX_CONFIGURATION_ARCHIVE
@@ -914,8 +914,8 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
     $terminalEdition = ''
     $tradingViewAuthenticatedCookies = 0
     $tradingViewAuthenticationVerified = $false
-    $tradingViewStackEnabled = Test-Path -LiteralPath (Join-Path $expanded 'tradingview\authentication.json') -PathType Leaf
-    $tradingViewCredentialSyncEnabled = $tradingViewStackEnabled -and [bool]$agentSync.credentialSync.tradingView
+    $tradingViewCredentialsPresent = Test-Path -LiteralPath (Join-Path $expanded 'tradingview\authentication.json') -PathType Leaf
+    $tradingViewCredentialSyncEnabled = $tradingViewCredentialsPresent -and [bool]$agentSync.credentialSync.tradingView
 
     if ([bool]$agentSync.opencode) {
         [Console]::Error.WriteLine('[config-sync] apply-opencode')
@@ -947,9 +947,9 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         [Console]::Error.WriteLine('[config-sync] apply-opencode-integration')
         $openCodeConfigurationVerified = [bool](Enable-OpenCodeManagedConfiguration `
             -RequireExecutable ($openCodeEnabled -or $openCodeInstalled) `
-            -TradingViewEnabled $tradingViewStackEnabled -SandboxPermissions (-not $LocalTarget))
+            -TradingViewEnabled $TradingViewEnabled -SandboxPermissions (-not $LocalTarget))
         $openCodePermissionVerified = $openCodeConfigurationVerified -and -not $LocalTarget
-        $openCodeTVControlMCPConfigured = $openCodeConfigurationVerified -and $tradingViewStackEnabled
+        $openCodeTVControlMCPConfigured = $openCodeConfigurationVerified -and $TradingViewEnabled
     }
 
     if ([bool]$agentSync.claudeCode -or [bool]$agentSync.credentialSync.claudeCode) {

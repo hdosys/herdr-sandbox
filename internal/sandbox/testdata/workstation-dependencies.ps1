@@ -55,10 +55,22 @@ if ($writes['HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced/H
 $sandboxWrites = $writes.Clone()
 $writes = @{}
 if (-not (Set-ProvisioningDesktopUsability -PreserveWindowsProtections)) { throw 'Workstation desktop changes were not reported.' }
-$widgets = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh/AllowNewsAndInterests'
-if ($writes.ContainsKey($widgets) -or -not $sandboxWrites.ContainsKey($widgets)) { throw 'Widgets policy target boundary was not preserved.' }
-$sandboxWrites.Remove($widgets)
+foreach ($protectedPolicy in @('HKLM:\SOFTWARE\Policies\Microsoft\Dsh/AllowNewsAndInterests', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds/EnableFeeds')) {
+    if ($writes.ContainsKey($protectedPolicy) -or -not $sandboxWrites.ContainsKey($protectedPolicy)) { throw 'Protected feed policy target boundary was not preserved.' }
+    $sandboxWrites.Remove($protectedPolicy)
+}
 if ($writes.Count -ne $sandboxWrites.Count) { throw 'Workstation changed unrelated desktop preferences.' }
 foreach ($key in $sandboxWrites.Keys) {
     if (-not $writes.ContainsKey($key) -or $writes[$key] -ne $sandboxWrites[$key]) { throw "Workstation changed desktop preference $key" }
+}
+
+# Framework readiness uses registered package identity, not WinGet's exact-version inventory.
+$registration = [pscustomobject]@{ PackageFamilyName='Microsoft.UI.Xaml.2.8_8wekyb3d8bbwe'; IsFramework=$true; Status='Ok'; Architecture='X64'; Version=[Version]'8.2511.26001.0' }
+function Get-AppxPackage { param($Name) return $registration }
+$metadata = [pscustomobject]@{ Id='Microsoft.UI.Xaml.2.8'; Version='8.2310.30001.0' }
+if (-not (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter MSIX)) { throw 'Compatible newer Xaml was not retained.' }
+foreach ($mutation in @(@{Property='Version';Value=[Version]'8.2306.22001.0'}, @{Property='Architecture';Value='X86'}, @{Property='Status';Value='Modified'}, @{Property='PackageFamilyName';Value='Microsoft.UI.Xaml.2.8_other'})) {
+    $property=$mutation.Property; $original=$registration.$property; $registration.$property=$mutation.Value
+    if (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter MSIX) { throw "Invalid Xaml registration accepted: $property" }
+    $registration.$property=$original
 }

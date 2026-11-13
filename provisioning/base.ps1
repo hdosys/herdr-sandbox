@@ -2164,6 +2164,17 @@ function Test-ProvisioningGeistMonoFontInstalled {
     }
 }
 
+function Test-ProvisioningXamlFrameworkInstalled {
+    param([Parameter(Mandatory = $true)][Version]$MinimumVersion)
+
+    $frameworks = @(Get-AppxPackage -Name 'Microsoft.UI.Xaml.2.8' -ErrorAction Stop | Where-Object {
+        $_.PackageFamilyName -ceq 'Microsoft.UI.Xaml.2.8_8wekyb3d8bbwe' -and
+        $_.IsFramework -and [string]$_.Status -eq 'Ok' -and
+        [string]$_.Architecture -in @('X64', 'Neutral') -and [Version]$_.Version -ge $MinimumVersion
+    })
+    return $frameworks.Count -gt 0
+}
+
 function Test-ProvisioningPackageInstalled {
     param(
         [Parameter(Mandatory = $true)]
@@ -2187,7 +2198,13 @@ function Test-ProvisioningPackageInstalled {
         'Rustup' {
             return Test-ProvisioningRustupInstalled -Metadata $Metadata
         }
-        { $_ -in @('Exe', 'Inno', 'NSIS', 'MSI', 'Burn', 'MSIX') } {
+        'MSIX' {
+            if ([string]$Metadata.Id -ceq 'Microsoft.UI.Xaml.2.8') {
+                return Test-ProvisioningXamlFrameworkInstalled -MinimumVersion ([Version]$Metadata.Version)
+            }
+            return Test-ProvisioningWinGetPackageInstalled -Metadata $Metadata
+        }
+        { $_ -in @('Exe', 'Inno', 'NSIS', 'MSI', 'Burn') } {
             return Test-ProvisioningWinGetPackageInstalled -Metadata $Metadata
         }
         default {
@@ -2942,8 +2959,9 @@ function Install-ProvisioningPackage {
         'Microsoft.UI.Xaml.2.8' {
             Install-ProvisioningWinGetPackage -Role 'Windows UI Xaml 2.8' -Id $Id -Version $Version -InstallerType 'msix' -Adapter 'MSIX'
             if (Test-ProvisioningPreparation) { return }
-            $frameworks = @(Get-AppxPackage -Name $Id -ErrorAction SilentlyContinue | Where-Object { [string]$_.Architecture -in @('X64','Neutral') -and $_.Version -ge [Version]'8.2306.22001.0' })
-            if ($frameworks.Count -lt 1) { throw 'Windows UI Xaml 2.8 framework registration is missing or too old.' }
+            if (-not (Test-ProvisioningXamlFrameworkInstalled -MinimumVersion '8.2306.22001.0')) {
+                throw 'Windows UI Xaml 2.8 framework registration is missing, unhealthy or too old.'
+            }
         }
         { $_ -in @('Microsoft.WindowsTerminal','Microsoft.WindowsTerminal.Preview') } {
             $preview = $Id -eq 'Microsoft.WindowsTerminal.Preview'
@@ -3770,17 +3788,19 @@ function Set-ProvisioningDesktopUsability {
         } },
         [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Windows Search'; Values = [ordered]@{
             CortanaConsent = 0
-        } },
-        [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; Values = [ordered]@{
-            EnableFeeds = 0
         } }
     )
     if ($PreserveWindowsProtections) {
-        Write-Host 'Widgets policy left unchanged by Workstation setup.'
+        Write-Host 'Widgets and Windows Feeds policies left unchanged by Workstation setup.'
     } else {
-        $groups += [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
-            AllowNewsAndInterests = 0
-        } }
+        $groups += @(
+            [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
+                AllowNewsAndInterests = 0
+            } },
+            [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; Values = [ordered]@{
+                EnableFeeds = 0
+            } }
+        )
     }
     $changed = $false
     foreach ($group in $groups) {

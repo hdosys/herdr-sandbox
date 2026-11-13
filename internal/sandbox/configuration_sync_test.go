@@ -18,6 +18,53 @@ import (
 	"unicode/utf16"
 )
 
+func TestConfigurationCredentialsDoNotSelectTradingViewIntegration(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	tradingView, _, err := emptyTradingViewAuthenticationPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]any{
+		configurationPackagePlanArchivePath:  wingetPackagePlan{SchemaVersion: 1, Defaults: []wingetPackagePlanEntry{{ID: packagePowerShell}, {ID: packageOpenCode}}},
+		codingAgentSyncManifestArchivePath:   codingAgentSyncManifest{SchemaVersion: 5, OpenCode: true, CredentialSync: credentialSyncConfiguration{TradingView: true}},
+		tradingViewAuthenticationArchivePath: json.RawMessage(tradingView),
+	}
+	for name, value := range entries {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(entry).Encode(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archive := buffer.Bytes()
+	count, err := configurationArchivePayloadFileCount(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := developmentConfigurationSyncResult{SchemaVersion: 9, ArchiveSHA256: fmt.Sprintf("%x", sha256.Sum256(archive)), CopiedFiles: count, HerdrConfigurationPublished: true, TradingViewAuthenticationVerified: true}
+	if err := verifyDevelopmentConfigurationResult(archive, actual, true, false); err != nil {
+		t.Fatalf("credentials without stack unexpectedly required integration: %v", err)
+	}
+	if err := verifyDevelopmentConfigurationResult(archive, actual, true, true); err == nil {
+		t.Fatal("selected TradingView integration was not required")
+	}
+	actual.OpenCodeTVControlMCPConfigured = true
+	if err := verifyDevelopmentConfigurationResult(archive, actual, true, true); err != nil {
+		t.Fatal(err)
+	}
+	actual.OpenCodeTVControlMCPConfigured = false
+	actual.TradingViewAuthenticationVerified = false
+	if err := verifyDevelopmentConfigurationResult(archive, actual, true, false); err == nil {
+		t.Fatal("unselected integration suppressed selected credential verification")
+	}
+}
+
 func TestBuildDevelopmentConfigurationArchiveUsesAllowlistAndAuthentication(t *testing.T) {
 	root := t.TempDir()
 	openCode := filepath.Join(root, "opencode")
@@ -1135,7 +1182,7 @@ if ($mcpList -notmatch '(?is)tvcontrol.*disabled') {
 		SSHTarget:     sshTargetName,
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(archive.Bytes()))
-	launcher := buildDevelopmentConfigurationLauncher(digest, archive.Len())
+	launcher := buildDevelopmentConfigurationLauncher(digest, archive.Len(), false)
 	output, err := runSSHArchivePowerShell(ctx, connection, archive.Bytes(), launcher, "verify guest OpenCode TVControl MCP")
 	if err != nil {
 		t.Fatal(err)
@@ -1190,7 +1237,7 @@ func TestEncodePowerShellUsesUTF16LE(t *testing.T) {
 }
 
 func TestDevelopmentConfigurationLauncherReadsExactLengthWithoutWaitingForEOF(t *testing.T) {
-	script := buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345)
+	script := buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345, false)
 	for _, required := range []string{
 		"$expectedArchiveLength = [long]12345",
 		"while ($remaining -gt 0)",

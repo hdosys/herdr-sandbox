@@ -63,9 +63,15 @@ The current product contract is:
   administrator rights once and uses a restricted same-user child for packages
   that prohibit elevation. The remaining selected Windows preferences reuse the
   normal provisioning owner rather than a separate workstation settings list.
-- Workstation setup leaves the protected Widgets `AllowNewsAndInterests` policy
-  unchanged. Its desktop-preferences result excludes that policy and explicitly
-  reports it as unchanged, not applied. Other selected desktop settings remain.
+- Workstation setup leaves the protected Widgets `AllowNewsAndInterests` and
+  Windows Feeds `EnableFeeds` policies unchanged. Its desktop-preferences result
+  excludes those policies and explicitly reports them as unchanged, not applied.
+  Other selected desktop settings remain.
+- Compatible, healthy newer Microsoft UI Xaml 2.8 framework registrations are
+  retained rather than downgraded to the materialized package version.
+- Captured TradingView credentials do not select the TradingView development
+  stack. Selected credentials still import; TVControl integration requires the
+  explicitly selected stack.
 - The installer details show each step starting and its terminal result, with
   live package output and immediate failure diagnostics. WinGet readiness includes
   initialization and a real query of its community source, not just a version check.

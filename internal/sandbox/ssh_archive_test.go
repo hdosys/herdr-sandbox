@@ -118,7 +118,7 @@ throw 'clear remote failure'`)
 
 func TestSSHArchiveTransportCommandsFitWindowsCommandLine(t *testing.T) {
 	launchers := map[string]string{
-		"configuration": buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345),
+		"configuration": buildDevelopmentConfigurationLauncher(strings.Repeat("a", 64), 12345, false),
 		"reprovision": buildReprovisionLauncher(
 			strings.Repeat("a", 64), 12345, 1,
 			"20260804-123456-abcdef12", "HerdrSandbox-ExplorerRestart-20260804-123456-abcdef12", false, provisioningSnapshot{},

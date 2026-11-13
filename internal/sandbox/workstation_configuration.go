@@ -77,7 +77,7 @@ func captureInstallerConfiguration(ctx context.Context, selection provisioningPl
 	return []WorkstationFile{{Kind: "configuration-archive", Path: "configuration.zip", SHA256: fmt.Sprintf("%x", sha256.Sum256(archive)), Data: archive}}, nil
 }
 
-func applyInstallerConfiguration(ctx context.Context, root string, file WorkstationFile, output io.Writer) error {
+func applyInstallerConfiguration(ctx context.Context, root string, file WorkstationFile, tradingViewEnabled bool, output io.Writer) error {
 	if fmt.Sprintf("%x", sha256.Sum256(file.Data)) != file.SHA256 {
 		return errors.New("configuration archive digest mismatch")
 	}
@@ -195,7 +195,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	}
 	applyContext, stop := context.WithTimeout(ctx, 10*time.Minute)
 	defer stop()
-	script := `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); try { & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget } catch { $failure=$_.Exception.GetBaseException(); [Console]::Error.WriteLine('[config-failure] '+$failure.GetType().FullName+' line='+$_.InvocationInfo.ScriptLineNumber); exit 1 }`
+	script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $env:PSModulePath=$PSHOME+'\Modules'; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); try { & $env:HERDR_WORKSTATION_CONFIGURATION_SCRIPT -LocalTarget -TradingViewEnabled:$%t } catch { $failure=$_.Exception.GetBaseException(); [Console]::Error.WriteLine('[config-failure] '+$failure.GetType().FullName+' line='+$_.InvocationInfo.ScriptLineNumber); exit 1 }`, tradingViewEnabled)
 	command := hiddenCommandContext(applyContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
 	command.Env = append(attachEnvironment(childProcessEnvironment(os.Environ())), "HERDR_CONFIG_PATH="+herdrTarget, "HERDR_SANDBOX_CONFIGURATION_ARCHIVE="+archivePath, "HERDR_SANDBOX_CONFIGURATION_EXPANDED="+expanded, "HERDR_WORKSTATION_CONFIGURATION_SCRIPT="+scriptPath, "HERDR_PROVISIONING_ROOT="+root)
 	// Provider tools can include account material in errors. Keep their diagnostics
@@ -221,7 +221,7 @@ func applyInstallerConfiguration(ctx context.Context, root string, file Workstat
 	if err != nil {
 		return errors.New("shared configuration application did not publish a valid result")
 	}
-	if err := verifyDevelopmentConfigurationResult(file.Data, verified, true); err != nil {
+	if err := verifyDevelopmentConfigurationResult(file.Data, verified, true, tradingViewEnabled); err != nil {
 		return err
 	}
 	if err := writeVoxCPM2JSONAtomically(filepath.Join(root, "configuration-result.json"), verified); err != nil {
