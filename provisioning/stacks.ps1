@@ -2453,8 +2453,8 @@ function Get-StackJavaInstalledVersions {
         [object]$Metadata
     )
 
-    $result = Invoke-ProvisioningNativeResult -Role 'Microsoft OpenJDK installed-version inspection' `
-        -FilePath 'winget.exe' -ArgumentList @(
+    $result = Invoke-ProvisioningWinGet -Result -Role 'Microsoft OpenJDK installed-version inspection' `
+        -ArgumentList @(
             'list', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--scope', 'machine', '--accept-source-agreements', '--disable-interactivity'
         ) -TimeoutSeconds 120
@@ -2484,8 +2484,8 @@ function Remove-StackJavaPreviousInstallation {
         return
     }
     Write-Output "Replacing previous $($Metadata.Id) versions: $($installedVersions -join ', ')"
-    Invoke-ProvisioningNative -Role 'Microsoft OpenJDK previous-version uninstall' `
-        -FilePath 'winget.exe' -ArgumentList @(
+    Invoke-ProvisioningWinGet -Role 'Microsoft OpenJDK previous-version uninstall' `
+        -ArgumentList @(
             'uninstall', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--scope', 'machine', '--all-versions', '--silent', '--accept-source-agreements',
             '--disable-interactivity'

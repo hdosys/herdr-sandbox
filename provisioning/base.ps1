@@ -639,18 +639,6 @@ function New-ProvisioningNativeSpec {
     $spec.Role = $Role
     $spec.FilePath = [string]$command.Source
     $spec.Arguments = [string[]]@($ArgumentList)
-    if ([IO.Path]::GetFileName($spec.FilePath) -ieq 'winget.exe') {
-        # Packaged WinGet activation can reject extended process creation. Launch
-        # it from PS5 inside the same atomically assigned job and hidden console.
-        # Only encoded JSON data varies; executable paths and arguments are never
-        # interpolated into PowerShell source.
-        $invocation = @{ FilePath = $spec.FilePath; Arguments = $spec.Arguments } | ConvertTo-Json -Compress
-        $encodedInvocation = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($invocation))
-        $launcher = '$ErrorActionPreference = ''Stop''; $ProgressPreference = ''SilentlyContinue''; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $call = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + $encodedInvocation + ''')) | ConvertFrom-Json; $arguments = [string[]]@($call.Arguments); & $call.FilePath @arguments; exit $LASTEXITCODE'
-        $spec.FilePath = Join-Path $PSHOME 'powershell.exe'
-        $spec.Arguments = [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-            '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launcher)))
-    }
     $spec.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
     $spec.TimeoutMilliseconds = $TimeoutSeconds * 1000
     $spec.SuccessExitCodes = [int[]]@($acceptedExitCodes.Keys | Sort-Object)
@@ -1335,6 +1323,36 @@ function Get-ProvisioningMetadataValue {
     return $values[0].Trim()
 }
 
+function Invoke-ProvisioningWinGet {
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [string]$FilePath = 'winget.exe',
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ArgumentList,
+        [int]$TimeoutSeconds = 1800,
+        [switch]$Result,
+        [switch]$ForwardOutput,
+        [switch]$AsStandardUser
+    )
+
+    $command = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    # One WinGet path for both targets. The generic process owner knows nothing
+    # about packaged activation; it contains this PS5 parent and its descendants.
+    $invocation = @{ FilePath = [string]$command.Source; Arguments = [string[]]@($ArgumentList) } | ConvertTo-Json -Compress
+    $encodedInvocation = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($invocation))
+    $launcher = '$ErrorActionPreference = ''Stop''; $ProgressPreference = ''SilentlyContinue''; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $call = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + $encodedInvocation + ''')) | ConvertFrom-Json; $arguments = [string[]]@($call.Arguments); & $call.FilePath @arguments; exit $LASTEXITCODE'
+    $native = @{
+        Role = $Role
+        FilePath = Join-Path $PSHOME 'powershell.exe'
+        ArgumentList = [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
+            '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launcher)))
+        TimeoutSeconds = $TimeoutSeconds
+    }
+    if ($Result) {
+        return Invoke-ProvisioningNativeResult @native -ForwardOutput:$ForwardOutput -AsStandardUser:$AsStandardUser
+    }
+    return Invoke-ProvisioningNative @native
+}
+
 function Resolve-ProvisioningWinGetNumericFamilyID {
     param(
         [Parameter(Mandatory = $true)][string]$Role,
@@ -1342,7 +1360,7 @@ function Resolve-ProvisioningWinGetNumericFamilyID {
         [ValidateSet('major', 'series')][string]$SuffixKind = 'major'
     )
 
-    $lines = @(Invoke-ProvisioningNative -Role "$Role package-family resolution" -FilePath 'winget.exe' `
+    $lines = @(Invoke-ProvisioningWinGet -Role "$Role package-family resolution" `
         -ArgumentList @('search', '--id', $Prefix, '--source', 'winget', '--accept-source-agreements', '--disable-interactivity') |
         ForEach-Object { [string]$_ })
     $suffixPattern = if ($SuffixKind -eq 'series') { '\d+\.\d+' } else { '\d+' }
@@ -1478,7 +1496,7 @@ function Get-ProvisioningWinGetMetadata {
     if (-not [string]::IsNullOrWhiteSpace($Scope)) {
         $arguments += @('--scope', $Scope)
     }
-    $lines = @(Invoke-ProvisioningNative -Role "$Role metadata resolution" -FilePath 'winget.exe' -ArgumentList $arguments |
+    $lines = @(Invoke-ProvisioningWinGet -Role "$Role metadata resolution" -ArgumentList $arguments |
         ForEach-Object { [string]$_ })
     $resolvedID = Get-ProvisioningMetadataValue -Lines $lines -Name 'PackageIdentifier' `
         -Pattern '^Found .+ \[([A-Za-z0-9._+-]+)\](?: Version .+)?$'
@@ -1551,7 +1569,7 @@ function Get-ProvisioningDownloadedMetadata {
             '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
         if ($Version) { $arguments += @('--version',$Version) }
         if ($Scope) { $arguments += @('--scope',$Scope) }
-        Invoke-ProvisioningNative -Role "$Role selected installer download" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 | Out-Null
+        Invoke-ProvisioningWinGet -Role "$Role selected installer download" -ArgumentList $arguments -TimeoutSeconds 600 | Out-Null
         $arguments = @('workstation','inspect-download','--directory',$stage,'--id',$Id,'--architecture',$Architecture,'--type',$InstallerType)
         if ($Version) { $arguments += @('--version',$Version) }
         if ($Scope) { $arguments += @('--scope',$Scope) }
@@ -1685,7 +1703,7 @@ function Get-ProvisioningDownloadedPackage {
     if (-not [string]::IsNullOrWhiteSpace($Metadata.Scope)) {
         $arguments += @('--scope', $Metadata.Scope)
     }
-    Invoke-ProvisioningNative -Role "$Role package download" -FilePath 'winget.exe' -ArgumentList $arguments | Out-Null
+    Invoke-ProvisioningWinGet -Role "$Role package download" -ArgumentList $arguments | Out-Null
     $directories = @(Get-ChildItem -LiteralPath $DownloadDirectory -Directory -Force)
     if ($directories.Count -ne 0) {
         throw "$Role package download produced unexpected dependency directories."
@@ -1872,8 +1890,8 @@ function Test-ProvisioningWinGetPackageInstalled {
         [object]$Metadata
     )
 
-    $result = Invoke-ProvisioningNativeResult -Role "$($Metadata.Id) installed-package inspection" `
-        -FilePath 'winget.exe' -ArgumentList @(
+    $result = Invoke-ProvisioningWinGet -Result -Role "$($Metadata.Id) installed-package inspection" `
+        -ArgumentList @(
             'list', '--id', [string]$Metadata.Id, '--exact', '--source', 'winget',
             '--accept-source-agreements', '--disable-interactivity'
         )
@@ -2739,7 +2757,7 @@ function Install-ProvisioningMaterializedWinGet {
         $installed = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         $functional = $false
         if ($null -ne $installed) {
-            $capabilities = Invoke-ProvisioningNativeResult -Role 'Existing WinGet capability' -FilePath $installed.Source -ArgumentList @('download','--help') -TimeoutSeconds 30
+            $capabilities = Invoke-ProvisioningWinGet -Result -Role 'Existing WinGet capability' -FilePath $installed.Source -ArgumentList @('download','--help') -TimeoutSeconds 30
             $functional = $capabilities.Succeeded -and $capabilities.Output.Contains('--skip-dependencies')
         }
         if (-not $functional) {
@@ -2755,8 +2773,8 @@ function Install-ProvisioningMaterializedWinGet {
         }
         Update-ProvisioningPath
         $manager = Get-Command winget.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
-        Invoke-ProvisioningNative -Role 'Materialized WinGet verification' -FilePath $manager.Source -ArgumentList @('--version') -TimeoutSeconds 30
-        Invoke-ProvisioningNative -Role 'Materialized WinGet catalog verification' -FilePath $manager.Source -ArgumentList @('show','--id','Microsoft.VCRedist.2015+.x64','--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 60 | Out-Null
+        Invoke-ProvisioningWinGet -Role 'Materialized WinGet verification' -FilePath $manager.Source -ArgumentList @('--version') -TimeoutSeconds 30
+        Invoke-ProvisioningWinGet -Role 'Materialized WinGet catalog verification' -FilePath $manager.Source -ArgumentList @('show','--id','Microsoft.VCRedist.2015+.x64','--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 60 | Out-Null
     } finally { Remove-ProvisioningGuestPackageStage -Path $stage -Attempts 1 -DelayMilliseconds 0 | Out-Null }
 }
 
@@ -2965,20 +2983,20 @@ function Install-ProvisioningOnlineWinGetPackage {
         if ($Override) { $arguments += @('--override',$Override) }
         # Official APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE, not a generic
         # error suppression. Presence is independently checked below.
-        $installation = Invoke-ProvisioningNativeResult -Role "$Role installation" -FilePath 'winget.exe' -ArgumentList $arguments -TimeoutSeconds 600 -ForwardOutput -AsStandardUser:$AsStandardUser
+        $installation = Invoke-ProvisioningWinGet -Result -Role "$Role installation" -ArgumentList $arguments -TimeoutSeconds 600 -ForwardOutput -AsStandardUser:$AsStandardUser
         if ($installation.Stopped) { throw [OperationCanceledException]::new("$Role installation was cancelled.") }
         if (-not $installation.Succeeded -and ($installation.TimedOut -or $installation.ExitCode -ne [int]0x8A15002B)) {
             $diagnostic = Get-ProvisioningBoundedDiagnosticText -Text ([string]$installation.Output) -MaximumBytes 3000
             throw "$Role installation failed (exit $($installation.ExitCode), timeout $($installation.TimedOut)). $diagnostic"
         }
-        Invoke-ProvisioningNative -Role "$Role installed-package verification" -FilePath 'winget.exe' -ArgumentList @(
+        Invoke-ProvisioningWinGet -Role "$Role installed-package verification" -ArgumentList @(
             'list','--id',$Id,'--exact','--source','winget','--accept-source-agreements','--disable-interactivity') -TimeoutSeconds 120 | Out-Null
         Update-ProvisioningPath
         return
     }
 
     if ([string]::IsNullOrWhiteSpace($Version)) {
-        $lines = @(Invoke-ProvisioningNative -Role "$Role metadata resolution" -FilePath 'winget.exe' -ArgumentList @(
+        $lines = @(Invoke-ProvisioningWinGet -Role "$Role metadata resolution" -ArgumentList @(
                 'show', '--id', $Id, '--exact', '--source', 'winget',
                 '--accept-source-agreements', '--disable-interactivity'
             ) -TimeoutSeconds 120 | ForEach-Object { [string]$_ })
@@ -2999,7 +3017,7 @@ function Install-ProvisioningOnlineWinGetPackage {
     if (-not [string]::IsNullOrWhiteSpace($Override)) {
         $arguments += @('--override', $Override)
     }
-    Invoke-ProvisioningNative -Role "$Role online installation" -FilePath 'winget.exe' -ArgumentList $arguments | Out-Null
+    Invoke-ProvisioningWinGet -Role "$Role online installation" -ArgumentList $arguments | Out-Null
     Update-ProvisioningPath
     $installed = Test-ProvisioningWinGetPackageInstalled -Metadata $metadata
     Confirm-ProvisioningWinGetReadback -Role $Role -Metadata $metadata -Verified $installed

@@ -34,16 +34,15 @@ function ConvertFrom-ProvisioningNativeOutput {
 $script:versions = @()
 $script:uninstallCalls = 0
 $script:uninstallArguments = @()
-function Invoke-ProvisioningNativeResult {
-    param($Role, $FilePath, [object[]]$ArgumentList, $TimeoutSeconds)
-    $rows = @('Name Id Version Source', '----------------------')
-    foreach ($version in $script:versions) {
-        $rows += "Microsoft Build of OpenJDK Microsoft.OpenJDK.25 $version winget"
+function Invoke-ProvisioningWinGet {
+    param($Role, [object[]]$ArgumentList, $TimeoutSeconds, [switch]$Result)
+    if ($Result) {
+        $rows = @('Name Id Version Source', '----------------------')
+        foreach ($version in $script:versions) {
+            $rows += "Microsoft Build of OpenJDK Microsoft.OpenJDK.25 $version winget"
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = ($rows -join [Environment]::NewLine) }
     }
-    return [pscustomobject]@{ ExitCode = 0; Output = ($rows -join [Environment]::NewLine) }
-}
-function Invoke-ProvisioningNative {
-    param($Role, $FilePath, [object[]]$ArgumentList, $TimeoutSeconds)
     $script:uninstallCalls += 1
     $script:uninstallArguments = @($ArgumentList)
     $script:versions = @()

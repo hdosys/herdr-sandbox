@@ -59,8 +59,8 @@ func TestNumericWinGetFamilyResolverSelectsHighestStableFamilyInWindowsPowerShel
 	})
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
-function Invoke-ProvisioningNative {
-    param($Role, $FilePath, [object[]]$ArgumentList)
+function Invoke-ProvisioningWinGet {
+    param($Role, [object[]]$ArgumentList)
     return @(
         'Microsoft .NET SDK Microsoft.DotNet.SDK.9 9.0.1 winget',
         'Microsoft .NET SDK Microsoft.DotNet.SDK.10 10.0.1 winget',
@@ -905,8 +905,8 @@ $script:installCalls = 0
 $script:installedVersion = ''
 $script:verifiedVersion = ''
 $script:latestVersion = '9.8.7'
-function Invoke-ProvisioningNative {
-    param($Role, $FilePath, [object[]]$ArgumentList)
+function Invoke-ProvisioningWinGet {
+    param($Role, [object[]]$ArgumentList)
     if ($ArgumentList[0] -ceq 'show') { return @("Version: $script:latestVersion") }
     $script:installArguments = @($ArgumentList)
     $script:installCalls += 1

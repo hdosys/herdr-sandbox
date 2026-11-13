@@ -20,7 +20,7 @@ func TestWinGetMetadataAcceptsExplicitExtensionForSourceForgeDownloadURL(t *test
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
 $script:arguments = @()
-function Invoke-ProvisioningNative {
+function Invoke-ProvisioningWinGet {
     param($Role, $FilePath, [object[]]$ArgumentList)
     $script:arguments = @($ArgumentList)
     return @(
