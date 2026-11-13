@@ -9,6 +9,11 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Sandbox Java downloads use the selected package's verified HTTPS payload rather
+  than Delivery Optimization, which could return an HTML page for its redirect.
+- Supertonic uses an isolated compatible Python runtime, so newer project Python
+  releases do not break installation of its hash-locked CPU dependencies.
+
 - Workstation setup handles per-user Nushell and installed Python command paths,
   keeps Visual Studio layouts below its path limit, and preserves Nushell's
   target-generated terminal fragment instead of importing old machine paths.

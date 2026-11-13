@@ -2519,8 +2519,10 @@ function Install-JavaStack {
     $Version = [string]$metadata.Version
     Write-Output "Installing Microsoft OpenJDK $Version..."
     if (-not (Test-ProvisioningPreparation) -and -not (Test-ProvisioningWorkstation)) { Remove-StackJavaPreviousInstallation -Metadata $metadata }
+    # Delivery Optimization can resolve this aka.ms URL to an HTML page. Reuse
+    # the direct downloader with the same selected manifest hash and signature.
     Install-ProvisioningCachedPackage -Role 'Microsoft OpenJDK' -Metadata $metadata `
-        -DownloadSource 'WinGet' -Adapter 'MSI' -ExecutableName 'java.exe' `
+        -DownloadSource 'Direct' -Adapter 'MSI' -ExecutableName 'java.exe' `
         -InstallerArguments @('ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome') `
         -RequireAuthenticodeSignature
     if (Test-ProvisioningPreparation) { return }
@@ -3307,12 +3309,23 @@ function Install-StackHyperFramesSupertonic {
             }
         }
     }
-    $python = Wait-ProvisioningCommandAvailable -Role 'Supertonic Python' -Name 'python.exe'
     $uv = Wait-ProvisioningCommandAvailable -Role 'Supertonic uv' -Name 'uv.exe'
+    # The bundle's locked ONNX Runtime wheels support CPython through 3.14,
+    # independently of the current project Python. Keep this interpreter out
+    # of PATH and the registry, and resolve the latest supported patch via uv.
+    $pythonSeries = '3.14'
+    Invoke-ProvisioningNative -Role 'Supertonic compatible Python' -FilePath $uv `
+        -ArgumentList @('python', 'install', $pythonSeries, '--upgrade', '--no-bin', '--no-registry', '--no-config') `
+        -TimeoutSeconds 600 | Out-Null
+    $python = ((Invoke-ProvisioningNative -Role 'Supertonic Python selection' -FilePath $uv `
+        -ArgumentList @('python', 'find', $pythonSeries, '--managed-python', '--no-project', '--no-config')) -join '').Trim()
+    if (-not [IO.Path]::IsPathRooted($python) -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw 'Supertonic managed Python selection is invalid.'
+    }
     $environmentPython = Join-Path $environmentRoot 'Scripts\python.exe'
-    $pythonSeries = ((Invoke-ProvisioningNative -Role 'Supertonic Python ABI selection' -FilePath $python `
+    $actualSeries = ((Invoke-ProvisioningNative -Role 'Supertonic Python ABI selection' -FilePath $python `
         -ArgumentList @('-I', '-c', 'import sys; print("%d.%d" % sys.version_info[:2])')) -join '').Trim()
-    if ($pythonSeries -notmatch '^3\.\d+$') { throw 'Supertonic Python ABI selection is invalid.' }
+    if ($actualSeries -cne $pythonSeries) { throw 'Supertonic Python ABI selection is invalid.' }
     $createEnvironment = -not (Test-Path -LiteralPath $environmentRoot)
     $venvArguments = @('venv', '--python', $python, '--no-python-downloads')
     if (-not $createEnvironment) {
