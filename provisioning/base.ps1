@@ -639,6 +639,18 @@ function New-ProvisioningNativeSpec {
     $spec.Role = $Role
     $spec.FilePath = [string]$command.Source
     $spec.Arguments = [string[]]@($ArgumentList)
+    if ([IO.Path]::GetFileName($spec.FilePath) -ieq 'winget.exe') {
+        # Packaged WinGet activation can reject extended process creation. Launch
+        # it from PS5 inside the same atomically assigned job and hidden console.
+        # Only encoded JSON data varies; executable paths and arguments are never
+        # interpolated into PowerShell source.
+        $invocation = @{ FilePath = $spec.FilePath; Arguments = $spec.Arguments } | ConvertTo-Json -Compress
+        $encodedInvocation = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($invocation))
+        $launcher = '$ErrorActionPreference = ''Stop''; $ProgressPreference = ''SilentlyContinue''; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $call = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''' + $encodedInvocation + ''')) | ConvertFrom-Json; $arguments = [string[]]@($call.Arguments); & $call.FilePath @arguments; exit $LASTEXITCODE'
+        $spec.FilePath = Join-Path $PSHOME 'powershell.exe'
+        $spec.Arguments = [string[]]@('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
+            '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launcher)))
+    }
     $spec.WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
     $spec.TimeoutMilliseconds = $TimeoutSeconds * 1000
     $spec.SuccessExitCodes = [int[]]@($acceptedExitCodes.Keys | Sort-Object)
@@ -3696,6 +3708,8 @@ function Ensure-ProvisioningTaskbarPins {
 }
 
 function Set-ProvisioningDesktopUsability {
+    param([switch]$PreserveWindowsProtections)
+
     # Shared desktop-only allowlist. Never include audio, security, updates,
     # services or blanket capability-consent policies in this workstation path.
     $groups = @(
@@ -3739,13 +3753,17 @@ function Set-ProvisioningDesktopUsability {
         [ordered]@{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Windows Search'; Values = [ordered]@{
             CortanaConsent = 0
         } },
-        [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
-            AllowNewsAndInterests = 0
-        } },
         [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds'; Values = [ordered]@{
             EnableFeeds = 0
         } }
     )
+    if ($PreserveWindowsProtections) {
+        Write-Host 'Widgets policy left unchanged by Workstation setup.'
+    } else {
+        $groups += [ordered]@{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh'; Values = [ordered]@{
+            AllowNewsAndInterests = 0
+        } }
+    }
     $changed = $false
     foreach ($group in $groups) {
         foreach ($entry in $group.Values.GetEnumerator()) {
@@ -4091,7 +4109,7 @@ foreach ($path in @($edgeMachinePolicyPath, $edgeUserPolicyPath)) {
 }
 
 Write-Output 'Applying reviewed Windows UI and privacy settings...'
-if (Set-ProvisioningDesktopUsability) { $registryStateChanged = $true }
+if (Set-ProvisioningDesktopUsability -PreserveWindowsProtections:$PreserveWindowsProtections) { $registryStateChanged = $true }
 $privacyRegistryGroups = @(
     [ordered]@{ Path = 'HKCU:\Control Panel\International\User Profile'; Values = [ordered]@{
         HttpAcceptLanguageOptOut = 1

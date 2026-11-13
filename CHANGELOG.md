@@ -9,6 +9,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- WinGet provisioning uses a contained hidden PowerShell launch on Windows hosts
+  where direct packaged-app process creation is denied. Workstation setup leaves
+  the protected Widgets policy unchanged while applying the other desktop settings.
 - The printed manual attach command selects server keybindings, matching
   `sandbox attach` and preserving guest custom shortcuts.
 - Sandbox Java downloads use the selected package's verified HTTPS payload rather

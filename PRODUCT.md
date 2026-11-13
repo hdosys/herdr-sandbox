@@ -63,6 +63,9 @@ The current product contract is:
   administrator rights once and uses a restricted same-user child for packages
   that prohibit elevation. The remaining selected Windows preferences reuse the
   normal provisioning owner rather than a separate workstation settings list.
+- Workstation setup leaves the protected Widgets `AllowNewsAndInterests` policy
+  unchanged. Its desktop-preferences result excludes that policy and explicitly
+  reports it as unchanged, not applied. Other selected desktop settings remain.
 - The installer details show each step starting and its terminal result, with
   live package output and immediate failure diagnostics. WinGet readiness includes
   initialization and a real query of its community source, not just a version check.

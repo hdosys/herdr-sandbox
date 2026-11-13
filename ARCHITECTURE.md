@@ -279,6 +279,14 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   remain terminal. Direct Base invocation aggregates failures after independent
   work and exits unsuccessfully; the SSH caller receives them through the existing
   result object instead.
+- Base's native-spec builder runs WinGet through one hidden Windows PowerShell 5.1
+  child of the existing process owner. The resolved executable and argument array
+  travel as encoded JSON data, never interpolated commands. The PowerShell process
+  receives the existing atomic Job Object assignment, console, deadline and output
+  capture; WinGet inherits that containment. This is an explicit workaround for
+  packaged WinGet activation rejecting direct extended process creation on some
+  Windows hosts. It adds one process, not a retry, alternate executable or fallback;
+  the Windows activation cause remains unresolved.
 - The existing Base step owner writes successful input fingerprints atomically to
   `status/development-steps.json`, inside the current run. Each step invalidates its
   old record before execution. An incomplete operation reuses those records;

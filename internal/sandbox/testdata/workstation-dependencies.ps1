@@ -52,3 +52,13 @@ if ($writes['HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced/H
     $writes['HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds/EnableFeeds'] -ne 0) {
     throw 'Required desktop preferences were not applied.'
 }
+$sandboxWrites = $writes.Clone()
+$writes = @{}
+if (-not (Set-ProvisioningDesktopUsability -PreserveWindowsProtections)) { throw 'Workstation desktop changes were not reported.' }
+$widgets = 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh/AllowNewsAndInterests'
+if ($writes.ContainsKey($widgets) -or -not $sandboxWrites.ContainsKey($widgets)) { throw 'Widgets policy target boundary was not preserved.' }
+$sandboxWrites.Remove($widgets)
+if ($writes.Count -ne $sandboxWrites.Count) { throw 'Workstation changed unrelated desktop preferences.' }
+foreach ($key in $sandboxWrites.Keys) {
+    if (-not $writes.ContainsKey($key) -or $writes[$key] -ne $sandboxWrites[$key]) { throw "Workstation changed desktop preference $key" }
+}
