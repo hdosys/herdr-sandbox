@@ -80,7 +80,7 @@ function Set-TailscaleState {
     try {
         [IO.File]::WriteAllBytes($temporary, $StateBytes)
         Assert-RegularNonReparseFile -Path $temporary -Maximum $HerdrMaximumTailscaleStateBytes
-        if (Test-Path -LiteralPath $target) { [IO.File]::Replace($temporary, $target, $null) } else { [IO.File]::Move($temporary, $target) }
+        if (Test-Path -LiteralPath $target) { [IO.File]::Replace($temporary, $target, [System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($temporary, $target) }
         Assert-RegularNonReparseFile -Path $target -Maximum $HerdrMaximumTailscaleStateBytes
     } finally {
         if (Test-Path -LiteralPath $temporary) {

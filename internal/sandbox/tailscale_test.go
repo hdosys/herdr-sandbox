@@ -139,10 +139,11 @@ func TestBrowserEnrollmentOnlyDisplaysValidatedOfficialLinks(t *testing.T) {
 	}
 }
 
-func TestTailscaleIdentityParserAcceptsOrdinaryUserNode(t *testing.T) {
+func TestTailscaleUserIdentityAndStateRestoration(t *testing.T) {
 	t.Setenv(fastTestsEnvironment, "")
+	t.Setenv("ProgramData", t.TempDir())
 	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
-		path: filepath.Join("assets", "tailscale-lifecycle.ps1"), names: []string{"Read-TailscaleIdentity"},
+		path: filepath.Join("assets", "tailscale-lifecycle.ps1"), names: []string{"Read-TailscaleIdentity", "Set-TailscaleState", "Assert-TailscalePlaintextState", "Assert-RegularNonReparseFile"},
 	})
 	script := "$ErrorActionPreference='Stop'\n" + setup + `
 $HerdrTailscaleHostName = 'herdr-sandbox'
@@ -154,6 +155,16 @@ function Read-TestStatus {
 }
 $identity = Read-TailscaleIdentity -ExpectedSID 'S-1-5-21-1'
 if ($null -eq $identity -or @($identity.tags).Count -ne 0 -or $identity.nodeID -cne 'node-test') { throw 'Ordinary untagged node was rejected.' }
+$HerdrMaximumTailscaleStateBytes = 2097152
+$directory = Join-Path $env:ProgramData 'Tailscale'
+$null = New-Item -ItemType Directory -Path $directory
+$first = [Text.Encoding]::UTF8.GetBytes('{"_machinekey":"test-first-state"}')
+$second = [Text.Encoding]::UTF8.GetBytes('{"_machinekey":"test-restored-state"}')
+Set-TailscaleState -StateBytes $first
+Set-TailscaleState -StateBytes $second
+$actual = [IO.File]::ReadAllBytes((Join-Path $directory 'server-state.conf'))
+if ([Convert]::ToBase64String($actual) -cne [Convert]::ToBase64String($second)) { throw 'State replacement failed.' }
+if (@(Get-ChildItem -LiteralPath $directory).Count -ne 1) { throw 'State staging files remain.' }
 'verified ordinary node'
 `
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)

@@ -87,7 +87,7 @@ function Set-AtomicBytes {
         [void](Assert-RegularFile -Path $temporary -Maximum 65536 -Role 'Remote SSH staging file')
         if (Test-Path -LiteralPath $Path) {
             [void](Assert-RegularFile -Path $Path -Maximum 65536 -Role 'Remote SSH replacement target')
-            [IO.File]::Replace($temporary, $Path, $null)
+            [IO.File]::Replace($temporary, $Path, [System.Management.Automation.Language.NullString]::Value)
         } else {
             [IO.File]::Move($temporary, $Path)
         }
@@ -152,6 +152,18 @@ function Assert-Ed25519PublicKey {
     }
 }
 
+function Get-DerivedHostPublicKey {
+    $sshKeygen = Get-OpenSSHExecutable -Name 'ssh-keygen.exe'
+    $derivedOutput = @(& $sshKeygen -y -f $script:PrivateKeyPath 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Remote SSH host private key validation failed: $($derivedOutput -join ' ')" }
+    # Native OpenSSH may append the stored comment. Identity is algorithm plus key blob.
+    $fields = ([string]($derivedOutput | Select-Object -First 1)).Trim() -split '\s+'
+    if ($fields.Count -lt 2) { throw 'Remote SSH derived public key is incomplete.' }
+    $publicKey = $fields[0] + ' ' + $fields[1]
+    Assert-Ed25519PublicKey -Value $publicKey
+    return $publicKey
+}
+
 function Read-PreparedState {
     [void](Assert-RegularFile -Path $script:PreparedPath -Maximum 8192 -Role 'Remote SSH prepared state')
     $text = [IO.File]::ReadAllText($script:PreparedPath)
@@ -184,11 +196,7 @@ function Assert-PreparedFiles {
     }
     $publicKey = ([IO.File]::ReadAllText($script:PublicKeyPath)).Trim()
     if ($publicKey -cne [string]$State.hostPublicKey) { throw 'Remote SSH host public key changed.' }
-    $sshKeygen = Get-OpenSSHExecutable -Name 'ssh-keygen.exe'
-    $derivedOutput = @(& $sshKeygen -y -f $script:PrivateKeyPath 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "Remote SSH host private key validation failed: $($derivedOutput -join ' ')" }
-    $derivedPublicKey = ([string]($derivedOutput | Select-Object -First 1)).Trim()
-    Assert-Ed25519PublicKey -Value $derivedPublicKey
+    $derivedPublicKey = Get-DerivedHostPublicKey
     if ($derivedPublicKey -cne [string]$State.hostPublicKey) { throw 'Remote SSH host private key no longer matches its stable public identity.' }
     $authorizedDigest = (Get-FileHash -LiteralPath $script:AuthorizedKeysPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($authorizedDigest -cne [string]$State.authorizedKeysSHA256) { throw 'Remote SSH authorized keys changed.' }
@@ -296,10 +304,7 @@ function Invoke-Prepare {
     }
     Protect-KeyFile -Path $script:PrivateKeyPath
     Protect-KeyFile -Path $script:PublicKeyPath
-    $derivedOutput = @(& $sshKeygen -y -f $script:PrivateKeyPath 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "Remote SSH host private key validation failed: $($derivedOutput -join ' ')" }
-    $derivedPublicKey = ([string]($derivedOutput | Select-Object -First 1)).Trim()
-    Assert-Ed25519PublicKey -Value $derivedPublicKey
+    $derivedPublicKey = Get-DerivedHostPublicKey
     $storedPublicKey = ([IO.File]::ReadAllText($script:PublicKeyPath)).Trim()
     $storedFields = $storedPublicKey.Split(' ')
     $storedCanonical = $storedFields[0] + ' ' + $storedFields[1]
@@ -314,8 +319,8 @@ function Invoke-Prepare {
 Port $($script:RemotePort)
 AddressFamily inet
 ListenAddress $([string]$request.tailscaleIPv4)
-HostKey C:/HerdrSandbox/remote-ssh/ssh_host_ed25519_key
-AuthorizedKeysFile C:/HerdrSandbox/remote-ssh/authorized_keys
+HostKey "$($script:PrivateKeyPath.Replace('\', '/'))"
+AuthorizedKeysFile "$($script:AuthorizedKeysPath.Replace('\', '/'))"
 PubkeyAuthentication yes
 AuthenticationMethods publickey
 PasswordAuthentication no
