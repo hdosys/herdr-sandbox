@@ -2107,38 +2107,21 @@ public static class HerdrSandboxFontNativeMethods
 '@
 }
 
-function Test-ProvisioningGeistMonoFontPayload {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Metadata
-    )
+function Test-ProvisioningFontReadAccess {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    if ([string]$Metadata.Id -cne 'NerdFonts.GeistMono' -or
-        [string]$Metadata.Version -notmatch '^\d+\.\d+\.\d+$' -or
-        [string]$Metadata.Sha256 -notmatch '^[A-F0-9]{64}$') {
-        return $false
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    $read = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+    foreach ($sid in @('S-1-5-32-545', 'S-1-15-2-1', 'S-1-15-2-2')) {
+        $allowed = 0
+        foreach ($rule in $rules) {
+            if ($rule.AccessControlType -eq 'Deny') { return $false }
+            if ($rule.IdentityReference.Value -eq $sid) { $allowed = $allowed -bor $rule.FileSystemRights }
+        }
+        if (($allowed -band $read) -ne $read) { return $false }
     }
-    $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
-    try {
-        if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) {
-            return $false
-        }
-        $items = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
-        $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
-        if ($items.Count -ne $expectedFontNames.Count -or @($items | Where-Object {
-                    $_.PSIsContainer -or $_.DirectoryName -cne $toolRoot -or
-                    ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-                }).Count -ne 0) {
-            return $false
-        }
-        $familyFonts = @($items | Where-Object { $_.Name -like 'GeistMonoNerdFont-*.otf' } | Sort-Object Name)
-        if (($familyFonts.Name -join '|') -cne ($expectedFontNames -join '|')) {
-            return $false
-        }
-        return $true
-    } catch {
-        return $false
-    }
+    return $true
 }
 
 function Test-ProvisioningGeistMonoFontInstalled {
@@ -2147,15 +2130,16 @@ function Test-ProvisioningGeistMonoFontInstalled {
         [object]$Metadata
     )
 
-    if (-not (Test-ProvisioningGeistMonoFontPayload -Metadata $Metadata)) {
-        return $false
-    }
     try {
-        $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+        $fontRoot = Join-Path $env:WINDIR 'Fonts'
         $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
         foreach ($name in @(Get-ProvisioningGeistMonoExpectedFontNames)) {
+            $fontPath = Join-Path $fontRoot $name
+            Assert-ProvisioningCachePath -Path $fontPath
+            if (-not (Test-Path -LiteralPath $fontPath -PathType Leaf)) { return $false }
             $registeredPath = Get-ItemPropertyValue -LiteralPath $fontRegistry -Name $name -ErrorAction Stop
-            if ($registeredPath -cne (Join-Path $toolRoot $name)) { return $false }
+            if ($registeredPath -ine $fontPath) { return $false }
+            if (-not (Test-ProvisioningFontReadAccess -Path $fontPath)) { return $false }
         }
         Initialize-ProvisioningFontNativeMethods
         return [HerdrSandboxFontNativeMethods]::HasFamily('GeistMono NF')
@@ -2227,44 +2211,83 @@ function Install-ProvisioningGeistMonoFontPayload {
         [string]$Metadata.Architecture -cne 'neutral' -or [string]$Metadata.InstallerType -cne 'zip') {
         throw "$Role metadata does not match the resolved GeistMono Nerd Font contract."
     }
-    $toolRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
-    $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
-    if (-not (Test-ProvisioningGeistMonoFontPayload -Metadata $Metadata)) {
-        if (Test-Path -LiteralPath $toolRoot) {
-            Remove-Item -LiteralPath $toolRoot -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $toolRoot | Out-Null
-        $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-        Invoke-ProvisioningNative -Role "$Role cached extraction" -FilePath $tar `
-            -ArgumentList ([string[]](@('-xf', $PayloadPath, '-C', $toolRoot) + $expectedFontNames)) | Out-Null
-        $extractedItems = @(Get-ChildItem -LiteralPath $toolRoot -Recurse -Force)
-        foreach ($item in $extractedItems) {
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw [Security.SecurityException]::new("$Role archive produced a reparse point: $($item.FullName)")
-            }
-            if ($item.PSIsContainer -or $item.DirectoryName -cne $toolRoot) {
-                throw "$Role archive produced a non-flat entry: $($item.FullName)"
-            }
-        }
-        if ($extractedItems.Count -ne $expectedFontNames.Count) {
-            throw "$Role extracted $($extractedItems.Count) font files; expected $($expectedFontNames.Count)."
-        }
-    } else {
-        Write-Host "$Role payload already matches; loading it into the current Windows session."
+    $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "$Role system-wide installation requires an elevated administrator account. No private font installation was attempted."
     }
-    $familyFonts = @(Get-ChildItem -LiteralPath $toolRoot -File -Filter 'GeistMonoNerdFont-*.otf' |
+    $fontRoot = Join-Path $env:WINDIR 'Fonts'
+    Assert-ProvisioningCachePath -Path $fontRoot
+    $oldRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
+    $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+    $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
+    # The package owner removes this attempt-local extraction with its verified ZIP.
+    $extractRoot = Join-Path (Split-Path -Parent $PayloadPath) 'fonts'
+    New-Item -ItemType Directory -Path $extractRoot -ErrorAction Stop | Out-Null
+    $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+    Invoke-ProvisioningNative -Role "$Role cached extraction" -FilePath $tar `
+        -ArgumentList ([string[]](@('-xf', $PayloadPath, '-C', $extractRoot) + $expectedFontNames)) | Out-Null
+    $extractedItems = @(Get-ChildItem -LiteralPath $extractRoot -Recurse -Force)
+    foreach ($item in $extractedItems) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw [Security.SecurityException]::new("$Role archive produced a reparse point: $($item.FullName)")
+        }
+        if ($item.PSIsContainer -or $item.DirectoryName -cne $extractRoot) {
+            throw "$Role archive produced a non-flat entry: $($item.FullName)"
+        }
+    }
+    if ($extractedItems.Count -ne $expectedFontNames.Count) {
+        throw "$Role extracted $($extractedItems.Count) font files; expected $($expectedFontNames.Count)."
+    }
+    $familyFonts = @(Get-ChildItem -LiteralPath $extractRoot -File -Filter 'GeistMonoNerdFont-*.otf' |
         Sort-Object Name)
     if (($familyFonts.Name -join '|') -cne ($expectedFontNames -join '|')) {
         throw "$Role selected font files do not match the GeistMono Nerd Font family contract."
     }
+    # Validate both destinations before changing either registration. Only the exact
+    # former path for this target is eligible for repair; never adopt other installs.
+    $registrations = Get-ItemProperty -LiteralPath $fontRegistry
+    foreach ($font in $familyFonts) {
+        $destination = Join-Path $fontRoot $font.Name
+        Assert-ProvisioningCachePath -Path $destination
+        $property = $registrations.PSObject.Properties[$font.Name]
+        if ($null -ne $property -and [string]$property.Value -ine $destination -and
+            [string]$property.Value -ine (Join-Path $oldRoot $font.Name)) {
+            throw "$Role preserves an unrecognized font registration: $($font.Name)"
+        }
+        if (Test-Path -LiteralPath $destination) {
+            if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne
+                (Get-FileHash -LiteralPath $font.FullName -Algorithm SHA256).Hash) {
+                throw "$Role preserves a different existing font file: $destination. Remove or update it through its owning installer first."
+            }
+        }
+    }
+    if (Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata) {
+        Write-Host "$Role system-wide files, registration and access already match."
+        return
+    }
     Initialize-ProvisioningFontNativeMethods
     # SSH provisioning and the desktop need the same installed font collection.
     # AddFontResourceEx alone loads only the calling Windows session.
-    $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
     foreach ($font in $familyFonts) {
-        New-ItemProperty -LiteralPath $fontRegistry -Name $font.Name -Value $font.FullName `
+        $destination = Join-Path $fontRoot $font.Name
+        if (-not (Test-Path -LiteralPath $destination)) {
+            # Create in Fonts rather than copying the private source's security descriptor.
+            $output = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try {
+                $inputFont = [IO.File]::OpenRead($font.FullName)
+                try { $inputFont.CopyTo($output) } finally { $inputFont.Dispose() }
+            } finally { $output.Dispose() }
+        }
+        if (-not (Test-ProvisioningFontReadAccess -Path $destination)) {
+            throw "$Role requires normal Windows Fonts read permissions: $destination"
+        }
+        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -cne
+            (Get-FileHash -LiteralPath $font.FullName -Algorithm SHA256).Hash) {
+            throw "$Role installed font hash mismatch: $destination"
+        }
+        New-ItemProperty -LiteralPath $fontRegistry -Name $font.Name -Value $destination `
             -PropertyType String -Force | Out-Null
-        $added = [HerdrSandboxFontNativeMethods]::AddFontResourceExW($font.FullName, 0, [IntPtr]::Zero)
+        $added = [HerdrSandboxFontNativeMethods]::AddFontResourceExW($destination, 0, [IntPtr]::Zero)
         if ($added -le 0) {
             throw "$Role failed to add font resource: $($font.Name)"
         }
@@ -2496,7 +2519,7 @@ function Install-ProvisioningCachedPackage {
         if ($Adapter -cne 'MSIX') { throw 'Verified MSIX identity requires the MSIX adapter.' }
         $VerifiedMsixIdentity.Value = $null
     }
-    if ($null -eq $VerifiedMsixIdentity -and -not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
+    if ($Adapter -ne 'GeistMonoFont' -and $null -eq $VerifiedMsixIdentity -and -not (Test-ProvisioningPreparation) -and (Test-ProvisioningPackageInstalled -Metadata $metadata -Adapter $Adapter -ExecutableName $ExecutableName `
             -PortableVersionArguments $PortableVersionArguments -PortableVersionSource $PortableVersionSource)) {
         Write-Host "$Role is already installed; resolved version for this run: $($metadata.Version)"
         $packageStopwatch.Stop()

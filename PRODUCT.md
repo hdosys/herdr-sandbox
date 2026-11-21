@@ -10,6 +10,15 @@ The current product contract is:
 
 ### Failure isolation in every provisioning target
 
+- System-wide GeistMono Nerd Fonts use the same elevated installation owner on
+  Sandbox and workstation targets: permanent files in `%WINDIR%\Fonts`, HKLM font
+  registration, normal inherited Windows font read permissions, session activation
+  and `WM_FONTCHANGE`. Rerunning current provisioning replaces the exact former
+  target-owned private-path registrations, without deleting the old files or font
+  caches. Unrecognized registrations and different existing destination bytes are
+  preserved and reported as conflicts, not silently overwritten. Existing saved
+  installers must be rebuilt with the corrected payload before rerunning setup.
+
 - A package lookup, download, checksum, signature, installation or capability
   failure stops that component, never the whole provisioning run. Every selected
   independent step must still be attempted, including independent parallel work.

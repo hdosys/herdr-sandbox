@@ -9,6 +9,11 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Both provisioning targets install GeistMono Nerd Fonts in the Windows Fonts
+  directory with normal system-wide read access instead of registering private
+  tool files. Rerunning updated provisioning repairs its exact old registrations
+  while preserving private files and unrelated fonts.
+
 - Workstation setup preserves protected Windows Feeds preferences and compatible
   newer Xaml frameworks. Captured TradingView logins no longer require an
   unselected Node/TVControl stack during configuration import.
