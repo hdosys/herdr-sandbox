@@ -12,9 +12,14 @@ represent failed tag attempts; this changelog does not recreate them.
 - Tailscale joins an existing tailnet through one browser sign-in and reuses the
   protected Sandbox identity on later starts, without a manually created auth key
   or mandatory device tag.
-- General tailnet access replaces the mobile-only endpoint: configure
-  `remoteSSHAuthorizedKeys` and use `sandbox remote` for normal SSH on port 22,
-  Herdr remoting, and TCP port forwarding from any permitted client device.
+- `sandbox remote setup` previews standard host incoming SSH public-key lists and
+  enables ordinary tailnet SSH with one confirmation, preserving configured keys.
+  The host's managed key is included automatically; `--key FILE` adds a new
+  device, and `--no-start` saves without starting or reprovisioning a Sandbox.
+- First Tailscale sign-in opens in the default browser. `sandbox remote` shows
+  compact SSH and Herdr connection commands plus the host fingerprint; `--qr`
+  adds the optional connection QR. Additional keys support Ed25519, RSA of at
+  least 2048 bits, and ECDSA nistp256/384/521.
 
 ### Fixed
 

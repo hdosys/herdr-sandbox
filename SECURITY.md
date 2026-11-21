@@ -73,7 +73,18 @@ The product protects these boundaries:
   the guest.
 - Remote SSH private keys remain on their originating phones, tablets, or
   computers. Configuration and immutable run input contain only canonical
-  Ed25519 public keys; the displayed QR contains only a connection URI.
+  public keys (Ed25519, RSA of at least 2048 bits, or ECDSA nistp256/384/521);
+  the optional QR contains only a connection URI.
+- With Tailscale enabled, every `up` includes the app-owned host management public
+  key in remote authorization, alongside at most seven configured additional keys.
+  `remote setup` previews a snapshot of the two standard incoming lists,
+  `%USERPROFILE%\.ssh\authorized_keys` and
+  `%ProgramData%\ssh\administrators_authorized_keys`, before one default-no
+  confirmation. `--yes` approves that same bounded set; `--key FILE` selects an
+  explicit public-key file instead of discovery. Existing configured keys remain.
+  No `.pub` or private-key search, private-key copy, or ongoing source sync occurs.
+  Custom SSH sources and effective `sshd` Match rules are not discovered. Entries
+  with authorization options fail before changes rather than losing restrictions.
 - The separate remote SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
@@ -113,17 +124,21 @@ The product protects these boundaries:
   process tree, and never target `WindowsSandbox.exe`.
 - Remote SSH listens only on the verified Tailscale IPv4 at TCP 22 and accepts
   public-key authentication only. The management listener and its firewall rule
-  bind separately to the management IPv4, with different credentials. Windows
+  bind separately to the management IPv4. The same host client key can authenticate
+  to both, but the remote listener has its own durable server identity. Windows
   Firewall allows remote SSH from the Tailscale IPv4 range; existing tailnet policy
-  must independently permit the intended peers. No policy is changed automatically.
+  must independently permit the intended peers. No policy is changed automatically,
+  no pairing server is added, and tailnet membership alone never grants SSH login.
 - Authorized remote users receive an ordinary guest-administrator shell and TCP
   forwarding, including access to destinations the guest can reach. Agent forwarding
   remains disabled and remote forwarded listeners default to loopback. Do not
   authorize a key whose owner should not have those capabilities. Other direct
   service ports require intentional service bindings and firewall rules.
-- First Tailscale enrollment uses a browser authorization link, not a stored auth
-  key or the host's device identity. Disabling device key expiry for unattended
-  operation is an explicit owner choice in Tailscale, not an automatic policy change.
+- First Tailscale enrollment opens a validated browser authorization link through
+  the Windows Shell, not a stored auth key or the host's device identity. The link
+  remains visible and an opening failure is reported. Disabling device key expiry
+  for unattended operation is an explicit owner choice in Tailscale, not an
+  automatic policy change.
 
 These are deliberate non-guarantees:
 
@@ -204,9 +219,12 @@ These are deliberate non-guarantees:
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
   authorized remote private key and tailnet reachability can open a shell as the
   guest administrator user and access every resource available to that guest.
-  Remove a compromised public key from `remoteSSHAuthorizedKeys`, stop the
-  app-owned Sandbox, and launch a fresh one; changing a live listener in place is
-  intentionally unsupported.
+  For an additional device key, remove it from `remoteSSHAuthorizedKeys` and any
+  source list you may import again, explicitly stop the app-owned Sandbox, and
+  launch a fresh one. Source-list removal alone does not revoke a saved snapshot.
+  The automatically included host management key is not revoked by editing that
+  additional-key list. Changing a live listener in place is intentionally
+  unsupported; setup never closes or restarts a ready guest automatically.
 
 If the threat model forbids credential exfiltration, leave every `credentialSync`
 and `codingAgentSync` choice false. Enable only configuration roots whose tracked
