@@ -45,10 +45,10 @@ func SetupRemote(ctx context.Context, keyFile string, confirm func(RemoteSetup) 
 		}
 		sources = []string{keyFile}
 	}
-	return setupRemoteAt(ctx, filepath.Join(root, applicationName), sources, confirm)
+	return setupRemoteAt(ctx, filepath.Join(root, applicationName), sources, keyFile != "", confirm)
 }
 
-func setupRemoteAt(ctx context.Context, root string, sources []string, confirm func(RemoteSetup) bool) (bool, error) {
+func setupRemoteAt(ctx context.Context, root string, sources []string, requireKey bool, confirm func(RemoteSetup) bool) (bool, error) {
 	path := filepath.Join(root, globalConfigurationName)
 	original, found, err := readBoundedRegularFile(path, 1024*1024)
 	if err != nil {
@@ -71,6 +71,7 @@ func setupRemoteAt(ctx context.Context, root string, sources []string, confirm f
 		return false, err
 	}
 	preview := RemoteSetup{ConfigurationPath: path}
+	importedKeys := 0
 	for _, source := range sources {
 		contents, exists, err := readBoundedRegularFile(source, maximumRemoteSSHAuthorizedKeys*maximumRemoteSSHAuthorizedKeySize)
 		if err != nil {
@@ -88,11 +89,15 @@ func setupRemoteAt(ctx context.Context, root string, sources []string, confirm f
 			if err != nil {
 				return false, fmt.Errorf("public-key list %s line %d: %w; no access settings were changed", source, index+1, err)
 			}
+			importedKeys++
 			if !slices.Contains(keys, key) {
 				keys = append(keys, key)
 			}
 		}
 		preview.Sources = append(preview.Sources, source)
+	}
+	if requireKey && importedKeys == 0 {
+		return false, errors.New("selected file contains no public keys; no access settings were changed")
 	}
 	keys, err = canonicalizeRemoteSSHAuthorizedKeys(keys)
 	if err != nil {
