@@ -34,7 +34,7 @@ const usage = `Usage:
   sandbox up --provisioning installer --installer FILE [--no-attach]
   sandbox attach
   sandbox status
-  sandbox mobile
+  sandbox remote
   sandbox down
   sandbox clean
 
@@ -48,7 +48,7 @@ Commands:
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
   attach  verify and attach to the exact ready Sandbox without re-provisioning
   status  report the app-owned Sandbox; proven stale app state may be cleaned
-  mobile  show the ready private mobile Herdr endpoint and its secret-free QR code
+  remote  show the ready private remote Herdr endpoint and its secret-free QR code
   down    stop only the exact app-owned Sandbox, then optionally pull host configuration
   clean   remove inactive app-owned run workspaces
 
@@ -58,7 +58,7 @@ Configuration:
   - named folder mounts with explicit read-only or read/write access
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
-  - mobileSSHAuthorizedKeys for device-owned Ed25519 mobile credentials
+  - remoteSSHAuthorizedKeys for device-owned Ed25519 remote credentials
   - configurationSync host Git pull choices for up and down (all disabled by default)
   - codingAgentSync choices (all enabled by default)
   - credentialSync choices (all disabled by default)
@@ -317,9 +317,9 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		return 0
-	case "mobile":
+	case "remote":
 		if len(args) != 1 {
-			fmt.Fprintf(stderr, "sandbox: mobile does not accept arguments\n\n%s", usage)
+			fmt.Fprintf(stderr, "sandbox: remote does not accept arguments\n\n%s", usage)
 			return 2
 		}
 		status, err := dependencies.inspect(ctx)
@@ -327,11 +327,11 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
-		if status.State != sandbox.SessionReady || status.MobileAccess == nil {
-			fmt.Fprintln(stderr, "sandbox: mobile access is not ready; enable tailscale, add at least one device-owned mobileSSHAuthorizedKeys entry, and launch a fresh Sandbox")
+		if status.State != sandbox.SessionReady || status.RemoteAccess == nil {
+			fmt.Fprintln(stderr, "sandbox: remote access is not ready; enable tailscale, add at least one device-owned remoteSSHAuthorizedKeys entry, and launch a fresh Sandbox")
 			return 1
 		}
-		if err := printMobileAccess(stdout, *status.MobileAccess); err != nil {
+		if err := printRemoteAccess(stdout, *status.RemoteAccess); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
@@ -477,8 +477,8 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		provisioningStartedAt.Sub(startedAt).Round(100*time.Millisecond),
 		completedAt.Sub(provisioningStartedAt).Round(100*time.Millisecond),
 		completedAt.Sub(startedAt).Round(100*time.Millisecond))
-	if connection.MobileAccess != nil {
-		if err := printMobileAccess(stdout, *connection.MobileAccess); err != nil {
+	if connection.RemoteAccess != nil {
+		if err := printRemoteAccess(stdout, *connection.RemoteAccess); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
@@ -496,7 +496,7 @@ func commandHelpRequested(args []string) bool {
 
 func directHelpCommand(command string) bool {
 	switch command {
-	case "config", "pull-host-config", "version", "plan", "attach", "status", "mobile", "down", "clean":
+	case "config", "pull-host-config", "version", "plan", "attach", "status", "remote", "down", "clean":
 		return true
 	default:
 		return false
@@ -707,13 +707,13 @@ func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now ti
 	if attachable {
 		fmt.Fprintln(output, "  Attach: herdr --remote sandbox")
 	}
-	if status.MobileAccess != nil {
-		fmt.Fprintln(output, "\nMobile Herdr access")
-		fmt.Fprintf(output, "  URI: %s\n", status.MobileAccess.URI)
-		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.MobileAccess.IPv4)
-		fmt.Fprintf(output, "  Host key: %s\n", status.MobileAccess.HostKeyFingerprint)
-		fmt.Fprintf(output, "  Authorized device keys: %d\n", status.MobileAccess.AuthorizedKeyCount)
-		fmt.Fprintln(output, "  QR: run `sandbox mobile`")
+	if status.RemoteAccess != nil {
+		fmt.Fprintln(output, "\nRemote Herdr access")
+		fmt.Fprintf(output, "  URI: %s\n", status.RemoteAccess.URI)
+		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.RemoteAccess.IPv4)
+		fmt.Fprintf(output, "  Host key: %s\n", status.RemoteAccess.HostKeyFingerprint)
+		fmt.Fprintf(output, "  Authorized device keys: %d\n", status.RemoteAccess.AuthorizedKeyCount)
+		fmt.Fprintln(output, "  QR: run `sandbox remote`")
 	}
 	if len(status.Workspaces) > 0 {
 		fmt.Fprintln(output, "\nWorkspaces")
@@ -809,7 +809,7 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
-	fmt.Fprintf(output, "  Mobile SSH authorized keys: %d\n", plan.MobileSSHAuthorizedKeyCount)
+	fmt.Fprintf(output, "  Remote SSH authorized keys: %d\n", plan.RemoteSSHAuthorizedKeyCount)
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
 	fmt.Fprintf(output, "  Pull host Git repositories on up: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnUp))
 	fmt.Fprintf(output, "  Pull host Git repositories on down: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnDown))
@@ -896,12 +896,12 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "\nNext: %s\n", plan.NextAction)
 }
 
-func printMobileAccess(output io.Writer, access sandbox.MobileAccess) error {
+func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
 	lines, err := access.QRLines()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(output, "Mobile Herdr access")
+	fmt.Fprintln(output, "Remote Herdr access")
 	fmt.Fprintf(output, "  URI: %s\n", access.URI)
 	fmt.Fprintf(output, "  Host: %s\n", access.DNSName)
 	fmt.Fprintf(output, "  Tailscale IPv4: %s\n", access.IPv4)

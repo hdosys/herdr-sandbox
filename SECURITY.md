@@ -71,10 +71,10 @@ The product protects these boundaries:
 
 - The app-owned SSH private key remains on the host; only its public key enters
   the guest.
-- Mobile SSH private keys remain on their originating phones, tablets, or
+- Remote SSH private keys remain on their originating phones, tablets, or
   computers. Configuration and immutable run input contain only canonical
   Ed25519 public keys; the displayed QR contains only a connection URI.
-- The separate mobile SSH server key is current-user DPAPI encrypted on the host.
+- The separate remote SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
 - Portable agent, Apify, GitHub CLI, and TradingView credentials default to no transfer.
@@ -111,7 +111,7 @@ The product protects these boundaries:
   queried full image path exactly equals the installed `sandbox.exe`. They retain
   each validated process handle through bounded exit confirmation, do not kill a
   process tree, and never target `WindowsSandbox.exe`.
-- Mobile SSH listens only on the verified Tailscale IPv4 at TCP 2222, accepts
+- Remote SSH listens only on the verified Tailscale IPv4 at TCP 2222, accepts
   public-key authentication only, and disables forwarding. Windows Firewall
   allows that port only from the Tailscale IPv4 range and blocks tailnet access
   to the management endpoint on TCP 22; tailnet policy must independently grant
@@ -194,9 +194,9 @@ These are deliberate non-guarantees:
   application; an unselected empty import preserves existing guest session rows.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
-  authorized mobile private key and tailnet reachability can open Herdr as the
+  authorized remote private key and tailnet reachability can open Herdr as the
   guest administrator user and access every resource available to that guest.
-  Remove a compromised public key from `mobileSSHAuthorizedKeys`, stop the
+  Remove a compromised public key from `remoteSSHAuthorizedKeys`, stop the
   app-owned Sandbox, and launch a fresh one; changing a live listener in place is
   intentionally unsupported.
 

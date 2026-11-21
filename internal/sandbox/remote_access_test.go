@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-func TestCanonicalizeMobileSSHAuthorizedKeysRequiresExactUniqueEd25519Keys(t *testing.T) {
+func TestCanonicalizeRemoteSSHAuthorizedKeysRequiresExactUniqueEd25519Keys(t *testing.T) {
 	second := testEd25519PublicKey(2)
 	first := testEd25519PublicKey(1)
-	keys, err := canonicalizeMobileSSHAuthorizedKeys([]string{second + " tablet", first + " phone"})
+	keys, err := canonicalizeRemoteSSHAuthorizedKeys([]string{second + " tablet", first + " phone"})
 	if err != nil {
 		t.Fatalf("canonicalize keys: %v", err)
 	}
@@ -29,19 +29,19 @@ func TestCanonicalizeMobileSSHAuthorizedKeysRequiresExactUniqueEd25519Keys(t *te
 		first + " trailing ",
 	}
 	for _, value := range invalid {
-		if _, err := canonicalizeMobileSSHAuthorizedKeys([]string{value}); err == nil {
-			t.Fatalf("invalid mobile key accepted: %q", value)
+		if _, err := canonicalizeRemoteSSHAuthorizedKeys([]string{value}); err == nil {
+			t.Fatalf("invalid remote key accepted: %q", value)
 		}
 	}
-	if _, err := canonicalizeMobileSSHAuthorizedKeys([]string{first, first + " duplicate-comment"}); err == nil {
-		t.Fatal("duplicate mobile key accepted")
+	if _, err := canonicalizeRemoteSSHAuthorizedKeys([]string{first, first + " duplicate-comment"}); err == nil {
+		t.Fatal("duplicate remote key accepted")
 	}
 }
 
-func TestMobileSSHAuthorizedKeyTextIsCanonicalAndRoundTrips(t *testing.T) {
+func TestRemoteSSHAuthorizedKeyTextIsCanonicalAndRoundTrips(t *testing.T) {
 	first := testEd25519PublicKey(1)
 	second := testEd25519PublicKey(2)
-	encoded, err := encodeMobileSSHAuthorizedKeys([]string{second, first})
+	encoded, err := encodeRemoteSSHAuthorizedKeys([]string{second, first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestMobileSSHAuthorizedKeyTextIsCanonicalAndRoundTrips(t *testing.T) {
 	if string(encoded) != want {
 		t.Fatalf("encoded keys = %q, want %q", encoded, want)
 	}
-	decoded, err := decodeMobileSSHAuthorizedKeys(encoded)
+	decoded, err := decodeRemoteSSHAuthorizedKeys(encoded)
 	if err != nil || len(decoded) != 2 || decoded[0] != first || decoded[1] != second {
 		t.Fatalf("decoded keys = %#v, error = %v", decoded, err)
 	}
@@ -58,29 +58,29 @@ func TestMobileSSHAuthorizedKeyTextIsCanonicalAndRoundTrips(t *testing.T) {
 		[]byte(first + "\r\n"),
 		[]byte(second + "\n" + first + "\n"),
 	} {
-		if _, err := decodeMobileSSHAuthorizedKeys(invalid); err == nil {
+		if _, err := decodeRemoteSSHAuthorizedKeys(invalid); err == nil {
 			t.Fatalf("noncanonical key text accepted: %q", invalid)
 		}
 	}
 }
 
-func TestMobileSSHAuthorizedKeyRunInputIsBoundedAndTreatsOldRunAsEmpty(t *testing.T) {
+func TestRemoteSSHAuthorizedKeyRunInputIsBoundedAndTreatsOldRunAsEmpty(t *testing.T) {
 	inputDirectory := t.TempDir()
-	keys, err := readMobileSSHAuthorizedKeysInput(inputDirectory)
+	keys, err := readRemoteSSHAuthorizedKeysInput(inputDirectory)
 	if err != nil || len(keys) != 0 {
 		t.Fatalf("old run keys = %#v, error = %v", keys, err)
 	}
 	want := []string{testEd25519PublicKey(1), testEd25519PublicKey(2)}
-	if err := writeMobileSSHAuthorizedKeysInput(inputDirectory, want); err != nil {
+	if err := writeRemoteSSHAuthorizedKeysInput(inputDirectory, want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readMobileSSHAuthorizedKeysInput(inputDirectory)
-	if err != nil || !sameMobileSSHAuthorizedKeys(got, want) {
+	got, err := readRemoteSSHAuthorizedKeysInput(inputDirectory)
+	if err != nil || !sameRemoteSSHAuthorizedKeys(got, want) {
 		t.Fatalf("run input keys = %#v, error = %v", got, err)
 	}
 }
 
-func TestResolveProvisioningRequiresTailscaleForCanonicalMobileKeys(t *testing.T) {
+func TestResolveProvisioningRequiresTailscaleForCanonicalRemoteKeys(t *testing.T) {
 	root := t.TempDir()
 	defaults := filepath.Join(root, "defaults")
 	global := filepath.Join(root, "global")
@@ -94,7 +94,7 @@ func TestResolveProvisioningRequiresTailscaleForCanonicalMobileKeys(t *testing.T
 	}
 	key := testEd25519PublicKey(1)
 	configurationPath := filepath.Join(global, globalConfigurationName)
-	configuration := `{"tailscale":true,"mobileSSHAuthorizedKeys":[` + strconv.Quote(key+" phone") + `]}`
+	configuration := `{"tailscale":true,"remoteSSHAuthorizedKeys":[` + strconv.Quote(key+" phone") + `]}`
 	if err := os.WriteFile(configurationPath, []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -102,49 +102,49 @@ func TestResolveProvisioningRequiresTailscaleForCanonicalMobileKeys(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Tailscale || len(plan.MobileSSHAuthorizedKeys) != 1 || plan.MobileSSHAuthorizedKeys[0] != key {
-		t.Fatalf("mobile provisioning plan = %#v", plan)
+	if !plan.Tailscale || len(plan.RemoteSSHAuthorizedKeys) != 1 || plan.RemoteSSHAuthorizedKeys[0] != key {
+		t.Fatalf("remote provisioning plan = %#v", plan)
 	}
-	if err := os.WriteFile(configurationPath, []byte(`{"mobileSSHAuthorizedKeys":[`+strconv.Quote(key)+`]}`), 0o600); err != nil {
+	if err := os.WriteFile(configurationPath, []byte(`{"remoteSSHAuthorizedKeys":[`+strconv.Quote(key)+`]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolveProvisioningAt(root, global, defaults); err == nil || !strings.Contains(err.Error(), "requires tailscale") {
-		t.Fatalf("mobile keys without Tailscale error = %v", err)
+		t.Fatalf("remote keys without Tailscale error = %v", err)
 	}
 	for _, invalid := range []string{
-		`{"mobileSSHAuthorizedKeys":null}`,
-		`{"mobileSSHAuthorizedKeys":"` + key + `"}`,
-		`{"mobileSSHAuthorizedKeys":["ssh-rsa AAAA"]}`,
+		`{"remoteSSHAuthorizedKeys":null}`,
+		`{"remoteSSHAuthorizedKeys":"` + key + `"}`,
+		`{"remoteSSHAuthorizedKeys":["ssh-rsa AAAA"]}`,
 	} {
 		if err := os.WriteFile(configurationPath, []byte(invalid), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := resolveProvisioningAt(root, global, defaults); err == nil {
-			t.Fatalf("invalid mobile SSH configuration accepted: %s", invalid)
+			t.Fatalf("invalid remote SSH configuration accepted: %s", invalid)
 		}
 	}
 }
 
-func TestBuildMobileAccessUsesStableMagicDNSAndPinnedHostFingerprint(t *testing.T) {
+func TestBuildRemoteAccessUsesStableMagicDNSAndPinnedHostFingerprint(t *testing.T) {
 	identity := testTailscaleIdentity(t, "100.64.0.10")
-	access, err := buildMobileAccess(identity, testEd25519PublicKey(9)+" host", 2)
+	access, err := buildRemoteAccess(identity, testEd25519PublicKey(9)+" host", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if access.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
 		access.DNSName != "herdr-sandbox.example.ts.net" || access.IPv4 != identity.IPv4 ||
-		access.SSHUser != mobileSSHUser || access.Port != mobileSSHPort || access.AuthorizedKeyCount != 2 ||
+		access.SSHUser != remoteSSHUser || access.Port != remoteSSHPort || access.AuthorizedKeyCount != 2 ||
 		!strings.HasPrefix(access.HostKeyFingerprint, "SHA256:") {
-		t.Fatalf("mobile access = %#v", access)
+		t.Fatalf("remote access = %#v", access)
 	}
 	identity.DNSName = "other.example.ts.net."
-	if _, err := buildMobileAccess(identity, testEd25519PublicKey(9), 1); err == nil {
+	if _, err := buildRemoteAccess(identity, testEd25519PublicKey(9), 1); err == nil {
 		t.Fatal("unexpected MagicDNS identity accepted")
 	}
 }
 
-func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
-	lines, err := renderMobileAccessQR("ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222")
+func TestRenderRemoteAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
+	lines, err := renderRemoteAccessQR("ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +157,8 @@ func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
 			t.Fatalf("QR line %d is malformed: %q", index, line)
 		}
 	}
-	quietWidth := 2 * mobileSSHQRQuietZone
-	for index := range mobileSSHQRQuietZone {
+	quietWidth := 2 * remoteSSHQRQuietZone
+	for index := range remoteSSHQRQuietZone {
 		if strings.TrimSpace(lines[index]) != "" || strings.TrimSpace(lines[len(lines)-1-index]) != "" {
 			t.Fatalf("QR quiet row %d is not white", index)
 		}
@@ -169,7 +169,7 @@ func TestRenderMobileAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
 		}
 	}
 	// Every QR code begins with a 7x7 finder whose outer ring is black.
-	origin := mobileSSHQRQuietZone
+	origin := remoteSSHQRQuietZone
 	for y := range 7 {
 		for x := range 7 {
 			outer := x == 0 || x == 6 || y == 0 || y == 6

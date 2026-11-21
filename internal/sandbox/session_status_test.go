@@ -125,7 +125,7 @@ func TestFailedInitialProvisioningCanRetryWithoutReplacingGuest(t *testing.T) {
 	}
 }
 
-func TestEnrichReadySessionReportsProtectedMobileAccess(t *testing.T) {
+func TestEnrichReadySessionReportsProtectedRemoteAccess(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows DPAPI boundary")
 	}
@@ -139,21 +139,21 @@ func TestEnrichReadySessionReportsProtectedMobileAccess(t *testing.T) {
 		}
 	}
 	key := testEd25519PublicKey(1)
-	if err := writeMobileSSHAuthorizedKeysInput(inputDirectory, []string{key}); err != nil {
+	if err := writeRemoteSSHAuthorizedKeysInput(inputDirectory, []string{key}); err != nil {
 		t.Fatal(err)
 	}
 	if err := storeTailscaleIdentity(dataDirectory, testTailscaleIdentity(t, "100.64.0.10")); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeMobileSSHIdentity(dataDirectory, testMobileSSHIdentity()); err != nil {
+	if err := storeRemoteSSHIdentity(dataDirectory, testRemoteSSHIdentity()); err != nil {
 		t.Fatal(err)
 	}
 	active := activeSession{RunID: runID, StartedAtUTC: "2026-07-29T12:00:00Z", Tailscale: true}
 	status := SessionStatus{State: SessionReady, RunID: runID}
 	enrichSessionStatus(dataDirectory, active, &status)
-	if status.MobileAccess == nil || status.MobileAccess.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
-		strings.Contains(strings.Join(status.Warnings, "\n"), "Mobile SSH") {
-		t.Fatalf("enriched mobile status = %#v", status)
+	if status.RemoteAccess == nil || status.RemoteAccess.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
+		strings.Contains(strings.Join(status.Warnings, "\n"), "Remote SSH") {
+		t.Fatalf("enriched remote status = %#v", status)
 	}
 }
 

@@ -73,7 +73,7 @@ func prepareInstallerRunInputs(ctx context.Context, plan *runPlan, provisioning 
 	applyWorkspaceRequirements(plan)
 	plan.RequiresVisualStudioLayout = false
 	plan.Tailscale = false
-	plan.MobileSSHAuthorizedKeys = nil
+	plan.RemoteSSHAuthorizedKeys = nil
 	manifest, err := encodeGuestWorkspaceManifest(workspaces, plan.ActiveWorkspace)
 	if err != nil {
 		return err

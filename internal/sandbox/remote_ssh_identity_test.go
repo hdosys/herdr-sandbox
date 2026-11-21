@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestMobileSSHIdentityDPAPIRoundTripHidesPrivateKey(t *testing.T) {
+func TestRemoteSSHIdentityDPAPIRoundTripHidesPrivateKey(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows DPAPI boundary")
 	}
@@ -18,28 +18,28 @@ func TestMobileSSHIdentityDPAPIRoundTripHidesPrivateKey(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDirectory, "identity"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	identity := testMobileSSHIdentity()
-	if err := storeMobileSSHIdentity(dataDirectory, identity); err != nil {
-		t.Fatalf("storeMobileSSHIdentity: %v", err)
+	identity := testRemoteSSHIdentity()
+	if err := storeRemoteSSHIdentity(dataDirectory, identity); err != nil {
+		t.Fatalf("storeRemoteSSHIdentity: %v", err)
 	}
-	protected, err := os.ReadFile(mobileSSHIdentityPath(dataDirectory))
+	protected, err := os.ReadFile(remoteSSHIdentityPath(dataDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(protected, identity.PrivateKey) || bytes.Contains(protected, []byte(identity.PublicKey)) {
-		t.Fatal("protected mobile SSH identity contains plaintext key material")
+		t.Fatal("protected remote SSH identity contains plaintext key material")
 	}
-	loaded, found, err := loadMobileSSHIdentity(dataDirectory)
+	loaded, found, err := loadRemoteSSHIdentity(dataDirectory)
 	if err != nil || !found {
-		t.Fatalf("loadMobileSSHIdentity: found=%t error=%v", found, err)
+		t.Fatalf("loadRemoteSSHIdentity: found=%t error=%v", found, err)
 	}
 	defer loaded.clear()
 	if !bytes.Equal(loaded.PrivateKey, identity.PrivateKey) || loaded.PublicKey != identity.PublicKey {
-		t.Fatal("loaded mobile SSH identity differs")
+		t.Fatal("loaded remote SSH identity differs")
 	}
 }
 
-func TestLoadMobileSSHIdentityRejectsTamperedCiphertext(t *testing.T) {
+func TestLoadRemoteSSHIdentityRejectsTamperedCiphertext(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows DPAPI boundary")
 	}
@@ -47,15 +47,15 @@ func TestLoadMobileSSHIdentityRejectsTamperedCiphertext(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dataDirectory, "identity"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := storeMobileSSHIdentity(dataDirectory, testMobileSSHIdentity()); err != nil {
+	if err := storeRemoteSSHIdentity(dataDirectory, testRemoteSSHIdentity()); err != nil {
 		t.Fatal(err)
 	}
-	path := mobileSSHIdentityPath(dataDirectory)
+	path := remoteSSHIdentityPath(dataDirectory)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var protected protectedMobileSSHIdentity
+	var protected protectedRemoteSSHIdentity
 	if err := json.Unmarshal(data, &protected); err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +67,13 @@ func TestLoadMobileSSHIdentityRejectsTamperedCiphertext(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := loadMobileSSHIdentity(dataDirectory); err == nil || strings.Contains(err.Error(), "OPENSSH PRIVATE") {
+	if _, _, err := loadRemoteSSHIdentity(dataDirectory); err == nil || strings.Contains(err.Error(), "OPENSSH PRIVATE") {
 		t.Fatalf("tampered identity error = %v", err)
 	}
 }
 
-func TestMobileSSHIdentityValidationRejectsMalformedKeys(t *testing.T) {
-	identity := testMobileSSHIdentity()
+func TestRemoteSSHIdentityValidationRejectsMalformedKeys(t *testing.T) {
+	identity := testRemoteSSHIdentity()
 	if err := identity.validate(); err != nil {
 		t.Fatalf("valid identity: %v", err)
 	}
@@ -81,16 +81,16 @@ func TestMobileSSHIdentityValidationRejectsMalformedKeys(t *testing.T) {
 	if err := identity.validate(); err == nil {
 		t.Fatal("malformed private key accepted")
 	}
-	identity = testMobileSSHIdentity()
+	identity = testRemoteSSHIdentity()
 	identity.PublicKey = "ssh-rsa AAAA"
 	if err := identity.validate(); err == nil {
 		t.Fatal("malformed public key accepted")
 	}
 }
 
-func testMobileSSHIdentity() mobileSSHIdentity {
-	return mobileSSHIdentity{
-		SchemaVersion: mobileSSHIdentitySchemaVersion,
+func testRemoteSSHIdentity() remoteSSHIdentity {
+	return remoteSSHIdentity{
+		SchemaVersion: remoteSSHIdentitySchemaVersion,
 		PrivateKey: []byte("-----BEGIN OPENSSH PRIVATE KEY-----\n" +
 			"dGVzdC1vbmx5LW1vYmlsZS1zc2gtcHJpdmF0ZS1rZXk=\n" +
 			"-----END OPENSSH PRIVATE KEY-----\n"),

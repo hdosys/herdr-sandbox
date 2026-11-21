@@ -69,7 +69,7 @@ type Connection struct {
 	WinGetVersion   string
 	HerdrVersion    string
 	HerdrProtocol   int
-	MobileAccess    *MobileAccess
+	RemoteAccess    *RemoteAccess
 
 	privateKeyPath      string
 	herdrExecutable     string
@@ -89,7 +89,7 @@ type runPlan struct {
 	WorktreeDirectory          string
 	ModelsDirectory            string
 	Tailscale                  bool
-	MobileSSHAuthorizedKeys    []string
+	RemoteSSHAuthorizedKeys    []string
 	Packages                   wingetPackagePlan
 	CodingAgentSync            codingAgentSyncConfiguration
 	CredentialSync             credentialSyncConfiguration
@@ -509,7 +509,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 		PrivateKeyPath:          privateKey,
 		PublicKeyPath:           publicKey,
 		Tailscale:               provisioning.Tailscale,
-		MobileSSHAuthorizedKeys: append([]string(nil), provisioning.MobileSSHAuthorizedKeys...),
+		RemoteSSHAuthorizedKeys: append([]string(nil), provisioning.RemoteSSHAuthorizedKeys...),
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
 		CredentialSync:          provisioning.CredentialSync,
@@ -523,7 +523,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 	plan.CacheDirectory = cacheDirectory
 	if plan.InstallerProvisioning {
 		plan.Tailscale = false
-		plan.MobileSSHAuthorizedKeys = nil
+		plan.RemoteSSHAuthorizedKeys = nil
 	}
 	plan.InputDirectory = filepath.Join(plan.RunDirectory, "input")
 	plan.StatusDirectory = filepath.Join(plan.RunDirectory, "status")
@@ -592,7 +592,7 @@ func prepareRun(ctx context.Context, dataDirectory string, memoryMB int, provisi
 			return runPlan{}, fmt.Errorf("write run input %s: %w", filepath.Base(file.path), err)
 		}
 	}
-	if err := writeMobileSSHAuthorizedKeysInput(plan.InputDirectory, plan.MobileSSHAuthorizedKeys); err != nil {
+	if err := writeRemoteSSHAuthorizedKeysInput(plan.InputDirectory, plan.RemoteSSHAuthorizedKeys); err != nil {
 		return runPlan{}, err
 	}
 	if plan.InstallerProvisioning {

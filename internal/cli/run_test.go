@@ -24,9 +24,9 @@ func TestRunPrintsHelp(t *testing.T) {
 	}
 	for _, required := range []string{
 		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
-		"sandbox attach", "sandbox status", "sandbox mobile", "sandbox pull-host-config", "sandbox down", "sandbox clean",
+		"sandbox attach", "sandbox status", "sandbox remote", "sandbox pull-host-config", "sandbox down", "sandbox clean",
 		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "mobileSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
+		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "remoteSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -203,7 +203,7 @@ func TestRunInstallerOnlyCommandsRejectArgumentsAndFailures(t *testing.T) {
 }
 
 func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
-	for _, command := range []string{"plan", "attach", "status", "mobile", "pull-host-config", "down", "clean"} {
+	for _, command := range []string{"plan", "attach", "status", "remote", "pull-host-config", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
 		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
@@ -212,8 +212,8 @@ func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
 	}
 }
 
-func TestRunMobilePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
-	access := sandbox.MobileAccess{
+func TestRunRemotePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
+	access := sandbox.RemoteAccess{
 		URI:                "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222",
 		DNSName:            "herdr-sandbox.example.ts.net",
 		IPv4:               "100.64.0.10",
@@ -224,22 +224,22 @@ func TestRunMobilePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
 	}
 	dependencies := defaultCommandDependencies()
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
-		return sandbox.SessionStatus{State: sandbox.SessionReady, MobileAccess: &access}, nil
+		return sandbox.SessionStatus{State: sandbox.SessionReady, RemoteAccess: &access}, nil
 	}
 	var stdout, stderr bytes.Buffer
-	code := runWithCommandDependencies(context.Background(), []string{"mobile"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	code := runWithCommandDependencies(context.Background(), []string{"remote"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
 	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), access.URI) ||
 		!strings.Contains(stdout.String(), "never a key or password") || !strings.Contains(stdout.String(), "████") {
-		t.Fatalf("mobile code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		t.Fatalf("remote code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{State: sandbox.SessionReady}, nil
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code = runWithCommandDependencies(context.Background(), []string{"mobile"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
-	if code != 1 || !strings.Contains(stderr.String(), "mobile access is not ready") {
-		t.Fatalf("unconfigured mobile code=%d stderr=%q", code, stderr.String())
+	code = runWithCommandDependencies(context.Background(), []string{"remote"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 1 || !strings.Contains(stderr.String(), "remote access is not ready") {
+		t.Fatalf("unconfigured remote code=%d stderr=%q", code, stderr.String())
 	}
 }
 
@@ -786,7 +786,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Models directory: F:\\models", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
-		"Mobile SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
+		"Remote SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Credential transfers\n  - OpenCode\n  - TradingView", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Resolved stack tools\n  Precedence: explicit provisioning (including a selected project file) > optional project version file > stack default/latest stable; incompatible stack constraints fail\n  - GoLang.Go\n    Selection: 1.26.5\n    Source: explicit provisioning value or stack constraint\n    Owners:\n      - project \"project\" (go)",

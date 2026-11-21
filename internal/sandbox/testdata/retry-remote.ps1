@@ -32,7 +32,7 @@ foreach ($field in @('tailscaleIPv4', 'publicKey', 'scriptSHA256', 'authorizedKe
     $request.$field = 'changed'
     $rejected = $false
     try { Assert-RepeatedPreparation -Request $request -Prepared $script:prepared } catch {
-        if ($_.Exception.Message -notlike 'Repeated mobile preparation*') { throw }
+        if ($_.Exception.Message -notlike 'Repeated remote preparation*') { throw }
         $rejected = $true
     }
     $request.$field = $original

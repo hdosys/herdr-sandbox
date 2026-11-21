@@ -2289,7 +2289,7 @@ func TestResolveProvisioningUsesConfiguredCacheDirectory(t *testing.T) {
 	}
 	config, err := json.Marshal(globalConfiguration{
 		CacheDirectory:          cache,
-		MobileSSHAuthorizedKeys: []string{},
+		RemoteSSHAuthorizedKeys: []string{},
 		WingetPackages:          defaultWingetPackageConfiguration(),
 		Mounts:                  map[string]mountConfiguration{},
 		Workspaces:              map[string]string{},
@@ -2387,7 +2387,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		t.Fatalf("load seeded config: %v", err)
 	}
 	if config.CacheDirectory != "" || config.WorktreeDirectory != "" || config.MemoryMB == nil || *config.MemoryMB != defaultMemoryMB || config.AudioOutput || config.AudioInput || config.Tailscale ||
-		config.MobileSSHAuthorizedKeys == nil || len(config.MobileSSHAuthorizedKeys) != 0 ||
+		config.RemoteSSHAuthorizedKeys == nil || len(config.RemoteSSHAuthorizedKeys) != 0 ||
 		config.WingetPackages.Remove == nil || config.WingetPackages.Add == nil || config.WingetPackages.Versions == nil ||
 		!slices.Equal(config.WingetPackages.Add, defaultCodingAgentPackageIDs()) ||
 		config.WorkspaceDiscovery == nil || config.WorkspaceDiscovery.Root != "" || config.WorkspaceDiscovery.Exclude == nil || config.Mounts == nil || config.Workspaces == nil {
@@ -2409,8 +2409,8 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 	if !bytes.Contains(seededContents, []byte(`"modelsDirectory": ""`)) {
 		t.Fatalf("seeded config does not expose the optional shared models directory: %s", seededContents)
 	}
-	if !bytes.Contains(seededContents, []byte(`"mobileSSHAuthorizedKeys": []`)) {
-		t.Fatalf("seeded config does not expose disabled mobile SSH access: %s", seededContents)
+	if !bytes.Contains(seededContents, []byte(`"remoteSSHAuthorizedKeys": []`)) {
+		t.Fatalf("seeded config does not expose disabled remote SSH access: %s", seededContents)
 	}
 	if !bytes.Contains(seededContents, []byte(`"pullHostGitRepositoriesOnUp": false`)) ||
 		!bytes.Contains(seededContents, []byte(`"pullHostGitRepositoriesOnDown": false`)) ||
@@ -2426,7 +2426,7 @@ func TestEnsureGlobalProvisioningSeedsUserWithoutOverwriting(t *testing.T) {
 		}
 	}
 	remaining := seededContents
-	for _, field := range []string{`"$schema"`, `"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"mobileSSHAuthorizedKeys"`, `"configurationSync"`, `"codingAgentSync"`, `"credentialSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
+	for _, field := range []string{`"$schema"`, `"cacheDirectory"`, `"worktreeDirectory"`, `"modelsDirectory"`, `"memoryMB"`, `"audio"`, `"audioInput"`, `"tailscale"`, `"remoteSSHAuthorizedKeys"`, `"configurationSync"`, `"codingAgentSync"`, `"credentialSync"`, `"workspaces"`, `"mounts"`, `"workspaceDiscovery"`, `"wingetPackages"`} {
 		index := bytes.Index(remaining, []byte(field))
 		if index < 0 {
 			t.Fatalf("seeded config field order is missing %s: %s", field, seededContents)

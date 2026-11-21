@@ -56,15 +56,15 @@ func enrichSessionStatus(dataDirectory string, active activeSession, status *Ses
 		status.Timings = timings
 	}
 	if status.State == SessionReady && active.Tailscale {
-		keys, err := readMobileSSHAuthorizedKeysInput(filepath.Join(runDirectory, "input"))
+		keys, err := readRemoteSSHAuthorizedKeysInput(filepath.Join(runDirectory, "input"))
 		if err != nil {
-			status.Warnings = append(status.Warnings, "Mobile SSH access state unavailable: "+err.Error())
+			status.Warnings = append(status.Warnings, "Remote SSH access state unavailable: "+err.Error())
 		} else if len(keys) > 0 {
-			access, err := loadMobileAccess(dataDirectory, len(keys))
+			access, err := loadRemoteAccess(dataDirectory, len(keys))
 			if err != nil {
-				status.Warnings = append(status.Warnings, "Mobile SSH access identity unavailable: "+err.Error())
+				status.Warnings = append(status.Warnings, "Remote SSH access identity unavailable: "+err.Error())
 			} else {
-				status.MobileAccess = &access
+				status.RemoteAccess = &access
 			}
 		}
 	}

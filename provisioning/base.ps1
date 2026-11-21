@@ -471,7 +471,7 @@ $herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Objec
 if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
     $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
     if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
-        throw 'Provisioned Herdr executable is unavailable for mobile SSH.'
+        throw 'Provisioned Herdr executable is unavailable for remote SSH.'
     }
     & $herdrExecutable
     exit $LASTEXITCODE

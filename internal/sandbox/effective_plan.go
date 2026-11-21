@@ -58,7 +58,7 @@ type EffectivePlan struct {
 	AudioOutput                   bool
 	AudioInput                    bool
 	Tailscale                     bool
-	MobileSSHAuthorizedKeyCount   int
+	RemoteSSHAuthorizedKeyCount   int
 	WindowsTerminal               string
 	PullHostGitRepositoriesOnUp   bool
 	PullHostGitRepositoriesOnDown bool
@@ -118,7 +118,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 		AudioOutput:                   provisioning.AudioOutput,
 		AudioInput:                    provisioning.AudioInput,
 		Tailscale:                     provisioning.Tailscale,
-		MobileSSHAuthorizedKeyCount:   len(provisioning.MobileSSHAuthorizedKeys),
+		RemoteSSHAuthorizedKeyCount:   len(provisioning.RemoteSSHAuthorizedKeys),
 		WindowsTerminal:               provisioning.WindowsTerminal.Edition,
 		PullHostGitRepositoriesOnUp:   provisioning.ConfigurationSync.PullHostGitRepositoriesOnUp,
 		PullHostGitRepositoriesOnDown: provisioning.ConfigurationSync.PullHostGitRepositoriesOnDown,

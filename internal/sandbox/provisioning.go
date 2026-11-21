@@ -66,7 +66,7 @@ var defaultGlobalConfiguration = []byte(`{
   "audio": false,
   "audioInput": false,
   "tailscale": false,
-  "mobileSSHAuthorizedKeys": [],
+  "remoteSSHAuthorizedKeys": [],
   "configurationSync": {
     "pullHostGitRepositoriesOnUp": false,
     "pullHostGitRepositoriesOnDown": false
@@ -115,7 +115,7 @@ var sampleGlobalConfiguration = []byte(`{
   "audio": false,
   "audioInput": false,
   "tailscale": false,
-  "mobileSSHAuthorizedKeys": [],
+  "remoteSSHAuthorizedKeys": [],
   "configurationSync": {
     "pullHostGitRepositoriesOnUp": false,
     "pullHostGitRepositoriesOnDown": false
@@ -259,7 +259,7 @@ type provisioningPlan struct {
 	AudioOutput             bool
 	AudioInput              bool
 	Tailscale               bool
-	MobileSSHAuthorizedKeys []string
+	RemoteSSHAuthorizedKeys []string
 	ConfigurationSync       configurationSyncConfiguration
 	CodingAgentSync         codingAgentSyncConfiguration
 	CredentialSync          credentialSyncConfiguration
@@ -280,7 +280,7 @@ type globalConfiguration struct {
 	AudioOutput             bool                             `json:"audio"`
 	AudioInput              bool                             `json:"audioInput"`
 	Tailscale               bool                             `json:"tailscale"`
-	MobileSSHAuthorizedKeys []string                         `json:"mobileSSHAuthorizedKeys"`
+	RemoteSSHAuthorizedKeys []string                         `json:"remoteSSHAuthorizedKeys"`
 	ConfigurationSync       configurationSyncConfiguration   `json:"configurationSync"`
 	Mounts                  map[string]mountConfiguration    `json:"mounts"`
 	CodingAgentSync         codingAgentSyncConfiguration     `json:"codingAgentSync"`
@@ -604,12 +604,12 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	if err != nil {
 		return provisioningPlan{}, err
 	}
-	mobileSSHAuthorizedKeys, err := canonicalizeMobileSSHAuthorizedKeys(configuration.MobileSSHAuthorizedKeys)
+	remoteSSHAuthorizedKeys, err := canonicalizeRemoteSSHAuthorizedKeys(configuration.RemoteSSHAuthorizedKeys)
 	if err != nil {
 		return provisioningPlan{}, err
 	}
-	if len(mobileSSHAuthorizedKeys) > 0 && !configuration.Tailscale {
-		return provisioningPlan{}, errors.New("mobileSSHAuthorizedKeys requires tailscale to be true")
+	if len(remoteSSHAuthorizedKeys) > 0 && !configuration.Tailscale {
+		return provisioningPlan{}, errors.New("remoteSSHAuthorizedKeys requires tailscale to be true")
 	}
 	mountNames := make([]string, 0, len(configuration.Mounts))
 	for name := range configuration.Mounts {
@@ -823,7 +823,7 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 		AudioOutput:             configuration.AudioOutput,
 		AudioInput:              configuration.AudioInput,
 		Tailscale:               configuration.Tailscale,
-		MobileSSHAuthorizedKeys: mobileSSHAuthorizedKeys,
+		RemoteSSHAuthorizedKeys: remoteSSHAuthorizedKeys,
 		ConfigurationSync:       configuration.ConfigurationSync,
 		CodingAgentSync:         configuration.CodingAgentSync,
 		CredentialSync:          configuration.CredentialSync,
@@ -962,12 +962,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 			if err := json.Unmarshal(raw, &config.Tailscale); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
-		case "mobileSSHAuthorizedKeys":
+		case "remoteSSHAuthorizedKeys":
 			raw, err := decodeNonNullJSONValue(decoder, key)
 			if err != nil {
 				return err
 			}
-			if err := json.Unmarshal(raw, &config.MobileSSHAuthorizedKeys); err != nil {
+			if err := json.Unmarshal(raw, &config.RemoteSSHAuthorizedKeys); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
 		case "mounts":

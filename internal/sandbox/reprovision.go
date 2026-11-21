@@ -239,12 +239,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 			return Connection{}, err
 		}
-		if len(plan.MobileSSHAuthorizedKeys) > 0 {
-			access, err := verifyMobileSSH(ctx, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
+		if len(plan.RemoteSSHAuthorizedKeys) > 0 {
+			access, err := verifyRemoteSSH(ctx, connection, plan.DataDirectory, plan.RemoteSSHAuthorizedKeys)
 			if err != nil {
 				return Connection{}, err
 			}
-			connection.MobileAccess = &access
+			connection.RemoteAccess = &access
 		}
 		return finishDevelopmentProvisioning(connection, developmentFailure, updateOperation, options.Output)
 	}
@@ -339,30 +339,30 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			return Connection{}, err
 		}
 	}
-	if len(plan.MobileSSHAuthorizedKeys) > 0 && !tailscaleReady {
-		recordFailure("Mobile SSH", errors.New("blocked because Tailscale setup failed"))
+	if len(plan.RemoteSSHAuthorizedKeys) > 0 && !tailscaleReady {
+		recordFailure("Remote SSH", errors.New("blocked because Tailscale setup failed"))
 	}
-	if len(plan.MobileSSHAuthorizedKeys) > 0 && tailscaleReady {
+	if len(plan.RemoteSSHAuthorizedKeys) > 0 && tailscaleReady {
 		if !wasReady {
-			if err := updateOperation("mobile-ssh-preparation", "Preparing the private mobile Herdr endpoint."); err != nil {
+			if err := updateOperation("remote-ssh-preparation", "Preparing the private remote Herdr endpoint."); err != nil {
 				return Connection{}, err
 			}
-			if _, err := prepareMobileSSH(ctx, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys); err != nil {
+			if _, err := prepareRemoteSSH(ctx, connection, plan.DataDirectory, plan.RemoteSSHAuthorizedKeys); err != nil {
 				return Connection{}, err
 			}
-			if err := activateMobileSSH(ctx, connection); err != nil {
+			if err := activateRemoteSSH(ctx, connection); err != nil {
 				return Connection{}, err
 			}
 		}
-		if err := updateOperation("mobile-ssh-verification", "Verifying the retained private mobile Herdr endpoint."); err != nil {
+		if err := updateOperation("remote-ssh-verification", "Verifying the retained private remote Herdr endpoint."); err != nil {
 			return Connection{}, err
 		}
-		access, err := verifyMobileSSH(ctx, connection, plan.DataDirectory, plan.MobileSSHAuthorizedKeys)
+		access, err := verifyRemoteSSH(ctx, connection, plan.DataDirectory, plan.RemoteSSHAuthorizedKeys)
 		if err != nil {
 			return Connection{}, err
 		}
-		connection.MobileAccess = &access
-		fmt.Fprintf(options.Output, "Mobile Herdr endpoint verified: %s\n", access.URI)
+		connection.RemoteAccess = &access
+		fmt.Fprintf(options.Output, "Remote Herdr endpoint verified: %s\n", access.URI)
 	}
 	if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 		return Connection{}, err
@@ -454,12 +454,12 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 	if err != nil {
 		return runPlan{}, nil, err
 	}
-	runningMobileSSHAuthorizedKeys, err := readMobileSSHAuthorizedKeysInput(inputDirectory)
+	runningRemoteSSHAuthorizedKeys, err := readRemoteSSHAuthorizedKeysInput(inputDirectory)
 	if err != nil {
 		return runPlan{}, nil, err
 	}
-	if !sameMobileSSHAuthorizedKeys(runningMobileSSHAuthorizedKeys, provisioning.MobileSSHAuthorizedKeys) {
-		differences = append(differences, "mobile SSH authorized keys")
+	if !sameRemoteSSHAuthorizedKeys(runningRemoteSSHAuthorizedKeys, provisioning.RemoteSSHAuthorizedKeys) {
+		differences = append(differences, "remote SSH authorized keys")
 	}
 	if err := validatePhysicalMappings(dataDirectory, inputDirectory, statusDirectory, cacheDirectory, worktreeDirectory, modelsDirectory, mounts, workspaces); err != nil {
 		return runPlan{}, nil, err
@@ -489,7 +489,7 @@ func retainedRunPlanDetails(active activeSession, provisioning provisioningPlan,
 		WorktreeDirectory:       worktreeDirectory,
 		ModelsDirectory:         modelsDirectory,
 		Tailscale:               active.Tailscale,
-		MobileSSHAuthorizedKeys: runningMobileSSHAuthorizedKeys,
+		RemoteSSHAuthorizedKeys: runningRemoteSSHAuthorizedKeys,
 		Packages:                provisioning.Packages,
 		CodingAgentSync:         provisioning.CodingAgentSync,
 		CredentialSync:          provisioning.CredentialSync,

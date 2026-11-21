@@ -16,17 +16,17 @@ import (
 )
 
 const (
-	mobileSSHPort                     = 2222
-	mobileSSHUser                     = "WDAGUtilityAccount"
-	mobileSSHAuthorizedKeysFileName   = "mobile_authorized_keys"
-	maximumMobileSSHAuthorizedKeys    = 8
-	maximumMobileSSHAuthorizedKeySize = 1024
-	mobileSSHQRQuietZone              = 4
+	remoteSSHPort                     = 2222
+	remoteSSHUser                     = "WDAGUtilityAccount"
+	remoteSSHAuthorizedKeysFileName   = "remote_authorized_keys"
+	maximumRemoteSSHAuthorizedKeys    = 8
+	maximumRemoteSSHAuthorizedKeySize = 1024
+	remoteSSHQRQuietZone              = 4
 )
 
-// MobileAccess is the non-secret connection profile for the dedicated Herdr
+// RemoteAccess is the non-secret connection profile for the dedicated Herdr
 // endpoint exposed only through the opted-in Tailscale node.
-type MobileAccess struct {
+type RemoteAccess struct {
 	URI                string
 	DNSName            string
 	IPv4               string
@@ -36,23 +36,23 @@ type MobileAccess struct {
 	AuthorizedKeyCount int
 }
 
-func (access MobileAccess) QRLines() ([]string, error) {
-	return renderMobileAccessQR(access.URI)
+func (access RemoteAccess) QRLines() ([]string, error) {
+	return renderRemoteAccessQR(access.URI)
 }
 
-func canonicalizeMobileSSHAuthorizedKeys(values []string) ([]string, error) {
-	if len(values) > maximumMobileSSHAuthorizedKeys {
-		return nil, fmt.Errorf("mobileSSHAuthorizedKeys contains %d keys, maximum is %d", len(values), maximumMobileSSHAuthorizedKeys)
+func canonicalizeRemoteSSHAuthorizedKeys(values []string) ([]string, error) {
+	if len(values) > maximumRemoteSSHAuthorizedKeys {
+		return nil, fmt.Errorf("remoteSSHAuthorizedKeys contains %d keys, maximum is %d", len(values), maximumRemoteSSHAuthorizedKeys)
 	}
 	keys := make([]string, 0, len(values))
 	seen := make(map[string]bool, len(values))
 	for index, value := range values {
 		key, _, err := canonicalEd25519PublicKey(value)
 		if err != nil {
-			return nil, fmt.Errorf("mobileSSHAuthorizedKeys[%d]: %w", index, err)
+			return nil, fmt.Errorf("remoteSSHAuthorizedKeys[%d]: %w", index, err)
 		}
 		if seen[key] {
-			return nil, fmt.Errorf("mobileSSHAuthorizedKeys[%d] duplicates another key", index)
+			return nil, fmt.Errorf("remoteSSHAuthorizedKeys[%d] duplicates another key", index)
 		}
 		seen[key] = true
 		keys = append(keys, key)
@@ -62,7 +62,7 @@ func canonicalizeMobileSSHAuthorizedKeys(values []string) ([]string, error) {
 }
 
 func canonicalEd25519PublicKey(value string) (string, []byte, error) {
-	if value == "" || len(value) > maximumMobileSSHAuthorizedKeySize || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\x00\r\n") {
+	if value == "" || len(value) > maximumRemoteSSHAuthorizedKeySize || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\x00\r\n") {
 		return "", nil, errors.New("expected one bounded single-line Ed25519 public key")
 	}
 	fields := strings.Fields(value)
@@ -101,8 +101,8 @@ func readSSHPublicKeyString(data []byte) (value, remainder []byte, ok bool) {
 	return data[4:end], data[end:], true
 }
 
-func encodeMobileSSHAuthorizedKeys(keys []string) ([]byte, error) {
-	canonical, err := canonicalizeMobileSSHAuthorizedKeys(keys)
+func encodeRemoteSSHAuthorizedKeys(keys []string) ([]byte, error) {
+	canonical, err := canonicalizeRemoteSSHAuthorizedKeys(keys)
 	if err != nil {
 		return nil, err
 	}
@@ -112,93 +112,93 @@ func encodeMobileSSHAuthorizedKeys(keys []string) ([]byte, error) {
 	return []byte(strings.Join(canonical, "\n") + "\n"), nil
 }
 
-func decodeMobileSSHAuthorizedKeys(data []byte) ([]string, error) {
+func decodeRemoteSSHAuthorizedKeys(data []byte) ([]string, error) {
 	if len(data) == 0 {
 		return []string{}, nil
 	}
-	if len(data) > maximumMobileSSHAuthorizedKeys*maximumMobileSSHAuthorizedKeySize {
-		return nil, errors.New("mobile SSH authorized-key input is too large")
+	if len(data) > maximumRemoteSSHAuthorizedKeys*maximumRemoteSSHAuthorizedKeySize {
+		return nil, errors.New("remote SSH authorized-key input is too large")
 	}
 	if data[len(data)-1] != '\n' || strings.Contains(string(data), "\r") {
-		return nil, errors.New("mobile SSH authorized-key input is not canonical LF-delimited text")
+		return nil, errors.New("remote SSH authorized-key input is not canonical LF-delimited text")
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	keys, err := canonicalizeMobileSSHAuthorizedKeys(lines)
+	keys, err := canonicalizeRemoteSSHAuthorizedKeys(lines)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := encodeMobileSSHAuthorizedKeys(keys)
+	encoded, err := encodeRemoteSSHAuthorizedKeys(keys)
 	if err != nil {
 		return nil, err
 	}
 	if string(encoded) != string(data) {
-		return nil, errors.New("mobile SSH authorized-key input is not sorted canonical text")
+		return nil, errors.New("remote SSH authorized-key input is not sorted canonical text")
 	}
 	return keys, nil
 }
 
-func buildMobileAccess(identity tailscaleIdentity, hostPublicKey string, authorizedKeyCount int) (MobileAccess, error) {
-	if authorizedKeyCount < 1 || authorizedKeyCount > maximumMobileSSHAuthorizedKeys {
-		return MobileAccess{}, errors.New("mobile SSH access requires a bounded nonempty authorized-key set")
+func buildRemoteAccess(identity tailscaleIdentity, hostPublicKey string, authorizedKeyCount int) (RemoteAccess, error) {
+	if authorizedKeyCount < 1 || authorizedKeyCount > maximumRemoteSSHAuthorizedKeys {
+		return RemoteAccess{}, errors.New("remote SSH access requires a bounded nonempty authorized-key set")
 	}
-	dnsName, err := mobileTailscaleDNSName(identity)
+	dnsName, err := remoteTailscaleDNSName(identity)
 	if err != nil {
-		return MobileAccess{}, err
+		return RemoteAccess{}, err
 	}
 	ip := net.ParseIP(identity.IPv4)
 	if ip == nil || ip.To4() == nil || strings.Contains(identity.IPv4, ":") {
-		return MobileAccess{}, errors.New("mobile SSH access requires one valid Tailscale IPv4 address")
+		return RemoteAccess{}, errors.New("remote SSH access requires one valid Tailscale IPv4 address")
 	}
 	_, hostKeyBlob, err := canonicalEd25519PublicKey(strings.TrimSpace(hostPublicKey))
 	if err != nil {
-		return MobileAccess{}, fmt.Errorf("validate mobile SSH host key: %w", err)
+		return RemoteAccess{}, fmt.Errorf("validate remote SSH host key: %w", err)
 	}
 	digest := sha256.Sum256(hostKeyBlob)
-	host := net.JoinHostPort(dnsName, strconv.Itoa(mobileSSHPort))
-	uri := (&url.URL{Scheme: "ssh", User: url.User(mobileSSHUser), Host: host}).String()
-	return MobileAccess{
+	host := net.JoinHostPort(dnsName, strconv.Itoa(remoteSSHPort))
+	uri := (&url.URL{Scheme: "ssh", User: url.User(remoteSSHUser), Host: host}).String()
+	return RemoteAccess{
 		URI:                uri,
 		DNSName:            dnsName,
 		IPv4:               identity.IPv4,
-		SSHUser:            mobileSSHUser,
-		Port:               mobileSSHPort,
+		SSHUser:            remoteSSHUser,
+		Port:               remoteSSHPort,
 		HostKeyFingerprint: "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:]),
 		AuthorizedKeyCount: authorizedKeyCount,
 	}, nil
 }
 
-func mobileTailscaleDNSName(identity tailscaleIdentity) (string, error) {
+func remoteTailscaleDNSName(identity tailscaleIdentity) (string, error) {
 	dnsName := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(identity.DNSName), "."))
 	if len(dnsName) == 0 || len(dnsName) > 253 || !strings.HasPrefix(dnsName, tailscaleHostName+".") || !strings.HasSuffix(dnsName, ".ts.net") {
-		return "", errors.New("mobile SSH access requires the stable herdr-sandbox MagicDNS name")
+		return "", errors.New("remote SSH access requires the stable herdr-sandbox MagicDNS name")
 	}
 	for label := range strings.SplitSeq(dnsName, ".") {
 		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return "", errors.New("mobile SSH access MagicDNS name is invalid")
+			return "", errors.New("remote SSH access MagicDNS name is invalid")
 		}
 		for _, character := range label {
 			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
-				return "", errors.New("mobile SSH access MagicDNS name is invalid")
+				return "", errors.New("remote SSH access MagicDNS name is invalid")
 			}
 		}
 	}
 	return dnsName, nil
 }
 
-func renderMobileAccessQR(uri string) ([]string, error) {
+func renderRemoteAccessQR(uri string) ([]string, error) {
 	if uri == "" || len(uri) > 512 || strings.TrimSpace(uri) != uri || strings.ContainsAny(uri, "\x00\r\n") {
-		return nil, errors.New("mobile SSH QR payload is invalid")
+		return nil, errors.New("remote SSH QR payload is invalid")
 	}
 	code, err := qr.Encode(uri, qr.Q)
 	if err != nil {
-		return nil, fmt.Errorf("encode mobile SSH QR: %w", err)
+		return nil, fmt.Errorf("encode remote SSH QR: %w", err)
 	}
-	size := code.Size + 2*mobileSSHQRQuietZone
+	size := code.Size + 2*remoteSSHQRQuietZone
 	lines := make([]string, 0, size)
-	for y := -mobileSSHQRQuietZone; y < code.Size+mobileSSHQRQuietZone; y++ {
+	for y := -remoteSSHQRQuietZone; y < code.Size+remoteSSHQRQuietZone; y++ {
 		var line strings.Builder
 		line.Grow(2 * size)
-		for x := -mobileSSHQRQuietZone; x < code.Size+mobileSSHQRQuietZone; x++ {
+		for x := -remoteSSHQRQuietZone; x < code.Size+remoteSSHQRQuietZone; x++ {
 			if code.Black(x, y) {
 				line.WriteString("##")
 			} else {

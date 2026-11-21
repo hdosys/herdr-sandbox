@@ -56,7 +56,7 @@ the normal terminal.
 - **Repeatable setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
 - **Retry without starting over:** correct a failed project profile and rerun `sandbox up`. It resumes unfinished or changed steps in the same compatible guest, preserving successful unchanged setup. Use `--refresh` for a full refresh.
 - **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
-- **Mobile access to agents:** use Herdr from a phone or tablet over Tailscale to review notifications, answer agent questions, and run project commands.
+- **Remote access to agents:** use Herdr from another device over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
 
 ## Engineering approach
@@ -309,7 +309,7 @@ letter or number, and are at most 64 characters.
 | `audio` | Boolean enabling guest audio output. |
 | `audioInput` | Boolean enabling guest microphone input. |
 | `tailscale` | Boolean enabling Herdr's stable tagged Tailscale identity. |
-| `mobileSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
+| `remoteSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
 | `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
 | `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
 | `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. Defaults to `true`. |
@@ -500,7 +500,7 @@ and errors go to stderr.
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. Returns zero only when the state is `ready`. |
-| `sandbox mobile` | Prints the mobile SSH profile and secret-free QR code. |
+| `sandbox remote` | Prints the remote SSH profile and secret-free QR code. |
 | `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
 | `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
 
@@ -706,7 +706,7 @@ go run ./cmd/task native-installer-sandbox
 Only OpenSSH and inbox PowerShell 5.1 run before the exact NSIS installer. Its
 embedded package/stack selection and personal settings are applied directly; no
 current host profile replaces the candidate's captured settings. Dedicated credentials,
-Git history, arbitrary project/user script effects, Tailscale/mobile setup and
+Git history, arbitrary project/user script effects, Tailscale/remote setup and
 normal Sandbox configuration policies are excluded. A local `ttsBundle` selection
 is rejected because the native installer cannot reproduce it.
 
@@ -770,14 +770,14 @@ when it is safe, and reports the next action.
 | Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
 
 <details>
-<summary><strong>Audio, mobile, and Tailscale troubleshooting</strong></summary>
+<summary><strong>Audio, remote access, and Tailscale troubleshooting</strong></summary>
 
 | Symptom | Action |
 | --- | --- |
 | Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
 | The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
-| Mobile access is not ready | Check `tailscale`, `mobileSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox mobile`. |
-| The mobile SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
+| Remote access is not ready | Check `tailscale`, `remoteSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox remote`. |
+| The remote SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Tailscale enrollment is refused | Confirm the opt-in, retained package, dedicated tag, and a current non-reusable, non-ephemeral, pre-authorized key. |
 
 </details>
@@ -860,16 +860,16 @@ only when guest-local REAPER playback should be audible.
 </details>
 
 <details>
-<summary><strong>Mobile Herdr over Tailscale</strong></summary>
+<summary><strong>Remote Herdr over Tailscale</strong></summary>
 
-This opt-in lets a phone or tablet access Herdr over an existing tailnet to review
+This opt-in lets another device access Herdr over an existing tailnet to review
 notifications, answer agent questions, and run project commands. It exposes a
-key-only mobile Herdr endpoint on TCP 2222. Prepare a dedicated least-privilege tag
-and ACL, generate an Ed25519 key on each mobile device, and create one
+key-only remote Herdr endpoint on TCP 2222. Prepare a dedicated least-privilege tag
+and ACL, generate an Ed25519 key on each connecting device, and create one
 non-reusable, non-ephemeral, pre-authorized Tailscale auth key for
-`tag:herdr-sandbox`. Never grant mobile peers management port 22.
+`tag:herdr-sandbox`. Never grant remote peers management port 22.
 
-The dedicated mobile SSH endpoint disables forwarding, so it is not a built-in
+The dedicated remote SSH endpoint disables forwarding, so it is not a built-in
 proxy for project web servers.
 
 Add only device public keys to `config.json`:
@@ -877,7 +877,7 @@ Add only device public keys to `config.json`:
 ```json
 {
   "tailscale": true,
-  "mobileSSHAuthorizedKeys": [
+  "remoteSSHAuthorizedKeys": [
     "ssh-ed25519 <device-public-key-base64> phone"
   ]
 }
@@ -898,7 +898,7 @@ try {
 }
 ```
 
-Use `sandbox mobile` to print the secret-free URI, QR code, and host-key
+Use `sandbox remote` to print the secret-free URI, QR code, and host-key
 fingerprint. Later fresh guests restore the protected identity without another
 auth key. Keep the tailnet device and node-key expiry unchanged while relying on
 that identity.

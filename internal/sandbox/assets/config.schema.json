@@ -50,7 +50,7 @@
       "default": false,
       "description": "Enables the stable tagged Tailscale identity."
     },
-    "mobileSSHAuthorizedKeys": {
+    "remoteSSHAuthorizedKeys": {
       "type": "array",
       "maxItems": 8,
       "uniqueItems": true,
