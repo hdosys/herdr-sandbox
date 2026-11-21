@@ -2135,7 +2135,7 @@ function Test-ProvisioningGeistMonoFontInstalled {
         $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
         foreach ($name in @(Get-ProvisioningGeistMonoExpectedFontNames)) {
             $fontPath = Join-Path $fontRoot $name
-            Assert-ProvisioningCachePath -Path $fontPath
+            Assert-ProvisioningPathAncestors -Path $fontPath
             if (-not (Test-Path -LiteralPath $fontPath -PathType Leaf)) { return $false }
             $registeredPath = Get-ItemPropertyValue -LiteralPath $fontRegistry -Name $name -ErrorAction Stop
             if ($registeredPath -ine $fontPath) { return $false }
@@ -2216,7 +2216,7 @@ function Install-ProvisioningGeistMonoFontPayload {
         throw "$Role system-wide installation requires an elevated administrator account. No private font installation was attempted."
     }
     $fontRoot = Join-Path $env:WINDIR 'Fonts'
-    Assert-ProvisioningCachePath -Path $fontRoot
+    Assert-ProvisioningPathAncestors -Path $fontRoot
     $oldRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName -Value $Metadata.Id)
     $fontRegistry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
     $expectedFontNames = @(Get-ProvisioningGeistMonoExpectedFontNames)
@@ -2248,7 +2248,7 @@ function Install-ProvisioningGeistMonoFontPayload {
     $registrations = Get-ItemProperty -LiteralPath $fontRegistry
     foreach ($font in $familyFonts) {
         $destination = Join-Path $fontRoot $font.Name
-        Assert-ProvisioningCachePath -Path $destination
+        Assert-ProvisioningPathAncestors -Path $destination
         $property = $registrations.PSObject.Properties[$font.Name]
         if ($null -ne $property -and [string]$property.Value -ine $destination -and
             [string]$property.Value -ine (Join-Path $oldRoot $font.Name)) {

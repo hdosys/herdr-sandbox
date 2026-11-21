@@ -1,4 +1,7 @@
-param([Parameter(Mandatory = $true)][string]$TestRoot)
+param(
+    [Parameter(Mandatory = $true)][string]$TestRoot,
+    [Parameter(Mandatory = $true)][string]$CacheDirectory
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 if ($env:USERNAME -cne 'WDAGUtilityAccount') { throw 'This mutating acceptance is restricted to Windows Sandbox.' }
@@ -9,10 +12,9 @@ $env:HERDR_PROVISIONING_ROOT = $TestRoot
 $env:HERDR_SANDBOX_STATUS_DIRECTORY = $null
 $env:HERDR_PROVISIONING_TARGET = 'workstation'
 New-Item -ItemType Directory -Path $TestRoot | Out-Null
-$cache = Join-Path $TestRoot 'cache'
-New-Item -ItemType Directory -Path $cache | Out-Null
+if (-not (Test-Path -LiteralPath $CacheDirectory -PathType Container)) { throw 'The verified package cache root must exist.' }
 . (Join-Path $repository 'provisioning\base.ps1') -Phase Library `
-    -ProcessOwnerPath (Join-Path $repository 'internal\sandbox\assets\provisioning-process.cs') -PackageCacheDirectory $cache
+    -ProcessOwnerPath (Join-Path $repository 'internal\sandbox\assets\provisioning-process.cs') -PackageCacheDirectory $CacheDirectory
 $registry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
 $fontRoot = Join-Path $env:WINDIR 'Fonts'
 $names = @(Get-ProvisioningGeistMonoExpectedFontNames)
