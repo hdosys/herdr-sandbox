@@ -2261,10 +2261,6 @@ function Install-ProvisioningGeistMonoFontPayload {
             }
         }
     }
-    if (Test-ProvisioningGeistMonoFontInstalled -Metadata $Metadata) {
-        Write-Host "$Role system-wide files, registration and access already match."
-        return
-    }
     Initialize-ProvisioningFontNativeMethods
     # SSH provisioning and the desktop need the same installed font collection.
     # AddFontResourceEx alone loads only the calling Windows session.
@@ -2272,11 +2268,17 @@ function Install-ProvisioningGeistMonoFontPayload {
         $destination = Join-Path $fontRoot $font.Name
         if (-not (Test-Path -LiteralPath $destination)) {
             # Create in Fonts rather than copying the private source's security descriptor.
-            $output = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $inputFont = [IO.File]::OpenRead($font.FullName)
             try {
-                $inputFont = [IO.File]::OpenRead($font.FullName)
-                try { $inputFont.CopyTo($output) } finally { $inputFont.Dispose() }
-            } finally { $output.Dispose() }
+                $output = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                try { $inputFont.CopyTo($output) }
+                catch {
+                    # CreateNew proves this invocation owns the incomplete file.
+                    $output.Dispose()
+                    [IO.File]::Delete($destination)
+                    throw
+                } finally { $output.Dispose() }
+            } finally { $inputFont.Dispose() }
         }
         if (-not (Test-ProvisioningFontReadAccess -Path $destination)) {
             throw "$Role requires normal Windows Fonts read permissions: $destination"

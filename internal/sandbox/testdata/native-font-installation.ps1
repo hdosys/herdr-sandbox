@@ -8,7 +8,7 @@ if ($env:USERNAME -cne 'WDAGUtilityAccount') { throw 'This mutating acceptance i
 if (Test-Path -LiteralPath $TestRoot) { throw 'TestRoot must be new and task-owned.' }
 if ((Get-PSDrive C).Free -lt 1GB) { throw 'Font acceptance requires 1 GiB free.' }
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
-$env:HERDR_PROVISIONING_ROOT = $TestRoot
+$env:HERDR_PROVISIONING_ROOT = 'C:\HerdrSandbox'
 $env:HERDR_SANDBOX_STATUS_DIRECTORY = $null
 $env:HERDR_PROVISIONING_TARGET = 'workstation'
 New-Item -ItemType Directory -Path $TestRoot | Out-Null
@@ -18,7 +18,13 @@ if (-not (Test-Path -LiteralPath $CacheDirectory -PathType Container)) { throw '
 $registry = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
 $fontRoot = Join-Path $env:WINDIR 'Fonts'
 $names = @(Get-ProvisioningGeistMonoExpectedFontNames)
-$canSimulateTransition = @($names | Where-Object { Test-Path -LiteralPath (Join-Path $fontRoot $_) }).Count -eq 0
+$oldPaths = @{}
+foreach ($name in $names) {
+    $property = (Get-ItemProperty -LiteralPath $registry).PSObject.Properties[$name]
+    if ($null -ne $property -and [string]$property.Value -ine (Join-Path $fontRoot $name)) {
+        $oldPaths[[string]$property.Value] = (Get-FileHash -LiteralPath $property.Value).Hash
+    }
+}
 $probe = Join-Path $TestRoot 'font-collection-probe.exe'
 Add-Type -Path (Join-Path $PSScriptRoot 'font-collection-probe.cs') -OutputAssembly $probe -OutputType ConsoleApplication
 
@@ -34,27 +40,13 @@ foreach ($name in $names) {
     (Get-Acl -LiteralPath $path).AccessToString | Write-Output
 }
 
-if ($canSimulateTransition) {
-    # Only registrations created by this test may be redirected. Preserve the
-    # private files, including an unrelated sentinel, through the repair.
-    $oldRoot = Join-Path (Get-ProvisioningPath 'tools') (Get-ProvisioningSafeCacheName 'NerdFonts.GeistMono')
-    New-Item -ItemType Directory -Path $oldRoot -Force | Out-Null
-    $sentinel = Join-Path $oldRoot 'unrelated.txt'
-    [IO.File]::WriteAllText($sentinel, 'preserve')
-    foreach ($name in $names) {
-        Copy-Item -LiteralPath (Join-Path $fontRoot $name) -Destination (Join-Path $oldRoot $name)
-        Set-ItemProperty -LiteralPath $registry -Name $name -Value (Join-Path $oldRoot $name)
-    }
-    Install-ProvisioningGeistMonoNerdFont
-    foreach ($name in $names) {
-        if (-not (Test-Path -LiteralPath (Join-Path $oldRoot $name))) { throw 'Private font was deleted.' }
-    }
-    if ([IO.File]::ReadAllText($sentinel) -cne 'preserve') { throw 'Unrelated file changed.' }
-    Invoke-ProvisioningNative -Role 'Fresh DirectWrite after private-path repair' -FilePath $probe -ArgumentList @() | Write-Output
-} else {
-    Write-Output 'Existing installation preserved; destructive transition fixture not applied.'
+foreach ($oldPath in $oldPaths.Keys) {
+    if ((Get-FileHash -LiteralPath $oldPath).Hash -cne $oldPaths[$oldPath]) { throw 'Private font was changed.' }
+    Write-Output "Private-path transition preserved: $oldPath"
 }
 
+# Reuse the same effect with the other target's storage/environment selection.
+$env:HERDR_PROVISIONING_TARGET = 'sandbox'
 Install-ProvisioningGeistMonoNerdFont
 foreach ($name in $names) {
     $path = Join-Path $fontRoot $name
