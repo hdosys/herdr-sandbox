@@ -791,7 +791,7 @@ func TestPrintEffectivePlanUsesReadableSortedSections(t *testing.T) {
 	printEffectivePlan(&output, plan)
 	for _, required := range []string{
 		"Effective plan\n\nConfiguration", "Worktree directory: E:\\herdr-worktrees", "Models directory: F:\\models", "Memory: 32768 MB", "Audio output: disabled", "Microphone input: disabled",
-		"Remote SSH authorized keys: 0", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
+		"Additional remote SSH keys: 0 (host access is automatic when enabled)", "Pull host Git repositories on up: enabled", "Pull host Git repositories on down: enabled",
 		"Coding agents\n  - Claude Code\n  - OpenCode", "Credential transfers\n  - OpenCode\n  - TradingView", "Global stacks\n  - go\n  - rust",
 		"Packages\n  - Git.Git\n    Version: latest during provisioning\n    Source: base",
 		"Resolved stack tools\n  Precedence: explicit provisioning (including a selected project file) > optional project version file > stack default/latest stable; incompatible stack constraints fail\n  - GoLang.Go\n    Selection: 1.26.5\n    Source: explicit provisioning value or stack constraint\n    Owners:\n      - project \"project\" (go)",
