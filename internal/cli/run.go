@@ -34,7 +34,8 @@ const usage = `Usage:
   sandbox up --provisioning installer --installer FILE [--no-attach]
   sandbox attach
   sandbox status
-  sandbox remote
+  sandbox remote [--qr]
+  sandbox remote setup [--key PUBLIC_KEY_FILE] [--yes] [--no-start]
   sandbox down
   sandbox clean
 
@@ -48,7 +49,7 @@ Commands:
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
   attach  verify and attach to the exact ready Sandbox without re-provisioning
   status  report the app-owned Sandbox; proven stale app state may be cleaned
-  remote  show the ready Tailnet SSH endpoint and its secret-free QR code
+  remote  show Tailnet access; remote setup configures it and starts the Sandbox
   down    stop only the exact app-owned Sandbox, then optionally pull host configuration
   clean   remove inactive app-owned run workspaces
 
@@ -58,7 +59,7 @@ Configuration:
   - named folder mounts with explicit read-only or read/write access
   - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
   - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
-  - remoteSSHAuthorizedKeys for device-owned Ed25519 remote credentials
+  - remoteSSHAuthorizedKeys for additional devices (remote setup imports host authorized keys)
   - configurationSync host Git pull choices for up and down (all disabled by default)
   - codingAgentSync choices (all enabled by default)
   - credentialSync choices (all disabled by default)
@@ -102,6 +103,7 @@ type commandDependencies struct {
 	workstationInstaller       func(string) (string, error)
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
 	openConfig                 func() (string, bool, error)
+	setupRemote                func(context.Context, string, func(sandbox.RemoteSetup) bool) (bool, error)
 	seedInstaller              func() error
 	stopInstallerProcesses     func(context.Context) error
 	cleanInstaller             func(context.Context, bool) error
@@ -125,6 +127,7 @@ func defaultCommandDependencies() commandDependencies {
 		workstationInstaller:       sandbox.SavedWorkstationInstaller,
 		initialize:                 sandbox.InitializeProject,
 		openConfig:                 sandbox.OpenConfiguration,
+		setupRemote:                sandbox.SetupRemote,
 		seedInstaller:              sandbox.SeedInstallerConfiguration,
 		stopInstallerProcesses:     sandbox.StopInstallerProcesses,
 		cleanInstaller:             sandbox.CleanInstallerData,
@@ -318,8 +321,12 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return 0
 	case "remote":
-		if len(args) != 1 {
-			fmt.Fprintf(stderr, "sandbox: remote does not accept arguments\n\n%s", usage)
+		if len(args) > 1 && args[1] == "setup" {
+			return runRemoteSetup(ctx, args[2:], stdin, stdout, stderr, dependencies)
+		}
+		qr := len(args) == 2 && args[1] == "--qr"
+		if len(args) != 1 && !qr {
+			fmt.Fprintf(stderr, "sandbox: remote does not accept arguments other than --qr or setup\n\n%s", usage)
 			return 2
 		}
 		status, err := dependencies.inspect(ctx)
@@ -328,12 +335,23 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			return 1
 		}
 		if status.State != sandbox.SessionReady || status.RemoteAccess == nil {
-			fmt.Fprintln(stderr, "sandbox: remote access is not ready; enable tailscale, add at least one device-owned remoteSSHAuthorizedKeys entry, and launch a fresh Sandbox")
+			fmt.Fprintln(stderr, "sandbox: remote access is not ready. Run `sandbox remote setup` for automatic configuration and startup.")
 			return 1
 		}
 		if err := printRemoteAccess(stdout, *status.RemoteAccess); err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
+		}
+		if qr {
+			lines, err := status.RemoteAccess.QRLines()
+			if err != nil {
+				fmt.Fprintln(stderr, "sandbox:", err)
+				return 1
+			}
+			fmt.Fprintln(stdout, "\nQR (connection URI only)")
+			for _, line := range lines {
+				fmt.Fprintln(stdout, strings.ReplaceAll(line, "##", "██"))
+			}
 		}
 		return 0
 	case "down":
@@ -809,7 +827,7 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 	fmt.Fprintf(output, "  Audio output: %s\n", enabledDisabled(plan.AudioOutput))
 	fmt.Fprintf(output, "  Microphone input: %s\n", enabledDisabled(plan.AudioInput))
 	fmt.Fprintf(output, "  Tailscale: %s\n", enabledDisabled(plan.Tailscale))
-	fmt.Fprintf(output, "  Remote SSH authorized keys: %d\n", plan.RemoteSSHAuthorizedKeyCount)
+	fmt.Fprintf(output, "  Additional remote SSH keys: %d (host access is automatic when enabled)\n", plan.RemoteSSHAuthorizedKeyCount)
 	fmt.Fprintf(output, "  Windows Terminal: %s\n", plan.WindowsTerminal)
 	fmt.Fprintf(output, "  Pull host Git repositories on up: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnUp))
 	fmt.Fprintf(output, "  Pull host Git repositories on down: %s\n", enabledDisabled(plan.PullHostGitRepositoriesOnDown))
@@ -897,10 +915,6 @@ func printEffectivePlan(output io.Writer, plan sandbox.EffectivePlan) {
 }
 
 func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
-	lines, err := access.QRLines()
-	if err != nil {
-		return err
-	}
 	fmt.Fprintln(output, "Tailnet SSH access")
 	fmt.Fprintf(output, "  URI: %s\n", access.URI)
 	fmt.Fprintf(output, "  Host: %s\n", access.DNSName)
@@ -912,11 +926,7 @@ func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
 	fmt.Fprintf(output, "\nSSH: ssh %s@%s\n", access.SSHUser, access.DNSName)
 	fmt.Fprintf(output, "Herdr: herdr machine add %s@%s\n", access.SSHUser, access.DNSName)
 	fmt.Fprintf(output, "Forward a service: ssh -N -L 8080:localhost:8080 %s@%s\n", access.SSHUser, access.DNSName)
-	fmt.Fprintln(output, "\nQR (contains only the connection URI, never a key or password)")
-	for _, line := range lines {
-		fmt.Fprintln(output, strings.ReplaceAll(line, "##", "██"))
-	}
-	fmt.Fprintln(output, "\nIf the QR handler does not open an SSH app, enter the URI and host-key fingerprint above manually.")
+	fmt.Fprintln(output, "\nOn this host, the existing `ssh sandbox` and `herdr --remote sandbox` connections already use the managed key.")
 	return nil
 }
 

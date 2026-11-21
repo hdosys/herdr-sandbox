@@ -222,6 +222,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if err != nil {
 		return Connection{}, err
 	}
+	if err := includeHostRemoteKey(runContext, dataDirectory, &provisioning); err != nil {
+		return Connection{}, fmt.Errorf("prepare automatic host access: %w", err)
+	}
 	memoryMB := options.MemoryMB
 	if memoryMB == 0 {
 		memoryMB = provisioning.MemoryMB

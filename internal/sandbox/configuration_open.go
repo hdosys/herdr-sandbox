@@ -13,7 +13,7 @@ func OpenConfiguration() (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("resolve user configuration directory: %w", err)
 	}
-	return openConfigurationAt(configurationRoot, openConfigurationFile)
+	return openConfigurationAt(configurationRoot, openShellTarget)
 }
 
 func openConfigurationAt(configurationRoot string, openFile func(string) error) (string, bool, error) {

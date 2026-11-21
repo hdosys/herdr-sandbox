@@ -1,11 +1,13 @@
 package sandbox
 
 import (
+	"crypto/ecdh"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/url"
 	"sort"
@@ -20,7 +22,7 @@ const (
 	remoteSSHUser                     = "WDAGUtilityAccount"
 	remoteSSHAuthorizedKeysFileName   = "remote_authorized_keys"
 	maximumRemoteSSHAuthorizedKeys    = 8
-	maximumRemoteSSHAuthorizedKeySize = 1024
+	maximumRemoteSSHAuthorizedKeySize = 4096
 	remoteSSHQRQuietZone              = 4
 )
 
@@ -47,7 +49,7 @@ func canonicalizeRemoteSSHAuthorizedKeys(values []string) ([]string, error) {
 	keys := make([]string, 0, len(values))
 	seen := make(map[string]bool, len(values))
 	for index, value := range values {
-		key, _, err := canonicalEd25519PublicKey(value)
+		key, err := canonicalRemotePublicKey(value)
 		if err != nil {
 			return nil, fmt.Errorf("remoteSSHAuthorizedKeys[%d]: %w", index, err)
 		}
@@ -59,6 +61,58 @@ func canonicalizeRemoteSSHAuthorizedKeys(values []string) ([]string, error) {
 	}
 	sort.Strings(keys)
 	return keys, nil
+}
+
+// canonicalRemotePublicKey never drops authorized_keys options, which could broaden access.
+func canonicalRemotePublicKey(value string) (string, error) {
+	if len(value) > maximumRemoteSSHAuthorizedKeySize || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\x00\r\n") {
+		return "", errors.New("expected a bounded single-line SSH public key")
+	}
+	fields := strings.Fields(value)
+	if len(fields) < 2 {
+		return "", errors.New("expected an SSH public key")
+	}
+	if fields[0] == "ssh-ed25519" {
+		key, _, err := canonicalEd25519PublicKey(strings.Join(fields[:2], " "))
+		return key, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil || base64.StdEncoding.EncodeToString(raw) != fields[1] {
+		return "", errors.New("SSH public key must contain canonical base64")
+	}
+	algorithm, rest, ok := readSSHPublicKeyString(raw)
+	if !ok || string(algorithm) != fields[0] {
+		return "", errors.New("SSH key algorithm mismatch; restricted authorized_keys entries cannot be imported")
+	}
+	first, rest, ok := readSSHPublicKeyString(rest)
+	if !ok {
+		return "", errors.New("SSH public key payload is incomplete")
+	}
+	second, rest, ok := readSSHPublicKeyString(rest)
+	if !ok || len(rest) != 0 {
+		return "", errors.New("SSH public key payload is invalid")
+	}
+	switch fields[0] {
+	case "ssh-rsa":
+		if len(first) == 0 || len(second) == 0 || first[0]&128 != 0 || second[0]&128 != 0 {
+			return "", errors.New("RSA public key integers must be positive")
+		}
+		exponent, modulus := new(big.Int).SetBytes(first), new(big.Int).SetBytes(second)
+		if !exponent.IsInt64() || exponent.Int64() < 3 || exponent.Int64() > 2147483647 || exponent.Bit(0) == 0 || modulus.BitLen() < 2048 || modulus.BitLen() > 16384 || modulus.Bit(0) == 0 {
+			return "", errors.New("RSA public key must have a valid exponent and a 2048..16384-bit modulus")
+		}
+	case "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521":
+		if string(first) != strings.TrimPrefix(fields[0], "ecdsa-sha2-") {
+			return "", errors.New("ECDSA curve does not match the key algorithm")
+		}
+		curves := map[string]ecdh.Curve{"nistp256": ecdh.P256(), "nistp384": ecdh.P384(), "nistp521": ecdh.P521()}
+		if _, err := curves[string(first)].NewPublicKey(second); err != nil {
+			return "", errors.New("ECDSA public key point is invalid")
+		}
+	default:
+		return "", errors.New("use an Ed25519, RSA or ECDSA public key without authorized_keys restrictions")
+	}
+	return strings.Join(fields[:2], " "), nil
 }
 
 func canonicalEd25519PublicKey(value string) (string, []byte, error) {

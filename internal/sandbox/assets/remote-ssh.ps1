@@ -188,7 +188,7 @@ function Assert-PreparedFiles {
     foreach ($entry in @(
         @($script:PrivateKeyPath, 16384, 'Remote SSH host private key'),
         @($script:PublicKeyPath, 1024, 'Remote SSH host public key'),
-        @($script:AuthorizedKeysPath, 8192, 'Remote SSH authorized keys'),
+        @($script:AuthorizedKeysPath, 32768, 'Remote SSH authorized keys'),
         @($script:ConfigPath, 8192, 'Remote SSH server configuration'),
         @($script:StableScriptPath, 65536, 'Remote SSH control script')
     )) {
@@ -262,7 +262,10 @@ function Invoke-Prepare {
     $previousKey = ''
     foreach ($key in $authorizedKeys) {
         if ($key -isnot [string]) { throw 'Remote SSH authorized key must be text.' }
-        Assert-Ed25519PublicKey -Value ([string]$key)
+        $fields = ([string]$key).Split(' ')
+        if ($fields.Count -ne 2 -or $fields[0] -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521))$') { throw 'Remote SSH authorized key is not canonical OpenSSH text.' }
+        $blob = [Convert]::FromBase64String($fields[1])
+        if ($blob.Length -eq 0 -or [Convert]::ToBase64String($blob) -cne $fields[1]) { throw 'Remote SSH authorized key encoding is invalid.' }
         if (-not [string]::IsNullOrEmpty($previousKey) -and [string]::CompareOrdinal($previousKey, [string]$key) -ge 0) {
             throw 'Remote SSH authorized keys are not sorted and unique.'
         }
@@ -315,6 +318,8 @@ function Invoke-Prepare {
     $authorizedText = ($authorizedKeys -join "`n") + "`n"
     Set-AtomicText -Path $script:AuthorizedKeysPath -Text $authorizedText
     Protect-KeyFile -Path $script:AuthorizedKeysPath
+    $fingerprints = @(& $sshKeygen -l -f $script:AuthorizedKeysPath 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $fingerprints.Count -ne $authorizedKeys.Count) { throw 'OpenSSH rejected the authorized-key set.' }
     $sshdConfig = @"
 Port $($script:RemotePort)
 AddressFamily inet

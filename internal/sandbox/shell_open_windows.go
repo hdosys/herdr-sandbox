@@ -24,14 +24,14 @@ var (
 	shellExecuteW  = syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW")
 )
 
-func openConfigurationFile(path string) error {
+func openShellTarget(path string) error {
 	operation, err := syscall.UTF16PtrFromString("open")
 	if err != nil {
 		return fmt.Errorf("encode Windows Shell open verb: %w", err)
 	}
 	file, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
-		return fmt.Errorf("encode configuration path for Windows Shell: %w", err)
+		return fmt.Errorf("encode Windows Shell target: %w", err)
 	}
 
 	runtime.LockOSThread()
@@ -62,7 +62,7 @@ func shellExecuteResultError(result uintptr) error {
 		return nil
 	}
 	if result == shellNoAssociation {
-		return errors.New("no application is registered to open .json files")
+		return errors.New("no application is registered to open this target")
 	}
 	return fmt.Errorf("shell open on Windows failed with code %d", result)
 }

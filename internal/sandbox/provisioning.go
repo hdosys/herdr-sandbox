@@ -608,6 +608,9 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	if err != nil {
 		return provisioningPlan{}, err
 	}
+	if len(remoteSSHAuthorizedKeys) >= maximumRemoteSSHAuthorizedKeys {
+		return provisioningPlan{}, errors.New("remoteSSHAuthorizedKeys allows seven additional keys; the host key is added automatically")
+	}
 	if len(remoteSSHAuthorizedKeys) > 0 && !configuration.Tailscale {
 		return provisioningPlan{}, errors.New("remoteSSHAuthorizedKeys requires tailscale to be true")
 	}

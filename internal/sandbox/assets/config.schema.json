@@ -48,18 +48,18 @@
     "tailscale": {
       "type": "boolean",
       "default": false,
-      "description": "Enables a stable Tailscale identity. First startup displays a browser sign-in link."
+      "description": "Enables stable Tailscale identity and automatic host SSH access. First startup opens browser sign-in. Use sandbox remote setup for guided configuration."
     },
     "remoteSSHAuthorizedKeys": {
       "type": "array",
-      "maxItems": 8,
+      "maxItems": 7,
       "uniqueItems": true,
       "default": [],
-      "description": "Device-owned Ed25519 public keys. Nonempty requires tailscale.",
+      "description": "Additional device-owned Ed25519, RSA or ECDSA public keys. The host key is added automatically. Use sandbox remote setup to import existing authorized keys.",
       "items": {
         "type": "string",
-        "maxLength": 1024,
-        "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\\s]+)?$"
+        "maxLength": 4096,
+        "pattern": "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,2}(?: [^\\r\\n]+)?$"
       }
     },
     "configurationSync": {

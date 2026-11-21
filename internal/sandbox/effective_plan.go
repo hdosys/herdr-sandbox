@@ -350,6 +350,9 @@ func inspectEffectiveReadyChangesAt(ctx context.Context, provisioning provisioni
 	if status.State != SessionReady {
 		return nil, nil
 	}
+	if err := includeRemotePublicKey(filepath.Join(dataDirectory, "identity", "id_ed25519.pub"), &provisioning); err != nil {
+		return nil, err
+	}
 	_, differences, err := retainedRunPlanDetails(active, provisioning, provisioning.MemoryMB)
 	if err != nil {
 		return nil, err

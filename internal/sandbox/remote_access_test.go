@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-func TestCanonicalizeRemoteSSHAuthorizedKeysRequiresExactUniqueEd25519Keys(t *testing.T) {
+func TestCanonicalizeRemoteSSHAuthorizedKeysRequiresValidUniqueKeys(t *testing.T) {
 	second := testEd25519PublicKey(2)
 	first := testEd25519PublicKey(1)
-	keys, err := canonicalizeRemoteSSHAuthorizedKeys([]string{second + " tablet", first + " phone"})
+	keys, err := canonicalizeRemoteSSHAuthorizedKeys([]string{second + " my tablet", first + " phone"})
 	if err != nil {
 		t.Fatalf("canonicalize keys: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestCanonicalizeRemoteSSHAuthorizedKeysRequiresExactUniqueEd25519Keys(t *te
 	invalid := []string{
 		"ssh-rsa AAAA",
 		"ssh-ed25519 AAAA",
-		first + " comment with spaces",
+		"restrict " + first,
 		first + "\n" + second,
 		first + " trailing ",
 	}

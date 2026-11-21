@@ -160,6 +160,9 @@ func beginTailscaleEnrollment(ctx context.Context, connection Connection, output
 	}
 	if result.BackendState == "NeedsLogin" {
 		fmt.Fprintf(output, "Sign in to your existing tailnet in a browser:\n%s\nWaiting up to eight minutes for this Sandbox to be authorized...\n", result.AuthURL)
+		if err := openShellTarget(result.AuthURL); err != nil {
+			fmt.Fprintf(output, "Could not open the browser: %v. Open the link above to continue.\n", err)
+		}
 	} else if result.BackendState == "NeedsMachineAuth" {
 		fmt.Fprintln(output, "Approve herdr-sandbox in your Tailscale admin console. Waiting up to eight minutes...")
 	}

@@ -229,8 +229,13 @@ func TestRunRemotePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"remote"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
 	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), access.URI) ||
-		!strings.Contains(stdout.String(), "never a key or password") || !strings.Contains(stdout.String(), "████") {
+		strings.Contains(stdout.String(), "████") || !strings.Contains(stdout.String(), "ssh sandbox") {
 		t.Fatalf("remote code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	code = runWithCommandDependencies(context.Background(), []string{"remote", "--qr"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	if code != 0 || !strings.Contains(stdout.String(), "████") {
+		t.Fatalf("optional QR missing: %s %s", &stdout, &stderr)
 	}
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{State: sandbox.SessionReady}, nil
