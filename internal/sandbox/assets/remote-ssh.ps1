@@ -282,7 +282,8 @@ function Invoke-Prepare {
     $sshKeygen = Get-OpenSSHExecutable -Name 'ssh-keygen.exe'
     if ([string]::IsNullOrEmpty([string]$request.privateKey)) {
         if (-not [string]::IsNullOrEmpty([string]$request.publicKey)) { throw 'Remote SSH generated identity request contains only a public key.' }
-        $output = @(& $sshKeygen -q -t ed25519 -N '' -C 'herdr-sandbox-remote-host' -f $script:PrivateKeyPath 2>&1)
+        # PowerShell 5.1 drops an empty native argument; preserve the explicit empty passphrase.
+        $output = @(& $sshKeygen -q -t ed25519 -N '""' -C 'herdr-sandbox-remote-host' -f $script:PrivateKeyPath 2>&1)
         if ($LASTEXITCODE -ne 0) { throw "Remote SSH host-key generation failed: $($output -join ' ')" }
     } else {
         if ([string]::IsNullOrEmpty([string]$request.publicKey)) { throw 'Remote SSH restored identity request is missing its public key.' }

@@ -99,7 +99,7 @@ func configureFreshTailscale(ctx context.Context, connection Connection, dataDir
 	defer clear(request.State)
 	identity, err := applyAndCaptureTailscale(ctx, connection, request)
 	if err != nil {
-		return fmt.Errorf("Tailscale identity is not ready; complete browser/device approval or check device expiry and revocation in your tailnet; the guest is preserved: %w", err)
+		return fmt.Errorf("identity for Tailscale is not ready; complete browser/device approval or check device expiry and revocation in your tailnet; the guest is preserved: %w", err)
 	}
 	defer clear(identity.State)
 	if bootstrap.Existing != nil {

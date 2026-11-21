@@ -367,7 +367,15 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 		return Connection{}, err
 	}
-	if !wasReady && (developmentFailure == nil || !developmentFailure.tailscaleNotEnrolled) {
+	if !tailscaleReady && (developmentFailure == nil || !developmentFailure.tailscaleNotEnrolled) {
+		// Do not publish ready status while enrollment/capture is incomplete. A later
+		// up must return through enrollment and endpoint preparation, not ready repair.
+		if err := updateOperation("tailscale-identity", "Tailscale identity is pending. Complete authorization or correct the reported error, then run sandbox up again. Guest preserved."); err != nil {
+			return Connection{}, err
+		}
+		return connection, developmentFailure
+	}
+	if !wasReady && tailscaleReady {
 		if err := writeReadyStatus(plan.StatusDirectory, ready); err != nil {
 			return Connection{}, err
 		}
