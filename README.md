@@ -237,6 +237,50 @@ Run `sandbox down` when you are finished and want to discard the guest.
 Use `sandbox up --no-attach` from a headless caller, then attach later from a real
 terminal. Plain `ssh sandbox` remains available for diagnostics.
 
+### Enable access from your tailnet
+
+On the host, run:
+
+```powershell
+sandbox remote setup
+```
+
+Review the preview and answer the single `y/N` prompt to enable ordinary SSH over
+Tailscale for this host and the listed devices. Setup reads existing incoming
+public-key lists at `%USERPROFILE%\.ssh\authorized_keys` and
+`%ProgramData%\ssh\administrators_authorized_keys` when present, merges them with
+already configured keys, and saves without changing unrelated settings. No JSON
+editing or key generation is needed. These are snapshots of the two standard
+files, not ongoing synchronization or discovery of custom SSH server rules.
+
+**Approve only keys whose owners may administer the guest and access its mapped
+resources.** Restricted `authorized_keys` entries are rejected before any change;
+setup never strips their access restrictions. It does not search `.pub` or private
+key files, copy private keys, trust every tailnet peer, or change tailnet policy.
+
+Setup then runs the normal `up --no-attach` path and displays connection commands.
+The first Tailscale sign-in link opens in your default browser and remains visible
+in the terminal; an opening failure is reported so you can follow it yourself.
+Complete any required tailnet approval. A ready Sandbox is never closed or
+restarted automatically. If its fixed configuration differs, the saved settings
+wait for your next explicitly requested fresh startup.
+
+```powershell
+sandbox remote                       # Compact commands and host-key fingerprint
+sandbox remote --qr                  # Also show the connection URI as a QR code
+sandbox remote setup --key device.pub # Add a genuinely new device's public key
+sandbox remote setup --no-start       # Save only, without starting or reprovisioning
+```
+
+Use `--yes` to approve the same bounded selection noninteractively. `--key FILE`
+replaces automatic source discovery for that invocation, not existing configured
+keys. Devices already covered by the imported list need no additional key setup;
+each device keeps and uses its own private key. The host already has `ssh sandbox`
+and `herdr --remote sandbox` through its managed identity. Other devices use the
+DNS commands printed by `sandbox remote`; verify the displayed host fingerprint
+on first connection. See [optional workflows](#optional-workflows) for manual
+configuration and forwarding.
+
 ## Configuration
 
 Project profiles own per-project tools. `config.json` and `user.ps1` own global
@@ -266,10 +310,10 @@ PowerShell additions belong in `user.ps1`:
 ```
 
 New configurations include `"$schema": "./config.schema.json"`, so compatible
-editors discover the adjacent schema without a network request. Existing
-configurations are never rewritten. The schema checks JSON structure only;
-`sandbox plan` remains authoritative for paths, overlaps, package policy, and
-credentials.
+editors discover the adjacent schema without a network request. Reference-file
+refreshes never rewrite existing configurations. The schema checks JSON structure
+only; `sandbox plan` remains authoritative for paths, overlaps, package policy,
+and credentials.
 
 `config.json` is strict JSON. Start with the settings you need; omitted fields
 use their defaults. For example, to use 32 GiB of memory and map one project:
@@ -309,7 +353,7 @@ letter or number, and are at most 64 characters.
 | `audio` | Boolean enabling guest audio output. |
 | `audioInput` | Boolean enabling guest microphone input. |
 | `tailscale` | Boolean enabling the Sandbox's stable Tailscale identity with browser sign-in on first use. |
-| `remoteSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
+| `remoteSSHAuthorizedKeys` | Array of at most seven additional unique public keys: Ed25519, RSA of at least 2048 bits, or ECDSA nistp256/384/521. A nonempty array requires `tailscale: true`. Every enabled `up` adds the app-owned host management public key separately. |
 | `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
 | `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
 | `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. Defaults to `true`. |
@@ -500,7 +544,8 @@ and errors go to stderr.
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
 | `sandbox status` | Reports health, progress, diagnostics, and the next action. Returns zero only when the state is `ready`. |
-| `sandbox remote` | Prints the remote SSH profile and secret-free QR code. |
+| `sandbox remote setup [--key FILE] [--yes] [--no-start]` | Previews and approves remote access, preserves existing keys and unrelated settings, then normally starts without attaching. |
+| `sandbox remote [--qr]` | Prints compact remote commands and the SSH host-key fingerprint; `--qr` adds a secret-free connection QR code. |
 | `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
 | `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
 
@@ -776,7 +821,7 @@ when it is safe, and reports the next action.
 | --- | --- |
 | Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
 | The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
-| Remote access is not ready | Check `tailscale`, `remoteSSHAuthorizedKeys`, tailnet access to TCP 22, and the URI from `sandbox remote`. |
+| Remote access is not ready | Run `sandbox remote setup`, check tailnet access to TCP 22, and use the commands from `sandbox remote`. Saved changes incompatible with a ready guest need an explicitly requested fresh startup. |
 | The remote SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Tailscale enrollment is pending or refused | Follow the browser link printed by `sandbox up`; complete any required device or Tailnet Lock approval. Check device key expiry if a previously working identity stops connecting. |
 
@@ -867,7 +912,8 @@ node. The SSH endpoint uses standard port 22, normal shells and remote commands,
 including Herdr's own remoting and SSH TCP forwarding. No dedicated tag or manually
 created Tailscale auth key is needed. Your existing tailnet policy still applies.
 
-Add only device public keys to `config.json`:
+Prefer `sandbox remote setup` as described above. For optional manual
+configuration, enable Tailscale and add only additional device public keys:
 
 ```json
 {
@@ -878,21 +924,27 @@ Add only device public keys to `config.json`:
 }
 ```
 
-Start the Sandbox:
+The host management public key is added automatically at every `up` with
+`tailscale: true`, even without additional keys. At most seven additional keys
+are accepted: Ed25519, RSA of at least 2048 bits, and ECDSA nistp256/384/521.
+Changes to this key set require a fresh Sandbox; choose when to close an existing
+guest before starting with the new configuration:
 
 ```powershell
 sandbox up
 ```
 
-On first use, open the printed Tailscale sign-in link and authorize the Sandbox in
-your existing tailnet. Startup waits up to eight minutes. Later starts restore
+On first use, the Tailscale sign-in link opens in your default browser and remains
+printed if you need to open it manually. Authorize the Sandbox in your existing
+tailnet. Startup waits up to eight minutes. Later starts restore
 the protected Sandbox identity automatically. The host keeps its separate identity.
 For unattended starts over the long term, disable key expiry for this particular
 Sandbox device in the Tailscale admin console. Device approval, Tailnet Lock,
 revocation and expired keys still require the appropriate account action.
 
-Run `sandbox remote` on the host for the exact address, SSH host-key fingerprint,
-commands and optional URI-only QR. Verify the fingerprint on first connection.
+Run `sandbox remote` on the host for compact connection commands and the SSH
+host-key fingerprint; add `--qr` for a URI-only QR. Verify the fingerprint on first
+connection.
 For example, from another authorized node (replace the example DNS name):
 
 ```powershell
