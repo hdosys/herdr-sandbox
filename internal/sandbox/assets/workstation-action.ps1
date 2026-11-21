@@ -85,19 +85,10 @@ switch ($Action) {
     'hyperframes' { Install-StackHyperFramesRendering }
     'ffmpeg' { Install-StackFFmpeg }
     'tts' { Install-StackHyperFramesOptionalTTS }
-    'git-sh' {
-        $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
-        $bash = Join-Path (Split-Path (Split-Path $git -Parent) -Parent) 'bin\bash.exe'
-        Invoke-ProvisioningNative -Role 'Git shell verification' -FilePath $bash -ArgumentList @('--version') -TimeoutSeconds 30 | Out-Null
-    }
+    'git-sh' { Initialize-ProvisioningGitShell }
     'vulkan-sdk' { Install-StackVulkanSDK }
     'webview2' { Install-StackWebView2 }
-    'handy-headers' {
-        Enable-StackVisualStudioDeveloperEnvironment
-        $vulkanRoot = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
-        $prefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
-        Assert-HandyNativeToolchain -CMakePrefix $prefix -VulkanRoot $vulkanRoot
-    }
+    'handy-headers' { Initialize-StackHandyNativeHeaders }
     default { throw 'Unsupported workstation action.' }
 }
 if ($OptionalFailures.Count -gt 0) { exit 3 }

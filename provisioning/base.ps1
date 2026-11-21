@@ -3120,6 +3120,34 @@ function Assert-ProvisioningVulkanDevice {
     return $deviceNames
 }
 
+function Initialize-ProvisioningGitShell {
+    Wait-ProvisioningCommandAvailable -Role 'Git' -Name 'git.exe' | Out-Null
+    $gitVersion = Assert-ProvisioningCommand -Role 'Git' -Name 'git.exe' `
+        -VersionArguments @('--version') -ExpectedPattern '^git version '
+    $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $gitCommandDirectory = Split-Path -Parent $gitCommand
+    $gitCommandDirectoryName = Split-Path -Leaf $gitCommandDirectory
+    if ($gitCommandDirectoryName -notin @('cmd', 'bin')) {
+        throw "Git resolved from an unsupported command directory: $gitCommandDirectory"
+    }
+    $gitRoot = Split-Path -Parent $gitCommandDirectory
+    $gitShellDirectory = Join-Path $gitRoot 'bin'
+    $gitShell = Join-Path $gitShellDirectory 'sh.exe'
+    if (-not (Test-Path -LiteralPath $gitShell -PathType Leaf) -or
+        ((Get-Item -LiteralPath $gitShell -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Git for Windows shell is missing or unsafe: $gitShell"
+    }
+    Add-ProvisioningMachinePath -Directory $gitShellDirectory
+    $resolvedGitShell = Wait-ProvisioningCommandAvailable -Role 'Git for Windows shell' -Name 'sh.exe'
+    if ([IO.Path]::GetFullPath($resolvedGitShell) -ine [IO.Path]::GetFullPath($gitShell)) {
+        throw "Git for Windows shell resolved from an unexpected path: $resolvedGitShell"
+    }
+    $gitShellVersion = Assert-ProvisioningCommand -Role 'Git for Windows shell' -Name 'sh.exe' `
+        -VersionArguments @('--version') -ExpectedPattern '^GNU bash, version \d+\.\d+\.\d+\(\d+\)-release '
+    Write-Output "Git for Windows shell ready: $gitShellVersion"
+    Write-Output "Git ready: $gitVersion"
+}
+
 function Set-ProvisioningOpenSSHDefaultShell {
     param([Parameter(Mandatory = $true)][string]$Executable)
     if (-not [IO.Path]::IsPathRooted($Executable)) { throw 'OpenSSH default shell must use an absolute executable path.' }
@@ -4514,30 +4542,8 @@ if ($activeWorkspaceMatches -ne 1) {
 }
 if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     Invoke-ProvisioningIndependentStep -Name 'Git configuration' -Failures $DevelopmentFailures -Requires @('Package Git.Git') -InputFiles @($workspaceManifestPath) -InputValues (Get-ProvisioningPackageVersion -Id 'Git.Git') -Action {
-    Wait-ProvisioningCommandAvailable -Role 'Git' -Name 'git.exe' | Out-Null
-    $gitVersion = Assert-ProvisioningCommand -Role 'Git' -Name 'git.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^git version '
+    Initialize-ProvisioningGitShell
     $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-    $gitCommandDirectory = Split-Path -Parent $gitCommand
-    $gitCommandDirectoryName = Split-Path -Leaf $gitCommandDirectory
-    if ($gitCommandDirectoryName -notin @('cmd', 'bin')) {
-        throw "Git resolved from an unsupported command directory: $gitCommandDirectory"
-    }
-    $gitRoot = Split-Path -Parent $gitCommandDirectory
-    $gitShellDirectory = Join-Path $gitRoot 'bin'
-    $gitShell = Join-Path $gitShellDirectory 'sh.exe'
-    if (-not (Test-Path -LiteralPath $gitShell -PathType Leaf) -or
-        ((Get-Item -LiteralPath $gitShell -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Git for Windows shell is missing or unsafe: $gitShell"
-    }
-    Add-ProvisioningMachinePath -Directory $gitShellDirectory
-    $resolvedGitShell = Wait-ProvisioningCommandAvailable -Role 'Git for Windows shell' -Name 'sh.exe'
-    if ([IO.Path]::GetFullPath($resolvedGitShell) -ine [IO.Path]::GetFullPath($gitShell)) {
-        throw "Git for Windows shell resolved from an unexpected path: $resolvedGitShell"
-    }
-    $gitShellVersion = Assert-ProvisioningCommand -Role 'Git for Windows shell' -Name 'sh.exe' `
-        -VersionArguments @('--version') -ExpectedPattern '^GNU bash, version \d+\.\d+\.\d+\(\d+\)-release '
-    Write-Output "Git for Windows shell ready: $gitShellVersion"
     $safeDirectoryResult = Invoke-ProvisioningNativeResult -Role 'Git safe-directory inspection' `
         -FilePath $gitCommand -ArgumentList @('config', '--global', '--get-all', 'safe.directory') `
         -SuccessExitCodes @(0, 1)
@@ -4562,7 +4568,6 @@ if (Test-ProvisioningPackageEnabled -Id 'Git.Git') {
     if (($verifiedSafeDirectories -join '|') -cne ($guestSafeDirectories -join '|')) {
         throw "Git safe-directory verification failed: $($verifiedSafeDirectories -join ', ')"
     }
-    Write-Output "Git ready: $gitVersion"
     }
 }
 
