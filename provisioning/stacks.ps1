@@ -5297,6 +5297,13 @@ int main() { return VK_API_VERSION_1_0 == 0; }
     }
 }
 
+function Initialize-StackHandyNativeHeaders {
+    $vulkanRoot = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+    $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
+    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
+    Write-Output 'Handy native headers ready.'
+}
+
 function Install-HandyStack {
     [CmdletBinding()]
     param(
@@ -5342,13 +5349,7 @@ function Install-HandyStack {
     Invoke-ProvisioningStackStep -Name 'WebView2' -Requires @('WinGet') -Action { Install-StackWebView2 }
     Install-BunStack
     Install-RustMSVCStack -ProjectDirectory $rustRoot
-    Invoke-ProvisioningStackStep -Name 'Handy native headers' -Requires @('Vulkan SDK','CMake','Visual Studio Build Tools') -Action {
-    $vulkanRoot = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
-    $cmakePrefix = Write-HandySPIRVHeadersPackage -VulkanRoot $vulkanRoot
-    Assert-HandyNativeToolchain -CMakePrefix $cmakePrefix -VulkanRoot $vulkanRoot
-
-    Write-Output 'Handy native headers ready.'
-    }
+    Invoke-ProvisioningStackStep -Name 'Handy native headers' -Requires @('Vulkan SDK','CMake','Visual Studio Build Tools') -Action { Initialize-StackHandyNativeHeaders }
 }
 
 function Install-StackVulkanSDK {
