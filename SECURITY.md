@@ -111,11 +111,19 @@ The product protects these boundaries:
   queried full image path exactly equals the installed `sandbox.exe`. They retain
   each validated process handle through bounded exit confirmation, do not kill a
   process tree, and never target `WindowsSandbox.exe`.
-- Remote SSH listens only on the verified Tailscale IPv4 at TCP 2222, accepts
-  public-key authentication only, and disables forwarding. Windows Firewall
-  allows that port only from the Tailscale IPv4 range and blocks tailnet access
-  to the management endpoint on TCP 22; tailnet policy must independently grant
-  only the intended principals access to TCP 2222.
+- Remote SSH listens only on the verified Tailscale IPv4 at TCP 22 and accepts
+  public-key authentication only. The management listener and its firewall rule
+  bind separately to the management IPv4, with different credentials. Windows
+  Firewall allows remote SSH from the Tailscale IPv4 range; existing tailnet policy
+  must independently permit the intended peers. No policy is changed automatically.
+- Authorized remote users receive an ordinary guest-administrator shell and TCP
+  forwarding, including access to destinations the guest can reach. Agent forwarding
+  remains disabled and remote forwarded listeners default to loopback. Do not
+  authorize a key whose owner should not have those capabilities. Other direct
+  service ports require intentional service bindings and firewall rules.
+- First Tailscale enrollment uses a browser authorization link, not a stored auth
+  key or the host's device identity. Disabling device key expiry for unattended
+  operation is an explicit owner choice in Tailscale, not an automatic policy change.
 
 These are deliberate non-guarantees:
 
@@ -194,7 +202,7 @@ These are deliberate non-guarantees:
   application; an unselected empty import preserves existing guest session rows.
 - Clipboard sharing crosses the host/guest boundary by explicit user action.
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
-  authorized remote private key and tailnet reachability can open Herdr as the
+  authorized remote private key and tailnet reachability can open a shell as the
   guest administrator user and access every resource available to that guest.
   Remove a compromised public key from `remoteSSHAuthorizedKeys`, stop the
   app-owned Sandbox, and launch a fresh one; changing a live listener in place is

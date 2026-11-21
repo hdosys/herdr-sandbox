@@ -20,7 +20,6 @@ const (
 	tailscaleIdentityFileName       = "tailscale-identity.json"
 	tailscaleIdentitySchemaVersion  = 1
 	tailscaleProtectedSchemaVersion = 1
-	maximumTailscaleAuthKeyBytes    = 4096
 	maximumTailscaleStateBytes      = 2 * 1024 * 1024
 	maximumTailscaleIdentityBytes   = 4 * 1024 * 1024
 )
@@ -43,21 +42,6 @@ type tailscaleIdentity struct {
 type protectedTailscaleIdentity struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	ProtectedData []byte `json:"protectedData"`
-}
-
-func consumeTailscaleAuthKeyEnvironment() ([]byte, bool, error) {
-	value, found := os.LookupEnv(tailscaleAuthKeyEnvironment)
-	if err := os.Unsetenv(tailscaleAuthKeyEnvironment); err != nil {
-		return nil, false, fmt.Errorf("clear Tailscale auth-key environment: %w", err)
-	}
-	if !found {
-		return nil, false, nil
-	}
-	if value == "" || len(value) > maximumTailscaleAuthKeyBytes || strings.TrimSpace(value) != value ||
-		strings.ContainsAny(value, "\x00\r\n\t ") || !strings.HasPrefix(value, "tskey-") {
-		return nil, false, errors.New("HERDR_SANDBOX_TAILSCALE_AUTH_KEY must contain one bounded Tailscale auth key without whitespace")
-	}
-	return []byte(value), true, nil
 }
 
 func tailscaleIdentityPath(dataDirectory string) string {
@@ -215,7 +199,7 @@ func (identity tailscaleIdentity) validate() error {
 	if ip := net.ParseIP(identity.IPv4); ip == nil || ip.To4() == nil || strings.Contains(identity.IPv4, ":") {
 		return errors.New("ipv4 is invalid")
 	}
-	if len(identity.Tags) == 0 || len(identity.Tags) > 16 {
+	if len(identity.Tags) > 16 {
 		return errors.New("tags must contain at least one bounded tag")
 	}
 	seenTags := map[string]bool{}

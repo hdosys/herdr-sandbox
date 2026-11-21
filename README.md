@@ -308,7 +308,7 @@ letter or number, and are at most 64 characters.
 | `memoryMB` | Integer Sandbox memory limit in MiB, minimum `2048`. `--memory-mb` overrides one run. |
 | `audio` | Boolean enabling guest audio output. |
 | `audioInput` | Boolean enabling guest microphone input. |
-| `tailscale` | Boolean enabling Herdr's stable tagged Tailscale identity. |
+| `tailscale` | Boolean enabling the Sandbox's stable Tailscale identity with browser sign-in on first use. |
 | `remoteSSHAuthorizedKeys` | Array of at most eight unique device-owned Ed25519 public keys. A nonempty array requires `tailscale: true`. |
 | `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
 | `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
@@ -776,9 +776,9 @@ when it is safe, and reports the next action.
 | --- | --- |
 | Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
 | The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
-| Remote access is not ready | Check `tailscale`, `remoteSSHAuthorizedKeys`, tailnet access to TCP 2222, and the URI from `sandbox remote`. |
+| Remote access is not ready | Check `tailscale`, `remoteSSHAuthorizedKeys`, tailnet access to TCP 22, and the URI from `sandbox remote`. |
 | The remote SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
-| Tailscale enrollment is refused | Confirm the opt-in, retained package, dedicated tag, and a current non-reusable, non-ephemeral, pre-authorized key. |
+| Tailscale enrollment is pending or refused | Follow the browser link printed by `sandbox up`; complete any required device or Tailnet Lock approval. Check device key expiry if a previously working identity stops connecting. |
 
 </details>
 
@@ -860,17 +860,12 @@ only when guest-local REAPER playback should be audible.
 </details>
 
 <details>
-<summary><strong>Remote Herdr over Tailscale</strong></summary>
+<summary><strong>SSH, Herdr remoting, and services over Tailscale</strong></summary>
 
-This opt-in lets another device access Herdr over an existing tailnet to review
-notifications, answer agent questions, and run project commands. It exposes a
-key-only remote Herdr endpoint on TCP 2222. Prepare a dedicated least-privilege tag
-and ACL, generate an Ed25519 key on each connecting device, and create one
-non-reusable, non-ephemeral, pre-authorized Tailscale auth key for
-`tag:herdr-sandbox`. Never grant remote peers management port 22.
-
-The dedicated remote SSH endpoint disables forwarding, so it is not a built-in
-proxy for project web servers.
+Use the Sandbox like another machine in your existing tailnet, from any permitted
+node. The SSH endpoint uses standard port 22, normal shells and remote commands,
+including Herdr's own remoting and SSH TCP forwarding. No dedicated tag or manually
+created Tailscale auth key is needed. Your existing tailnet policy still applies.
 
 Add only device public keys to `config.json`:
 
@@ -883,25 +878,35 @@ Add only device public keys to `config.json`:
 }
 ```
 
-Pass the Tailscale key once without placing it in configuration or shell history:
+Start the Sandbox:
 
 ```powershell
-$keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
-    (Read-Host 'One-off tagged Tailscale auth key' -AsSecureString)
-)
-try {
-    $env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-    sandbox up
-} finally {
-    Remove-Item Env:HERDR_SANDBOX_TAILSCALE_AUTH_KEY -ErrorAction SilentlyContinue
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
-}
+sandbox up
 ```
 
-Use `sandbox remote` to print the secret-free URI, QR code, and host-key
-fingerprint. Later fresh guests restore the protected identity without another
-auth key. Keep the tailnet device and node-key expiry unchanged while relying on
-that identity.
+On first use, open the printed Tailscale sign-in link and authorize the Sandbox in
+your existing tailnet. Startup waits up to eight minutes. Later starts restore
+the protected Sandbox identity automatically. The host keeps its separate identity.
+For unattended starts over the long term, disable key expiry for this particular
+Sandbox device in the Tailscale admin console. Device approval, Tailnet Lock,
+revocation and expired keys still require the appropriate account action.
+
+Run `sandbox remote` on the host for the exact address, SSH host-key fingerprint,
+commands and optional URI-only QR. Verify the fingerprint on first connection.
+For example, from another authorized node (replace the example DNS name):
+
+```powershell
+ssh WDAGUtilityAccount@herdr-sandbox.example.ts.net
+herdr machine add WDAGUtilityAccount@herdr-sandbox.example.ts.net
+ssh -N -L 8080:localhost:8080 WDAGUtilityAccount@herdr-sandbox.example.ts.net
+```
+
+The last command makes a Sandbox service on port 8080 reachable at
+`localhost:8080` on your client. Other service ports work the same way. Direct
+access through the Tailscale IP additionally needs the service to listen there
+and a targeted Windows Firewall rule; startup does not open all ports.
+Private client keys stay on their originating devices. The management SSH
+connection remains isolated on the guest's management address.
 
 </details>
 

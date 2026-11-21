@@ -7,6 +7,15 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ## Unreleased
 
+### Changed
+
+- Tailscale joins an existing tailnet through one browser sign-in and reuses the
+  protected Sandbox identity on later starts, without a manually created auth key
+  or mandatory device tag.
+- General tailnet access replaces the mobile-only endpoint: configure
+  `remoteSSHAuthorizedKeys` and use `sandbox remote` for normal SSH on port 22,
+  Herdr remoting, and TCP port forwarding from any permitted client device.
+
 ### Fixed
 
 - Both provisioning targets install GeistMono Nerd Fonts in the Windows Fonts

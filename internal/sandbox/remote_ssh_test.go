@@ -36,15 +36,14 @@ func TestRemoteSSHControlScriptIsPowerShell51AndOwnsNarrowEndpoint(t *testing.T)
 	script := string(remoteSSHScript)
 	for _, required := range []string{
 		"[ValidateSet('Prepare', 'Activate', 'Verify')]",
-		"$script:RemotePort = 2222",
+		"$script:RemotePort = 22",
 		"ListenAddress $([string]$request.tailscaleIPv4)",
 		"AuthenticationMethods publickey",
 		"PasswordAuthentication no",
-		"DisableForwarding yes",
+		"DisableForwarding no",
 		"AllowAgentForwarding no",
-		"AllowTcpForwarding no",
+		"AllowTcpForwarding yes",
 		"-RemoteAddress '100.64.0.0/10' -LocalPort $script:RemotePort",
-		"-Action Block -RemoteAddress '100.64.0.0/10' -LocalPort 22",
 		"Start-Process -FilePath $sshd",
 		"-WindowStyle Hidden",
 		"[DateTime]::UtcNow.AddSeconds(30)",

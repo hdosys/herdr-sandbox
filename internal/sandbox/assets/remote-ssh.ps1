@@ -12,7 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $script:SchemaVersion = 1
-$script:RemotePort = 2222
+$script:RemotePort = 22
 $script:RemoteUser = 'WDAGUtilityAccount'
 $script:RemoteUserRule = 'wdagutilityaccount'
 $script:Root = 'C:\HerdrSandbox\remote-ssh'
@@ -27,7 +27,6 @@ $script:LogPath = Join-Path $script:Root 'sshd.log'
 $script:StdoutPath = Join-Path $script:Root 'sshd.stdout.log'
 $script:StderrPath = Join-Path $script:Root 'sshd.stderr.log'
 $script:AllowRuleName = 'HerdrSandbox-RemoteSSH-In-TCP'
-$script:BlockRuleName = 'HerdrSandbox-ManagementSSH-Block-Tailnet'
 $script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
 
 function Assert-ExactProperties {
@@ -275,7 +274,7 @@ function Invoke-Prepare {
         return
     }
     if (Test-Path -LiteralPath $script:ProcessPath) { throw 'Remote SSH process state already exists before preparation.' }
-    if (Get-NetTCPConnection -State Listen -LocalPort $script:RemotePort -ErrorAction SilentlyContinue) {
+    if (Get-NetTCPConnection -State Listen -LocalAddress @('0.0.0.0', [string]$request.tailscaleIPv4) -LocalPort $script:RemotePort -ErrorAction SilentlyContinue) {
         throw 'Remote SSH port is already owned before preparation.'
     }
     Set-AtomicBytes -Path $script:StableScriptPath -Bytes ([IO.File]::ReadAllBytes($PSCommandPath))
@@ -322,9 +321,9 @@ PasswordAuthentication no
 PermitEmptyPasswords no
 PermitTTY yes
 AllowUsers $($script:RemoteUserRule)
-DisableForwarding yes
+DisableForwarding no
 AllowAgentForwarding no
-AllowTcpForwarding no
+AllowTcpForwarding yes
 GatewayPorts no
 MaxAuthTries 3
 MaxSessions 4
@@ -348,7 +347,7 @@ SyslogFacility LOCAL0
 }
 
 function Remove-OwnedFirewallRules {
-    foreach ($name in @($script:AllowRuleName, $script:BlockRuleName)) {
+    foreach ($name in @($script:AllowRuleName)) {
         $rule = Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue
         if ($null -ne $rule) { Remove-NetFirewallRule -Name $name -ErrorAction Stop }
     }
@@ -357,21 +356,14 @@ function Remove-OwnedFirewallRules {
 function Assert-FirewallRules {
     param([Parameter(Mandatory = $true)][string]$TailscaleIPv4)
     $allow = Get-NetFirewallRule -Name $script:AllowRuleName -ErrorAction Stop
-    $block = Get-NetFirewallRule -Name $script:BlockRuleName -ErrorAction Stop
-    if ([string]$allow.Direction -cne 'Inbound' -or [string]$allow.Action -cne 'Allow' -or [string]$allow.Enabled -cne 'True' -or
-        [string]$block.Direction -cne 'Inbound' -or [string]$block.Action -cne 'Block' -or [string]$block.Enabled -cne 'True') {
+    if ([string]$allow.Direction -cne 'Inbound' -or [string]$allow.Action -cne 'Allow' -or [string]$allow.Enabled -cne 'True') {
         throw 'Remote SSH firewall rule actions are invalid.'
     }
     $allowPort = $allow | Get-NetFirewallPortFilter
     $allowAddress = $allow | Get-NetFirewallAddressFilter
-    $blockPort = $block | Get-NetFirewallPortFilter
-    $blockAddress = $block | Get-NetFirewallAddressFilter
     $allowRemote = [string]$allowAddress.RemoteAddress
-    $blockRemote = [string]$blockAddress.RemoteAddress
     if ([string]$allowPort.Protocol -cne 'TCP' -or [string]$allowPort.LocalPort -cne [string]$script:RemotePort -or
-        [string]$allowAddress.LocalAddress -cne $TailscaleIPv4 -or $allowRemote -notin @('100.64.0.0/10', '100.64.0.0/255.192.0.0') -or
-        [string]$blockPort.Protocol -cne 'TCP' -or [string]$blockPort.LocalPort -cne '22' -or
-        $blockRemote -notin @('100.64.0.0/10', '100.64.0.0/255.192.0.0')) {
+        [string]$allowAddress.LocalAddress -cne $TailscaleIPv4 -or $allowRemote -notin @('100.64.0.0/10', '100.64.0.0/255.192.0.0')) {
         throw 'Remote SSH firewall rule filters are invalid.'
     }
 }
@@ -416,10 +408,10 @@ function Invoke-Activate {
         [ordered]@{ schemaVersion = $script:SchemaVersion; state = 'running'; pid = [int]$verified.pid } | ConvertTo-Json -Compress
         return
     }
-    if (Get-NetTCPConnection -State Listen -LocalPort $script:RemotePort -ErrorAction SilentlyContinue) {
+    if (Get-NetTCPConnection -State Listen -LocalAddress @('0.0.0.0', [string]$prepared.tailscaleIPv4) -LocalPort $script:RemotePort -ErrorAction SilentlyContinue) {
         throw 'Remote SSH port is already owned before activation.'
     }
-    foreach ($name in @($script:AllowRuleName, $script:BlockRuleName)) {
+    foreach ($name in @($script:AllowRuleName)) {
         if (Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue) { throw "Remote SSH firewall rule already exists before activation: $name" }
     }
     $process = $null
@@ -428,8 +420,6 @@ function Invoke-Activate {
         New-NetFirewallRule -Name $script:AllowRuleName -DisplayName 'Herdr Sandbox remote SSH over Tailscale' `
             -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalAddress ([string]$prepared.tailscaleIPv4) `
             -RemoteAddress '100.64.0.0/10' -LocalPort $script:RemotePort | Out-Null
-        New-NetFirewallRule -Name $script:BlockRuleName -DisplayName 'Block Herdr Sandbox management SSH from Tailscale' `
-            -Enabled True -Direction Inbound -Protocol TCP -Action Block -RemoteAddress '100.64.0.0/10' -LocalPort 22 | Out-Null
         Assert-FirewallRules -TailscaleIPv4 ([string]$prepared.tailscaleIPv4)
         foreach ($path in @($script:LogPath, $script:StdoutPath, $script:StderrPath)) {
             if (Test-Path -LiteralPath $path) { [void](Assert-RegularFile -Path $path -Maximum 1048576 -Role 'Remote SSH log') }

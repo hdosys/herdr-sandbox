@@ -10,37 +10,6 @@ import (
 	"testing"
 )
 
-func TestConsumeTailscaleAuthKeyEnvironmentClearsValue(t *testing.T) {
-	const key = "tskey-auth-test-only-value"
-	t.Setenv(tailscaleAuthKeyEnvironment, key)
-	got, found, err := consumeTailscaleAuthKeyEnvironment()
-	if err != nil {
-		t.Fatalf("consumeTailscaleAuthKeyEnvironment: %v", err)
-	}
-	defer clear(got)
-	if !found || string(got) != key {
-		t.Fatalf("key found = %t, value matches = %t", found, string(got) == key)
-	}
-	if _, found := os.LookupEnv(tailscaleAuthKeyEnvironment); found {
-		t.Fatal("auth key remained in the process environment")
-	}
-}
-
-func TestConsumeTailscaleAuthKeyEnvironmentRejectsSecretSafely(t *testing.T) {
-	const secret = "not-a-key secret-value"
-	t.Setenv(tailscaleAuthKeyEnvironment, secret)
-	_, _, err := consumeTailscaleAuthKeyEnvironment()
-	if err == nil {
-		t.Fatal("invalid key unexpectedly succeeded")
-	}
-	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "secret-value") {
-		t.Fatalf("error disclosed auth key: %v", err)
-	}
-	if _, found := os.LookupEnv(tailscaleAuthKeyEnvironment); found {
-		t.Fatal("invalid auth key remained in the process environment")
-	}
-}
-
 func TestTailscaleIdentityDPAPIRoundTripAndReplacement(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows DPAPI boundary")
@@ -112,11 +81,11 @@ func TestLoadTailscaleIdentityRejectsTamperedCiphertext(t *testing.T) {
 	}
 }
 
-func TestTailscaleIdentityRequiresTaggedPlaintextState(t *testing.T) {
+func TestTailscaleIdentityAcceptsUntaggedPlaintextState(t *testing.T) {
 	identity := testTailscaleIdentity(t, "100.64.0.10")
 	identity.Tags = nil
-	if err := identity.validate(); err == nil {
-		t.Fatal("untagged identity unexpectedly validated")
+	if err := identity.validate(); err != nil {
+		t.Fatalf("ordinary user-owned identity rejected: %v", err)
 	}
 	identity = testTailscaleIdentity(t, "100.64.0.10")
 	identity.State = []byte(`{"key":"sealed","nonce":"value","data":"value"}`)

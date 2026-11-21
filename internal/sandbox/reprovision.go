@@ -258,7 +258,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		if wasReady {
 			err = captureAndStoreTailscale(tailscaleContext, connection, plan.DataDirectory)
 		} else {
-			err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap)
+			err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap, options.Output)
 		}
 		cancelTailscale()
 		tailscaleReady = err == nil
@@ -344,7 +344,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	}
 	if len(plan.RemoteSSHAuthorizedKeys) > 0 && tailscaleReady {
 		if !wasReady {
-			if err := updateOperation("remote-ssh-preparation", "Preparing the private remote Herdr endpoint."); err != nil {
+			if err := updateOperation("remote-ssh-preparation", "Preparing general SSH access over Tailscale."); err != nil {
 				return Connection{}, err
 			}
 			if _, err := prepareRemoteSSH(ctx, connection, plan.DataDirectory, plan.RemoteSSHAuthorizedKeys); err != nil {
@@ -354,7 +354,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 				return Connection{}, err
 			}
 		}
-		if err := updateOperation("remote-ssh-verification", "Verifying the retained private remote Herdr endpoint."); err != nil {
+		if err := updateOperation("remote-ssh-verification", "Verifying general SSH access over Tailscale."); err != nil {
 			return Connection{}, err
 		}
 		access, err := verifyRemoteSSH(ctx, connection, plan.DataDirectory, plan.RemoteSSHAuthorizedKeys)
@@ -362,7 +362,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			return Connection{}, err
 		}
 		connection.RemoteAccess = &access
-		fmt.Fprintf(options.Output, "Remote Herdr endpoint verified: %s\n", access.URI)
+		fmt.Fprintf(options.Output, "Tailnet SSH endpoint verified: %s\n", access.URI)
 	}
 	if err := hostHerdr.verifyUnchanged(ctx); err != nil {
 		return Connection{}, err

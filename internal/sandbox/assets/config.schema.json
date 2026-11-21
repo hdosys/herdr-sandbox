@@ -48,7 +48,7 @@
     "tailscale": {
       "type": "boolean",
       "default": false,
-      "description": "Enables the stable tagged Tailscale identity."
+      "description": "Enables a stable Tailscale identity. First startup displays a browser sign-in link."
     },
     "remoteSSHAuthorizedKeys": {
       "type": "array",

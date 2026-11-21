@@ -103,8 +103,8 @@ function Read-TailscaleIdentity {
         $parsed = $null
         [Net.IPAddress]::TryParse([string]$_, [ref]$parsed) -and $parsed.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork
     })
-    $tags = @($status.Self.Tags)
-    if ($ipv4.Count -ne 1 -or $tags.Count -eq 0 -or [string]$status.Self.HostName -cne $HerdrTailscaleHostName -or
+    $tags = @($status.Self.Tags | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($ipv4.Count -ne 1 -or [string]$status.Self.HostName -cne $HerdrTailscaleHostName -or
         [string]::IsNullOrWhiteSpace([string]$status.Self.ID) -or [string]::IsNullOrWhiteSpace([string]$status.Self.PublicKey) -or
         [string]::IsNullOrWhiteSpace([string]$status.Self.DNSName) -or [string]::IsNullOrWhiteSpace([string]$status.Version)) { return $null }
     return [ordered]@{
@@ -121,14 +121,14 @@ function Read-TailscaleIdentity {
 }
 
 function Wait-TailscaleIdentity {
-    param([string]$ExpectedSID)
-    $deadline = [DateTime]::UtcNow.AddMinutes(2)
+    param([string]$ExpectedSID, [int]$Minutes = 2)
+    $deadline = [DateTime]::UtcNow.AddMinutes($Minutes)
     do {
         $identity = Read-TailscaleIdentity -ExpectedSID $ExpectedSID
         if ($null -ne $identity) { return $identity }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Tailscale did not reach the required tagged running identity.'
+    throw 'Tailscale did not reach the required running identity. Complete browser/device approval; an expired or revoked identity requires reauthorization. The Sandbox was preserved.'
 }
 
 function Capture-TailscaleStateBytes {

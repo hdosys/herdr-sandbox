@@ -131,7 +131,7 @@ func TestBuildRemoteAccessUsesStableMagicDNSAndPinnedHostFingerprint(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
+	if access.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:22" ||
 		access.DNSName != "herdr-sandbox.example.ts.net" || access.IPv4 != identity.IPv4 ||
 		access.SSHUser != remoteSSHUser || access.Port != remoteSSHPort || access.AuthorizedKeyCount != 2 ||
 		!strings.HasPrefix(access.HostKeyFingerprint, "SHA256:") {
@@ -144,7 +144,7 @@ func TestBuildRemoteAccessUsesStableMagicDNSAndPinnedHostFingerprint(t *testing.
 }
 
 func TestRenderRemoteAccessQRHasQuietZoneAndFinderPatterns(t *testing.T) {
-	lines, err := renderRemoteAccessQR("ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222")
+	lines, err := renderRemoteAccessQR("ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:22")
 	if err != nil {
 		t.Fatal(err)
 	}

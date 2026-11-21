@@ -190,16 +190,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	runContext, cancelRun := withOptionalTimeout(ctx, options.Timeout)
 	defer cancelRun()
 
-	var authKey []byte
-	var authKeyFound bool
 	var err error
-	if !options.InstallerProvisioning {
-		authKey, authKeyFound, err = consumeTailscaleAuthKeyEnvironment()
-		if err != nil {
-			return Connection{}, err
-		}
-	}
-	defer clear(authKey)
 
 	dataDirectory := options.DataDirectory
 	if dataDirectory == "" {
@@ -296,7 +287,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		}
 	}
 	if ready.SchemaVersion == 0 && !options.InstallerProvisioning {
-		tailscaleBootstrap, err = prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale, authKey, authKeyFound)
+		tailscaleBootstrap, err = prepareTailscaleBootstrap(dataDirectory, provisioning.Tailscale)
 		if err != nil {
 			return Connection{}, err
 		}

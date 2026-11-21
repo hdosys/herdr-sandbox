@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	remoteSSHPort                     = 2222
+	remoteSSHPort                     = 22
 	remoteSSHUser                     = "WDAGUtilityAccount"
 	remoteSSHAuthorizedKeysFileName   = "remote_authorized_keys"
 	maximumRemoteSSHAuthorizedKeys    = 8
@@ -24,7 +24,7 @@ const (
 	remoteSSHQRQuietZone              = 4
 )
 
-// RemoteAccess is the non-secret connection profile for the dedicated Herdr
+// RemoteAccess is the non-secret connection profile for general SSH access
 // endpoint exposed only through the opted-in Tailscale node.
 type RemoteAccess struct {
 	URI                string

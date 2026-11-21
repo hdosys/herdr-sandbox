@@ -151,7 +151,7 @@ func TestEnrichReadySessionReportsProtectedRemoteAccess(t *testing.T) {
 	active := activeSession{RunID: runID, StartedAtUTC: "2026-07-29T12:00:00Z", Tailscale: true}
 	status := SessionStatus{State: SessionReady, RunID: runID}
 	enrichSessionStatus(dataDirectory, active, &status)
-	if status.RemoteAccess == nil || status.RemoteAccess.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222" ||
+	if status.RemoteAccess == nil || status.RemoteAccess.URI != "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:22" ||
 		strings.Contains(strings.Join(status.Warnings, "\n"), "Remote SSH") {
 		t.Fatalf("enriched remote status = %#v", status)
 	}

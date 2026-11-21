@@ -214,11 +214,11 @@ func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
 
 func TestRunRemotePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
 	access := sandbox.RemoteAccess{
-		URI:                "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:2222",
+		URI:                "ssh://WDAGUtilityAccount@herdr-sandbox.example.ts.net:22",
 		DNSName:            "herdr-sandbox.example.ts.net",
 		IPv4:               "100.64.0.10",
 		SSHUser:            "WDAGUtilityAccount",
-		Port:               2222,
+		Port:               22,
 		HostKeyFingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		AuthorizedKeyCount: 1,
 	}

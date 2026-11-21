@@ -48,7 +48,7 @@ Commands:
   up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
   attach  verify and attach to the exact ready Sandbox without re-provisioning
   status  report the app-owned Sandbox; proven stale app state may be cleaned
-  remote  show the ready private remote Herdr endpoint and its secret-free QR code
+  remote  show the ready Tailnet SSH endpoint and its secret-free QR code
   down    stop only the exact app-owned Sandbox, then optionally pull host configuration
   clean   remove inactive app-owned run workspaces
 
@@ -708,7 +708,7 @@ func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now ti
 		fmt.Fprintln(output, "  Attach: herdr --remote sandbox")
 	}
 	if status.RemoteAccess != nil {
-		fmt.Fprintln(output, "\nRemote Herdr access")
+		fmt.Fprintln(output, "\nTailnet SSH access")
 		fmt.Fprintf(output, "  URI: %s\n", status.RemoteAccess.URI)
 		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.RemoteAccess.IPv4)
 		fmt.Fprintf(output, "  Host key: %s\n", status.RemoteAccess.HostKeyFingerprint)
@@ -901,7 +901,7 @@ func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(output, "Remote Herdr access")
+	fmt.Fprintln(output, "Tailnet SSH access")
 	fmt.Fprintf(output, "  URI: %s\n", access.URI)
 	fmt.Fprintf(output, "  Host: %s\n", access.DNSName)
 	fmt.Fprintf(output, "  Tailscale IPv4: %s\n", access.IPv4)
@@ -909,6 +909,9 @@ func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
 	fmt.Fprintf(output, "  Port: %d\n", access.Port)
 	fmt.Fprintf(output, "  Host key: %s\n", access.HostKeyFingerprint)
 	fmt.Fprintf(output, "  Authorized device keys: %d\n", access.AuthorizedKeyCount)
+	fmt.Fprintf(output, "\nSSH: ssh %s@%s\n", access.SSHUser, access.DNSName)
+	fmt.Fprintf(output, "Herdr: herdr machine add %s@%s\n", access.SSHUser, access.DNSName)
+	fmt.Fprintf(output, "Forward a service: ssh -N -L 8080:localhost:8080 %s@%s\n", access.SSHUser, access.DNSName)
 	fmt.Fprintln(output, "\nQR (contains only the connection URI, never a key or password)")
 	for _, line := range lines {
 		fmt.Fprintln(output, strings.ReplaceAll(line, "##", "██"))

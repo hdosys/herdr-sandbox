@@ -467,15 +467,6 @@ $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [En
         $lines += @'
 
 $env:PLAYWRIGHT_MCP_EXTENSION_TOKEN = [Environment]::GetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', 'Machine')
-$herdrSSHConnection = @(([string]$env:SSH_CONNECTION -split '\s+') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($herdrSSHConnection.Count -eq 4 -and [string]$herdrSSHConnection[3] -ceq '2222') {
-    $herdrExecutable = [Environment]::GetEnvironmentVariable('HERDR_SANDBOX_HERDR_EXE', 'Machine')
-    if ([string]::IsNullOrWhiteSpace($herdrExecutable) -or -not [IO.Path]::IsPathRooted($herdrExecutable) -or -not (Test-Path -LiteralPath $herdrExecutable -PathType Leaf)) {
-        throw 'Provisioned Herdr executable is unavailable for remote SSH.'
-    }
-    & $herdrExecutable
-    exit $LASTEXITCODE
-}
 '@
     }
     $lines += "`r`n"

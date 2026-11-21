@@ -645,15 +645,22 @@ try {
         throw 'Could not secure administrators_authorized_keys.'
     }
 
-    $sshdConfig = @'
+    $network = Get-NetIPConfiguration |
+        Where-Object { $null -ne $_.IPv4DefaultGateway -and $null -ne $_.IPv4Address } |
+        Select-Object -First 1
+    if ($null -eq $network) { throw 'No Sandbox network adapter with an IPv4 default gateway was found.' }
+    $ipAddress = ($network.IPv4Address | Select-Object -First 1).IPAddress
+    if ([string]::IsNullOrWhiteSpace($ipAddress)) { throw 'Sandbox IPv4 address is empty.' }
+
+    $sshdConfig = @"
 Port 22
 AddressFamily inet
-ListenAddress 0.0.0.0
+ListenAddress $ipAddress
 PubkeyAuthentication yes
 PasswordAuthentication no
 PermitEmptyPasswords no
 AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
-'@
+"@
     $sshdConfigPath = Join-Path $sshDirectory 'sshd_config'
     [IO.File]::WriteAllText($sshdConfigPath, $sshdConfig, $script:Utf8NoBom)
 
@@ -671,9 +678,9 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
     Start-Service -Name sshd
     if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
         New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' `
-            -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+            -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalAddress $ipAddress -LocalPort 22 | Out-Null
     } else {
-        Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP'
+        Set-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -Enabled True -LocalAddress $ipAddress
     }
     if (-not (Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue)) {
         throw 'sshd did not begin listening on TCP port 22.'
@@ -684,17 +691,6 @@ AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
         throw 'OpenSSH did not produce an Ed25519 host key.'
     }
     $sshHostKey = $hostKeyFields[0] + ' ' + $hostKeyFields[1]
-
-    $network = Get-NetIPConfiguration |
-        Where-Object { $null -ne $_.IPv4DefaultGateway -and $null -ne $_.IPv4Address } |
-        Select-Object -First 1
-    if ($null -eq $network) {
-        throw 'No Sandbox network adapter with an IPv4 default gateway was found.'
-    }
-    $ipAddress = ($network.IPv4Address | Select-Object -First 1).IPAddress
-    if ([string]::IsNullOrWhiteSpace($ipAddress)) {
-        throw 'Sandbox IPv4 address is empty.'
-    }
 
     $connectable = [ordered]@{
         schemaVersion = 1

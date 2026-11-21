@@ -49,24 +49,19 @@ type testExitCodeError int
 func (err testExitCodeError) Error() string { return "test command exit" }
 func (err testExitCodeError) ExitCode() int { return int(err) }
 
-func TestPrepareTailscaleBootstrapRequiresOnlyTheFirstAuthKey(t *testing.T) {
-	disabled, err := prepareTailscaleBootstrap(t.TempDir(), false, []byte("tskey-auth-unused"), true)
-	if err != nil || disabled.Enabled || disabled.Existing != nil || len(disabled.AuthKey) != 0 {
+func TestPrepareTailscaleBootstrapSelectsBrowserOrProtectedIdentity(t *testing.T) {
+	disabled, err := prepareTailscaleBootstrap(t.TempDir(), false)
+	if err != nil || disabled.Enabled || disabled.Existing != nil {
 		t.Fatalf("disabled bootstrap = %#v, error = %v", disabled, err)
 	}
 
 	dataDirectory := t.TempDir()
-	if _, err := prepareTailscaleBootstrap(dataDirectory, true, nil, false); err == nil || !strings.Contains(err.Error(), tailscaleAuthKeyEnvironment) {
-		t.Fatalf("missing first auth-key error = %v", err)
-	}
-	key := []byte("tskey-auth-test-only")
-	bootstrap, err := prepareTailscaleBootstrap(dataDirectory, true, key, true)
+	bootstrap, err := prepareTailscaleBootstrap(dataDirectory, true)
 	if err != nil {
 		t.Fatalf("prepare first enrollment: %v", err)
 	}
 	defer bootstrap.clear()
-	key[0] = 'X'
-	if !bootstrap.Enabled || bootstrap.Existing != nil || string(bootstrap.AuthKey) != "tskey-auth-test-only" {
+	if !bootstrap.Enabled || bootstrap.Existing != nil {
 		t.Fatalf("first enrollment bootstrap = %#v", bootstrap)
 	}
 	if runtime.GOOS == "windows" {
@@ -74,12 +69,12 @@ func TestPrepareTailscaleBootstrapRequiresOnlyTheFirstAuthKey(t *testing.T) {
 		if err := storeTailscaleIdentity(storedDirectory, testTailscaleIdentity(t, "100.64.0.10")); err != nil {
 			t.Fatal(err)
 		}
-		restored, err := prepareTailscaleBootstrap(storedDirectory, true, nil, false)
+		restored, err := prepareTailscaleBootstrap(storedDirectory, true)
 		if err != nil {
-			t.Fatalf("prepare existing identity without another auth key: %v", err)
+			t.Fatalf("prepare existing identity without another browser login: %v", err)
 		}
 		defer restored.clear()
-		if restored.Existing == nil || len(restored.AuthKey) != 0 {
+		if restored.Existing == nil {
 			t.Fatalf("existing identity bootstrap = %#v", restored)
 		}
 	}
@@ -104,13 +99,12 @@ func TestChildProcessEnvironmentAlwaysRemovesTailscaleAuthKey(t *testing.T) {
 
 func TestTailscaleApplyRequestsFailBeforeSSHWhenInvalid(t *testing.T) {
 	tests := map[string]tailscaleApplyRequest{
-		"schema":           {SchemaVersion: tailscaleApplySchemaVersion + 1, Mode: tailscaleApplyModeEnroll, AuthKey: []byte("key")},
-		"mode":             {SchemaVersion: tailscaleApplySchemaVersion, Mode: "other", AuthKey: []byte("key")},
-		"missing key":      {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeEnroll},
-		"oversized key":    {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeEnroll, AuthKey: bytes.Repeat([]byte{'x'}, maximumTailscaleAuthKeyBytes+1)},
-		"restore with key": {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore, AuthKey: []byte("key"), State: []byte("state"), WindowsUserSID: "S-1-5-21-1"},
-		"oversized state":  {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore, State: bytes.Repeat([]byte{'x'}, maximumTailscaleStateBytes+1), WindowsUserSID: "S-1-5-21-1"},
-		"invalid SID":      {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore, State: []byte("state"), WindowsUserSID: "not-a-sid"},
+		"schema":            {SchemaVersion: tailscaleApplySchemaVersion + 1, Mode: tailscaleApplyModeEnroll},
+		"mode":              {SchemaVersion: tailscaleApplySchemaVersion, Mode: "other"},
+		"missing state":     {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore},
+		"enroll with state": {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeEnroll, State: []byte("state")},
+		"oversized state":   {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore, State: bytes.Repeat([]byte{'x'}, maximumTailscaleStateBytes+1), WindowsUserSID: "S-1-5-21-1"},
+		"invalid SID":       {SchemaVersion: tailscaleApplySchemaVersion, Mode: tailscaleApplyModeRestore, State: []byte("state"), WindowsUserSID: "not-a-sid"},
 	}
 	for name, request := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -118,6 +112,55 @@ func TestTailscaleApplyRequestsFailBeforeSSHWhenInvalid(t *testing.T) {
 				t.Fatalf("invalid request crossed the SSH boundary: %v", err)
 			}
 		})
+	}
+}
+
+func TestBrowserEnrollmentOnlyDisplaysValidatedOfficialLinks(t *testing.T) {
+	for _, state := range []tailscaleEnrollment{
+		{BackendState: "NeedsLogin", AuthURL: "https://login.tailscale.com/a/0123456789abcdef"},
+		{BackendState: "NeedsMachineAuth"},
+		{BackendState: "Running"},
+	} {
+		data, _ := json.Marshal(state)
+		if got, err := decodeTailscaleEnrollment(data); err != nil || got != state {
+			t.Fatalf("valid enrollment rejected: %#v %v", got, err)
+		}
+	}
+	for _, link := range []string{"", "http://login.tailscale.com/a/123", "https://attacker.example/a/123", "https://login.tailscale.com@attacker.example/a/123", "https://login.tailscale.com/a/123\nunsafe", "https://login.tailscale.com/a/123?secret=value"} {
+		data, _ := json.Marshal(tailscaleEnrollment{BackendState: "NeedsLogin", AuthURL: link})
+		if _, err := decodeTailscaleEnrollment(data); err == nil {
+			t.Fatalf("unsafe browser link accepted: %q", link)
+		}
+	}
+	for _, data := range []string{`{"backendState":"Stopped","authURL":""}`, `{"backendState":"Running"}`, `{"backendState":"Running","authURL":"","extra":true}`} {
+		if _, err := decodeTailscaleEnrollment([]byte(data)); err == nil {
+			t.Fatalf("invalid enrollment accepted: %s", data)
+		}
+	}
+}
+
+func TestTailscaleIdentityParserAcceptsOrdinaryUserNode(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "")
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: filepath.Join("assets", "tailscale-lifecycle.ps1"), names: []string{"Read-TailscaleIdentity"},
+	})
+	script := "$ErrorActionPreference='Stop'\n" + setup + `
+$HerdrTailscaleHostName = 'herdr-sandbox'
+$HerdrTailscaleIdentitySchemaVersion = 1
+function Get-TailscaleExecutable { return 'Read-TestStatus' }
+function Read-TestStatus {
+    $global:LASTEXITCODE = 0
+    return '{"BackendState":"Running","Self":{"ID":"node-test","PublicKey":"nodekey:test","HostName":"herdr-sandbox","DNSName":"herdr-sandbox.example.ts.net."},"TailscaleIPs":["100.64.0.10"],"Version":"1.104.7"}'
+}
+$identity = Read-TailscaleIdentity -ExpectedSID 'S-1-5-21-1'
+if ($null -eq $identity -or @($identity.tags).Count -ne 0 -or $identity.nodeID -cne 'node-test') { throw 'Ordinary untagged node was rejected.' }
+'verified ordinary node'
+`
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodePowerShell(script))
+	if output, err := command.CombinedOutput(); err != nil || !bytes.Contains(output, []byte("verified ordinary node")) {
+		t.Fatalf("ordinary node parser: %v %s", err, output)
 	}
 }
 
@@ -206,14 +249,10 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 		digest,
 		"EncryptState",
 		"HardwareAttestation",
-		"--auth-key=file:",
 		"status --json --peers=false",
-		"-IdentityNotEstablishedExitCode 42",
 		"Join-Path $env:ProgramData 'Tailscale\\server-state.conf'",
 		"Stop-TailscaleService",
 		"Start-TailscaleService",
-		"Remove-Item -LiteralPath $authPath -Force -ErrorAction Stop",
-		"auth-key staging cleanup did not remove the credential file",
 		"plaintext state staging cleanup did not remove the credential file",
 	} {
 		if !strings.Contains(apply, required) {
@@ -237,15 +276,12 @@ func TestTailscaleLaunchersUseBoundedSecretSafePowerShell51(t *testing.T) {
 	if restartBodyIndex < 0 || !strings.Contains(restart[restartBodyIndex:], "Start-TailscaleService") {
 		t.Fatal("failed-down rollback does not restart Tailscale")
 	}
-	if strings.Contains(apply, "Remove-Item -LiteralPath $authPath -Force -ErrorAction SilentlyContinue") {
-		t.Fatal("Tailscale launcher silently ignores auth-key staging cleanup")
-	}
 	declaration := strings.Index(apply, "function Assert-ExactProperties")
 	use := strings.Index(apply, "Assert-ExactProperties $request")
 	if declaration < 0 || use < 0 || declaration > use {
 		t.Fatal("Tailscale helper functions are declared after use")
 	}
-	for name, script := range map[string]string{"apply": apply, "capture": capture, "down capture": downCapture, "failed-down restart": restart} {
+	for name, script := range map[string]string{"apply": apply, "capture": capture, "down capture": downCapture, "failed-down restart": restart, "browser enrollment": tailscalePowerShellFunctions() + "\n" + tailscaleEnrollPowerShell} {
 		t.Run(name, func(t *testing.T) {
 			assertPowerShell51Parses(t, script)
 		})

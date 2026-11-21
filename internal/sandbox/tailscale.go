@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ const (
 	maximumTailscaleCaptureResultBytes      = maximumTailscaleIdentityBytes
 )
 
-var errTailscaleIdentityNotEstablished = errors.New("enrollment through Tailscale did not establish a tagged running identity")
+var errTailscaleIdentityNotEstablished = errors.New("enrollment through Tailscale did not establish a running identity")
 
 //go:embed assets/tailscale-lifecycle.ps1
 var tailscaleLifecyclePowerShell string
@@ -33,10 +34,12 @@ var tailscaleLifecyclePowerShell string
 //go:embed assets/tailscale-apply.ps1
 var tailscaleApplyPowerShell string
 
+//go:embed assets/tailscale-enroll.ps1
+var tailscaleEnrollPowerShell string
+
 type tailscaleBootstrap struct {
 	Enabled  bool
 	Existing *tailscaleIdentity
-	AuthKey  []byte
 }
 
 func (bootstrap tailscaleBootstrap) confirmedNotEnrolled(wasReady bool, err error) bool {
@@ -46,7 +49,6 @@ func (bootstrap tailscaleBootstrap) confirmedNotEnrolled(wasReady bool, err erro
 type tailscaleApplyRequest struct {
 	SchemaVersion  int    `json:"schemaVersion"`
 	Mode           string `json:"mode"`
-	AuthKey        []byte `json:"authKey"`
 	State          []byte `json:"state"`
 	WindowsUserSID string `json:"windowsUserSID"`
 }
@@ -56,7 +58,7 @@ type tailscaleStateCapture struct {
 	State          []byte `json:"state"`
 }
 
-func prepareTailscaleBootstrap(dataDirectory string, enabled bool, authKey []byte, authKeyFound bool) (tailscaleBootstrap, error) {
+func prepareTailscaleBootstrap(dataDirectory string, enabled bool) (tailscaleBootstrap, error) {
 	bootstrap := tailscaleBootstrap{Enabled: enabled}
 	if !enabled {
 		return bootstrap, nil
@@ -69,40 +71,35 @@ func prepareTailscaleBootstrap(dataDirectory string, enabled bool, authKey []byt
 		bootstrap.Existing = &identity
 		return bootstrap, nil
 	}
-	if !authKeyFound || len(authKey) == 0 {
-		return tailscaleBootstrap{}, errors.New("tailscale is enabled but no protected identity exists; set HERDR_SANDBOX_TAILSCALE_AUTH_KEY to one one-off preapproved tagged auth key for the first up")
-	}
-	bootstrap.AuthKey = append([]byte(nil), authKey...)
 	return bootstrap, nil
 }
 
 func (bootstrap *tailscaleBootstrap) clear() {
-	clear(bootstrap.AuthKey)
-	bootstrap.AuthKey = nil
 	if bootstrap.Existing != nil {
 		clear(bootstrap.Existing.State)
 		bootstrap.Existing.State = nil
 	}
 }
 
-func configureFreshTailscale(ctx context.Context, connection Connection, dataDirectory string, bootstrap tailscaleBootstrap) error {
+func configureFreshTailscale(ctx context.Context, connection Connection, dataDirectory string, bootstrap tailscaleBootstrap, output io.Writer) error {
 	if !bootstrap.Enabled {
 		return nil
 	}
 	request := tailscaleApplyRequest{SchemaVersion: tailscaleApplySchemaVersion}
 	if bootstrap.Existing == nil {
+		if err := beginTailscaleEnrollment(ctx, connection, output); err != nil {
+			return err
+		}
 		request.Mode = tailscaleApplyModeEnroll
-		request.AuthKey = append([]byte(nil), bootstrap.AuthKey...)
 	} else {
 		request.Mode = tailscaleApplyModeRestore
 		request.State = append([]byte(nil), bootstrap.Existing.State...)
 		request.WindowsUserSID = bootstrap.Existing.WindowsUserSID
 	}
-	defer clear(request.AuthKey)
 	defer clear(request.State)
 	identity, err := applyAndCaptureTailscale(ctx, connection, request)
 	if err != nil {
-		return err
+		return fmt.Errorf("Tailscale identity is not ready; complete browser/device approval or check device expiry and revocation in your tailnet; the guest is preserved: %w", err)
 	}
 	defer clear(identity.State)
 	if bootstrap.Existing != nil {
@@ -111,6 +108,62 @@ func configureFreshTailscale(ctx context.Context, connection Connection, dataDir
 		}
 	}
 	return storeTailscaleIdentity(dataDirectory, identity)
+}
+
+type tailscaleEnrollment struct {
+	BackendState string `json:"backendState"`
+	AuthURL      string `json:"authURL"`
+}
+
+func decodeTailscaleEnrollment(data []byte) (tailscaleEnrollment, error) {
+	var result tailscaleEnrollment
+	if len(data) > 8192 {
+		return result, errors.New("tailscale enrollment response is too large")
+	}
+	if err := validateExactJSONObjectShape(data, "tailscale enrollment", []string{"backendState", "authURL"}); err != nil {
+		return result, errors.New("tailscale enrollment response shape is invalid")
+	}
+	if err := decodeStrictJSON(data, &result); err != nil {
+		return result, errors.New("tailscale enrollment response is invalid")
+	}
+	switch result.BackendState {
+	case "Running", "NeedsMachineAuth":
+		if result.AuthURL != "" {
+			return result, errors.New("tailscale returned an unexpected enrollment URL")
+		}
+	case "NeedsLogin":
+		link, err := url.Parse(result.AuthURL)
+		if err != nil || len(result.AuthURL) > 2048 || link.Scheme != "https" || link.Host != "login.tailscale.com" ||
+			link.User != nil || !strings.HasPrefix(link.Path, "/a/") || len(strings.TrimPrefix(link.Path, "/a/")) == 0 ||
+			link.RawQuery != "" || link.Fragment != "" || strings.ContainsAny(result.AuthURL, "\x00\r\n\t ") {
+			return result, errors.New("tailscale returned an invalid browser enrollment URL")
+		}
+	default:
+		return result, errors.New("tailscale did not start browser enrollment")
+	}
+	return result, nil
+}
+
+func beginTailscaleEnrollment(ctx context.Context, connection Connection, output io.Writer) error {
+	launcher := tailscalePowerShellFunctions() + "\n" + tailscaleEnrollPowerShell
+	resultJSON, err := runSecretSSHPowerShell(ctx, connection, nil, launcher, "start Tailscale browser enrollment", 8192)
+	if err != nil {
+		if commandExitedWith(err, tailscaleIdentityNotEstablishedExitCode) {
+			return errTailscaleIdentityNotEstablished
+		}
+		return err
+	}
+	defer clear(resultJSON)
+	result, err := decodeTailscaleEnrollment(resultJSON)
+	if err != nil {
+		return err
+	}
+	if result.BackendState == "NeedsLogin" {
+		fmt.Fprintf(output, "Sign in to your existing tailnet in a browser:\n%s\nWaiting up to eight minutes for this Sandbox to be authorized...\n", result.AuthURL)
+	} else if result.BackendState == "NeedsMachineAuth" {
+		fmt.Fprintln(output, "Approve herdr-sandbox in your Tailscale admin console. Waiting up to eight minutes...")
+	}
+	return nil
 }
 
 func captureAndStoreTailscale(ctx context.Context, connection Connection, dataDirectory string) error {
@@ -181,10 +234,10 @@ func applyAndCaptureTailscale(ctx context.Context, connection Connection, reques
 		return tailscaleIdentity{}, errors.New("apply request for Tailscale is invalid")
 	}
 	if request.Mode == tailscaleApplyModeEnroll {
-		if len(request.AuthKey) == 0 || len(request.AuthKey) > maximumTailscaleAuthKeyBytes || len(request.State) != 0 || request.WindowsUserSID != "" {
+		if len(request.State) != 0 || request.WindowsUserSID != "" {
 			return tailscaleIdentity{}, errors.New("enrollment request for Tailscale is invalid")
 		}
-	} else if len(request.State) == 0 || len(request.State) > maximumTailscaleStateBytes || len(request.AuthKey) != 0 || !windowsSIDPattern.MatchString(request.WindowsUserSID) {
+	} else if len(request.State) == 0 || len(request.State) > maximumTailscaleStateBytes || !windowsSIDPattern.MatchString(request.WindowsUserSID) {
 		return tailscaleIdentity{}, errors.New("restoration request for Tailscale is invalid")
 	}
 	payload, err := json.Marshal(request)
@@ -323,9 +376,9 @@ func buildTailscaleApplyLauncher(expectedDigest string, payloadLength int) strin
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$result = Invoke-TailscaleApply -ExpectedLength %d -ExpectedDigest '%s' -ApplySchemaVersion %d -MaximumAuthKeyBytes %d -IdentityNotEstablishedExitCode %d
+$result = Invoke-TailscaleApply -ExpectedLength %d -ExpectedDigest '%s' -ApplySchemaVersion %d
 [Console]::Out.Write(($result | ConvertTo-Json -Compress))
-exit 0`, tailscalePowerShellFunctions(), tailscaleApplyPowerShell, payloadLength, expectedDigest, tailscaleApplySchemaVersion, maximumTailscaleAuthKeyBytes, tailscaleIdentityNotEstablishedExitCode)
+exit 0`, tailscalePowerShellFunctions(), tailscaleApplyPowerShell, payloadLength, expectedDigest, tailscaleApplySchemaVersion)
 }
 
 func buildTailscaleCaptureLauncher() string {
