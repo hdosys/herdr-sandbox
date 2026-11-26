@@ -24,8 +24,6 @@ $script:PublicKeyPath = $script:PrivateKeyPath + '.pub'
 $script:AuthorizedKeysPath = Join-Path $script:Root 'authorized_keys'
 $script:StableScriptPath = Join-Path $script:Root 'remote-ssh.ps1'
 $script:LogPath = Join-Path $script:Root 'sshd.log'
-$script:StdoutPath = Join-Path $script:Root 'sshd.stdout.log'
-$script:StderrPath = Join-Path $script:Root 'sshd.stderr.log'
 $script:AllowRuleName = 'HerdrSandbox-RemoteSSH-In-TCP'
 $script:Utf8NoBom = New-Object Text.UTF8Encoding($false)
 
@@ -432,12 +430,13 @@ function Invoke-Activate {
             -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalAddress ([string]$prepared.tailscaleIPv4) `
             -RemoteAddress '100.64.0.0/10' -LocalPort $script:RemotePort | Out-Null
         Assert-FirewallRules -TailscaleIPv4 ([string]$prepared.tailscaleIPv4)
-        foreach ($path in @($script:LogPath, $script:StdoutPath, $script:StderrPath)) {
-            if (Test-Path -LiteralPath $path) { [void](Assert-RegularFile -Path $path -Maximum 1048576 -Role 'Remote SSH log') }
+        if (Test-Path -LiteralPath $script:LogPath) {
+            [void](Assert-RegularFile -Path $script:LogPath -Maximum 1048576 -Role 'Remote SSH log')
         }
         $arguments = @('-D', '-f', $script:ConfigPath, '-E', $script:LogPath)
-        $process = Start-Process -FilePath $sshd -ArgumentList $arguments -WindowStyle Hidden `
-            -RedirectStandardOutput $script:StdoutPath -RedirectStandardError $script:StderrPath -PassThru
+        # Stream redirection retains the calling SSH channel's pipe handles in the
+        # long-lived child. Detach it; sshd owns diagnostics through its -E log.
+        $process = Start-Process -FilePath $sshd -ArgumentList $arguments -WindowStyle Hidden -PassThru
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
             if ($process.HasExited) { throw "Remote SSH server exited with code $($process.ExitCode)." }
