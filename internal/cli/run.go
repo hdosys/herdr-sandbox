@@ -502,7 +502,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 	}
 	if noAttach {
-		fmt.Fprintln(stdout, "Next: run `sandbox attach` or `herdr --remote sandbox`.")
+		fmt.Fprintln(stdout, "Next: run `sandbox attach` or `herdr --remote sandbox --remote-keybindings server`.")
 		return 0
 	}
 	return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
@@ -723,7 +723,7 @@ func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now ti
 		}
 	}
 	if attachable {
-		fmt.Fprintln(output, "  Attach: herdr --remote sandbox")
+		fmt.Fprintln(output, "  Attach: herdr --remote sandbox --remote-keybindings server")
 	}
 	if status.RemoteAccess != nil {
 		fmt.Fprintln(output, "\nTailnet SSH access")
@@ -926,7 +926,7 @@ func printRemoteAccess(output io.Writer, access sandbox.RemoteAccess) error {
 	fmt.Fprintf(output, "\nSSH: ssh %s@%s\n", access.SSHUser, access.DNSName)
 	fmt.Fprintf(output, "Herdr: herdr machine add %s@%s\n", access.SSHUser, access.DNSName)
 	fmt.Fprintf(output, "Forward a service: ssh -N -L 8080:localhost:8080 %s@%s\n", access.SSHUser, access.DNSName)
-	fmt.Fprintln(output, "\nOn this host, the existing `ssh sandbox` and `herdr --remote sandbox` connections already use the managed key.")
+	fmt.Fprintln(output, "\nOn this host, the existing `ssh sandbox` and `herdr --remote sandbox --remote-keybindings server` connections already use the managed key.")
 	return nil
 }
 

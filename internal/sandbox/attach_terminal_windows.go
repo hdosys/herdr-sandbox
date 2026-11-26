@@ -21,11 +21,11 @@ func validateInteractiveAttachStreams(stdin io.Reader, stdout, stderr io.Writer)
 	for _, stream := range streams {
 		file, ok := stream.value.(*os.File)
 		if !ok {
-			return fmt.Errorf("automatic Herdr attach requires an interactive Windows terminal: %s is redirected; use herdr --remote sandbox", stream.name)
+			return fmt.Errorf("automatic Herdr attach requires an interactive Windows terminal: %s is redirected; use herdr --remote sandbox --remote-keybindings server", stream.name)
 		}
 		var mode uint32
 		if err := syscall.GetConsoleMode(syscall.Handle(file.Fd()), &mode); err != nil {
-			return fmt.Errorf("automatic Herdr attach requires an interactive Windows terminal: %s is not a console; use herdr --remote sandbox", stream.name)
+			return fmt.Errorf("automatic Herdr attach requires an interactive Windows terminal: %s is not a console; use herdr --remote sandbox --remote-keybindings server", stream.name)
 		}
 	}
 	return nil

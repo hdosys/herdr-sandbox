@@ -34,8 +34,9 @@ represent failed tag attempts; this changelog does not recreate them.
 - WinGet provisioning uses a contained hidden PowerShell launch on Windows hosts
   where direct packaged-app process creation is denied. Workstation setup leaves
   the protected Widgets policy unchanged while applying the other desktop settings.
-- The printed manual attach command selects server keybindings, matching
-  `sandbox attach` and preserving guest custom shortcuts.
+- All printed manual attach commands, including status and noninteractive guidance,
+  select server keybindings, matching `sandbox attach` and preserving guest custom
+  shortcuts.
 - Sandbox Java downloads use the selected package's verified HTTPS payload rather
   than Delivery Optimization, which could return an HTML page for its redirect.
 - Android provisioning recognizes ADB's current pairing syntax with QR support

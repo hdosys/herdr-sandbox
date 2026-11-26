@@ -276,7 +276,7 @@ Use `--yes` to approve the same bounded selection noninteractively. `--key FILE`
 replaces automatic source discovery for that invocation, not existing configured
 keys. Devices already covered by the imported list need no additional key setup;
 each device keeps and uses its own private key. The host already has `ssh sandbox`
-and `herdr --remote sandbox` through its managed identity. Other devices use the
+and `herdr --remote sandbox --remote-keybindings server` through its managed identity. Other devices use the
 DNS commands printed by `sandbox remote`; verify the displayed host fingerprint
 on first connection. See [optional workflows](#optional-workflows) for manual
 configuration and forwarding.

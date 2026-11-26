@@ -11,7 +11,7 @@ import (
 func TestValidateInteractiveAttachStreamsRejectsRedirectedStreams(t *testing.T) {
 	var stream bytes.Buffer
 	err := validateInteractiveAttachStreams(&stream, &stream, &stream)
-	if err == nil || !strings.Contains(err.Error(), "stdin is redirected") || !strings.Contains(err.Error(), "herdr --remote sandbox") {
+	if err == nil || !strings.Contains(err.Error(), "stdin is redirected") || !strings.Contains(err.Error(), "herdr --remote sandbox --remote-keybindings server") {
 		t.Fatalf("error = %v", err)
 	}
 }

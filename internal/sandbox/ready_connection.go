@@ -115,7 +115,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 	}
 	fmt.Fprintln(output, "Ready Sandbox")
 	fmt.Fprintf(output, "  Run: %s\n", active.RunID)
-	fmt.Fprintf(output, "  Attach: herdr --remote %s\n", connection.SSHTarget)
+	fmt.Fprintf(output, "  Attach: herdr --remote %s --remote-keybindings server\n", connection.SSHTarget)
 	return connection, nil
 }
 

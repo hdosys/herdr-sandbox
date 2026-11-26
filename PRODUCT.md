@@ -367,7 +367,7 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   The remote Ed25519 server key persists as current-user DPAPI ciphertext so its
   SHA-256 fingerprint survives fresh Sandboxes. `sandbox remote` prints compact
   commands and that fingerprint; `--qr` adds a URI-only QR. The host retains
-  `ssh sandbox` and `herdr --remote sandbox` using its managed identity; other
+  `ssh sandbox` and `herdr --remote sandbox --remote-keybindings server` using its managed identity; other
   devices use the DNS commands with their own private keys. Changing authorized
   keys requires an explicitly requested `down` and fresh `up`, not live listener
   mutation. Forwarding binds loopback by default; direct service access needs an
