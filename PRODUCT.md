@@ -350,9 +350,11 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   searches `.pub` or private-key files, copies private keys, or requires manual
   JSON editing or key generation.
 - After approval, setup atomically saves `tailscale: true` and the merged keys
-  while preserving unrelated configuration, then invokes normal `up --no-attach`
-  and displays remote commands. `--no-start` saves only, without starting or
-  reprovisioning. Setup never closes or restarts a ready Sandbox; incompatible
+  while preserving unrelated configuration. For a ready tailnet Sandbox it applies
+  the approved keys over verified management SSH without provisioning or restarting
+  services, then displays remote commands with the Sandbox username. Only when no
+  managed Sandbox exists does setup invoke `up --no-attach`. Setup never closes or
+  restarts a ready Sandbox; incompatible
   settings remain saved for the next explicitly authorized fresh startup.
   Existing devices covered by the imported list need no additional key setup;
   genuinely new devices supply their public key through `--key FILE`.
@@ -369,8 +371,9 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   commands and that fingerprint; `--qr` adds a URI-only QR. The host retains
   `ssh sandbox` and `herdr --remote sandbox --remote-keybindings server` using its managed identity; other
   devices use the DNS commands with their own private keys. Changing authorized
-  keys requires an explicitly requested `down` and fresh `up`, not live listener
-  mutation. Forwarding binds loopback by default; direct service access needs an
+  keys through `remote setup` takes effect for new connections immediately, without
+  restarting the listener or disconnecting existing sessions. Forwarding binds
+  loopback by default; direct service access needs an
   intentional service bind and firewall rule.
 - The same config may set `cacheDirectory` to an absolute, dedicated Herdr Sandbox cache directory on any available drive; it must not be a shared data directory because uninstall treats it as disposable and attempts recursive removal. Files still locked by an active compiler, test, agent, or tool are preserved without blocking application removal. When omitted or empty, the cache defaults beneath the system-selected temporary directory (`<system-temp>\herdr-sandbox\cache`, normally `%TEMP%\herdr-sandbox\cache`); the guest always sees the selected directory at `C:\HerdrSandbox\cache`. Caching is strictly demand-driven: a normal provisioning run stores only payloads it actually needs, and later normal runs reuse them without downloading those payloads again; no separate warm, prefetch, or scheduled mode exists. The guest caches the immutable WinGet bundle/dependencies, VC++ runtime, OpenSSH MSI, supported WinGet installer payloads, and each concretely resolved Rust distribution by verified digest, then copies executable bootstrap inputs guest-local before use. Herdr's matching runtime travels through its managed remote SSH provisioning path and never enters the Sandbox package cache or read-only bootstrap input. Because Microsoft's layout bootstrapper cannot create a complete layout inside a Windows 10 Sandbox, `sandbox up` creates or updates the required Visual Studio Build Tools layout automatically on the host only when the selected project needs it and no valid Current layout exists; the guest then revalidates, materializes, and installs that layout offline. Provisioning time is evaluated against the selected project plan and cache state rather than one universal wall-clock target: the maximal `native-all-stacks` fixture deliberately installs every supported stack as a breadth and compatibility gate and is not representative of normal project startup. Performance work requires a measured regression or concrete critical-path owner in a realistic project plan; adding supported stacks does not block unrelated feature work.
 - When Current Visual Studio layout preparation fails, provisioning may continue with an existing cached A/B layout only after its signed channel, artifact hashes, selected components, bootstrapper, and safe paths all revalidate. The cached build is reported as a warning. An unavailable or unverifiable layout remains a failure.

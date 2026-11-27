@@ -21,7 +21,8 @@ represent failed tag attempts; this changelog does not recreate them.
 - `sandbox remote setup` previews standard host incoming SSH public-key lists and
   enables ordinary tailnet SSH with one confirmation, preserving configured keys.
   The host's managed key is included automatically; `--key FILE` adds a new
-  device, and `--no-start` saves without starting or reprovisioning a Sandbox.
+  device directly to a ready tailnet Sandbox without restarting it, disconnecting
+  sessions, or repeating provisioning.
 - First Tailscale sign-in opens in the default browser. `sandbox remote` shows
   compact SSH and Herdr connection commands plus the host fingerprint; `--qr`
   adds the optional connection QR. Additional keys support Ed25519, RSA of at

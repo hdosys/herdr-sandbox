@@ -435,8 +435,8 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   of at most seven additional unique canonical public keys: Ed25519, RSA of at
   least 2048 bits, or ECDSA nistp256/384/521. A nonempty array requires Tailscale.
   Every enabled `up` adds the same app-owned management client public key,
-  reserving its slot in the immutable per-run authorization set. Go canonicalizes
-  and sorts that set; changes require a fresh Sandbox. No password, device private
+  reserving its slot in the per-run authorization set. Go canonicalizes
+  and sorts that set. No password, device private
   key, or remote-client profile enters this owner. The durable remote server key
   remains Ed25519 independently of supported client key types.
 - `remote setup` reuses configuration validation and atomic persistence. It
@@ -448,10 +448,17 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   Restricted authorized-key options fail before mutation; they are never stripped.
   Discovery neither searches `.pub`/private files nor evaluates custom `sshd`
   sources or Match rules. There is no ongoing synchronization or pairing service.
-  Saving preserves unrelated configuration, then dispatches normal `up --no-attach`
-  and remote display. `--no-start` stops after saving. A ready-guest mismatch leaves
-  the settings saved for an explicitly authorized fresh startup, without closing
-  or restarting that guest.
+  Saving preserves unrelated configuration. A ready tailnet guest receives a
+  key-only update under the existing lifecycle lock and pinned management SSH
+  connection. `assets/remote-ssh-keys.ps1` reuses the hash-verified remote SSH
+  control owner, validates the proposed public keys with OpenSSH, atomically
+  replaces the authorization file and updates its existing prepared digest.
+  Exact read-back and unchanged listener identity precede atomic publication to
+  the existing run-input authorization snapshot. No new state owner, enrollment,
+  Herdr operation, listener restart or provisioning is involved. A partial failure
+  is reported, never treated as confirmed access. With no managed guest, setup
+  dispatches normal `up --no-attach`; a non-ready or non-tailnet guest is preserved
+  and reported rather than automatically replaced.
 
 ### Package And Agent Sync Planning
 

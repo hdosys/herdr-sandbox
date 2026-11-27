@@ -35,7 +35,7 @@ const usage = `Usage:
   sandbox attach
   sandbox status
   sandbox remote [--qr]
-  sandbox remote setup [--key PUBLIC_KEY_FILE] [--yes] [--no-start]
+  sandbox remote setup [--key PUBLIC_KEY_FILE] [--yes]
   sandbox down
   sandbox clean
 
@@ -104,6 +104,7 @@ type commandDependencies struct {
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
 	openConfig                 func() (string, bool, error)
 	setupRemote                func(context.Context, string, func(sandbox.RemoteSetup) bool) (bool, error)
+	applyRemoteKeys            func(context.Context) (bool, error)
 	seedInstaller              func() error
 	stopInstallerProcesses     func(context.Context) error
 	cleanInstaller             func(context.Context, bool) error
@@ -128,6 +129,7 @@ func defaultCommandDependencies() commandDependencies {
 		initialize:                 sandbox.InitializeProject,
 		openConfig:                 sandbox.OpenConfiguration,
 		setupRemote:                sandbox.SetupRemote,
+		applyRemoteKeys:            sandbox.ApplyRemoteKeys,
 		seedInstaller:              sandbox.SeedInstallerConfiguration,
 		stopInstallerProcesses:     sandbox.StopInstallerProcesses,
 		cleanInstaller:             sandbox.CleanInstallerData,

@@ -72,7 +72,7 @@ The product protects these boundaries:
 - The app-owned SSH private key remains on the host; only its public key enters
   the guest.
 - Remote SSH private keys remain on their originating phones, tablets, or
-  computers. Configuration and immutable run input contain only canonical
+  computers. Configuration and the active run input contain only canonical
   public keys (Ed25519, RSA of at least 2048 bits, or ECDSA nistp256/384/521);
   the optional QR contains only a connection URI.
 - With Tailscale enabled, every `up` includes the app-owned host management public
@@ -85,6 +85,11 @@ The product protects these boundaries:
   No `.pub` or private-key search, private-key copy, or ongoing source sync occurs.
   Custom SSH sources and effective `sshd` Match rules are not discovered. Entries
   with authorization options fail before changes rather than losing restrictions.
+- Approved key changes use the pinned management SSH channel and existing lifecycle
+  lock. The running tailnet listener keeps its host identity, firewall and sessions;
+  new authentication reads the updated authorized-key file. An exact verified
+  read-back precedes updating the active run snapshot. No other tailnet peer gains
+  implicit trust, and existing SSH sessions are not revoked by a key-file update.
 - The separate remote SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.

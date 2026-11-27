@@ -16,10 +16,9 @@ func runRemoteSetup(ctx context.Context, args []string, input io.Reader, output,
 	flags := flag.NewFlagSet("sandbox remote setup", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var keyFile string
-	var yes, noStart bool
+	var yes bool
 	flags.StringVar(&keyFile, "key", "", "public key file for an additional device (otherwise import standard host authorized_keys lists)")
 	flags.BoolVar(&yes, "yes", false, "approve enabling remote access and the displayed public-key set")
-	flags.BoolVar(&noStart, "no-start", false, "save settings for the next Sandbox startup without starting or reprovisioning")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -63,12 +62,17 @@ func runRemoteSetup(ctx context.Context, args []string, input io.Reader, output,
 		fmt.Fprintln(output, "Cancelled. Access settings were not changed.")
 		return 0
 	}
-	fmt.Fprintln(output, "Remote access configured. No manual key generation or JSON editing is needed.")
-	if noStart {
-		fmt.Fprintln(output, "Next: sandbox up. An existing Sandbox was not changed.")
-		return 0
+	fmt.Fprintln(output, "Remote settings saved. Applying access to the running Sandbox without restarting or provisioning it...")
+	applied, err := dependencies.applyRemoteKeys(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, "sandbox: remote settings saved, but access was not confirmed:", err)
+		return 1
 	}
-	fmt.Fprintln(output, "Starting through sandbox up. First-time Tailscale sign-in opens in your browser.")
+	if applied {
+		fmt.Fprintln(output, "Remote access verified. Existing Sandbox sessions and services were preserved.")
+		return runWithCommandDependencies(ctx, []string{"remote"}, input, output, stderr, dependencies)
+	}
+	fmt.Fprintln(output, "No managed Sandbox exists yet. Starting it now; first-time Tailscale sign-in opens in your browser.")
 	if code := runWithCommandDependencies(ctx, []string{"up", "--no-attach"}, input, output, stderr, dependencies); code != 0 {
 		fmt.Fprintln(stderr, "Remote settings were saved. The existing Sandbox was not closed or replaced; resolve the reported startup condition and run sandbox up.")
 		return code
