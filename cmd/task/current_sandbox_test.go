@@ -19,6 +19,7 @@ func TestCurrentSandboxAudioConnection(t *testing.T) {
 	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
 		t.Fatal("audio acceptance refuses host execution")
 	}
+	t.Chdir(filepath.Join("..", ".."))
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	before, err := inspectCurrentSandboxIdentity(ctx)
