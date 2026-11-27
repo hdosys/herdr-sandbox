@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 30
+# herdr-sandbox-stacks-contract: 31
 
 function Get-StackWebResponseText {
     param(
@@ -2975,6 +2975,13 @@ function Install-OracleStack {
         }
         $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
         if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) { throw 'Oracle requires the existing Sandbox Microsoft Edge installation.' }
+        # Oracle MCP checks CHROME_PATH before loading browser.chromePath.
+        # Publish the same verified browser for both supported entrypoints.
+        [Environment]::SetEnvironmentVariable('CHROME_PATH', $edge, (Get-ProvisioningEnvironmentTarget))
+        if ([Environment]::GetEnvironmentVariable('CHROME_PATH', (Get-ProvisioningEnvironmentTarget)) -cne $edge) {
+            throw 'Oracle browser environment was not persisted.'
+        }
+        $env:CHROME_PATH = $edge
         $configRoot = Join-Path $env:USERPROFILE '.oracle'
         if (-not (Test-Path -LiteralPath $configRoot)) { New-Item -ItemType Directory -Path $configRoot | Out-Null }
         $rootItem = Get-Item -LiteralPath $configRoot -Force

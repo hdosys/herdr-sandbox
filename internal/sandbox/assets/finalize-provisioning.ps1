@@ -50,6 +50,7 @@ if ([string]::IsNullOrWhiteSpace($workspacePath) -or $workspacePath.Length -gt 3
     throw 'Provisioned guest workspace PATH is invalid.'
 }
 $playwrightExtensionToken = [Environment]::GetEnvironmentVariable('PLAYWRIGHT_MCP_EXTENSION_TOKEN', 'Machine')
+$oracleChromePath = [Environment]::GetEnvironmentVariable('CHROME_PATH', 'Machine')
 $manifest = [IO.File]::ReadAllText($WorkspaceManifestPath) | ConvertFrom-Json
 if ((@($manifest.PSObject.Properties.Name | Sort-Object) -join '|') -cne 'activeWorkspace|schemaVersion|workspaces' -or
     $manifest.schemaVersion -isnot [int] -or $manifest.schemaVersion -ne 1) {
@@ -101,6 +102,9 @@ foreach ($workspace in $ordered) {
             '--env', "PATH=$workspacePath", '--env', "HERDR_SANDBOX_HERDR_EXE=$herdrExecutable")
         if (-not [string]::IsNullOrWhiteSpace($playwrightExtensionToken)) {
             $arguments += @('--env', "PLAYWRIGHT_MCP_EXTENSION_TOKEN=$playwrightExtensionToken")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($oracleChromePath)) {
+            $arguments += @('--env', "CHROME_PATH=$oracleChromePath")
         }
         $created = Invoke-WorkspaceCommand -Arguments $arguments
         $workspaceID = [string]$created.result.workspace.workspace_id

@@ -508,6 +508,9 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   Provisioning never opens the browser, waits for login, or claims authentication.
   New Oracle configuration defaults to visible browser-based Deep Research with
   cookie copying disabled. Existing Oracle configuration and profile are preserved.
+  The same Edge path is published as `CHROME_PATH` for Oracle MCP's browser
+  preflight and passed to new guest workspaces. Existing agent sessions need a
+  refreshed launch environment; they are not restarted automatically.
 - The global agent workflow owns topic interpretation, account capability selection,
   visible manual login and research execution. A completed cited Markdown report
   can be rendered with `pandoc --from=markdown-smart report.md --pdf-engine=typst -o report.pdf`.

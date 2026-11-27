@@ -40,7 +40,7 @@ $global:HerdrSandboxStepState.StackImplementation = Get-ProvisioningStepFingerpr
 Update-ProvisioningPath
 foreach ($name in @('RUSTUP_HOME','CARGO_HOME','RUSTUP_AUTO_INSTALL','UV_CACHE_DIR','UV_NO_MANAGED_PYTHON',
         'ZIG_LOCAL_CACHE_DIR','ZIG_GLOBAL_CACHE_DIR','ANDROID_HOME','ANDROID_SDK_ROOT','ANDROID_USER_HOME','JAVA_HOME',
-        'PLAYWRIGHT_BROWSERS_PATH','NO_UPDATE_NOTIFIER','CMAKE_PREFIX_PATH','OPENSRC_HOME')) {
+        'PLAYWRIGHT_BROWSERS_PATH','CHROME_PATH','NO_UPDATE_NOTIFIER','CMAKE_PREFIX_PATH','OPENSRC_HOME')) {
     $value = [Environment]::GetEnvironmentVariable($name, 'User')
     if ($null -ne $value) { [Environment]::SetEnvironmentVariable($name, $value, 'Process') }
 }
