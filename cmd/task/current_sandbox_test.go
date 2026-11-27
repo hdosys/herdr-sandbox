@@ -9,7 +9,33 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestCurrentSandboxAudioConnection(t *testing.T) {
+	if os.Getenv(currentSandboxNativeEnvironment) != "1" {
+		t.Skip("explicit current-Sandbox audio acceptance")
+	}
+	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		t.Fatal("audio acceptance refuses host execution")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	before, err := inspectCurrentSandboxIdentity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCurrentSandboxAudioSmoke(ctx, os.Stdout, os.Stderr); err != nil {
+		t.Error(err)
+	}
+	after, err := inspectCurrentSandboxIdentity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCurrentSandboxIdentityPreserved(before, after); err != nil {
+		t.Error(err)
+	}
+}
 
 func TestCurrentSandboxGatesRejectHostBeforeExecution(t *testing.T) {
 	t.Setenv("USERNAME", "host-fixture")

@@ -234,6 +234,54 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 	}
 }
 
+func TestCurrentSandboxExplorerRestartPreservesDesktop(t *testing.T) {
+	if os.Getenv(currentSandboxNativeEnvironment) != "1" {
+		t.Skip("explicit current-Sandbox desktop lifecycle acceptance")
+	}
+	if !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		t.Fatal("desktop lifecycle acceptance refuses host execution")
+	}
+	powerShell := mustWindowsPowerShellPath(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancel()
+	type shellState struct {
+		PID          int    `json:"pid"`
+		SessionID    int    `json:"sessionId"`
+		StartedAtUTC string `json:"startedAtUTC"`
+	}
+	query := func() shellState {
+		t.Helper()
+		command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filepath.Join("testdata", "native-explorer-shell-state.ps1"))
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("registered desktop: %v: %s", err, output)
+		}
+		var state shellState
+		if err := json.Unmarshal(output, &state); err != nil || state.PID <= 0 || state.SessionID <= 0 {
+			t.Fatalf("invalid shell evidence: %v: %s", err, output)
+		}
+		return state
+	}
+	before := query()
+	setup := provisioningPowerShellFunctionSetup(t, provisioningPowerShellFunctionSource{
+		path: defaultProvisioningPath(t, baseProvisioningName), names: []string{"Restart-ProvisioningExplorerShell"},
+	})
+	scriptPath := filepath.Join(t.TempDir(), "native-explorer-restart.ps1")
+	if err := os.WriteFile(scriptPath, []byte("$ErrorActionPreference = 'Stop'\n"+setup+"\nRestart-ProvisioningExplorerShell -Role 'native desktop lifecycle acceptance'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := hiddenCommandContext(ctx, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("production Explorer restart: %v: %s", err, output)
+	}
+	// Command.Run has now closed the production Job Object and killed descendants.
+	after := query()
+	if before.PID == after.PID || before.StartedAtUTC == after.StartedAtUTC || before.SessionID != after.SessionID {
+		t.Fatalf("desktop was not replaced in the same session: before=%+v after=%+v", before, after)
+	}
+	t.Logf("registered Explorer %d -> %d in session %d survived provisioning process-tree cleanup", before.PID, after.PID, after.SessionID)
+}
+
 func TestCurrentSandboxStackProvisioning(t *testing.T) {
 	if os.Getenv(currentSandboxNativeEnvironment) != "1" || os.Getenv(currentSandboxStackEnvironment) == "" {
 		t.Skip("explicit current-Sandbox stack provisioning gate")

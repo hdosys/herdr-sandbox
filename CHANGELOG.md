@@ -36,6 +36,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Explorer restarts during in-place provisioning now leave the replacement desktop
+  owned by Windows, so it survives the provisioning process cleanup.
 - Large direct package downloads no longer stall behind Windows PowerShell 5.1's
   per-block progress rendering. Phase feedback and SHA-256 verification remain enabled.
 - Oracle provisioning parses npm registry JSON separately from stderr notices,

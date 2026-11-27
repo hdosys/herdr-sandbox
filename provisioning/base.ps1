@@ -3536,36 +3536,53 @@ public static class HerdrSandboxShellWindow {
         }
     }
 
-    Write-Host "Stopping all Explorer processes after $Role..."
-    $stoppedExplorerProcessIDs = @()
-    $explorerStopDeadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        $explorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue)
-        if ($explorerProcesses.Count -eq 0) { break }
-        $stoppedExplorerProcessIDs += @($explorerProcesses | ForEach-Object { [int]$_.Id })
-        $explorerProcesses | Stop-Process -Force -ErrorAction Stop
-        if ([DateTime]::UtcNow -ge $explorerStopDeadline) {
-            throw "Explorer processes did not stop within 30 seconds: $($explorerProcesses.Id -join ', ')"
-        }
-        Start-Sleep -Milliseconds 250
-    } while ($true)
-    if ($stoppedExplorerProcessIDs.Count -eq 0) {
-        throw "Explorer shell was not running before the required $Role restart."
+    $configuredShell = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' `
+        -Name 'Shell' -ErrorAction Stop).Shell
+    if ($configuredShell -ine 'explorer.exe') { throw "Winlogon shell is not explorer.exe: $configuredShell" }
+    if ($null -eq ('HerdrSandboxShellWindow' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class HerdrSandboxShellWindow {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processID);
+}
+'@
     }
-
-    Write-Host 'Starting one fresh Explorer shell...'
-    Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') | Out-Null
+    $expectedExplorerPath = Join-Path $env:WINDIR 'explorer.exe'
+    $shellWindow = [HerdrSandboxShellWindow]::GetShellWindow()
+    $shellProcessID = [uint32]0
+    if ($shellWindow -ne [IntPtr]::Zero) {
+        $null = [HerdrSandboxShellWindow]::GetWindowThreadProcessId($shellWindow, [ref]$shellProcessID)
+    }
+    $shellProcess = Get-Process -Id ([int]$shellProcessID) -ErrorAction SilentlyContinue
+    if ($null -eq $shellProcess -or $initialExplorerProcesses.Id -notcontains [int]$shellProcess.Id -or
+        [int]$shellProcess.SessionId -ne $explorerSessionID -or [string]$shellProcess.Path -ine $expectedExplorerPath) {
+        throw 'The registered interactive Explorer shell does not match the observed process set.'
+    }
+    Write-Host "Restarting the registered Explorer shell after $Role..."
+    $stoppedExplorerProcessIDs = @($initialExplorerProcesses.Id)
+    # Winlogon owns the desktop lifetime. A directly launched replacement would
+    # inherit the provisioning Job Object and be killed when provisioning exits.
+    $initialExplorerProcesses | Stop-Process -Force -ErrorAction Stop
     $explorerStartDeadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
-        $newExplorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue |
-            Where-Object { $stoppedExplorerProcessIDs -notcontains [int]$_.Id })
-        if ($newExplorerProcesses.Count -gt 0) { break }
+        $shellWindow = [HerdrSandboxShellWindow]::GetShellWindow()
+        $shellProcessID = [uint32]0
+        if ($shellWindow -ne [IntPtr]::Zero) {
+            $null = [HerdrSandboxShellWindow]::GetWindowThreadProcessId($shellWindow, [ref]$shellProcessID)
+        }
+        $shellProcess = Get-Process -Id ([int]$shellProcessID) -ErrorAction SilentlyContinue
+        if ($null -ne $shellProcess -and $stoppedExplorerProcessIDs -notcontains [int]$shellProcess.Id -and
+            [int]$shellProcess.SessionId -eq $explorerSessionID -and [string]$shellProcess.Path -ieq $expectedExplorerPath) { break }
         if ([DateTime]::UtcNow -ge $explorerStartDeadline) {
-            throw 'Explorer shell did not restart within 30 seconds.'
+            throw 'Winlogon did not restore the registered interactive Explorer shell within 30 seconds.'
         }
         Start-Sleep -Milliseconds 250
     } while ($true)
-    Write-Host "Explorer shell restarted: $($stoppedExplorerProcessIDs -join ', ') -> $($newExplorerProcesses.Id -join ', ')"
+    Write-Host "Explorer shell restarted: $($stoppedExplorerProcessIDs -join ', ') -> $($shellProcess.Id)"
 }
 
 function Ensure-ProvisioningStartShortcut {
