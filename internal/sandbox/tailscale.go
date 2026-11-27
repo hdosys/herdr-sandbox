@@ -169,7 +169,7 @@ func beginTailscaleEnrollment(ctx context.Context, connection Connection, output
 	return nil
 }
 
-func captureAndStoreTailscale(ctx context.Context, connection Connection, dataDirectory string) error {
+func verifyRetainedTailscale(ctx context.Context, connection Connection, dataDirectory string) error {
 	expected, found, err := loadTailscaleIdentity(dataDirectory)
 	if err != nil {
 		return err
@@ -178,7 +178,34 @@ func captureAndStoreTailscale(ctx context.Context, connection Connection, dataDi
 		return errors.New("protected Tailscale identity is missing")
 	}
 	defer clear(expected.State)
-	return captureAndStoreTailscaleAgainst(ctx, connection, dataDirectory, &expected)
+	output, err := runSSHPowerShell(ctx, connection, nil, buildTailscaleVerifyLauncher(), "verify retained Tailscale identity", 16*1024)
+	if err != nil {
+		return err
+	}
+	actual, err := decodeLiveTailscaleIdentity(output)
+	if err != nil {
+		return err
+	}
+	return verifyStableTailscaleIdentity(expected, actual)
+}
+
+func decodeLiveTailscaleIdentity(data []byte) (tailscaleIdentity, error) {
+	if len(data) == 0 || len(data) > 16*1024 {
+		return tailscaleIdentity{}, errors.New("live Tailscale identity size is invalid")
+	}
+	if err := validateExactJSONObjectShape(data, "live Tailscale identity", []string{
+		"schemaVersion", "windowsUserSID", "nodeID", "nodeKey", "ipv4", "dnsName", "hostName", "tailscaleVersion", "tags",
+	}); err != nil {
+		return tailscaleIdentity{}, err
+	}
+	var identity tailscaleIdentity
+	if err := decodeStrictJSON(data, &identity); err != nil {
+		return tailscaleIdentity{}, err
+	}
+	if err := identity.validatePublic(); err != nil {
+		return tailscaleIdentity{}, err
+	}
+	return identity, nil
 }
 
 func recoverAndStoreTailscale(ctx context.Context, connection Connection, dataDirectory string) error {
@@ -395,6 +422,17 @@ $identity = Wait-TailscaleIdentity -ExpectedSID $currentSID
 $result = Capture-TailscaleState -Identity $identity
 [Console]::Out.Write(($result | ConvertTo-Json -Compress))
 exit 0`, tailscalePowerShellFunctions())
+}
+
+func buildTailscaleVerifyLauncher() string {
+	return tailscalePowerShellFunctions() + `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$currentSID = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$identity = Read-TailscaleIdentity -ExpectedSID $currentSID
+if ($null -eq $identity) { throw 'Tailscale is not running with a complete identity. Existing services were not changed.' }
+[Console]::Out.Write(($identity | ConvertTo-Json -Compress))
+exit 0`
 }
 
 func buildTailscaleDownCaptureLauncher() string {

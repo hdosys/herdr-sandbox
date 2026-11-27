@@ -211,27 +211,29 @@ are not safe for the guest.
 
 ### Launch your first project
 
-From the project root, choose a stack, inspect the plan, and start:
+From the project root, choose a stack and start:
 
 ```powershell
 sandbox init --stack go
-sandbox plan
 sandbox up
 ```
 
 Omit `--stack` for a prompt or repeat it to combine compatible entries from
 [Supported stacks](#supported-stacks). `init` writes
 `.herdr-sandbox\provision.ps1` without replacing an existing profile. `plan` is
-read-only. `up` provisions the guest and attaches Herdr in the normal host
+an optional read-only preview. `up` provisions the guest and attaches Herdr in the normal host
 terminal; the visible Sandbox bootstrap console needs no input.
 
 After detaching, the guest stays ready:
 
 ```powershell
 sandbox status
-sandbox attach
+sandbox up
 ```
 
+For an already ready environment, `up` only verifies and connects. It does not
+update tools or configuration. Use `sandbox up --refresh` when you want to adopt
+changes, and `sandbox attach` to connect without resuming incomplete setup.
 Run `sandbox down` when you are finished and want to discard the guest.
 
 Use `sandbox up --no-attach` from a headless caller, then attach later from a real
@@ -334,9 +336,9 @@ Replace the path with an existing project folder. The key `project` makes its
 guest path `C:\Workspaces\project`. Add optional mappings only when needed; the
 generated `config.sample.json` provides a complete example.
 
-Review the effective configuration and resolved tool versions with `sandbox plan`
-before `up`. Package changes can apply to a compatible ready guest without
-replacing it.
+Use `sandbox plan` when you want a read-only preview of configuration and resolved
+tool versions. Apply changes to a compatible ready guest with `sandbox up --refresh`,
+without replacing it.
 
 <details>
 <summary><strong>Complete config.json field reference</strong></summary>
@@ -421,9 +423,9 @@ paths or credentials. Other settings, including command bindings, transfer from
 the host. Both the host exporter and guest importer need a matching Herdr Extended
 build with this contract; the `herdr-ext` version marker alone does not prove it.
 
-A full `sandbox up` adopts transferable host Herdr settings for both new and
-retained guests. Use `sandbox up --refresh` to request adoption when `up` would
-otherwise resume incomplete development setup without refreshing configuration.
+Initial provisioning adopts transferable host Herdr settings. Use
+`sandbox up --refresh` to adopt changes in a retained guest; ordinary `up`
+connects or resumes unfinished development rather than refreshing settings.
 Full provisioning passes `--overwrite-config` to Herdr's remote `--provision`
 operation, preserving only those environment-specific exclusions. An unchanged
 configuration is not rewritten. `sandbox attach` and ordinary reconnects do not
@@ -542,10 +544,10 @@ and errors go to stderr.
 | `sandbox version` or `sandbox --version` | Prints the release, sortable UTC build freshness, and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]` | Starts a guest, resumes incomplete setup, or refreshes a completed setup, then normally attaches. `--refresh` explicitly requests full provisioning. |
+| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]` | Starts a guest, resumes incomplete setup, or connects to a completed environment. Only `--refresh` requests full provisioning of a completed environment. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
-| `sandbox status` | Reports health, progress, diagnostics, and the next action. Returns zero only when the state is `ready`. |
+| `sandbox status [--verbose]` | Separates guest usability from the latest setup result and shows the next action. `--verbose` includes versions, processes, workspaces and timings. Returns zero only when the state is `ready`. |
 | `sandbox remote setup [--key FILE] [--yes]` | Approves and applies device keys to a ready tailnet Sandbox without reprovisioning. Starts a Sandbox only when none exists. |
 | `sandbox remote [--qr]` | Prints compact remote commands and the SSH host-key fingerprint; `--qr` adds a secret-free connection QR code. |
 | `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
@@ -947,6 +949,9 @@ revocation and expired keys still require the appropriate account action.
 Run `sandbox remote` on the host for compact connection commands and the SSH
 host-key fingerprint; add `--qr` for a URI-only QR. Verify the fingerprint on first
 connection.
+Retained refreshes verify the live Tailscale identity without stopping its service.
+Private recovery state is captured at initial setup and explicit shutdown, not
+every refresh. After an unexpected guest loss, the saved snapshot may be older.
 For example, from another authorized node (replace the example DNS name):
 
 ```powershell

@@ -9,6 +9,12 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Ordinary `sandbox up` now reconnects to a completed environment without refreshing
+  packages or host configuration. `--refresh` explicitly requests those changes.
+  `sandbox status` separates usability from incomplete setup, with full diagnostic
+  details available through `--verbose`.
+- Retained refresh verifies Tailscale without interrupting its service and avoids
+  transferring credentials again after a successful early credential sync.
 - Development provisioning can be checked directly inside the running Sandbox,
   using one generic stack selection or the complete canonical stack set, without
   replacing the guest or restarting SSH and Herdr.

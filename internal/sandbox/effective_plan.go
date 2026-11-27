@@ -202,7 +202,7 @@ func buildEffectivePlan(ctx context.Context, provisioning provisioningPlan, conf
 	if len(plan.Workspaces) == 0 {
 		plan.NextAction = "Run `sandbox init --stack <name>` from a project, or add a configured workspace."
 	} else {
-		plan.NextAction = "Run `sandbox up` to apply this plan."
+		plan.NextAction = "Run `sandbox up` to start or connect; use `sandbox up --refresh` to apply this plan to an existing ready Sandbox."
 	}
 	return plan, nil
 }

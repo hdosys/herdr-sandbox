@@ -176,7 +176,7 @@ func decodeStrictJSON(data []byte, destination any) error {
 	return nil
 }
 
-func (identity tailscaleIdentity) validate() error {
+func (identity tailscaleIdentity) validatePublic() error {
 	if identity.SchemaVersion != tailscaleIdentitySchemaVersion {
 		return fmt.Errorf("schemaVersion = %d, want %d", identity.SchemaVersion, tailscaleIdentitySchemaVersion)
 	}
@@ -208,6 +208,13 @@ func (identity tailscaleIdentity) validate() error {
 			return errors.New("tags contain an invalid or duplicate value")
 		}
 		seenTags[tag] = true
+	}
+	return nil
+}
+
+func (identity tailscaleIdentity) validate() error {
+	if err := identity.validatePublic(); err != nil {
+		return err
 	}
 	if len(identity.State) == 0 || len(identity.State) > maximumTailscaleStateBytes {
 		return errors.New("state size is invalid")

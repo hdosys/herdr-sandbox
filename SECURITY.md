@@ -93,6 +93,10 @@ The product protects these boundaries:
 - The separate remote SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
+- Retained refresh verifies the live Tailscale public identity without stopping its
+  service or copying live private state. Initial setup and explicit shutdown retain
+  the protected recovery snapshot. An unexpected guest loss can therefore restore
+  an older snapshot; expiry, revocation or changed identity still fail closed.
 - Portable agent, Apify, GitHub CLI, and TradingView credentials default to no transfer.
   Each provider must be enabled independently through `credentialSync`; selected
   credentials are streamed only over the verified SSH channel and are not placed

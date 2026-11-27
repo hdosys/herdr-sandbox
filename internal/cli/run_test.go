@@ -532,6 +532,9 @@ func TestRunPullHostConfigAndUpReportPartialResultsBeforeFailure(t *testing.T) {
 	for _, command := range []string{"pull-host-config", "up"} {
 		t.Run(command, func(t *testing.T) {
 			dependencies := defaultCommandDependencies()
+			dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+				return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
+			}
 			result := sandbox.HostConfigurationPullResult{Pulled: []string{"OpenCode configuration"}}
 			failure := errors.New("later repository diverged")
 			dependencies.pullHostConfig = func(context.Context) (sandbox.HostConfigurationPullResult, error) { return result, failure }
@@ -586,6 +589,9 @@ func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.
 
 func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
+	}
 	validated := false
 	attached := false
 	var upOptions sandbox.Options
@@ -624,6 +630,9 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 
 func TestRunUpExplicitTimeoutOverridesDefault(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
+	}
 	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
 	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
 	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {
@@ -668,6 +677,9 @@ func TestRunUpInstallerSelectionAndNoHostPull(t *testing.T) {
 func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dependencies := defaultCommandDependencies()
+	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
+	}
 	dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
 	dependencies.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
 	dependencies.pullHostConfigOnUp = func(context.Context) (sandbox.HostConfigurationPullResult, error) {

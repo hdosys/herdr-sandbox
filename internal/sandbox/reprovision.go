@@ -250,13 +250,13 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	}
 	tailscaleReady := !plan.Tailscale
 	if plan.Tailscale {
-		if err := updateOperation("tailscale-identity", "Capturing and verifying the retained Tailscale identity."); err != nil {
+		if err := updateOperation("tailscale-identity", "Verifying Tailscale identity without interrupting retained connections."); err != nil {
 			return Connection{}, err
 		}
-		fmt.Fprintln(options.Output, "Capturing and verifying the retained Tailscale identity...")
+		fmt.Fprintln(options.Output, "Verifying Tailscale identity...")
 		tailscaleContext, cancelTailscale := context.WithTimeout(ctx, tailscaleIdentityTimeout)
 		if wasReady {
-			err = captureAndStoreTailscale(tailscaleContext, connection, plan.DataDirectory)
+			err = verifyRetainedTailscale(tailscaleContext, connection, plan.DataDirectory)
 		} else {
 			err = configureFreshTailscale(tailscaleContext, connection, plan.DataDirectory, tailscaleBootstrap, options.Output)
 		}
@@ -276,10 +276,12 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	writeProvisioningConfiguration(options.Output, "Reapplying and verifying development configuration", plan.Packages, provisioning.CodingAgentSync)
 	syncContext, cancelSync := context.WithTimeout(ctx, configurationSyncTimeout)
 	credentialReportOutput := options.Output
+	remainingCredentials := provisioning.CredentialSync
 	if credentialsSyncedEarly {
 		credentialReportOutput = nil
+		remainingCredentials = credentialSyncConfiguration{}
 	}
-	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, provisioning.CredentialSync, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
+	err = syncDevelopmentConfiguration(syncContext, connection, plan.WindowsTerminal, plan.Packages, provisioning.CodingAgentSync, remainingCredentials, snapshot.TradingViewEnabled, plan.WorktreeDirectory != "", snapshot.Directory, credentialReportOutput)
 	cancelSync()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -319,6 +321,9 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	}
 	if len(installedIntegrations) > 0 {
 		fmt.Fprintf(options.Output, "Herdr integrations installed: %s\n", strings.Join(installedIntegrations, ", "))
+	}
+	if wasReady {
+		fmt.Fprintln(options.Output, "Updated tools are available in newly opened terminals. Already running agents and MCP servers keep their previous environment; reopen only the affected process when a command is missing.")
 	}
 	ready = readyStatus(connectable)
 	ready.SchemaVersion = readyStatusSchemaVersion

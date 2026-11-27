@@ -33,7 +33,7 @@ const usage = `Usage:
   sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]
   sandbox up --provisioning installer --installer FILE [--no-attach]
   sandbox attach
-  sandbox status
+  sandbox status [--verbose]
   sandbox remote [--qr]
   sandbox remote setup [--key PUBLIC_KEY_FILE] [--yes]
   sandbox down
@@ -67,7 +67,7 @@ Configuration:
 
 Behavior:
   - up has a four-hour launch-to-terminal-ready timeout; --timeout replaces it for one run
-  - after incomplete setup, up resumes unfinished or changed steps; --refresh requests a full refresh
+  - up connects to a ready Sandbox, or resumes incomplete setup; --refresh explicitly updates tools and configuration
   - optional TTS unavailability does not block a verified ready Sandbox or automatic attach
   - installer provisioning requires a fresh Sandbox and never runs normal tool provisioning to repair the result
   - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
@@ -308,8 +308,9 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
 	case "status":
-		if len(args) != 1 {
-			fmt.Fprintf(stderr, "sandbox: status does not accept arguments\n\n%s", usage)
+		verbose := len(args) == 2 && args[1] == "--verbose"
+		if len(args) != 1 && !verbose {
+			fmt.Fprintf(stderr, "sandbox: status does not accept arguments other than --verbose\n\n%s", usage)
 			return 2
 		}
 		status, err := dependencies.inspect(ctx)
@@ -317,7 +318,11 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
-		printSessionStatus(stdout, status)
+		if verbose {
+			printSessionStatus(stdout, status)
+		} else {
+			printSessionSummary(stdout, status)
+		}
 		if status.State != sandbox.SessionReady {
 			return 1
 		}
@@ -403,7 +408,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout (default 4h)")
 	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
-	flags.BoolVar(&options.Refresh, "refresh", false, "run a full provisioning refresh instead of resuming incomplete steps")
+	flags.BoolVar(&options.Refresh, "refresh", false, "explicitly update tools and configuration instead of connecting or resuming")
 	flags.StringVar(&provisioningMode, "provisioning", "normal", "normal or installer")
 	flags.StringVar(&options.InstallerPath, "installer", "", "exact workstation installer with its matching JSON sidecar")
 	flags.Usage = func() {}
@@ -471,6 +476,30 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 	}
 	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 		return 1
+	}
+	if !options.InstallerProvisioning && !options.Refresh {
+		status, err := dependencies.inspect(ctx)
+		if err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 1
+		}
+		if status.State == sandbox.SessionReady && (status.Operation == nil || status.Operation.State == "succeeded") {
+			if memoryOverrideSet {
+				fmt.Fprintln(stderr, "sandbox: a running Sandbox keeps its memory allocation; use sandbox plan to review changes before an explicit new startup")
+				return 1
+			}
+			connection, err := dependencies.openReady(ctx, stdout, hostHerdr)
+			if err != nil {
+				fmt.Fprintln(stderr, "sandbox:", err)
+				return 1
+			}
+			fmt.Fprintln(stdout, "Using the existing environment. No tools or configuration were refreshed. Use `sandbox up --refresh` to update them.")
+			if noAttach {
+				fmt.Fprintln(stdout, "Next: sandbox attach")
+				return 0
+			}
+			return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
+		}
 	}
 	if !options.InstallerProvisioning {
 		if pulled, err := dependencies.pullHostConfigOnUp(ctx); err != nil {
@@ -579,9 +608,9 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	fmt.Fprintf(stdout, "  Path: %s\n", result.Path)
 	fmt.Fprintln(stdout, "  Stacks:")
 	printBulletList(stdout, result.Stacks, "    ")
-	fmt.Fprintln(stdout, "\nNext")
-	fmt.Fprintln(stdout, "  1. Run `sandbox plan`.")
-	fmt.Fprintln(stdout, "  2. Run `sandbox up`.")
+	fmt.Fprintln(stdout, "\nNext: sandbox up")
+	fmt.Fprintln(stdout, "To apply this profile to an existing ready environment: sandbox up --refresh")
+	fmt.Fprintln(stdout, "Optional preview: sandbox plan")
 	return 0
 }
 
@@ -682,6 +711,38 @@ func printSessionStatus(output io.Writer, status sandbox.SessionStatus) {
 	printSessionStatusAt(output, status, time.Now())
 }
 
+func printSessionSummary(output io.Writer, status sandbox.SessionStatus) {
+	fmt.Fprintf(output, "Sandbox: %s\n", status.State)
+	if status.Operation == nil {
+		fmt.Fprintln(output, "Setup: no completion result recorded")
+	} else {
+		fmt.Fprintf(output, "Last setup: %s\n", status.Operation.State)
+		if status.Operation.State != "succeeded" {
+			fmt.Fprintf(output, "  %s\n", status.Operation.Message)
+			if status.State == sandbox.SessionReady && status.Operation.State != "running" {
+				fmt.Fprintln(output, "  You can still work: sandbox attach. Resume unfinished setup: sandbox up.")
+			}
+		}
+	}
+	if status.Message != "" {
+		fmt.Fprintln(output, status.Message)
+	}
+	if status.RemoteAccess != nil {
+		fmt.Fprintf(output, "Remote SSH: %s\n", status.RemoteAccess.URI)
+		fmt.Fprintln(output, "Connection commands and fingerprint: sandbox remote")
+	}
+	for _, warning := range status.Warnings {
+		fmt.Fprintf(output, "Warning: %s\n", warning)
+	}
+	if status.DiagnosticsPath != "" && (status.State != sandbox.SessionReady || status.Operation != nil && status.Operation.State != "succeeded") {
+		fmt.Fprintf(output, "Diagnostics: %s\n", status.DiagnosticsPath)
+	}
+	if status.NextAction != "" {
+		fmt.Fprintf(output, "Next: %s\n", status.NextAction)
+	}
+	fmt.Fprintln(output, "Details: sandbox status --verbose")
+}
+
 func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now time.Time) {
 	fmt.Fprintln(output, "Sandbox")
 	fmt.Fprintf(output, "  State: %s\n", status.State)
@@ -733,7 +794,7 @@ func printSessionStatusAt(output io.Writer, status sandbox.SessionStatus, now ti
 		fmt.Fprintf(output, "  Tailscale IPv4: %s\n", status.RemoteAccess.IPv4)
 		fmt.Fprintf(output, "  Host key: %s\n", status.RemoteAccess.HostKeyFingerprint)
 		fmt.Fprintf(output, "  Authorized device keys: %d\n", status.RemoteAccess.AuthorizedKeyCount)
-		fmt.Fprintln(output, "  QR: run `sandbox remote`")
+		fmt.Fprintln(output, "  QR: run `sandbox remote --qr`")
 	}
 	if len(status.Workspaces) > 0 {
 		fmt.Fprintln(output, "\nWorkspaces")
