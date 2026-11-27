@@ -43,7 +43,7 @@ function Install-ProvisioningPackage {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	resultPath := filepath.Join(root, "result.json")
-	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", filepath.Join(root, "prepare.ps1"),
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, "prepare.ps1"),
 		"-SelectionPath", filepath.Join(root, "selection.json"), "-BasePath", filepath.Join(root, "base.ps1"), "-StackPath", filepath.Join(root, "stacks.ps1"),
 		"-ProcessOwnerPath", "not-executed.cs", "-CacheDirectory", filepath.Join(root, "cache"), "-WorkDirectory", root, "-ResultPath", resultPath, "-PackagesOnly")
 	if output, err := command.CombinedOutput(); err != nil {

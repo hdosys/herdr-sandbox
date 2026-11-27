@@ -286,7 +286,7 @@ func TestLocalConfigurationTargetOverridesInWindowsPowerShell51(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", path)
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path)
 	if output, err := command.CombinedOutput(); err != nil || !bytes.Contains(output, []byte("verified selected local configuration targets")) {
 		t.Fatalf("local target contract: %v %s", err, output)
 	}
