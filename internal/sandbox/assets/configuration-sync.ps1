@@ -82,6 +82,36 @@ function Set-TerminalTargetProfiles {
     [IO.File]::WriteAllText($Path, ($state | ConvertTo-Json -Depth 64), $script:Utf8NoBom)
 }
 
+function Get-GuestGitHubCredentialHelpers {
+    param([string]$GitCommand, [string]$GitHubCommand)
+    $expected = "!'" + $GitHubCommand + "' auth git-credential"
+    $keys = @(& $GitCommand config --global --name-only --get-regexp '^credential\.https://[^/]+\.helper$')
+    if ($LASTEXITCODE -notin @(0, 1)) { throw 'Could not inspect guest Git credential helpers.' }
+    foreach ($key in @($keys | Sort-Object -Unique)) {
+        $values = @(& $GitCommand config --global --get-all ([string]$key))
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read guest Git credential helper.' }
+        if ($values.Count -eq 2 -and [string]$values[0] -ceq '' -and [string]$values[1] -ceq $expected) {
+            [string]$key
+        }
+    }
+}
+
+function Restore-GuestGitHubCredentialHelpers {
+    param([string]$GitCommand, [string]$GitHubCommand, [string[]]$Keys)
+    $expected = "!'" + $GitHubCommand + "' auth git-credential"
+    foreach ($key in $Keys) {
+        # PowerShell 5.1 needs explicit native quoting for the empty helper reset.
+        & $GitCommand config --global --replace-all $key '""'
+        if ($LASTEXITCODE -ne 0) { throw 'Could not restore guest Git credential-helper reset.' }
+        & $GitCommand config --global --add $key $expected
+        if ($LASTEXITCODE -ne 0) { throw 'Could not restore guest GitHub credential helper.' }
+        $values = @(& $GitCommand config --global --get-all $key)
+        if ($LASTEXITCODE -ne 0 -or $values.Count -ne 2 -or [string]$values[0] -cne '' -or [string]$values[1] -cne $expected) {
+            throw 'Guest GitHub credential-helper preservation failed.'
+        }
+    }
+}
+
 function Copy-VerifiedConfigurationFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -1113,6 +1143,16 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
 
     if ($gitEnabled) {
         [Console]::Error.WriteLine('[config-sync] apply-git')
+        $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $preservedGitHubHelpers = @()
+        $guestGitHubCommand = $null
+        if ($githubCLIEnabled -and -not $LocalTarget) {
+            $installedGitHubCommand = Get-Command 'gh.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $installedGitHubCommand) {
+                $guestGitHubCommand = [string]$installedGitHubCommand.Source
+                $preservedGitHubHelpers = @(Get-GuestGitHubCredentialHelpers -GitCommand $gitCommand -GitHubCommand $guestGitHubCommand)
+            }
+        }
         $gitConfig = Join-Path $expanded 'git\.gitconfig'
         if (Test-Path -LiteralPath $gitConfig -PathType Leaf) {
             Copy-VerifiedConfigurationFile -Source $gitConfig -Destination (Join-Path $env:USERPROFILE '.gitconfig')
@@ -1130,7 +1170,9 @@ $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInv
         }
 
         [Console]::Error.WriteLine('[config-sync] apply-git-safe-directories')
-        $gitCommand = (Get-Command 'git.exe' -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        if ($preservedGitHubHelpers.Count -gt 0) {
+            Restore-GuestGitHubCredentialHelpers -GitCommand $gitCommand -GitHubCommand $guestGitHubCommand -Keys $preservedGitHubHelpers
+        }
         $workspaceManifestPath = Join-Path $expanded 'herdr-sandbox\workspaces.json'
         if (-not $LocalTarget -and -not (Test-Path -LiteralPath $workspaceManifestPath -PathType Leaf)) {
             throw 'Workspace manifest is missing from the configuration archive.'

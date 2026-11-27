@@ -318,6 +318,11 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   host configuration pulls or provisioning. A failed connection never falls back
   to refreshing. An incomplete operation retains the existing continuation path;
   `--refresh` deliberately bypasses reuse. No additional readiness store is added.
+- A final configuration pass after successful early credential sync does not
+  export credentials again. Before replacing guest Git configuration, the existing
+  apply owner retains only exact installed `gh auth git-credential` helper entries
+  with their empty helper reset, then restores and verifies them after the copy.
+  Unrelated helpers are not preserved; workstation targets are unchanged.
 - Plain `attach` remains nonmutating and fails closed on identity drift.
 
 ### Console And Diagnostic Boundaries
