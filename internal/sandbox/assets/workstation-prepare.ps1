@@ -69,6 +69,7 @@ if (-not $PackagesOnly) {
             'java' { Install-JavaStack }
             'audio' { Install-AudioStack }
             'playwright-cli' { Install-PlaywrightCLIStack }
+            'oracle' { Install-OracleStack }
             'android' { Install-AndroidStack }
             'hyperframes' { Install-HyperFramesStack }
             'cpp' { Install-CppStack }

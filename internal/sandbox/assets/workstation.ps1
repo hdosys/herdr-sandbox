@@ -118,7 +118,7 @@ if ($selected.ContainsKey('python-ai')) { $selected['python'] = $true; $selected
 if ($selected.ContainsKey('herdr')) { foreach ($stack in @('python','zig','rust-msvc','bun','cargo-nextest','just')) { $selected[$stack] = $true } }
 if ($selected.ContainsKey('handy')) { foreach ($stack in @('rust-msvc','cpp','bun')) { $selected[$stack] = $true } }
 if ($selected.ContainsKey('hyperframes')) { foreach ($stack in @('node-runtime','python','uv')) { $selected[$stack] = $true } }
-foreach ($stack in @('node','playwright-cli','tradingview')) { if ($selected.ContainsKey($stack)) { $selected['node-runtime'] = $true } }
+foreach ($stack in @('node','oracle','playwright-cli','tradingview')) { if ($selected.ContainsKey($stack)) { $selected['node-runtime'] = $true } }
 if ($selected.ContainsKey('android')) { $selected['java'] = $true }
 if ($selected.ContainsKey('cargo-nextest')) { $selected['rust-msvc'] = $true }
 $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rust-msvc')
@@ -169,6 +169,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     }
     if ($selected.ContainsKey('node')) { Add-WorkstationJob 'Node browser tools' 'node' -Requires @('Node.js') -Tools @('playwright') }
     if ($selected.ContainsKey('playwright-cli')) { Add-WorkstationJob 'Playwright CLI' 'playwright-cli' -Requires @('Node.js') -Tools @('@playwright/cli') }
+    if ($selected.ContainsKey('oracle')) { Add-WorkstationJob 'Oracle research tools' 'oracle' -Requires @('Node.js','Package Microsoft.VCRedist.2015+.x64') -Tools @('@steipete/oracle','JohnMacFarlane.Pandoc','Typst.Typst') }
     if ($selected.ContainsKey('tradingview')) {
         Add-WorkstationJob 'TradingView Desktop' 'tradingview-desktop' -Tools @('TradingView.TradingViewDesktop')
         Add-WorkstationJob 'TVControl' 'tvcontrol' -Requires @('Node.js') -Tools @('@ferroxlabs/tvcontrol')

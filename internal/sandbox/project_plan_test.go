@@ -49,6 +49,7 @@ Install-HandyStack -ProjectDirectory $ProjectDirectory
 Install-HyperFramesStack
 Install-JavaStack
 Install-NSISStack
+Install-OracleStack -Version '0.23.1'
 Install-PlaywrightCLIStack
 Install-PythonAIStack
 Install-TradingViewStack
@@ -67,7 +68,7 @@ throw 'the AST adapter must not execute project code'
 	}
 	got := inspection.Workspaces
 	userStacks := inspection.UserStacks
-	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|playwright-cli|python|rust-msvc|tradingview|uv" {
+	if strings.Join(projectStackStrings(got[0].Stacks), "|") != "android|bun|cpp|dotnet|go|handy|hyperframes|java|nsis|oracle|playwright-cli|python|rust-msvc|tradingview|uv" {
 		t.Fatalf("alpha stacks = %v", got[0].Stacks)
 	}
 	if strings.Join(projectStackStrings(got[1].Stacks), "|") != "bun|cargo-nextest|git-sh|just|python|rust-msvc|zig" {

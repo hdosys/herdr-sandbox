@@ -80,6 +80,7 @@ switch ($Action) {
     'audiogridder' { Install-StackAudioGridder }
     'node' { Install-NodeStack }
     'playwright-cli' { Install-PlaywrightCLIStack }
+    'oracle' { Install-OracleStack }
     'tradingview-desktop' { Install-StackTradingViewDesktop }
     'tvcontrol' { Install-TVControl }
     'hyperframes' { Install-StackHyperFramesRendering }
