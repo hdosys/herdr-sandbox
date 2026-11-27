@@ -2950,6 +2950,14 @@ function Install-OracleStack {
                 $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
                 if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Oracle command is unsafe: $path" }
             }
+            # npm's PowerShell shim masks its native command under restricted
+            # execution policy. Keep the package-owned native entrypoint only.
+            $powerShellShim = Join-Path $toolRoot ($commandName + '.ps1')
+            if (Test-Path -LiteralPath $powerShellShim) {
+                $shimItem = Get-Item -LiteralPath $powerShellShim -Force
+                if ($shimItem.PSIsContainer -or ($shimItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Oracle PowerShell shim is unsafe.' }
+                Remove-Item -LiteralPath $powerShellShim -Force
+            }
             Invoke-ProvisioningNative -Role ($commandName + ' entry syntax') -FilePath $nodeTools.Node -ArgumentList @('--check', $entry) | Out-Null
         }
         Invoke-ProvisioningNative -Role 'Oracle CLI command smoke' -FilePath $nodeTools.Node `
