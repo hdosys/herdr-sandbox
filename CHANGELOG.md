@@ -26,6 +26,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Oracle provisioning parses npm registry JSON separately from stderr notices,
+  so npm update notifications no longer fail stable-version resolution.
 - Both provisioning targets install GeistMono Nerd Fonts in the Windows Fonts
   directory with normal system-wide read access instead of registering private
   tool files. Rerunning updated provisioning repairs its exact old registrations

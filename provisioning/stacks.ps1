@@ -2929,6 +2929,7 @@ function Install-OracleStack {
         }
         if ([string]::IsNullOrWhiteSpace($Version)) {
             $versionJSON = (Invoke-ProvisioningNative -Role 'Oracle stable version resolution' -FilePath $nodeTools.Node `
+                -SeparateErrorOutput `
                 -ArgumentList @($nodeTools.NpmCLI, 'view', '@steipete/oracle@latest', 'version', '--json')) -join "`n"
             $resolved = $versionJSON | ConvertFrom-Json
             if ($resolved -isnot [string] -or $resolved -notmatch '^\d+\.\d+\.\d+$') { throw 'Oracle registry did not return a stable version.' }

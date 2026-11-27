@@ -658,6 +658,7 @@ function Invoke-ProvisioningNativeResult {
         [int[]]$SuccessExitCodes = @(0),
         [switch]$TerminateDescendantsAfterRootExit,
         [switch]$ForwardOutput,
+        [switch]$SeparateErrorOutput,
         [switch]$AsStandardUser,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
@@ -668,6 +669,7 @@ function Invoke-ProvisioningNativeResult {
         -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $spec.ForwardOutput = [bool]$ForwardOutput
+    $spec.SeparateErrorOutput = [bool]$SeparateErrorOutput
     $spec.AsStandardUser = [bool]$AsStandardUser
     Write-ProvisioningProgress -Message $Role
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -691,6 +693,7 @@ function Invoke-ProvisioningNative {
         [string[]]$ArgumentList,
         [int[]]$SuccessExitCodes = @(0),
         [switch]$TerminateDescendantsAfterRootExit,
+        [switch]$SeparateErrorOutput,
         [int]$TimeoutSeconds = 1800,
         [string]$WorkingDirectory = ''
     )
@@ -698,12 +701,13 @@ function Invoke-ProvisioningNative {
     # Every invocation owns the complete tree. The opt-in cleanup applies only after the root is terminal.
     $result = Invoke-ProvisioningNativeResult -Role $Role -FilePath $FilePath -ArgumentList $ArgumentList `
         -SuccessExitCodes $SuccessExitCodes `
+        -SeparateErrorOutput:$SeparateErrorOutput `
         -TerminateDescendantsAfterRootExit:$TerminateDescendantsAfterRootExit `
         -TimeoutSeconds $TimeoutSeconds -WorkingDirectory $WorkingDirectory
     $output = @(ConvertFrom-ProvisioningNativeOutput -Text ([string]$result.Output))
     if (-not $result.Succeeded) {
         $details = Get-ProvisioningBoundedDiagnosticText `
-            -Text (($output -join [Environment]::NewLine).Trim()) -MaximumBytes 3000
+            -Text ((@($result.Output, $result.ErrorOutput) -join [Environment]::NewLine).Trim()) -MaximumBytes 3000
         if ($result.TimedOut) {
             throw "$Role exceeded $TimeoutSeconds seconds. $details"
         }
@@ -711,6 +715,9 @@ function Invoke-ProvisioningNative {
             throw [OperationCanceledException]::new("$Role was stopped before completion. $details")
         }
         throw "$Role failed with exit code $($result.ExitCode). $details"
+    }
+    if ($SeparateErrorOutput -and -not [string]::IsNullOrWhiteSpace($result.ErrorOutput)) {
+        Write-Warning ([string]$result.ErrorOutput)
     }
     return $output
 }
