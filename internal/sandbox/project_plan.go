@@ -52,6 +52,7 @@ const (
 	stackJust          projectStack = "just"
 	stackNode          projectStack = "node"
 	stackNSIS          projectStack = "nsis"
+	stackOracle        projectStack = "oracle"
 	stackPlaywrightCLI projectStack = "playwright-cli"
 	stackPython        projectStack = "python"
 	stackRustMSVC      projectStack = "rust-msvc"
@@ -107,6 +108,9 @@ var (
 	projectToolNames             = map[string]string{
 		"@ferroxlabs/tvcontrol":          "@ferroxlabs/tvcontrol",
 		"@playwright/cli":                "@playwright/cli",
+		"@steipete/oracle":               "@steipete/oracle",
+		"johnmacfarlane.pandoc":          "JohnMacFarlane.Pandoc",
+		"typst.typst":                    "Typst.Typst",
 		"audiogridder":                   "AudioGridder",
 		"astral-sh.uv":                   "astral-sh.uv",
 		"casey.just":                     "Casey.Just",
@@ -134,7 +138,7 @@ var (
 
 func (stack projectStack) valid() bool {
 	switch stack {
-	case stackAndroid, stackAudio, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
+	case stackAndroid, stackAudio, stackBun, stackCargoNextest, stackCpp, stackDotNet, stackGitSH, stackGo, stackHandy, stackHyperFrames, stackJava, stackJust, stackNode, stackNSIS, stackOracle, stackPlaywrightCLI, stackPython, stackRustMSVC, stackTradingView, stackUV, stackZig:
 		return true
 	default:
 		return false

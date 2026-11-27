@@ -9,6 +9,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- The optional Oracle research stack provides Oracle CLI/MCP, separate manual
+  browser login, and Pandoc/Typst for Markdown and PDF reports.
 - Tailscale joins an existing tailnet through one browser sign-in and reuses the
   protected Sandbox identity on later starts, without a manually created auth key
   or mandatory device tag.

@@ -223,6 +223,16 @@ function Get-CommandToolRequirements {
             $version = Get-LiteralCommandParameter $Command @('Version') 'Version' $Role
             return @(New-ToolRequirement 'NSIS.NSIS' $version '' 'nsis')
         }
+        'Install-OracleStack' {
+            $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'NodeVersion' $Role
+            $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'Version' $Role
+            return @(
+                (New-ToolRequirement 'OpenJS.NodeJS' $node '' 'oracle'),
+                (New-ToolRequirement '@steipete/oracle' $version '' 'oracle'),
+                (New-ToolRequirement 'JohnMacFarlane.Pandoc' '' '' 'oracle'),
+                (New-ToolRequirement 'Typst.Typst' '' '' 'oracle')
+            )
+        }
         'Install-PlaywrightCLIStack' {
             $node = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'NodeVersion' $Role
             $version = Get-LiteralCommandParameter $Command @('NodeVersion', 'Version') 'Version' $Role

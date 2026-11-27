@@ -490,8 +490,25 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 
 - Only explicitly configured project roots under `C:\Workspaces\<name>`, named folder mounts with `readOnly: false` under `C:\Mounts\<name>`, an explicitly selected `worktreeDirectory` at `C:\Worktrees`, and an explicitly selected `modelsDirectory` at `C:\Models` expose writable user data. The host home root, AppData roots, credentials, unselected repositories, and broader parents are not mapped; changing any mapping list or a mount's access requires a fresh Sandbox launch. The generated Sandbox contract explicitly enables Windows clipboard redirection so text and files can be copied between the host and guest without introducing another host mapping, and enables virtualized GPU acceleration when the Windows Sandbox host can provide it.
 - Windows Sandbox has no supported per-instance CPU-priority control, and Windows client Hyper-V does not support per-VM weights, caps, or reserves under its root scheduler. The product therefore has no idle/low-priority mode and does not pretend that changing the launcher process priority controls guest vCPU scheduling.
-- The Sandbox project profile installs and verifies Go plus the current stable NSIS compiler required by this repository's build and installer package tasks. Routine provisioning does not rerun repository test, lint, build, or package suites; acceptance runs representative commands explicitly through the ready Herdr session while project edits persist on the host workspace.
+- The Sandbox project profile installs and verifies Go, the current stable NSIS compiler, and the Oracle research stack. Routine provisioning does not rerun repository test, lint, build, or package suites; acceptance runs representative commands explicitly through the ready Herdr session while project edits persist on the host workspace.
 - Provisioning aborts when installation fails or when required package identity,
   integrity, command ownership, execution, or a real capability cannot be proven.
   Unrelated warning text and duplicate version presentation are not failures after
   stronger evidence already proves the installed result.
+
+### Oracle research tools
+
+- `sandbox init --stack oracle` selects `Install-OracleStack`. The same
+  function can be selected in `user.ps1`. It reuses Node, installs current stable
+  `@steipete/oracle` with `oracle` and `oracle-mcp`, and installs Pandoc and Typst
+  through the existing verified package adapters.
+- Oracle uses the existing Edge executable with its own guest-local manual-login
+  profile, separate from daily Edge and Playwright extension access. This scoped
+  Oracle path never copies browser credentials or operates the daily profile.
+  Provisioning never opens the browser, waits for login, or claims authentication.
+  New Oracle configuration defaults to visible browser-based Deep Research with
+  cookie copying disabled. Existing Oracle configuration and profile are preserved.
+- The global agent workflow owns topic interpretation, account capability selection,
+  visible manual login and research execution. A completed cited Markdown report
+  can be rendered with `pandoc report.md --pdf-engine=typst -o report.pdf`.
+  Availability of tools is not a claim that login, research or PDF delivery passed.

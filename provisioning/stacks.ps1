@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 29
+# herdr-sandbox-stacks-contract: 30
 
 function Get-StackWebResponseText {
     param(
@@ -2904,6 +2904,87 @@ function Install-NodeStack {
 
 function Install-PlaywrightBrowserAccess {
     Install-ProvisioningAccessShortcut -Name 'playwright-access' -DisplayName 'Playwright browser access'
+}
+
+function Install-OracleStack {
+    [CmdletBinding()]
+    param(
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')][string]$NodeVersion = '',
+        [ValidatePattern('^$|^\d+\.\d+\.\d+$')][string]$Version = ''
+    )
+
+    Install-NodeRuntime -Version $NodeVersion
+    Invoke-ProvisioningStackStep -Name 'Oracle' -Requires @('Node.js') -InputValues @($Version) -Action {
+        $Version = Get-ProvisioningToolVersion -Tool '@steipete/oracle' -Requested $Version
+        $nodeTools = Get-StackNodeTools
+        $toolsRoot = Get-ProvisioningPath 'tools'
+        $toolRoot = Join-Path $toolsRoot 'oracle'
+        $npmCache = Join-Path $toolsRoot 'npm-cache'
+        foreach ($directory in @($toolsRoot, $toolRoot, $npmCache)) {
+            if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+            $item = Get-Item -LiteralPath $directory -Force
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Oracle tools directory is unsafe: $directory"
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($Version)) {
+            $versionJSON = (Invoke-ProvisioningNative -Role 'Oracle stable version resolution' -FilePath $nodeTools.Node `
+                -ArgumentList @($nodeTools.NpmCLI, 'view', '@steipete/oracle@latest', 'version', '--json')) -join "`n"
+            $resolved = $versionJSON | ConvertFrom-Json
+            if ($resolved -isnot [string] -or $resolved -notmatch '^\d+\.\d+\.\d+$') { throw 'Oracle registry did not return a stable version.' }
+            $Version = Get-ProvisioningToolVersion -Tool '@steipete/oracle' -Requested $resolved
+        }
+        Invoke-ProvisioningNative -Role 'Oracle package installation' -FilePath $nodeTools.Node -ArgumentList @(
+            $nodeTools.NpmCLI, 'install', '--global', '--prefix', $toolRoot, '--cache', $npmCache,
+            '--ignore-scripts', '--engine-strict', '--no-audit', '--no-fund', '--package-lock=false', "@steipete/oracle@$Version"
+        ) | Out-Null
+        $packageRoot = Join-Path $toolRoot 'node_modules\@steipete\oracle'
+        $packagePath = Join-Path $packageRoot 'package.json'
+        $package = [IO.File]::ReadAllText($packagePath) | ConvertFrom-Json
+        if ($package.name -cne '@steipete/oracle') { throw 'Oracle package identity is invalid.' }
+        if ($package.version -cne $Version) { Write-Warning 'Oracle installed package version differs; checking capabilities.' }
+        foreach ($commandName in @('oracle', 'oracle-mcp')) {
+            $shim = Join-Path $toolRoot ($commandName + '.cmd')
+            $entry = Join-Path $packageRoot ('dist\bin\' + $commandName + $(if ($commandName -ceq 'oracle') { '-cli' } else { '' }) + '.js')
+            foreach ($path in @($packagePath, $shim, $entry)) {
+                $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Oracle command is unsafe: $path" }
+            }
+            Invoke-ProvisioningNative -Role ($commandName + ' entry syntax') -FilePath $nodeTools.Node -ArgumentList @('--check', $entry) | Out-Null
+        }
+        Invoke-ProvisioningNative -Role 'Oracle CLI command smoke' -FilePath $nodeTools.Node `
+            -ArgumentList @((Join-Path $packageRoot 'dist\bin\oracle-cli.js'), '--help') | Out-Null
+        Add-ProvisioningMachinePath -Directory $toolRoot
+        Install-ProvisioningWinGetPackage -Role 'Pandoc' -Id 'JohnMacFarlane.Pandoc' `
+            -Version (Get-ProvisioningToolVersion -Tool 'JohnMacFarlane.Pandoc' -Requested '') `
+            -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'pandoc.exe'
+        Install-ProvisioningWinGetPackage -Role 'Typst' -Id 'Typst.Typst' `
+            -Version (Get-ProvisioningToolVersion -Tool 'Typst.Typst' -Requested '') `
+            -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'typst.exe'
+        if (Test-ProvisioningPreparation) { return }
+        foreach ($name in @('oracle.cmd', 'oracle-mcp.cmd', 'pandoc.exe', 'typst.exe')) {
+            [void](Wait-ProvisioningCommandAvailable -Role 'Oracle research tools' -Name $name)
+        }
+        $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
+        if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) { throw 'Oracle requires the existing Sandbox Microsoft Edge installation.' }
+        $configRoot = Join-Path $env:USERPROFILE '.oracle'
+        if (-not (Test-Path -LiteralPath $configRoot)) { New-Item -ItemType Directory -Path $configRoot | Out-Null }
+        $rootItem = Get-Item -LiteralPath $configRoot -Force
+        if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Oracle configuration directory is unsafe.' }
+        $configPath = Join-Path $configRoot 'config.json'
+        if (-not (Test-Path -LiteralPath $configPath)) {
+            $configuration = [ordered]@{
+                engine = 'browser'
+                browser = [ordered]@{
+                    chromePath = $edge; manualLogin = $true; cookieSync = $false; manualLoginCookieSync = $false
+                    headless = $false; keepBrowser = $false; timeoutMs = 1200000; autoReattachIntervalMs = 0
+                    modelStrategy = 'current'; researchMode = 'deep'
+                }
+            }
+            [IO.File]::WriteAllText($configPath, (($configuration | ConvertTo-Json -Depth 4) + "`n"), (New-Object Text.UTF8Encoding($false)))
+        }
+        Write-Output 'Oracle CLI/MCP and Markdown/PDF tools ready. Existing Oracle configuration preserved. Manual browser login is separate; no account session has been copied or verified.'
+    }
 }
 
 function Install-PlaywrightCLIStack {

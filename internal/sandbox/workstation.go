@@ -198,7 +198,7 @@ func decodeWorkstationProfile(data []byte) (WorkstationProfile, error) {
 		}
 		seen[key] = true
 	}
-	allowedStacks := []string{"android", "audio", "bun", "cargo-nextest", "cpp", "dotnet", "font", "git-sh", "go", "handy", "herdr", "hyperframes", "java", "just", "node", "nsis", "opensrc", "playwright-cli", "python", "python-ai", "rust-msvc", "tradingview", "uv", "zig"}
+	allowedStacks := []string{"android", "audio", "bun", "cargo-nextest", "cpp", "dotnet", "font", "git-sh", "go", "handy", "herdr", "hyperframes", "java", "just", "node", "nsis", "opensrc", "oracle", "playwright-cli", "python", "python-ai", "rust-msvc", "tradingview", "uv", "zig"}
 	seen = map[string]bool{}
 	for _, stack := range result.Stacks {
 		if !slices.Contains(allowedStacks, stack) || seen[stack] {

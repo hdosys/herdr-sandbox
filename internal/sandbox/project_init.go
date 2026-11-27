@@ -29,6 +29,7 @@ var allProjectInitStacks = []projectStack{
 	stackJust,
 	stackNode,
 	stackNSIS,
+	stackOracle,
 	stackPlaywrightCLI,
 	stackPythonAIPreset,
 	stackRustMSVC,
@@ -135,7 +136,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {
 	if len(requested) == 0 {
-		return nil, nil, errors.New("select at least one stack: android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr")
+		return nil, nil, errors.New("select at least one stack: android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, oracle, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr")
 	}
 	for _, value := range requested {
 		if strings.EqualFold(strings.TrimSpace(value), "all") {
@@ -158,6 +159,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		"node":           stackNode,
 		"nsis":           stackNSIS,
 		"playwright-cli": stackPlaywrightCLI,
+		"oracle":         stackOracle,
 		"python":         stackPython,
 		"python-ai":      stackPythonAIPreset,
 		"rust":           stackRustMSVC,
@@ -171,7 +173,7 @@ func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, e
 		name := strings.ToLower(strings.TrimSpace(value))
 		stack, found := aliases[name]
 		if !found {
-			return nil, nil, fmt.Errorf("unknown stack %q; choose android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr", value)
+			return nil, nil, fmt.Errorf("unknown stack %q; choose android, audio, cpp, dotnet, go, hyperframes, java, node, nsis, oracle, playwright-cli, python, python-ai, rust, tradingview, zig, all, handy, or herdr", value)
 		}
 		if seen[stack] {
 			return nil, nil, fmt.Errorf("stack %q was selected more than once", name)
@@ -261,6 +263,8 @@ func renderProjectProvisioningProfile(stacks []projectStack) ([]byte, error) {
 			call = "Install-NSISStack"
 		case stackPlaywrightCLI:
 			call = "Install-PlaywrightCLIStack"
+		case stackOracle:
+			call = "Install-OracleStack"
 		case stackPython:
 			call = "Install-PythonStack"
 		case stackPythonAIPreset:
