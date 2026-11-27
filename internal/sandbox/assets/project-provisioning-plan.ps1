@@ -230,6 +230,7 @@ function Get-CommandToolRequirements {
             return @(
                 (New-ToolRequirement 'OpenJS.NodeJS' $node '' 'oracle'),
                 (New-ToolRequirement '@steipete/oracle' $version '' 'oracle'),
+                (New-ToolRequirement 'Google.Chrome' '' '' 'oracle'),
                 (New-ToolRequirement 'JohnMacFarlane.Pandoc' '' '' 'oracle'),
                 (New-ToolRequirement 'Typst.Typst' '' '' 'oracle')
             )

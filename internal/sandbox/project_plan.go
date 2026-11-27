@@ -109,6 +109,7 @@ var (
 		"@ferroxlabs/tvcontrol":          "@ferroxlabs/tvcontrol",
 		"@playwright/cli":                "@playwright/cli",
 		"@steipete/oracle":               "@steipete/oracle",
+		"google.chrome":                  "Google.Chrome",
 		"johnmacfarlane.pandoc":          "JohnMacFarlane.Pandoc",
 		"typst.typst":                    "Typst.Typst",
 		"audiogridder":                   "AudioGridder",

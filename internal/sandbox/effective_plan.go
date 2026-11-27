@@ -255,7 +255,7 @@ func effectiveStackPackageOwner(stack projectStack) string {
 	case stackPlaywrightCLI:
 		return "OpenJS.NodeJS + @playwright/cli@latest"
 	case stackOracle:
-		return "OpenJS.NodeJS + @steipete/oracle@latest + Pandoc + Typst + manual Edge login"
+		return "OpenJS.NodeJS + @steipete/oracle@latest + Google Chrome + Pandoc + Typst + manual login"
 	case stackPython:
 		return "Python.Python.<family selected by stack>"
 	case stackRustMSVC:

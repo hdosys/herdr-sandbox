@@ -169,7 +169,7 @@ $needsVisualStudio = $selected.ContainsKey('cpp') -or $selected.ContainsKey('rus
     }
     if ($selected.ContainsKey('node')) { Add-WorkstationJob 'Node browser tools' 'node' -Requires @('Node.js') -Tools @('playwright') }
     if ($selected.ContainsKey('playwright-cli')) { Add-WorkstationJob 'Playwright CLI' 'playwright-cli' -Requires @('Node.js') -Tools @('@playwright/cli') }
-    if ($selected.ContainsKey('oracle')) { Add-WorkstationJob 'Oracle research tools' 'oracle' -Requires @('Node.js','Package Microsoft.VCRedist.2015+.x64') -Tools @('@steipete/oracle','JohnMacFarlane.Pandoc','Typst.Typst') }
+    if ($selected.ContainsKey('oracle')) { Add-WorkstationJob 'Oracle research tools' 'oracle' -Requires @('Node.js','Package Microsoft.VCRedist.2015+.x64') -Tools @('@steipete/oracle','Google.Chrome','JohnMacFarlane.Pandoc','Typst.Typst') }
     if ($selected.ContainsKey('tradingview')) {
         Add-WorkstationJob 'TradingView Desktop' 'tradingview-desktop' -Tools @('TradingView.TradingViewDesktop')
         Add-WorkstationJob 'TVControl' 'tvcontrol' -Requires @('Node.js') -Tools @('@ferroxlabs/tvcontrol')

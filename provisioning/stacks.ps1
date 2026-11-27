@@ -1,4 +1,4 @@
-# herdr-sandbox-stacks-contract: 31
+# herdr-sandbox-stacks-contract: 32
 
 function Get-StackWebResponseText {
     param(
@@ -2969,36 +2969,68 @@ function Install-OracleStack {
         Install-ProvisioningWinGetPackage -Role 'Typst' -Id 'Typst.Typst' `
             -Version (Get-ProvisioningToolVersion -Tool 'Typst.Typst' -Requested '') `
             -InstallerType 'zip' -Adapter 'Portable' -ExecutableName 'typst.exe'
+        Install-ProvisioningWinGetPackage -Role 'Google Chrome' -Id 'Google.Chrome' `
+            -Version (Get-ProvisioningToolVersion -Tool 'Google.Chrome' -Requested '') `
+            -InstallerType 'wix' -Scope 'machine' -Adapter 'MSI' -RequireAuthenticodeSignature
         if (Test-ProvisioningPreparation) { return }
         foreach ($name in @('oracle.cmd', 'oracle-mcp.cmd', 'pandoc.exe', 'typst.exe')) {
             [void](Wait-ProvisioningCommandAvailable -Role 'Oracle research tools' -Name $name)
         }
-        $edge = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'
-        if (-not (Test-Path -LiteralPath $edge -PathType Leaf)) { throw 'Oracle requires the existing Sandbox Microsoft Edge installation.' }
+        $chrome = Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'
+        if (-not (Test-Path -LiteralPath $chrome -PathType Leaf) -or
+            ((Get-Item -LiteralPath $chrome -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The provisioned Google Chrome executable is missing or unsafe.'
+        }
+        $signature = Get-AuthenticodeSignature -LiteralPath $chrome
+        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Google LLC(,|$)') {
+            throw 'Google Chrome publisher verification failed.'
+        }
         # Oracle MCP checks CHROME_PATH before loading browser.chromePath.
         # Publish the same verified browser for both supported entrypoints.
-        [Environment]::SetEnvironmentVariable('CHROME_PATH', $edge, (Get-ProvisioningEnvironmentTarget))
-        if ([Environment]::GetEnvironmentVariable('CHROME_PATH', (Get-ProvisioningEnvironmentTarget)) -cne $edge) {
+        [Environment]::SetEnvironmentVariable('CHROME_PATH', $chrome, (Get-ProvisioningEnvironmentTarget))
+        if ([Environment]::GetEnvironmentVariable('CHROME_PATH', (Get-ProvisioningEnvironmentTarget)) -cne $chrome) {
             throw 'Oracle browser environment was not persisted.'
         }
-        $env:CHROME_PATH = $edge
+        $env:CHROME_PATH = $chrome
         $configRoot = Join-Path $env:USERPROFILE '.oracle'
         if (-not (Test-Path -LiteralPath $configRoot)) { New-Item -ItemType Directory -Path $configRoot | Out-Null }
         $rootItem = Get-Item -LiteralPath $configRoot -Force
         if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Oracle configuration directory is unsafe.' }
         $configPath = Join-Path $configRoot 'config.json'
-        if (-not (Test-Path -LiteralPath $configPath)) {
-            $configuration = [ordered]@{
+        if (Test-Path -LiteralPath $configPath) {
+            $configItem = Get-Item -LiteralPath $configPath -Force
+            if ($configItem.PSIsContainer -or ($configItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Oracle configuration file is unsafe.' }
+            $configuration = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
+            if ($configuration -isnot [pscustomobject] -or $configuration.browser -isnot [pscustomobject]) {
+                throw 'Existing Oracle configuration must contain a browser settings object.'
+            }
+        } else {
+            $configuration = [pscustomobject]@{
                 engine = 'browser'
-                browser = [ordered]@{
-                    chromePath = $edge; manualLogin = $true; cookieSync = $false; manualLoginCookieSync = $false
+                browser = [pscustomobject]@{
+                    manualLogin = $true; cookieSync = $false; manualLoginCookieSync = $false
                     headless = $false; keepBrowser = $false; timeoutMs = 1200000; autoReattachIntervalMs = 0
                     modelStrategy = 'current'; researchMode = 'deep'
                 }
             }
-            [IO.File]::WriteAllText($configPath, (($configuration | ConvertTo-Json -Depth 4) + "`n"), (New-Object Text.UTF8Encoding($false)))
         }
-        Write-Output 'Oracle CLI/MCP and Markdown/PDF tools ready. Existing Oracle configuration preserved. Manual browser login is separate; no account session has been copied or verified.'
+        # Select one Chrome-owned profile. Do not inspect, migrate or remove any
+        # previous browser profile or its account state.
+        $profilePath = Join-Path $configRoot 'browser-profile-chrome'
+        if (Test-Path -LiteralPath $profilePath) {
+            $profileItem = Get-Item -LiteralPath $profilePath -Force
+            if (-not $profileItem.PSIsContainer -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Oracle Chrome profile directory is unsafe.' }
+        }
+        $configuration.browser | Add-Member -NotePropertyName chromePath -NotePropertyValue $chrome -Force
+        $configuration.browser | Add-Member -NotePropertyName manualLoginProfileDir -NotePropertyValue $profilePath -Force
+        $configStage = Join-Path $configRoot ('.config-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+        try {
+            [IO.File]::WriteAllText($configStage, (($configuration | ConvertTo-Json -Depth 100) + "`n"), (New-Object Text.UTF8Encoding($false)))
+            if (Test-Path -LiteralPath $configPath) {
+                [IO.File]::Replace($configStage, $configPath, [System.Management.Automation.Language.NullString]::Value)
+            } else { [IO.File]::Move($configStage, $configPath) }
+        } finally { if ([IO.File]::Exists($configStage)) { [IO.File]::Delete($configStage) } }
+        Write-Output 'Oracle CLI/MCP and Markdown/PDF tools ready with Google Chrome. Other configuration and previous profiles preserved. Manual login is separate; no account state has been copied or verified.'
     }
 }
 

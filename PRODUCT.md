@@ -500,15 +500,21 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 
 - `sandbox init --stack oracle` selects `Install-OracleStack`. The same
   function can be selected in `user.ps1`. It reuses Node, installs current stable
-  `@steipete/oracle` with `oracle` and `oracle-mcp`, and installs Pandoc and Typst
+  `@steipete/oracle` with `oracle` and `oracle-mcp`, and installs regular official
+  stable Google Chrome, Pandoc and Typst
   through the existing verified package adapters.
-- Oracle uses the existing Edge executable with its own guest-local manual-login
-  profile, separate from daily Edge and Playwright extension access. This scoped
-  Oracle path never copies browser credentials or operates the daily profile.
+- Oracle uses regular Google Chrome with the dedicated guest-local
+  `~/.oracle/browser-profile-chrome` manual-login profile, separate from daily Edge
+  and Playwright extension access. There is no Edge fallback or Chrome-for-Testing
+  downloader. This path never copies browser credentials or operates daily profiles.
   Provisioning never opens the browser, waits for login, or claims authentication.
   New Oracle configuration defaults to visible browser-based Deep Research with
-  cookie copying disabled. Existing Oracle configuration and profile are preserved.
-  The same Edge path is published as `CHROME_PATH` for Oracle MCP's browser
+  cookie copying disabled. Provisioning updates only `browser.chromePath` and
+  `browser.manualLoginProfileDir` in existing Oracle configuration. Other settings
+  and all previous profiles remain intact. In particular, an earlier Edge-backed
+  `~/.oracle/browser-profile` is not reused, migrated or deleted. A fresh Chrome
+  profile requires its own manual login.
+  The same verified Chrome path is published as `CHROME_PATH` for Oracle MCP's browser
   preflight and passed to new guest workspaces. Existing agent sessions need a
   refreshed launch environment; they are not restarted automatically.
 - The global agent workflow owns topic interpretation, account capability selection,
