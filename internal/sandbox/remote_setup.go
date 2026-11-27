@@ -18,6 +18,7 @@ type RemoteSetup struct {
 	Sources           []string
 	AdditionalKeys    int
 	ConfigurationPath string
+	AuthorizedKeys    []string
 }
 
 // SetupRemote enables tailnet access using the app-owned host identity and an
@@ -107,6 +108,7 @@ func setupRemoteAt(ctx context.Context, root string, sources []string, requireKe
 		return false, errors.New("remote access requires one free key slot for this computer")
 	}
 	preview.AdditionalKeys = len(keys)
+	preview.AuthorizedKeys = slices.Clone(keys)
 	if confirm == nil || !confirm(preview) {
 		return false, nil
 	}

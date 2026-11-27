@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	if !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
 		t.Fatal("current-Sandbox acceptance refuses host execution")
 	}
+	powerShell := mustWindowsPowerShellPath(t)
 	root := `C:\HerdrSandbox\remote-ssh`
 	original, err := os.ReadFile(filepath.Join(root, "authorized_keys"))
 	if err != nil {
@@ -75,16 +77,18 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	if output, err := connect(); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
 		t.Fatalf("unapproved device was not rejected by public-key authentication: %v: %s", err, output)
 	}
-	apply := func(operationContext context.Context, selected []string) error {
+	apply := func(operationContext context.Context, selected []string, lockPrepared bool) error {
 		script, err := remoteKeysUpdateScript(selected)
 		if err != nil {
 			return err
 		}
-		command := hiddenCommandContext(operationContext, mustWindowsPowerShellPath(t), "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
+		if lockPrepared {
+			script = "$lockedPrepared = [IO.File]::Open('C:\\HerdrSandbox\\remote-ssh\\prepared.json', [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)\ntry { & {\n" + script + "\n} } finally { $lockedPrepared.Dispose() }"
+		}
+		command := hiddenCommandContext(operationContext, powerShell, "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodePowerShell(script))
 		output, err := command.CombinedOutput()
 		if err != nil {
-			t.Logf("key update failed: %s", output)
-			return err
+			return fmt.Errorf("key update: %w: %s", err, output)
 		}
 		_, err = decodeRemoteSSHRuntimeResult(output)
 		return err
@@ -93,17 +97,25 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupContext, stop := context.WithTimeout(context.Background(), time.Minute)
 		defer stop()
-		if err := apply(cleanupContext, keys); err != nil {
+		if err := apply(cleanupContext, keys, false); err != nil {
 			t.Errorf("temporary device authorization cleanup failed: %v", err)
 		}
 	})
-	if err := apply(ctx, append(append([]string{}, keys...), key)); err != nil {
+	proposed := append(append([]string{}, keys...), key)
+	if err := apply(ctx, proposed, true); err == nil || !strings.Contains(err.Error(), "being used by another process") || !strings.Contains(err.Error(), "Set-AtomicBytes") {
+		t.Fatalf("locked prepared state did not reject the second publication: %v", err)
+	}
+	afterFailure, err := os.ReadFile(filepath.Join(root, "authorized_keys"))
+	if err != nil || !bytes.Equal(afterFailure, original) {
+		t.Fatal("failed prepared-state publication did not restore previous authorization")
+	}
+	if err := apply(ctx, proposed, false); err != nil {
 		t.Fatal(err)
 	}
 	if output, err := connect(); err != nil || !strings.Contains(string(output), "remote-key-accepted") {
 		t.Fatalf("newly approved device could not connect: %v: %s", err, output)
 	}
-	if err := apply(ctx, keys); err != nil {
+	if err := apply(ctx, keys, false); err != nil {
 		t.Fatal(err)
 	}
 	if output, err := connect(); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
@@ -116,5 +128,18 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	processAfter, err := os.ReadFile(filepath.Join(root, "process.json"))
 	if err != nil || !bytes.Equal(processBefore, processAfter) {
 		t.Fatal("remote endpoint identity changed")
+	}
+}
+
+func TestRemoteKeysRemainBoundToApprovedSnapshot(t *testing.T) {
+	approved := []string{testEd25519PublicKey(1)}
+	if err := verifyApprovedRemoteKeys(approved, approved); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyApprovedRemoteKeys([]string{testEd25519PublicKey(2)}, approved); err == nil {
+		t.Fatal("configuration substitution after approval was accepted")
+	}
+	if err := verifyApprovedRemoteKeys(nil, approved); err == nil {
+		t.Fatal("configuration removal after approval was accepted")
 	}
 }

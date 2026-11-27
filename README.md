@@ -929,8 +929,8 @@ configuration, enable Tailscale and add only additional device public keys:
 The host management public key is added automatically at every `up` with
 `tailscale: true`, even without additional keys. At most seven additional keys
 are accepted: Ed25519, RSA of at least 2048 bits, and ECDSA nistp256/384/521.
-Changes to this key set require a fresh Sandbox; choose when to close an existing
-guest before starting with the new configuration:
+Apply and approve the configured keys with `sandbox remote setup`. A ready
+tailnet guest receives the keys without a restart. For initial startup:
 
 ```powershell
 sandbox up

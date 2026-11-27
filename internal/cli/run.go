@@ -104,7 +104,7 @@ type commandDependencies struct {
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
 	openConfig                 func() (string, bool, error)
 	setupRemote                func(context.Context, string, func(sandbox.RemoteSetup) bool) (bool, error)
-	applyRemoteKeys            func(context.Context) (bool, error)
+	applyRemoteKeys            func(context.Context, []string) (bool, error)
 	seedInstaller              func() error
 	stopInstallerProcesses     func(context.Context) error
 	cleanInstaller             func(context.Context, bool) error

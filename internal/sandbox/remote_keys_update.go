@@ -16,7 +16,7 @@ var remoteSSHKeysScript string
 
 // ApplyRemoteKeys updates the existing tailnet endpoint without provisioning or
 // restarting anything. False means no active managed Sandbox exists yet.
-func ApplyRemoteKeys(ctx context.Context) (applied bool, resultErr error) {
+func ApplyRemoteKeys(ctx context.Context, approvedKeys []string) (applied bool, resultErr error) {
 	release, err := acquireLifecycleMutationLock(ctx)
 	if err != nil {
 		return false, err
@@ -65,6 +65,9 @@ func ApplyRemoteKeys(ctx context.Context) (applied bool, resultErr error) {
 	}
 	if !configuration.Tailscale {
 		return false, errors.New("remote access is no longer enabled in configuration")
+	}
+	if err := verifyApprovedRemoteKeys(configuration.RemoteSSHAuthorizedKeys, approvedKeys); err != nil {
+		return false, err
 	}
 	provisioning := provisioningPlan{Tailscale: true, RemoteSSHAuthorizedKeys: configuration.RemoteSSHAuthorizedKeys}
 	if err := includeRemotePublicKey(filepath.Join(dataDirectory, "identity", "id_ed25519.pub"), &provisioning); err != nil {
@@ -120,6 +123,17 @@ func ApplyRemoteKeys(ctx context.Context) (applied bool, resultErr error) {
 		return false, fmt.Errorf("remote keys applied, but active plan could not be saved; repeat remote setup to reconcile: %w", err)
 	}
 	return true, nil
+}
+
+func verifyApprovedRemoteKeys(configured, approved []string) error {
+	keys, err := canonicalizeRemoteSSHAuthorizedKeys(configured)
+	if err != nil {
+		return err
+	}
+	if !sameRemoteSSHAuthorizedKeys(keys, approved) {
+		return errors.New("configured remote keys changed after approval; no guest keys were changed, repeat remote setup to review the current set")
+	}
+	return nil
 }
 
 func remoteKeysUpdateScript(keys []string) (string, error) {

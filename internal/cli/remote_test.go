@@ -18,13 +18,16 @@ func TestRemoteSetupAppliesApprovedKeysWithoutProvisioning(t *testing.T) {
 			if keyFile != "device.pub" {
 				t.Fatalf("wrong import path %q", keyFile)
 			}
-			approved = confirm(sandbox.RemoteSetup{AdditionalKeys: 1, Sources: []string{"device.pub"}})
+			approved = confirm(sandbox.RemoteSetup{AdditionalKeys: 1, Sources: []string{"device.pub"}, AuthorizedKeys: []string{"approved-device-key"}})
 			return approved, nil
 		}
 		applied := false
-		deps.applyRemoteKeys = func(context.Context) (bool, error) {
+		deps.applyRemoteKeys = func(_ context.Context, keys []string) (bool, error) {
 			if !approved {
 				t.Fatal("unapproved access applied")
+			}
+			if len(keys) != 1 || keys[0] != "approved-device-key" {
+				t.Fatal("application lost the exact approved key snapshot")
 			}
 			applied = true
 			return true, nil
@@ -54,7 +57,7 @@ func TestRemoteSetupReportsLiveFailureWithoutStartingSandbox(t *testing.T) {
 	deps.setupRemote = func(_ context.Context, _ string, confirm func(sandbox.RemoteSetup) bool) (bool, error) {
 		return confirm(sandbox.RemoteSetup{}), nil
 	}
-	deps.applyRemoteKeys = func(context.Context) (bool, error) {
+	deps.applyRemoteKeys = func(context.Context, []string) (bool, error) {
 		return false, errors.New("endpoint identity changed")
 	}
 	deps.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {

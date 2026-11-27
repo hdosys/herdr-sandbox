@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"herdr-sandbox/internal/sandbox"
@@ -30,7 +31,9 @@ func runRemoteSetup(ctx context.Context, args []string, input io.Reader, output,
 		return 2
 	}
 	var inputErr error
+	var approvedKeys []string
 	saved, err := dependencies.setupRemote(ctx, keyFile, func(plan sandbox.RemoteSetup) bool {
+		approvedKeys = slices.Clone(plan.AuthorizedKeys)
 		fmt.Fprintln(output, "Set up remote access")
 		fmt.Fprintln(output, "  This computer: automatic access with its existing Sandbox SSH identity.")
 		fmt.Fprintf(output, "  Additional authorized keys: %d\n", plan.AdditionalKeys)
@@ -63,7 +66,7 @@ func runRemoteSetup(ctx context.Context, args []string, input io.Reader, output,
 		return 0
 	}
 	fmt.Fprintln(output, "Remote settings saved. Applying access to the running Sandbox without restarting or provisioning it...")
-	applied, err := dependencies.applyRemoteKeys(ctx)
+	applied, err := dependencies.applyRemoteKeys(ctx, approvedKeys)
 	if err != nil {
 		fmt.Fprintln(stderr, "sandbox: remote settings saved, but access was not confirmed:", err)
 		return 1

@@ -453,6 +453,10 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   connection. `assets/remote-ssh-keys.ps1` reuses the hash-verified remote SSH
   control owner, validates the proposed public keys with OpenSSH, atomically
   replaces the authorization file and updates its existing prepared digest.
+  A failed digest publication restores the previous authorization file and reports
+  failure; it does not leave the new keys silently active. The approved canonical
+  snapshot travels from confirmation to application, which rejects configuration
+  drift before guest mutation.
   Exact read-back and unchanged listener identity precede atomic publication to
   the existing run-input authorization snapshot. No new state owner, enrollment,
   Herdr operation, listener restart or provisioning is involved. A partial failure

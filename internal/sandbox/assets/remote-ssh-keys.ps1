@@ -49,9 +49,21 @@ try {
     [void](Assert-RunningEndpoint -Prepared $prepared)
     $newDigest = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($newDigest -cne [string]$prepared.authorizedKeysSHA256) {
-        [IO.File]::Replace($candidate, $script:AuthorizedKeysPath, [System.Management.Automation.Language.NullString]::Value)
-        $prepared.authorizedKeysSHA256 = $newDigest
-        Set-AtomicText -Path $script:PreparedPath -Text (($prepared | ConvertTo-Json -Compress) + "`n")
+        $backup = Join-Path $script:Root ('.remote-keys-previous-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+        [IO.File]::Replace($candidate, $script:AuthorizedKeysPath, $backup)
+        try {
+            $prepared.authorizedKeysSHA256 = $newDigest
+            Set-AtomicText -Path $script:PreparedPath -Text (($prepared | ConvertTo-Json -Compress) + "`n")
+        } catch {
+            $publicationError = $_
+            try {
+                [IO.File]::Replace($backup, $script:AuthorizedKeysPath, [System.Management.Automation.Language.NullString]::Value)
+            } catch {
+                throw "Remote key publication and rollback failed. Previous public keys remain at $backup. Inspect the endpoint before another update."
+            }
+            throw $publicationError
+        }
+        [IO.File]::Delete($backup)
     }
     [void](Assert-PreparedFiles -State $prepared)
     $after = Assert-RunningEndpoint -Prepared $prepared
