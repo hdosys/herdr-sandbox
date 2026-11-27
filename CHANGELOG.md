@@ -36,6 +36,8 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Fixed
 
+- Large direct package downloads no longer stall behind Windows PowerShell 5.1's
+  per-block progress rendering. Phase feedback and SHA-256 verification remain enabled.
 - Oracle provisioning parses npm registry JSON separately from stderr notices,
   so npm update notifications no longer fail stable-version resolution.
 - Both provisioning targets install GeistMono Nerd Fonts in the Windows Fonts

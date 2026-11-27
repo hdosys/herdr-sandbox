@@ -2471,6 +2471,9 @@ function Get-ProvisioningDirectPackage {
     $downloadStopwatch = [Diagnostics.Stopwatch]::StartNew()
     try {
         Write-ProvisioningProgress -Message "$Role package download"
+        # PowerShell 5.1 byte-level progress throttles large downloads. Keep the
+        # phase status above, without rendering progress for every received block.
+        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $Metadata.Url -OutFile $GuestPayloadPath
     } finally {
         $downloadStopwatch.Stop()
