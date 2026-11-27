@@ -510,5 +510,6 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   cookie copying disabled. Existing Oracle configuration and profile are preserved.
 - The global agent workflow owns topic interpretation, account capability selection,
   visible manual login and research execution. A completed cited Markdown report
-  can be rendered with `pandoc report.md --pdf-engine=typst -o report.pdf`.
+  can be rendered with `pandoc --from=markdown-smart report.md --pdf-engine=typst -o report.pdf`.
+  Disabling smart punctuation preserves literal source URLs in the PDF text.
   Availability of tools is not a claim that login, research or PDF delivery passed.
