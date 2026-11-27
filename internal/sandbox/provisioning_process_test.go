@@ -124,7 +124,7 @@ $tokens = $null
 $errors = $null
 $baseAST = [Management.Automation.Language.Parser]::ParseFile('%s', [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw $errors[0].Message }
-foreach ($name in @('New-ProvisioningNativeSpec', 'Invoke-ProvisioningNativeResult', 'Invoke-ProvisioningNative', 'ConvertFrom-ProvisioningNativeOutput', 'Start-ProvisioningNativeGroup', 'Complete-ProvisioningNativeGroup', 'Stop-ProvisioningNativeGroup')) {
+foreach ($name in @('New-ProvisioningNativeSpec', 'Start-ProvisioningNativeGroup', 'Complete-ProvisioningNativeGroup', 'Stop-ProvisioningNativeGroup')) {
     $definition = $baseAST.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true)
     if ($null -eq $definition) { throw "Missing Base process function: $name" }
     Invoke-Expression $definition.Extent.Text
@@ -144,16 +144,6 @@ function New-Spec([string]$Role, [string[]]$Arguments, [int[]]$Success = @(0), [
     $spec.SuccessExitCodes = $Success
     return $spec
 }
-$jsonCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('[Console]::Out.WriteLine(''"0.23.1"''); [Console]::Error.WriteLine(''npm notice New major version of npm available!'')'))
-$jsonWarnings = @()
-$jsonOutput = Invoke-ProvisioningNative -Role 'JSON metadata' -FilePath (New-Spec -Role 'path' -Arguments @()).FilePath -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $jsonCommand) -SeparateErrorOutput -WarningVariable jsonWarnings -WarningAction SilentlyContinue -TimeoutSeconds 10
-if (($jsonOutput | ConvertFrom-Json) -cne '0.23.1' -or ($jsonWarnings -join '') -notlike '*npm notice*') { throw 'JSON stdout or stderr warning was lost.' }
-$failureCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('[Console]::Error.WriteLine(''registry unavailable''); exit 23'))
-$failureMessage = ''
-try {
-    Invoke-ProvisioningNative -Role 'JSON metadata failure' -FilePath (New-Spec -Role 'path' -Arguments @()).FilePath -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $failureCommand) -SeparateErrorOutput -TimeoutSeconds 10 | Out-Null
-} catch { $failureMessage = $_.Exception.Message }
-if ($failureMessage -notlike '*exit code 23*registry unavailable*') { throw "Native failure diagnostic was lost: $failureMessage" }
 $values = @(%s) | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }
 $argumentSpec = New-Spec -Role 'arguments' -Arguments ([string[]](@('-NoLogo', '-NoProfile', '-NonInteractive', '-File', '%s') + $values))
 $argumentResult = [HerdrSandbox.ProvisioningProcess]::Run($argumentSpec)

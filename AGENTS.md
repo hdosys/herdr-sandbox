@@ -164,6 +164,24 @@ in the global OpenCode configuration, not this repository.
 
 Use repository-owned tasks and the smallest ladder covering the change:
 
+For provisioning changes, the agent must run the affected real production path
+inside the already running Windows Sandbox before claiming acceptance. Use
+`go run ./cmd/task native-current-sandbox --stack NAME` with an existing init
+selection, or the full task below for shared Base/orchestration changes.
+This is part of the authorized fix, not an optional user-operated follow-up. The
+task rejects host execution; run it from the guest checkout. An existing verified
+SSH connection may launch the command there, but neither host mocks nor a host
+provisioner substitute for guest evidence. Preserve the ready guest and its SSH
+and Herdr processes. Never start a nested or replacement Sandbox to satisfy this
+gate. If no guest is accessible, report native acceptance as blocked, not passed.
+
+Keep targeted checks generic: reuse the initializer's stack selection, production
+plans, libraries and capability checks. Do not add per-stack flags, a second
+installer, copied stack catalogs or success based only on retained completion
+markers. New stacks must participate through the canonical selection owner.
+Short deterministic regressions for discovered parsing/process failures belong
+in the fast gate when they can run without installation or network access.
+
 1. Focused pure tests for parsing, rendering, status, and quoting.
 2. `go run ./cmd/task fmt`, the fast product-focused `go run ./cmd/task test`, and
    applicable Windows PowerShell 5.1 syntax checks.
@@ -171,7 +189,9 @@ Use repository-owned tasks and the smallest ladder covering the change:
    behavior changed.
 4. `go run ./cmd/task provisioning-preflight` for the bounded current-guest inputs
    and production parsers that can fail before expensive provisioning.
-5. `go run ./cmd/task native-current-sandbox` for explicit in-place Base/package/
+5. `go run ./cmd/task native-current-sandbox [--stack NAME]` for in-place real
+   provisioning. A selected stack runs its production dependencies and capability
+   checks without desktop/shell reconfiguration. Without selection, run Base/package/
    all-stack acceptance plus a task-owned REAPER-to-AudioGridder connection inside
    the active development Sandbox. It must never run bootstrap, reprovision SSH or
    Herdr, or change the existing SSH service, Herdr server, or remote-client bridge
@@ -194,14 +214,18 @@ the bounded, isolated PowerShell 5.1 continuation and transport/profile checks;
 their real script scopes and atomic state publication are normal iteration gates,
 not deferred external-integration coverage. `go run ./cmd/task test-integration` and
 `go run ./cmd/task verify-integration` own external PowerShell/Git execution and
-the full nightly or explicitly requested assurance matrix. `native-current-sandbox` and
-`package-current-sandbox` are also explicit and never part of normal iteration.
-Do not run these slower gates while a user waits for an ordinary build or
-installer. Unit tests do not replace the applicable native gate when changed
-behavior depends on that boundary.
+the full nightly or explicitly requested assurance matrix. The full
+`native-current-sandbox` and `package-current-sandbox` gates remain explicit, not
+automatic additions to an ordinary build. The affected guest-local provisioning
+check above is required after the first artifact for provisioning changes. Do not
+make unrelated stacks or a complete reinstall its prerequisites. Unit tests do
+not replace that native evidence.
 
 `go run ./cmd/task provisioning-preflight` must finish within 45 seconds and runs
-automatically before both current-Sandbox gates. It checks only already available
+automatically before the full native and installed-candidate gates. A selected
+stack instead checks guest identity/capacity and uses its own production parsers
+and prerequisites, without requiring unrelated Visual Studio or audio inputs.
+The full preflight checks only already available
 current-guest inputs, production parsers, and the task-owned minimum free capacity
 on the installation volume. The installed-candidate path revalidates it
 immediately before that boundary. It never installs, updates, or replaces a tool

@@ -1049,6 +1049,7 @@ go run ./cmd/task package v0.0.RELEASE_ID
 go run ./cmd/task release VERSION
 go run ./cmd/task provisioning-preflight
 go run ./cmd/task native-current-sandbox
+go run ./cmd/task native-current-sandbox --stack NAME
 go run ./cmd/task package-current-sandbox v0.0.RELEASE_ID
 go run ./cmd/task native-all-stacks
 ```
@@ -1070,11 +1071,16 @@ go run ./cmd/task native-all-stacks
 - `provisioning-preflight` checks production provisioning parsers plus available
   Java, Android, and Visual Studio inputs in the active Sandbox before a slower
   native or installed-candidate run. It does not install or update tools.
-- `native-current-sandbox` replays real Base and every project stack inside the
-  active development Sandbox, then proves a task-owned REAPER client connection
-  to AudioGridder server 0 without launching a nested Sandbox or restarting its
-  existing SSH and Herdr processes. Run it explicitly when deployment evidence is
-  useful before discarding a working guest; release does not invoke it.
+- Run `native-current-sandbox` **from the repository inside the running Sandbox**,
+  not on the host. Without arguments it replays Base and the canonical `all`
+  stack selection plus the project-specific compositions, then checks the
+  REAPER-to-AudioGridder connection. Add `--stack NAME` to check one existing
+  `sandbox init` selection using the real package installers and capability
+  checks, without replaying desktop/shell setup or unrelated stacks. Both paths
+  preserve the running Sandbox, SSH and Herdr processes. The focused path needs
+  the existing guest, network/package access and at least 4 GiB free; run one
+  provisioning check at a time. It retains installed tools and removes temporary
+  test inputs. It does not replace a final fresh-Sandbox check of first setup.
 - `package-current-sandbox` covers fresh install, same-version repair, a
   current-layout immediate-predecessor upgrade, installed-payload provisioning,
   configuration and development-environment preservation, and quiet uninstall

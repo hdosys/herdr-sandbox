@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,32 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestCurrentSandboxGatesRejectHostBeforeExecution(t *testing.T) {
+	t.Setenv("USERNAME", "host-fixture")
+	for _, args := range [][]string{
+		{"native-current-sandbox"},
+		{"native-current-sandbox", "--stack", "oracle"},
+		{"provisioning-preflight"},
+	} {
+		err := run(t.Context(), args, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "inside the running Windows Sandbox, not on the host") {
+			t.Fatalf("%v host rejection = %v", args, err)
+		}
+	}
+}
+
+func TestCurrentSandboxEnvironmentCannotSkipNativeChecks(t *testing.T) {
+	t.Setenv(fastTestsEnvironment, "1")
+	t.Setenv(currentSandboxStackEnvironment, "oracle")
+	t.Setenv(currentSandboxPayloadEnvironment, "unrelated-payload")
+	for _, value := range currentSandboxTestEnvironment("") {
+		name, _, _ := strings.Cut(value, "=")
+		if strings.EqualFold(name, fastTestsEnvironment) || strings.EqualFold(name, currentSandboxStackEnvironment) || strings.EqualFold(name, currentSandboxPayloadEnvironment) {
+			t.Fatalf("native check inherited selection or skip state: %s", name)
+		}
+	}
+}
 
 func TestRestoreGlobalGitSafeDirectoriesPreservesExistingEntries(t *testing.T) {
 	if runtime.GOOS != "windows" {

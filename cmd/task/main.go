@@ -36,7 +36,7 @@ Tasks:
   test-integration [args...]  run all Go external-boundary tests
   build            build intermediate CLI output at build/bin/%s
   provisioning-preflight  validate current guest inputs before an expensive native or installed-candidate gate
-  native-current-sandbox  provision and verify all stacks inside this active Sandbox without touching SSH or Herdr
+  native-current-sandbox [--stack NAME]  verify real provisioning inside this Sandbox; optionally select one existing init stack
   package-current-sandbox VERSION  exercise the existing local candidate through install, repair, upgrade, provisioning, and uninstall
   native-all-stacks build and test all built-in stacks in one real Windows Sandbox
   native-installer-sandbox test the exact workstation installer in a fresh Sandbox from the host
@@ -118,8 +118,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		return nativeAllStacks(ctx, stdout, stderr)
 	case "native-current-sandbox":
+		if len(args) == 3 && args[1] == "--stack" && strings.TrimSpace(args[2]) != "" {
+			return nativeCurrentSandboxStack(ctx, args[2], stdout, stderr)
+		}
 		if len(args) != 1 {
-			return errors.New("native-current-sandbox accepts no arguments")
+			return errors.New("usage: go run ./cmd/task native-current-sandbox [--stack NAME]")
 		}
 		return nativeCurrentSandbox(ctx, stdout, stderr, "")
 	case "package-current-sandbox":

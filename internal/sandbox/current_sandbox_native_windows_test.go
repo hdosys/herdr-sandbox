@@ -16,6 +16,7 @@ import (
 
 const (
 	currentSandboxNativeEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE"
+	currentSandboxStackEnvironment     = "HERDR_SANDBOX_CURRENT_NATIVE_STACK"
 	currentSandboxPayloadEnvironment   = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
 	currentSandboxModelsEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE_MODELS"
 	currentSandboxPreflightEnvironment = "HERDR_SANDBOX_CURRENT_PREFLIGHT"
@@ -117,13 +118,9 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 
 	const workspacesRoot = `C:\Workspaces`
 	workspaces := map[string][]string{
-		"herdr-sandbox-native-audio": {"audio"},
-		"herdr-sandbox-native-core": {
-			"dotnet", "android", "go", "hyperframes", "cpp", "java", "nsis", "playwright-cli", "tradingview",
-		},
-		"herdr-sandbox-native-handy":     {"handy"},
-		"herdr-sandbox-native-herdr":     {"herdr"},
-		"herdr-sandbox-native-python-ai": {"python-ai"},
+		"herdr-sandbox-native-core":  {"all"},
+		"herdr-sandbox-native-handy": {"handy"},
+		"herdr-sandbox-native-herdr": {"herdr"},
 	}
 	for name := range workspaces {
 		path := filepath.Join(workspacesRoot, name)
@@ -138,23 +135,10 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 	}
 
 	core := filepath.Join(workspacesRoot, "herdr-sandbox-native-core")
-	herdr := filepath.Join(workspacesRoot, "herdr-sandbox-native-herdr")
-	handy := filepath.Join(workspacesRoot, "herdr-sandbox-native-handy")
-	if err := writeCurrentSandboxFixtureFiles(herdr, map[string]string{
-		"Cargo.toml":          "[package]\nname = \"herdr-native-current\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
-		"rust-toolchain.toml": "[toolchain]\nchannel = \"1.96.1\"\ncomponents = [\"clippy\", \"rustfmt\"]\n",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeCurrentSandboxFixtureFiles(handy, map[string]string{
-		"package.json":         "{\"name\":\"handy-app\",\"private\":true,\"version\":\"0.0.0\"}\n",
-		"bun.lock":             "# current-Sandbox Handy fixture\n",
-		"src-tauri/Cargo.toml": "[package]\nname = \"handy\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
-		"src-tauri/resources/models/silero_vad_v4.onnx": "current-Sandbox model fixture\n",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	for name, stacks := range workspaces {
+		if err := prepareCurrentSandboxProject(filepath.Join(workspacesRoot, name), stacks[0]); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := InitializeProject(filepath.Join(workspacesRoot, name), stacks); err != nil {
 			t.Fatalf("initialize current-Sandbox profile %s: %v", name, err)
 		}
@@ -250,11 +234,96 @@ func TestCurrentSandboxProvisioning(t *testing.T) {
 	}
 }
 
+func TestCurrentSandboxStackProvisioning(t *testing.T) {
+	if os.Getenv(currentSandboxNativeEnvironment) != "1" || os.Getenv(currentSandboxStackEnvironment) == "" {
+		t.Skip("explicit current-Sandbox stack provisioning gate")
+	}
+	if !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		t.Fatal("stack provisioning must execute inside Windows Sandbox, not on the host")
+	}
+	selection := os.Getenv(currentSandboxStackEnvironment)
+	_, labels, err := normalizeProjectInitStacks([]string{selection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	configuration := filepath.Join(root, "config")
+	inspection := filepath.Join(root, "inspection")
+	status := filepath.Join(root, "status")
+	for _, path := range []string{project, configuration, inspection, status} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := prepareCurrentSandboxProject(project, labels[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InitializeProject(project, []string{selection}); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Dir(defaultProvisioningPath(t, baseProvisioningName))
+	plan, err := resolveProvisioningAt(project, configuration, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.WindowsTerminal, err = detectHostWindowsTerminalConfiguration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Packages, err = resolveWingetPackagePlan(plan.PackageConfiguration, plan.WindowsTerminal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := prepareProvisioningSnapshot(t.Context(), inspection, filepath.Join(root, "snapshot"), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := filepath.Abs(filepath.Join("..", "..", "cmd", "task", "assets", "current-sandbox-stack.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Minute)
+	defer cancel()
+	command := hiddenCommandContext(ctx, mustWindowsPowerShellPath(t),
+		"-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass",
+		"-File", runner, "-SnapshotDirectory", snapshot.Directory,
+		"-ProjectScript", filepath.Join(snapshot.ProjectScriptsDirectory, plan.Workspaces[0].Name+".ps1"),
+		"-ProjectDirectory", project)
+	command.Dir = project
+	command.Env = currentSandboxProvisioningEnvironment(status, "")
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("real %s provisioning: %v", labels[0], err)
+	}
+}
+
+func prepareCurrentSandboxProject(root, selection string) error {
+	switch selection {
+	case "herdr":
+		return writeCurrentSandboxFixtureFiles(root, map[string]string{
+			"Cargo.toml": "[package]\nname = \"herdr-native-current\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+		})
+	case "handy":
+		return writeCurrentSandboxFixtureFiles(root, map[string]string{
+			"package.json":         "{\"name\":\"handy-app\",\"private\":true,\"version\":\"0.0.0\"}\n",
+			"bun.lock":             "# current-Sandbox Handy fixture\n",
+			"src-tauri/Cargo.toml": "[package]\nname = \"handy\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+			"src-tauri/resources/models/silero_vad_v4.onnx": "current-Sandbox model fixture\n",
+		})
+	}
+	return nil
+}
+
 func currentSandboxProvisioningEnvironment(status, restartID string) []string {
 	filtered := make([]string, 0, len(os.Environ())+3)
 	for _, entry := range os.Environ() {
 		name, _, found := strings.Cut(entry, "=")
 		if found && (strings.EqualFold(name, "PSModulePath") ||
+			strings.EqualFold(name, "HERDR_PROVISIONING_ROOT") ||
+			strings.EqualFold(name, "HERDR_PROVISIONING_TARGET") ||
+			strings.EqualFold(name, "HERDR_PROVISIONING_RUNNER") ||
 			strings.EqualFold(name, "HERDR_SANDBOX_STATUS_DIRECTORY") ||
 			strings.EqualFold(name, "HERDR_SANDBOX_EXPLORER_RESTART_ID") ||
 			strings.EqualFold(name, "HERDR_SANDBOX_EXPLORER_RESTART_TASK_NAME") ||

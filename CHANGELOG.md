@@ -9,6 +9,9 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
+- Development provisioning can be checked directly inside the running Sandbox,
+  using one generic stack selection or the complete canonical stack set, without
+  replacing the guest or restarting SSH and Herdr.
 - The optional Oracle research stack provides Oracle CLI/MCP, regular Google
   Chrome with a separate manual-login profile, and Pandoc/Typst for Markdown and
   PDF reports. Existing Edge profiles remain untouched.

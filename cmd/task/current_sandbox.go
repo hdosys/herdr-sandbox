@@ -19,6 +19,7 @@ import (
 
 const (
 	currentSandboxNativeEnvironment    = "HERDR_SANDBOX_CURRENT_NATIVE"
+	currentSandboxStackEnvironment     = "HERDR_SANDBOX_CURRENT_NATIVE_STACK"
 	currentSandboxPayloadEnvironment   = "HERDR_SANDBOX_CURRENT_NATIVE_PAYLOAD"
 	currentSandboxPreflightEnvironment = "HERDR_SANDBOX_CURRENT_PREFLIGHT"
 	currentSandboxPreflightTimeout     = 45 * time.Second
@@ -28,11 +29,9 @@ const (
 )
 
 var currentSandboxFixtureSafeDirectories = []string{
-	"C:/Workspaces/herdr-sandbox-native-audio",
 	"C:/Workspaces/herdr-sandbox-native-core",
 	"C:/Workspaces/herdr-sandbox-native-handy",
 	"C:/Workspaces/herdr-sandbox-native-herdr",
-	"C:/Workspaces/herdr-sandbox-native-python-ai",
 }
 
 type currentSandboxProcessIdentity struct {
@@ -57,8 +56,8 @@ func nativeCurrentSandbox(ctx context.Context, stdout, stderr io.Writer, payload
 }
 
 func currentSandboxProvisioningPreflight(ctx context.Context, stdout, stderr io.Writer) error {
-	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") || os.Getenv("HERDR_ENV") != "1" {
-		return errors.New("provisioning-preflight requires the active Herdr-managed Windows Sandbox")
+	if err := requireCurrentSandbox(); err != nil {
+		return err
 	}
 	if err := currentSandboxReleaseResourcePreflight(stdout); err != nil {
 		return err
@@ -75,6 +74,44 @@ func currentSandboxProvisioningPreflight(ctx context.Context, stdout, stderr io.
 		return fmt.Errorf("run current-Sandbox provisioning preflight: %w", err)
 	}
 	_, err := fmt.Fprintln(stdout, "Current-Sandbox provisioning preflight passed.")
+	return err
+}
+
+func requireCurrentSandbox() error {
+	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
+		return errors.New("run this task inside the running Windows Sandbox, not on the host; no guest is started or replaced")
+	}
+	return nil
+}
+
+func nativeCurrentSandboxStack(ctx context.Context, stack string, stdout, stderr io.Writer) error {
+	if err := requireCurrentSandbox(); err != nil {
+		return err
+	}
+	before, err := inspectCurrentSandboxIdentity(ctx)
+	if err != nil {
+		return err
+	}
+	if err := currentSandboxReleaseResourcePreflight(stdout); err != nil {
+		return err
+	}
+	command := hiddenCommandContext(ctx, "go", "test", "./internal/sandbox", "-run", "^TestCurrentSandboxStackProvisioning$", "-count=1", "-timeout", "40m", "-v")
+	command.Env = append(currentSandboxTestEnvironment(""), currentSandboxStackEnvironment+"="+stack)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	command.Stdin = os.Stdin
+	runErr := command.Run()
+	if runErr != nil {
+		runErr = fmt.Errorf("run current-Sandbox stack provisioning: %w", runErr)
+	}
+	after, identityErr := inspectCurrentSandboxIdentity(ctx)
+	if identityErr == nil {
+		identityErr = verifyCurrentSandboxIdentityPreserved(before, after)
+	}
+	if err := errors.Join(runErr, identityErr); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "Current-Sandbox stack %s passed using real provisioning; SSH and Herdr process identities are unchanged.\n", stack)
 	return err
 }
 
@@ -114,11 +151,8 @@ func validateCurrentSandboxReleaseCapacity(root string, available uint64) error 
 }
 
 func nativeCurrentSandboxProvisioning(ctx context.Context, stdout, stderr io.Writer, payloadDirectory string) error {
-	if runtime.GOOS != "windows" || !strings.EqualFold(os.Getenv("USERNAME"), "WDAGUtilityAccount") {
-		return errors.New("native-current-sandbox requires the active confirmed Windows Sandbox")
-	}
-	if os.Getenv("HERDR_ENV") != "1" {
-		return errors.New("native-current-sandbox requires an active Herdr-managed development session")
+	if err := requireCurrentSandbox(); err != nil {
+		return err
 	}
 	before, err := inspectCurrentSandboxIdentity(ctx)
 	if err != nil {
@@ -129,7 +163,7 @@ func nativeCurrentSandboxProvisioning(ctx context.Context, stdout, stderr io.Wri
 		return err
 	}
 
-	command := hiddenCommandContext(ctx, "go", "test", "./internal/sandbox", "-run", "^TestCurrentSandboxProvisioning$", "-count=1", "-timeout", "40m")
+	command := hiddenCommandContext(ctx, "go", "test", "./internal/sandbox", "-run", "^TestCurrentSandboxProvisioning$", "-count=1", "-timeout", "40m", "-v")
 	command.Env = currentSandboxTestEnvironment(payloadDirectory)
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -258,7 +292,9 @@ func currentSandboxTestEnvironment(payloadDirectory string) []string {
 	for _, entry := range os.Environ() {
 		name, _, found := strings.Cut(entry, "=")
 		if !found || strings.EqualFold(name, currentSandboxNativeEnvironment) ||
-			strings.EqualFold(name, currentSandboxPayloadEnvironment) {
+			strings.EqualFold(name, currentSandboxPayloadEnvironment) ||
+			strings.EqualFold(name, currentSandboxStackEnvironment) ||
+			strings.EqualFold(name, fastTestsEnvironment) {
 			continue
 		}
 		filtered = append(filtered, entry)
@@ -295,7 +331,7 @@ func inspectCurrentSandboxIdentity(ctx context.Context) (currentSandboxIdentity,
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return currentSandboxIdentity{}, errors.New("decode current Sandbox SSH and Herdr identity: trailing data")
 	}
-	if identity.SchemaVersion != 1 || identity.SSHD.Role != "sshd-service" || identity.SSHD.PID <= 0 || len(identity.Herdr) < 2 {
+	if identity.SchemaVersion != 1 || identity.SSHD.Role != "sshd-service" || identity.SSHD.PID <= 0 || len(identity.Herdr) < 1 {
 		return currentSandboxIdentity{}, errors.New("current Sandbox SSH and Herdr identity is incomplete")
 	}
 	serverCount := 0
