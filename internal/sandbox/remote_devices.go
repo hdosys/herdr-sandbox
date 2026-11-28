@@ -125,7 +125,7 @@ func validateRemoteDeviceName(name string) error {
 			return errors.New("device name contains control characters")
 		}
 	}
-	if strings.HasPrefix(name, "SHA256:") {
+	if strings.HasPrefix(strings.ToUpper(name), "SHA256:") {
 		return errors.New("device name must not look like a key fingerprint")
 	}
 	return nil
@@ -144,7 +144,7 @@ func remoteSettingsFromConfiguration(config globalConfiguration) (RemoteSettings
 	}
 	result := RemoteSettings{Enabled: config.Tailscale, AuthorizedKeys: keys}
 	known := map[string]bool{}
-	names := map[string]bool{}
+	var names []string
 	for _, key := range keys {
 		fingerprint := remoteKeyFingerprint(key)
 		known[fingerprint] = true
@@ -153,10 +153,12 @@ func remoteSettingsFromConfiguration(config globalConfiguration) (RemoteSettings
 			if err := validateRemoteDeviceName(name); err != nil {
 				return result, err
 			}
-			if names[strings.ToLower(name)] {
-				return result, errors.New("device names must be unique")
+			for _, previous := range names {
+				if strings.EqualFold(previous, name) {
+					return result, errors.New("device names must be unique")
+				}
 			}
-			names[strings.ToLower(name)] = true
+			names = append(names, name)
 		}
 		result.Devices = append(result.Devices, RemoteDevice{Name: name, Fingerprint: fingerprint, PublicKey: key})
 	}
