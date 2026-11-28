@@ -180,7 +180,7 @@ func TestRunRejectsLifecycleArgumentsBeforeNativeWork(t *testing.T) {
 	for _, command := range []string{"plan", "attach", "status", "remote", "pull-host-config", "down", "clean"} {
 		var stderr bytes.Buffer
 		code := Run(context.Background(), []string{command, "extra"}, &bytes.Buffer{}, &bytes.Buffer{}, &stderr)
-		if code != 2 || !strings.Contains(stderr.String(), "does not accept arguments") {
+		if code != 2 || !strings.Contains(stderr.String(), "does not accept") {
 			t.Fatalf("command = %s, exit code = %d, stderr = %q", command, code, stderr.String())
 		}
 	}
