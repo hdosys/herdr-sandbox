@@ -77,19 +77,25 @@ The product protects these boundaries:
   the optional QR contains only a connection URI.
 - With Tailscale enabled, every `up` includes the app-owned host management public
   key in remote authorization, alongside at most seven configured additional keys.
-  `remote setup` previews a snapshot of the two standard incoming lists,
-  `%USERPROFILE%\.ssh\authorized_keys` and
-  `%ProgramData%\ssh\administrators_authorized_keys`, before one default-no
-  confirmation. `--yes` approves that same bounded set; `--key FILE` selects an
-  explicit public-key file instead of discovery. Existing configured keys remain.
-  No `.pub` or private-key search, private-key copy, or ongoing source sync occurs.
-  Custom SSH sources and effective `sshd` Match rules are not discovered. Entries
-  with authorization options fail before changes rather than losing restrictions.
+  `remote` manages devices through explicit approved actions. Add and replace
+  accept one pasted public key from stdin; there is no key-file importer,
+  incoming-list discovery, private-key search/copy, or client-to-client SSH
+  requirement. Existing configured keys remain valid, including unnamed keys.
+  Optional fingerprint labels in `remoteSSHDeviceNames` share the existing host
+  config and grant no authority independently of `remoteSSHAuthorizedKeys`.
+  Changes require default-no confirmation or explicit `--yes`. Restricted
+  authorized-key entries fail rather than silently losing their restrictions.
 - Approved key changes use the pinned management SSH channel and existing lifecycle
   lock. The running tailnet listener keeps its host identity, firewall and sessions;
   new authentication reads the updated authorized-key file. An exact verified
   read-back precedes updating the active run snapshot. No other tailnet peer gains
   implicit trust, and existing SSH sessions are not revoked by a key-file update.
+- Host edits are saved with an optimistic compare-and-swap check before automatic
+  live application. A failed apply leaves the new host selection saved but not
+  confirmed in the guest; previous access may remain active. Pending removals are
+  shown explicitly. `remote apply` reapplies the saved selection after resolution.
+  With no managed guest, changes are saved for the next `up` without starting one;
+  incompatible guests are never silently replaced.
 - The separate remote SSH server key is current-user DPAPI encrypted on the host.
   Its stable public fingerprint is displayed before connection and survives a
   fresh Sandbox without making the private key portable to another host user.
@@ -127,6 +133,9 @@ The product protects these boundaries:
   replaced before display.
 - Destructive lifecycle and uninstall paths require exact app ownership and fail
   closed when identity changes.
+- Before `down` mutates state, it warns about guest-only data loss and the fact
+  that host edits are not rolled back, then requires confirmation or `--yes`.
+  Overview, status, and remote listing are read-only and do not clean stale state.
 - Repair, upgrade, and uninstall may force-terminate only peer processes whose
   queried full image path exactly equals the installed `sandbox.exe`. They retain
   each validated process handle through bounded exit confirmation, do not kill a
@@ -228,12 +237,14 @@ These are deliberate non-guarantees:
 - Tailscale supplies private routing, not login authorization. Anyone who gains an
   authorized remote private key and tailnet reachability can open a shell as the
   guest administrator user and access every resource available to that guest.
-  For an additional device key, remove it from `remoteSSHAuthorizedKeys` and any
-  source list you may import again, explicitly stop the app-owned Sandbox, and
-  launch a fresh one. Source-list removal alone does not revoke a saved snapshot.
-  The automatically included host management key is not revoked by editing that
-  additional-key list. Changing a live listener in place is intentionally
-  unsupported; setup never closes or restarts a ready guest automatically.
+  Remove an additional device with `sandbox remote remove --device NAME` (or its
+  fingerprint), then verify live application succeeded. Removal blocks new
+  authentication only; existing SSH sessions are not terminated. If application
+  is unconfirmed, prior access may remain and `sandbox remote` shows the pending
+  removal. Resolve the reported problem and run `sandbox remote apply`. If ending
+  all guest sessions is necessary, explicitly discard the guest with `sandbox down`
+  after saving needed work. The automatically included managing-host identity
+  cannot be edited or revoked through device management.
 
 If the threat model forbids credential exfiltration, leave every `credentialSync`
 and `codingAgentSync` choice false. Enable only configuration roots whose tracked

@@ -54,7 +54,7 @@ the normal terminal.
 - **Confidence in real Windows behavior:** compile, test, package, and automate GUI applications in Windows Sandbox instead of a compatibility layer.
 - **Your normal terminal:** Herdr attaches from the host, so routine work does not require RDP or a second desktop workflow.
 - **Repeatable setup:** select composable tool stacks or keep an idempotent PowerShell profile with the project.
-- **Retry without starting over:** correct a failed project profile and rerun `sandbox up`. It resumes unfinished or changed steps in the same compatible guest, preserving successful unchanged setup. Use `--refresh` for a full refresh.
+- **Retry without starting over:** correct a failed initial project profile and rerun `sandbox up`. Use `sandbox refresh` for later updates. Both reuse successful unchanged steps in the same compatible guest.
 - **Deliberate persistence:** source, optional worktree and shared model roots, approved agent configuration, and a verified package cache survive; guest tools and processes do not.
 - **Remote access to agents:** use Herdr from another device over Tailscale to review notifications, answer agent questions, and run project commands.
 - **Explicit opt-ins:** browser automation, TradingView, audio, and microphone remain off unless selected.
@@ -191,18 +191,17 @@ The checked build writes the same four files to `build\bin`. Use that executable
 
 </details>
 
-### Review global configuration
+### Choose what the guest can access
 
-Before the first `up`, open the user-owned global configuration:
+Start with the project folder you want to expose. `sandbox up` guides first-use
+project and stack selection, offers optional Tailscale access, and asks you to
+approve the exact folder. No separate `init`, `plan`, or JSON editing is required.
+An existing project profile is reused, not overwritten. An explicit child folder
+never silently selects a broader ancestor profile; protected home roots are refused.
 
-```powershell
-sandbox config
-```
-
-Review memory, agent configuration sync, optional packages, and host folder
-mappings before exposing them to the guest. The command creates `config.json`
-only when absent. See [Configuration](#configuration) for a practical example
-and the complete field reference.
+For optional memory, agent-sync, package, or additional mapping changes, use
+`sandbox config`. It creates the user-owned configuration only when absent.
+See [Configuration](#configuration) for the field reference.
 
 Agent configuration transfer defaults on; credential transfer defaults off.
 A transferred Git-backed configuration includes its repository history, which
@@ -211,18 +210,19 @@ are not safe for the guest.
 
 ### Launch your first project
 
-From the project root, choose a stack and start:
+From the project root, start:
 
 ```powershell
-sandbox init --stack go
 sandbox up
 ```
 
-Omit `--stack` for a prompt or repeat it to combine compatible entries from
-[Supported stacks](#supported-stacks). `init` writes
-`.herdr-sandbox\provision.ps1` without replacing an existing profile. `plan` is
-an optional read-only preview. `up` provisions the guest and attaches Herdr in the normal host
-terminal; the visible Sandbox bootstrap console needs no input.
+Follow the prompts to choose from [Supported stacks](#supported-stacks). To supply
+the selection explicitly, use `sandbox up --project "D:\Projects\project" --stack go`.
+Repeat `--stack` to combine compatible entries, add `--remote-access` to enable
+Tailscale, and use `--yes` only when you approve the displayed selection without a
+prompt. New profiles live at `.herdr-sandbox\provision.ps1`.
+`up` provisions the guest and attaches Herdr in the normal host terminal; the
+visible Sandbox bootstrap console needs no input.
 
 After detaching, the guest stays ready:
 
@@ -231,10 +231,13 @@ sandbox status
 sandbox up
 ```
 
-For an already ready environment, `up` only verifies and connects. It does not
-update tools or configuration. Use `sandbox up --refresh` when you want to adopt
-changes, and `sandbox attach` to connect without resuming incomplete setup.
-Run `sandbox down` when you are finished and want to discard the guest.
+After initial setup completes, `up` only verifies and connects. It does not
+update tools or configuration, even after a failed later refresh. Use
+`sandbox refresh` to adopt changes without attaching; successful unchanged steps
+are retained. It requires an existing app-owned guest and never starts or replaces
+one. Use `sandbox attach` to connect without resuming incomplete initial setup.
+Run `sandbox down` when finished. Before any mutation it warns that guest-only
+data will be lost and host edits will not be rolled back, then asks for confirmation.
 
 Use `sandbox up --no-attach` from a headless caller, then attach later from a real
 terminal. Plain `ssh sandbox` remains available for diagnostics.
@@ -244,40 +247,54 @@ terminal. Plain `ssh sandbox` remains available for diagnostics.
 On the host, run:
 
 ```powershell
-sandbox remote setup
+sandbox remote
 ```
 
-Review the preview and answer the single `y/N` prompt to enable ordinary SSH over
-Tailscale for this host and the listed devices. Setup reads existing incoming
-public-key lists at `%USERPROFILE%\.ssh\authorized_keys` and
-`%ProgramData%\ssh\administrators_authorized_keys` when present, merges them with
-already configured keys, and saves without changing unrelated settings. No JSON
-editing or key generation is needed. These are snapshots of the two standard
-files, not ongoing synchronization or discovery of custom SSH server rules.
+The plain-text menu lists saved devices and lets you enable access, add a device,
+rename it, replace its key, remove it, or apply saved access. With noninteractive
+input, the same command only lists devices and available connection details.
 
-**Approve only keys whose owners may administer the guest and access its mapped
-resources.** Restricted `authorized_keys` entries are rejected before any change;
-setup never strips their access restrictions. It does not search `.pub` or private
-key files, copy private keys, trust every tailnet peer, or change tailnet policy.
-
-For a running, ready tailnet Sandbox, setup applies the approved keys immediately
-and displays connection commands. It does not repeat provisioning, restart SSH or
-Herdr, or disconnect existing sessions. With no managed Sandbox yet, setup starts
-one through `up --no-attach`; the first Tailscale sign-in link opens in your browser.
-A running Sandbox without Tailscale is preserved and reported, never replaced
-automatically.
+Choose **Add device**, name it, and paste its one public SSH key. On the client
+device, copy an existing public key with standard OpenSSH tools:
 
 ```powershell
-sandbox remote                       # Compact commands and host-key fingerprint
-sandbox remote --qr                  # Also show the connection URI as a QR code
-sandbox remote setup --key device.pub # Add a genuinely new device's public key
+Get-Content "$HOME/.ssh/id_ed25519.pub" | Set-Clipboard
 ```
 
-Use `--yes` to approve the same bounded selection noninteractively. `--key FILE`
-replaces automatic source discovery for that invocation, not existing configured
-keys. Devices already covered by the imported list need no additional key setup;
-each device keeps and uses its own private key. The host already has `ssh sandbox`
-and `herdr --remote sandbox --remote-keybindings server` through its managed identity. Other devices use the
+On macOS or Linux, run `cat ~/.ssh/id_ed25519.pub` and copy the displayed line.
+If the device has no key, create one there with `ssh-keygen -t ed25519`; never
+overwrite an existing private key. No SSH connection between clients is needed.
+Private keys stay on their originating devices. Sandbox does not import key files
+or discover incoming authorized-key lists.
+
+**Approve only devices whose owners may administer the guest and access its
+mapped resources.** Each approved change is saved on this host and automatically
+applied to a running tailnet guest without provisioning, restarting SSH or Herdr,
+or disconnecting sessions. With no managed guest, it is saved for the next `up`;
+remote management never starts one. An incompatible running guest is preserved.
+If live application fails, the change remains saved but unconfirmed, and previous
+access may remain active. Pending removals stay visible; resolve the reported
+condition and run `sandbox remote apply`.
+
+```powershell
+sandbox remote add --name Laptop     # Paste one public-key line, then approve
+sandbox remote rename --device Laptop --name Travel
+sandbox remote replace --device Travel # Paste the replacement public key
+sandbox remote remove --device Travel
+sandbox remote enable
+sandbox remote apply                 # Apply the saved selection again
+sandbox remote --qr                  # Connection details and URI-only QR
+```
+
+`--device` accepts a saved name or fingerprint, including for an older unnamed
+key. Replacement keeps the name unless `--name` supplies another. Add, rename,
+replace, remove, and enable accept `--yes` for noninteractive approval; add and
+replace read the public key from standard input. Removing a key blocks new
+authentication only, not existing SSH sessions. The managing host's reserved
+identity cannot be renamed, replaced, or removed here.
+
+The host already has `ssh sandbox` and
+`herdr --remote sandbox --remote-keybindings server` through its managed identity. Other devices use the
 DNS commands printed by `sandbox remote`, including the `WDAGUtilityAccount`
 username, rather than their local username. Verify the displayed host fingerprint
 on first connection. A `Permission denied (publickey)` error means the username
@@ -337,7 +354,7 @@ guest path `C:\Workspaces\project`. Add optional mappings only when needed; the
 generated `config.sample.json` provides a complete example.
 
 Use `sandbox plan` when you want a read-only preview of configuration and resolved
-tool versions. Apply changes to a compatible ready guest with `sandbox up --refresh`,
+tool versions. Apply changes to a compatible ready guest with `sandbox refresh`,
 without replacing it.
 
 <details>
@@ -358,7 +375,8 @@ letter or number, and are at most 64 characters.
 | `audioInput` | Boolean enabling guest microphone input. |
 | `tailscale` | Boolean enabling the Sandbox's stable Tailscale identity with browser sign-in on first use. |
 | `remoteSSHAuthorizedKeys` | Array of at most seven additional unique public keys: Ed25519, RSA of at least 2048 bits, or ECDSA nistp256/384/521. A nonempty array requires `tailscale: true`. Every enabled `up` adds the app-owned host management public key separately. |
-| `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories during `up`. Defaults to `false`. |
+| `remoteSSHDeviceNames` | Optional map from an authorized key's SHA-256 fingerprint to its device label. Existing unnamed keys remain valid; `sandbox remote` manages these names in the same configuration. |
+| `configurationSync.pullHostGitRepositoriesOnUp` | Opt-in boolean allowing fast-forward-only pulls of detected host Git config repositories before setup or refresh configuration transfer, not ready reconnects. Defaults to `false`. |
 | `configurationSync.pullHostGitRepositoriesOnDown` | Opt-in boolean allowing the same pull policy during `down`. Defaults to `false`. |
 | `codingAgentSync.opencode` | Boolean streaming OpenCode configuration into the guest. Defaults to `true`. |
 | `codingAgentSync.claudeCode` | Boolean streaming Claude Code configuration into the guest. Defaults to `true`. |
@@ -398,7 +416,7 @@ Nothing is installed into the host development environment.
 
 ### Zed editor and settings
 
-Zed is installed by default. Each `sandbox up` copies `settings.json`,
+Zed is installed by default. Initial setup and `sandbox refresh` copy `settings.json`,
 `keymap.json`, `tasks.json`, and JSON snippets/themes from the host's
 `%APPDATA%\Zed` into the guest. Missing host files are skipped and guest-only
 files are preserved. Sessions, installed extensions, and credential stores are
@@ -424,7 +442,7 @@ the host. Both the host exporter and guest importer need a matching Herdr Extend
 build with this contract; the `herdr-ext` version marker alone does not prove it.
 
 Initial provisioning adopts transferable host Herdr settings. Use
-`sandbox up --refresh` to adopt changes in a retained guest; ordinary `up`
+`sandbox refresh` to adopt changes in a retained guest; ordinary `up`
 connects or resumes unfinished development rather than refreshing settings.
 Full provisioning passes `--overwrite-config` to Herdr's remote `--provision`
 operation, preserving only those environment-specific exclusions. An unchanged
@@ -479,7 +497,8 @@ For persistent Apify usage status, create `.usage-status.env` in the host OpenCo
 configuration directory (normally `%USERPROFILE%\.config\opencode`) with
 `APIFY_TOKEN="your-token"`. Exclude `/.usage-status.env` in that checkout's local
 `.git/info/exclude` **before** saving the token. Enable `credentialSync.apify` in
-Herdr Sandbox's host `config.json`, then run `sandbox up`. The private file travels
+Herdr Sandbox's host `config.json`, then run `sandbox refresh` for an existing
+guest or `sandbox up` for initial setup. The private file travels
 over verified SSH, not Git or a mapped host directory.
 
 Inside the guest, **Apify access** on the taskbar opens a masked paste dialog.
@@ -489,8 +508,9 @@ guest copy; a later enabled host transfer replaces it. Keep the host token for
 reuse after closing and recreating the Sandbox. Never paste tokens into chats,
 command lines, or tracked files.
 
-When enabled, registered configuration repositories fast-forward before `up` and
-after `down`. Local edits are never rebased, stashed, or overwritten; divergence
+When enabled, registered configuration repositories fast-forward before setup or
+refresh transfers configuration and after `down`. Merely opening a ready guest
+does not pull. Local edits are never rebased, stashed, or overwritten; divergence
 and authentication failures are reported for the user to resolve.
 
 </details>
@@ -540,17 +560,24 @@ and errors go to stderr.
 
 | Command | Behavior |
 | --- | --- |
+| `sandbox` | Shows a read-only overview and next actions. |
+| `sandbox up [--project PATH] [--stack NAME]... [--remote-access] [--yes] [--memory-mb MB] [--timeout DURATION] [--no-attach]` | Guides first setup, resumes incomplete initial setup, or opens a usable guest without updates. |
+| `sandbox refresh [--project PATH] [--timeout DURATION]` | Updates only an existing app-owned guest, reusing successful unchanged steps, without attaching. |
+| `sandbox remote [--qr]` | Lists devices and connection details, with a plain menu on interactive input. `--qr` shows a connection QR without opening the menu. See device subcommands above. |
+| `sandbox status [--verbose]` | Read-only guest usability and latest setup result. `--verbose` adds diagnostics. Returns zero only for `ready`. |
+| `sandbox down [--yes]` | Warns and confirms before discarding only the app-owned guest; preserves opted-in Tailscale state. |
+
+Use `sandbox COMMAND --help` for command-scoped help. Advanced commands remain
+available without being prerequisites for first use:
+
+| Command | Behavior |
+| --- | --- |
 | `sandbox config` | Creates and opens user configuration without replacing an existing file. |
 | `sandbox version` or `sandbox --version` | Prints the release, sortable UTC build freshness, and abbreviated source revision. |
 | `sandbox plan` | Shows the validated plan and ready-guest differences without changing state. |
 | `sandbox init [--stack NAME]...` | Creates a project profile, interactively when no stack is supplied. |
-| `sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]` | Starts a guest, resumes incomplete setup, or connects to a completed environment. Only `--refresh` requests full provisioning of a completed environment. |
 | `sandbox pull-host-config` | Fast-forwards explicitly registered configuration repositories without touching a guest. |
 | `sandbox attach` | Attaches to a ready Herdr Sandbox guest without reprovisioning. |
-| `sandbox status [--verbose]` | Separates guest usability from the latest setup result and shows the next action. `--verbose` includes versions, processes, workspaces and timings. Returns zero only when the state is `ready`. |
-| `sandbox remote setup [--key FILE] [--yes]` | Approves and applies device keys to a ready tailnet Sandbox without reprovisioning. Starts a Sandbox only when none exists. |
-| `sandbox remote [--qr]` | Prints compact remote commands and the SSH host-key fingerprint; `--qr` adds a secret-free connection QR code. |
-| `sandbox down` | Stops only the guest started by Herdr Sandbox and preserves opted-in Tailscale state. |
 | `sandbox clean` | Removes inactive run data only after verifying it is safe to delete. |
 
 Lifecycle commands remove stale data only after verifying that no owned Sandbox
@@ -800,8 +827,8 @@ Guest processes have administrator access inside Windows Sandbox. Only select ho
 
 ## Troubleshooting
 
-Start with `sandbox status`; it preserves a running guest, removes stale data only
-when it is safe, and reports the next action.
+Start with `sandbox status`; it reports the guest and next action without changing
+state or cleaning stale data. Use `sandbox clean` for explicit inactive-run cleanup.
 
 | Symptom | Action |
 | --- | --- |
@@ -813,8 +840,8 @@ when it is safe, and reports the next action.
 | Host configuration pull fails | Resolve the named repository's local state, upstream, authentication, network, or timeout problem, or disable the relevant automatic hook. |
 | Guest Herdr provisioning fails | Update Herdr Extended, confirm host `ssh.exe` and `ssh sandbox`, then inspect the failed phase with `sandbox status`. |
 | A profile calls `Install-NushellStack` | Remove that call. Nushell is mandatory Base tooling; select an exact version through `wingetPackages.versions` instead. |
-| Project provisioning fails | Correct the named profile and rerun `sandbox up`. Successful unchanged steps are skipped when completion evidence exists. Free-form profiles remain indivisible steps. Keep the Sandbox open. |
-| Supertonic CPU runtime is unavailable | The Sandbox and HyperFrames rendering remain ready; TTS stays deactivated. Correct the reported runtime fault, then run `sandbox up` to resume. No automatic cache clearing or forced reinstallation is attempted. Use `--refresh` to adopt changed host configuration, TTS bundle selection or Herdr runtime. |
+| Project provisioning fails | Correct the named profile, then rerun `sandbox up` for incomplete initial setup or `sandbox refresh` for a later update. Successful unchanged steps are retained; free-form profiles remain indivisible. Keep the Sandbox open. |
+| Supertonic CPU runtime is unavailable | The Sandbox and rendering remain ready; TTS stays deactivated. Correct the fault, then resume initial setup with `sandbox up` or retry a later update with `sandbox refresh`. Refresh also adopts changed configuration, TTS selections or Herdr runtime; it does not clear caches or force dependency reinstallation. |
 | Minimal bootstrap fails before SSH | Use the retry command shown in the existing Sandbox console, then rerun `sandbox up` on the host. |
 | Initial provisioning is slow | The first run downloads selected toolchains; C/C++, Rust/MSVC, and Handy also prepare a Visual Studio layout. Later runs reuse the cache. |
 
@@ -825,7 +852,7 @@ when it is safe, and reports the next action.
 | --- | --- |
 | Audio or microphone is unavailable | Set `audio` or `audioInput` to `true`, run `sandbox down`, then start a fresh guest. |
 | The host AudioGridder client does not find the Sandbox server | Start **AudioGridder Server** in the guest, use `<Guest IP>:0` from `sandbox status`, and confirm the VST was installed through guest project or user provisioning. |
-| Remote access is not ready | Run `sandbox remote setup`, check tailnet access to TCP 22, and use the complete username and commands from `sandbox remote`. New device keys do not require reprovisioning an already ready tailnet guest. |
+| Remote access is not ready | Use `sandbox remote` to inspect saved and applied access, then `sandbox remote apply` after resolving any reported condition. Check tailnet access to TCP 22 and the printed username. With no guest, start one explicitly using `sandbox up`. |
 | The remote SSH host key changed | Refuse the connection. The fingerprint must survive fresh Sandboxes for the same host user; inspect protected identity and Tailscale state rather than accepting an unexpected key. |
 | Tailscale enrollment is pending or refused | Follow the browser link printed by `sandbox up`; complete any required device or Tailnet Lock approval. Check device key expiry if a previously working identity stops connecting. |
 
@@ -916,7 +943,7 @@ node. The SSH endpoint uses standard port 22, normal shells and remote commands,
 including Herdr's own remoting and SSH TCP forwarding. No dedicated tag or manually
 created Tailscale auth key is needed. Your existing tailnet policy still applies.
 
-Prefer `sandbox remote setup` as described above. For optional manual
+Prefer `sandbox remote` as described above. For optional manual
 configuration, enable Tailscale and add only additional device public keys:
 
 ```json
@@ -931,8 +958,9 @@ configuration, enable Tailscale and add only additional device public keys:
 The host management public key is added automatically at every `up` with
 `tailscale: true`, even without additional keys. At most seven additional keys
 are accepted: Ed25519, RSA of at least 2048 bits, and ECDSA nistp256/384/521.
-Apply and approve the configured keys with `sandbox remote setup`. A ready
-tailnet guest receives the keys without a restart. For initial startup:
+Apply the deliberately saved selection with `sandbox remote apply`. A ready
+tailnet guest receives the keys without a restart. With no guest, the selection
+remains saved for initial startup:
 
 ```powershell
 sandbox up
