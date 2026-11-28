@@ -121,11 +121,12 @@ The current product contract is:
 - The host `sandbox` command starts, provisions, inspects, and stops an app-owned Windows Sandbox while Herdr keeps the interactive terminal on the host.
 - Selected projects and explicit cache, mount, worktree, and model roots can persist on the host. Unselected host data is not mapped, and guest tools and processes remain disposable.
 - `sandbox up` reports whether it will create a guest or provision an existing
-  compatible app-owned guest. After incomplete provisioning, `up` automatically
+  compatible app-owned guest. After incomplete initial provisioning, `up` automatically
   resumes unfinished steps and steps whose recorded inputs changed. Successful
-  unchanged steps are retained. `up --refresh` explicitly starts a full refresh;
-  a normal `up` after a completely successful operation only verifies and connects
-  to the existing environment, without pulling host configuration or provisioning.
+  unchanged steps are retained. `sandbox refresh` explicitly updates an existing
+  guest using those same checkpoints, without attaching. A normal `up` opens a
+  previously usable environment even after a failed later refresh, without pulling
+  host configuration or provisioning. Incomplete initial `setup` still resumes.
   Fixed mappings must still match before a provisioning operation;
   `up` never replaces the guest automatically.
 - Windows PowerShell 5.1 provisions selected tools and verifies their integrity, ownership, and real capabilities. Omitted external-tool versions resolve to current stable releases; explicit project versions remain exact.
@@ -137,6 +138,9 @@ The current product contract is:
 - **Herdr**: the agent-aware terminal multiplexer at `herdr.dev`; its CLI and executable remain `herdr` and `herdr.exe`. Sandbox requires the maintained [`herdr-ext`](https://github.com/hdosys/herdr-ext) Windows distribution because upstream Herdr does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow needs. The host command must identify itself with the exact `herdr-ext` marker and prove unattended `--remote <target> --provision --yes --json` behavior. Herdr Extended remains an independent distribution that Sandbox never installs or updates on the host.
 - **Host**: the user's normal Windows machine.
 - **Guest**: the disposable Windows Sandbox instance.
+
+Herdr remains an independent generic remote client. Only Sandbox depends on Herdr;
+Sandbox menus, device management, and lifecycle state do not belong in Herdr.
 
 ## Core Behavior
 
@@ -186,12 +190,30 @@ explicitly stated otherwise.
 
 ### Commands and lifecycle
 
+- The five main commands are `up`, `refresh`, `remote`, `status`, and `down`.
+  Bare `sandbox` displays a read-only overview; `sandbox COMMAND --help` gives
+  scoped help. Existing advanced commands and installer-only paths remain available.
+- First `up` guides project and stack selection plus optional Tailscale access,
+  without requiring `init`, `plan`, or JSON editing. `--project PATH`, repeated
+  `--stack NAME`, `--remote-access`, and `--yes` supply explicit choices. Approval
+  is for the exact selected folder. An explicit child path cannot silently widen
+  to an ancestor profile; protected home roots are rejected before profile creation.
+  Selecting a folder with a profile reuses it without rewriting it.
 - `sandbox config` reports whether it created the default configuration or opened an existing file, then points to `sandbox plan` as the next validation step.
 - `sandbox config`, setup, and portable first-use seeding refresh the app-owned adjacent `config.sample.json` and `config.schema.json`; they never rewrite an existing user-owned `config.json`. The optional `$schema` field accepts only `./config.schema.json`, gives editors local structural guidance, and never replaces runtime validation.
 - After successful provisioning and before optional attach, `sandbox up` prints preparation, provisioning, and total elapsed time in one line.
 - `sandbox config` creates only the user-owned `%APPDATA%\herdr-sandbox\config.json` when absent, never replaces an existing file, and asks the Windows Shell to open it with the application registered for `.json` files. It does not open a hard-coded editor or mutate Sandbox lifecycle state. `sandbox version` prints the build-owned release identity and abbreviated source revision without inspecting or mutating Sandbox state. `sandbox plan` validates and prints the effective configuration, generic folder mounts, workspaces, stacks, packages, resolved project-stack tool selections with every owner, and any exact ready-guest launch-plan differences without seeding configuration or changing app, host-tool, or Sandbox state.
 - `sandbox init --stack <name>` creates one direct-call project profile at the current project root and never replaces an existing or ancestor-owned profile. `sandbox init --stack all` selects every generic technology, tool, and composition exactly once, including `audio`, `hyperframes`, and `python-ai`; checkout-specific `handy` and `herdr` shortcuts remain separate and `all` cannot be combined with another selection. The explicit virtual `herdr` selection makes an upstream Herdr checkout directly provisionable without repository guessing; it cannot be combined with an included `python`, `rust`, or `zig` selection. Generic stack profiles can initialize and provision an otherwise empty mapped project without requiring a repository manifest or dependency state.
-- `sandbox up` launches and provisions a fresh Sandbox when none exists, resumes incomplete setup, or verifies and connects to an already completed environment. It does not adopt configuration or package changes while merely connecting. `sandbox up --refresh` explicitly provisions a compatible retained guest. `sandbox attach` only verifies and connects; `status` reports usability and setup completeness separately, with `--verbose` for full diagnostics. `remote` prints compact secret-free connection commands and the host-key fingerprint (`--qr` adds a connection QR), `down` discards the guest, and `clean` explicitly removes inactive app-owned run workspaces.
+- `sandbox up` launches and provisions a fresh Sandbox when none exists, resumes
+  incomplete initial setup, or verifies and connects to a previously usable guest.
+  It does not adopt configuration or package changes while merely connecting.
+  `sandbox refresh [--project PATH] [--timeout DURATION]` updates a compatible
+  retained guest without attaching. It requires an owned existing guest, including
+  after stale-state cleanup; it never falls through to fresh startup or silently
+  replaces a guest for changed fixed mappings. `sandbox attach` only verifies and
+  connects. `status` reports usability and setup completeness separately, with
+  `--verbose` for full diagnostics; `clean` explicitly removes inactive app-owned
+  run workspaces. The workstation setup `--refresh` flag is unchanged.
 
 - The build-owned identity printed by `sandbox version` includes one lexically
   sortable UTC freshness label as `YYYY.MM.DD.HHMMZ` before the abbreviated source
@@ -220,7 +242,14 @@ explicitly stated otherwise.
 - Normal interactive `up` provisions and verifies the ready guest, then runs the host `herdr --remote` client. A successful client exit prints `Detached.` and returns immediately without another SSH connection. Server persistence after detach belongs to explicit interactive acceptance, not the ordinary disconnect path. Installation success or plain SSH alone is insufficient for readiness. Explicit `up --no-attach` succeeds at the same terminal-ready boundary and leaves the verified guest available for a later `sandbox attach` or `herdr --remote sandbox --remote-keybindings server`.
 - The automatic TUI attach requires real interactive console input, output, and error streams. Without `--no-attach`, a redirected or headless caller fails before cleanup, provisioning, download, or host-tool mutation and points to the intentional headless option; it must never send a live TUI into log files or present a blank terminal as success.
 - Fresh guest readiness includes one focused initial guest workspace with a root terminal pane, so remote attach never opens an empty client surface.
-- The Sandbox tool never installs, updates, or replaces host Herdr. It resolves the existing standard `herdr.exe` command, requires bounded `--version` and the required `status client --json` identity fields, and fingerprints the selected command plus active physical runtime. Only `up` probes unattended remote provisioning. Attachment rechecks launch identity without repeating those probes or the distribution hashes; its guest status query also proves SSH command execution without a separate connectivity probe. Additive Herdr-owned JSON fields do not make an otherwise compatible build unusable.
+- The Sandbox tool never installs, updates, or replaces host Herdr. It resolves
+  the existing standard `herdr.exe` command, requires bounded `--version` and
+  `status client --json` identity fields, and fingerprints the selected command
+  plus active runtime. Provisioning through `up` or `refresh` probes unattended
+  remote provisioning. Attachment rechecks launch identity without repeating
+  those probes or distribution hashes; its guest status query also proves SSH
+  execution without a separate connectivity probe. Additive Herdr-owned JSON
+  fields do not make an otherwise compatible build unusable.
 - Sandbox applies only its guest shell and enabled worktree-directory overrides to the existing guest Herdr configuration, preserving other values during that preliminary patch and refusing observed concurrent edits. For full fresh and retained provisioning it then invokes exact `herdr --remote sandbox --provision --overwrite-config --yes --json`. Herdr owns host-settings transfer, including custom `keys.command` entries unchanged. Only onboarding state, `terminal.default_shell`, `terminal.new_cwd`, `worktrees.directory`, free-form `agent.args`, and `ui.sound.path|done_path|request_path` remain target-local. Those exceptions protect environment-specific paths, execution arguments and possible credentials; command bindings are not categorically excluded. Their referenced tools and scripts must exist in the guest. Sandbox strictly validates the returned target, Windows platform, canonical local executable path, binary outcome, server start/reload/restart outcome, configuration outcome (`applied`, `unchanged` or `no_source`), distribution version, and protocol while allowing additive Herdr-owned fields. Both host exporter and guest importer must support this settings contract. Sandbox never updates installed Herdr itself. It independently verifies the running server identity and capability. Herdr owns the guest executable's storage layout; Sandbox verifies its non-reparse file and parent without prescribing a directory.
 - A retained retry may provision over stale ready metadata, then republishes the verified current identity before later remote and unchanged-host checks. Immediately before reporting success, Sandbox revalidates that the host command and runtime did not change. It installs or updates only the `sandbox` alias through the user's standard SSH configuration.
 - In the guest, the exact verified runtime directory becomes the unique first machine `PATH` entry. The same PATH plus `HERDR_SANDBOX_HERDR_EXE` are the explicit launch environment for every initial mapped-project workspace, without copying or wrapping the binary. The printed `herdr --remote sandbox --remote-keybindings server` command therefore reattaches with guest custom shortcuts and without a Sandbox-owned guest runtime or second server lifecycle path.
@@ -242,7 +271,8 @@ explicitly stated otherwise.
   Required development failures return nonzero and print `sandbox attach` for work.
   An unavailable Supertonic CPU runtime instead leaves the Sandbox and rendering
   ready, reports TTS unavailable, and allows normal attach. The latest operation
-  retains that incomplete optional outcome, so `up` resumes it after correction.
+  retains that incomplete optional outcome. After correction, `up` resumes initial
+  setup; `refresh` retries an incomplete later update.
   Rejected package data and unclassified TTS failures remain component errors;
   failed TTS validation removes its environment and command-path
   activation rather than selecting another provider. Existing processes may retain
@@ -255,9 +285,9 @@ explicitly stated otherwise.
   profiles are skipped. Changed shared profile inputs invalidate their dependants.
   Missing completion evidence never implies success. A guest provisioned by an
   older build therefore needs one current run to establish these records.
-- When repairing incomplete development on an already verified ready guest, `up`
+- When repairing incomplete initial development on an already verified ready guest, `up`
   does not refresh host configuration, credentials, the selected TTS bundle or the
-  Herdr server. It still verifies SSH and the ready Herdr identity. Use `--refresh`
+  Herdr server. It still verifies SSH and the ready Herdr identity. Use `sandbox refresh`
   to adopt changed configuration, bundle selections or a changed Herdr runtime.
   Failed or interrupted core setup still follows its required finalization path.
   Continuation performs one attempt per selected step. It neither clears a package
@@ -276,9 +306,20 @@ explicitly stated otherwise.
   Windows-equivalent mapped-path casing and ordering do not force replacement.
 - Current package additions, removals, and version selections are applied by retained reprovisioning. Changed retained plans still name the exact differing audio input, audio output, memory, cache, folder mounts, workspace, Tailscale, remote SSH authorized keys, or residual launch-contract fields.
 - `status` summarizes app-owned guest usability separately from the current or latest setup result, with warnings and next actions. Missing completion evidence is explicit. `status --verbose` additionally shows start time, age, versions/protocol, workspace identities, bounded timings, diagnostics, processes, and guest free capacity queried over verified SSH. Capacity describes the guest `C:` logical volume, not its host-storage footprint. Status waits only boundedly for the lifecycle lock and may return a stable read-only snapshot while retained reprovisioning owns it. Exit status is zero only for `ready`; non-ready states return one. A failed setup can coexist with a usable ready guest and remains visible in both output forms.
-- `down` bounds lifecycle-lock and Windows process inspection and termination waits, and returns an actionable status command when another lifecycle operation remains active. It is idempotent and terminates that process tree without opening the Windows close-confirmation dialog only after retaining handles and revalidating the exact app-owned launcher and client relationship. It refuses to stop an unowned or changed process.
+- `down` warns before any mutation that guest-only data will be lost and host
+  edits are not rolled back, then requires confirmation or `--yes`. It bounds
+  lifecycle-lock and process inspection/termination waits, and reports an actionable
+  status command when another operation remains active. It is idempotent and
+  terminates only the revalidated app-owned launcher/client tree without opening
+  the Windows close-confirmation dialog. Unowned or changed processes are refused.
 - When stable Tailscale identity is enabled for a ready guest, `down` stops the service, protects local state against the already verified identity, and terminates the guest without control-plane readiness or a successful-path service restart. A failed persistence or termination attempt restarts Tailscale before returning.
-- After command syntax is validated, `up`, `attach`, `status`, `remote`, and `down` run the lifecycle-locked automatic cleanup through the applicable shared inspector; `clean` invokes that cleanup owner directly. It preserves an exact running app-owned Sandbox and deletes only strictly validated inactive run directories. When process evidence proves that no Windows Sandbox launcher or client remains, it also removes stale active and SSH target state. Unmanaged, changed, unsafe, or uncertain state remains intact and is reported. Help, `plan`, and invalid command lines remain nonmutating.
+- After syntax and required approval, mutating lifecycle commands use the shared
+  lifecycle-locked cleanup owner; `clean` invokes it directly. It preserves the
+  exact running app-owned guest and removes only validated inactive run data.
+  Stale active and SSH target state may be removed only when process evidence
+  proves no Sandbox launcher or client remains. Unmanaged, changed, unsafe, or
+  uncertain state is preserved. Bare `sandbox`, `status`, remote listing, help,
+  `plan`, and invalid command lines do not clean up or mutate lifecycle state.
 
 ## Product Direction
 
@@ -338,30 +379,44 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 - `%APPDATA%\herdr-sandbox\config.json` may declare up to 16 named `mounts` whose strict entries contain only an absolute existing host `path` and an explicit `readOnly` boolean. Each folder appears deterministically at `C:\Mounts\<name>`; `true` exposes it read-only and `false` allows persistent host writes from the guest. A generic mount is never a project workspace: it does not select an active directory, run a project profile, enter the workspace manifest, or create a Herdr workspace. Names and host paths are unique case-insensitively, volume roots and reparse-bearing paths are rejected, and mounts may not overlap another mount, workspace, cache, private run state, protected host root, or app-owned root selected for recursive uninstall removal. Ordinary selected profile descendants remain valid, but known SSH/GPG, cloud/container, coding-agent authentication, GitHub CLI, and Windows credential roots reject both an enclosing mapping and any descendant mapping. Any mount or access change requires `down` before the next `up`.
 - The same config may set one optional absolute `worktreeDirectory`. Empty or omitted disables persistent linked worktrees. A selected existing physical non-reparse host root maps read/write only at `C:\Worktrees`; configuration sync sets guest Herdr's native `[worktrees].directory` to that root and adds only `C:/Worktrees/*` to guest Git trust. `Git.Git` must remain selected. The directory must not overlap configuration, cache, private run state, workspaces, folder mounts, protected roots, or sensitive credential locations, and any change requires a fresh Sandbox. Herdr and Git remain the only worktree create/list/open/remove owners; Sandbox adds no parallel lifecycle, leases, pruning, or deletion. When enabled, configuration sync projects one guest-only managed block into each selected agent's native global instructions. That block routes lifecycle mechanics through `herdr worktree` while leaving the user's existing instructions authoritative over whether and when worktrees are created or removed; host instructions remain unchanged. `sandbox clean` and uninstall preserve the root. These linked worktrees are guest-native because Git records their guest paths in the mapped main repository, so the same main workspace must return at the same guest path and host-side portability is not promised.
 - The same config may set one optional absolute `modelsDirectory`. Empty or omitted creates no model mapping and does not contact the TTS release or model sources. A selected existing physical non-reparse host root must not overlap configuration, cache, run state, worktrees, mounts, or workspaces and maps read/write only at `C:\Models`; changing it requires a fresh Sandbox. Guest administrators and tools may create or replace any content there, so the folder must contain no unrelated private data. `up` resolves the current stable GitHub Latest engine release unless `ttsBundle` explicitly selects an absolute local `hyperframes-voxcpm2-local-windows-x64.zip` with its adjacent SHA-256 sidecar. That selection requires `modelsDirectory`, must identify a clean committed local build, and never falls back to a public release on failure. The host verifies the archive and stages it in the same model cache for both fresh and retained provisioning. The HyperFrames stack rehashes selected models before activation. `sandbox clean` and uninstall preserve the shared model root and the selected source bundle.
-- `%APPDATA%\herdr-sandbox\config.json` may declare a name-to-path map of additional project workspaces and an optional `workspaceDiscovery` object whose nonempty absolute `root` contributes each nonexcluded direct child directory as a project. Its `exclude` array contains Go/RE2 regular expressions matched against each child directory name; any match excludes that child. Discovery never recurses or maps the parent itself. Selected and explicit workspaces are mounted without requiring `.herdr-sandbox\provision.ps1`; when that optional script exists it is strictly validated and run. An explicit workspace at the same path keeps its configured name. Independent workspace-validation errors are reported together. The user runs `sandbox up` anywhere: the nearest ancestor containing `.herdr-sandbox\provision.ps1` becomes the active project and is added or deduplicated; without one, only globally selected workspaces are used. `memoryMB` defaults to 32768 and must be at least 2048; `--memory-mb` overrides it for one run without rewriting the config. Exact booleans `audio` and `audioInput` independently control guest output and host-microphone sharing, and both default false. With both off, playback is muted and the shared audio services are disabled; input opt-in retains those services so microphone applications can work while output remains initially muted. Changing either audio selection requires `down` before the next `up`.
+- `%APPDATA%\herdr-sandbox\config.json` may declare a name-to-path map of additional
+  project workspaces and optional `workspaceDiscovery` with an absolute `root`
+  and Go/RE2 `exclude` patterns. Only nonexcluded direct child directories are
+  selected; discovery never recurses or maps the parent. A workspace needs no
+  profile, but a present `.herdr-sandbox\provision.ps1` is validated and run.
+  Explicit workspaces retain their name when deduplicated by physical path, and
+  independent validation errors are reported together. Implicit current-directory
+  discovery may use the nearest ancestor profile; an explicit `--project` selection
+  must not broaden to one. First-use guidance supplies missing project choices.
+  `memoryMB` defaults to 32768, minimum 2048; `--memory-mb` overrides one run without
+  rewriting configuration. `audio` and `audioInput` default false and independently
+  select output and microphone sharing. With both off, playback is muted and audio
+  services disabled; input opt-in retains those services with output initially
+  muted. Changing either selection requires `down` before the next `up`.
 - Project provisioning validation failures identify each failing workspace name,
   host directory, and source profile path, so a copied inspection filename is
   never the only diagnostic identity.
-- `sandbox remote setup` previews the host management identity and public keys from
-  the standard incoming lists `%USERPROFILE%\.ssh\authorized_keys` and
-  `%ProgramData%\ssh\administrators_authorized_keys` when present, then asks once
-  (`y/N`) to enable ordinary tailnet SSH. `--key FILE` imports the supplied
-  public-key file instead of discovering those lists; both paths merge existing
-  configured keys. `--yes` approves the same bounded selection noninteractively.
-  Source lists are a snapshot, not ongoing synchronization or a claim to discover
-  effective custom `sshd`/Match configuration. Entries with authorization options
-  fail before changes rather than silently losing restrictions. Setup never
-  searches `.pub` or private-key files, copies private keys, or requires manual
-  JSON editing or key generation.
-- After approval, setup atomically saves `tailscale: true` and the merged keys
-  while preserving unrelated configuration. For a ready tailnet Sandbox it applies
-  the approved keys over verified management SSH without provisioning or restarting
-  services, then displays remote commands with the Sandbox username. Only when no
-  managed Sandbox exists does setup invoke `up --no-attach`. Setup never closes or
-  restarts a ready Sandbox; incompatible
-  settings remain saved for the next explicitly authorized fresh startup.
-  Existing devices covered by the imported list need no additional key setup;
-  genuinely new devices supply their public key through `--key FILE`.
+- `sandbox remote` lists devices, fingerprints, and saved versus applied state.
+  Interactive input offers a plain menu; noninteractive input only lists. Available
+  actions are `add --name NAME`, `rename --device NAME --name NEW`,
+  `replace --device NAME [--name NEW]`, `remove --device NAME`, `enable`, and `apply`.
+  Device selectors also accept fingerprints. Add and replace consume one pasted
+  public key from stdin, with standard OpenSSH copy instructions on the client;
+  no SSH connection between clients, file importer, or incoming-list discovery is
+  required. Mutations preview the selection and require default-no confirmation
+  or `--yes`; `apply` uses the already saved selection and accepts no such flags.
+- The existing raw `remoteSSHAuthorizedKeys` array remains the authorization owner.
+  Optional `remoteSSHDeviceNames` in the same host configuration maps fingerprints
+  to labels, not a second device registry. Existing keys may remain unnamed;
+  replacement retains an existing name unless another is supplied. The reserved
+  managing-host identity cannot be renamed, replaced, or revoked as a device.
+- Every approved edit is saved with an optimistic compare-and-swap check preserving
+  unrelated host settings, then automatically applied through `ApplyRemoteKeys`
+  to the current tailnet guest. No guest means saved for the next `up`, never
+  automatic startup. A failed live application is explicitly saved but not confirmed;
+  previous access may remain active, and pending removals stay visible until
+  confirmed. `remote apply` retries the saved selection after the reported problem
+  is resolved. Services and existing sessions remain running.
 - `remoteSSHAuthorizedKeys` accepts at most seven additional unique canonical
   public keys: Ed25519, RSA of at least 2048 bits, or ECDSA nistp256/384/521.
   A nonempty array requires exact `"tailscale": true`. Every enabled `up` includes
@@ -371,12 +426,12 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   SSH authentication both apply; no pairing server, automatic all-peer trust, or
   ACL change is introduced. Management SSH remains separately address-bound.
   The remote Ed25519 server key persists as current-user DPAPI ciphertext so its
-  SHA-256 fingerprint survives fresh Sandboxes. `sandbox remote` prints compact
+  SHA-256 fingerprint survives fresh Sandboxes. `sandbox remote` includes available
   commands and that fingerprint; `--qr` adds a URI-only QR. The host retains
   `ssh sandbox` and `herdr --remote sandbox --remote-keybindings server` using its managed identity; other
   devices use the DNS commands with their own private keys. Changing authorized
-  keys through `remote setup` takes effect for new connections immediately, without
-  restarting the listener or disconnecting existing sessions. Forwarding binds
+  keys through the device actions takes effect for new authentication only after
+  confirmed application. Removal does not terminate existing sessions. Forwarding binds
   loopback by default; direct service access needs an
   intentional service bind and firewall rule.
 - The same config may set `cacheDirectory` to an absolute, dedicated Herdr Sandbox cache directory on any available drive; it must not be a shared data directory because uninstall treats it as disposable and attempts recursive removal. Files still locked by an active compiler, test, agent, or tool are preserved without blocking application removal. When omitted or empty, the cache defaults beneath the system-selected temporary directory (`<system-temp>\herdr-sandbox\cache`, normally `%TEMP%\herdr-sandbox\cache`); the guest always sees the selected directory at `C:\HerdrSandbox\cache`. Caching is strictly demand-driven: a normal provisioning run stores only payloads it actually needs, and later normal runs reuse them without downloading those payloads again; no separate warm, prefetch, or scheduled mode exists. The guest caches the immutable WinGet bundle/dependencies, VC++ runtime, OpenSSH MSI, supported WinGet installer payloads, and each concretely resolved Rust distribution by verified digest, then copies executable bootstrap inputs guest-local before use. Herdr's matching runtime travels through its managed remote SSH provisioning path and never enters the Sandbox package cache or read-only bootstrap input. Because Microsoft's layout bootstrapper cannot create a complete layout inside a Windows 10 Sandbox, `sandbox up` creates or updates the required Visual Studio Build Tools layout automatically on the host only when the selected project needs it and no valid Current layout exists; the guest then revalidates, materializes, and installs that layout offline. Provisioning time is evaluated against the selected project plan and cache state rather than one universal wall-clock target: the maximal `native-all-stacks` fixture deliberately installs every supported stack as a breadth and compatibility gate and is not representative of normal project startup. Performance work requires a measured regression or concrete critical-path owner in a realistic project plan; adding supported stacks does not block unrelated feature work.
@@ -387,7 +442,7 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 
 - Zed (`ZedIndustries.Zed`) is a removable Base default. Provisioning resolves the
   current stable user-scope package and verifies `zed --version` without opening
-  the editor. Each `up` copies host `%APPDATA%\Zed\settings.json`, `keymap.json`,
+  the editor. Initial setup and `refresh` copy host `%APPDATA%\Zed\settings.json`, `keymap.json`,
   `tasks.json`, and JSON files under `snippets` and `themes` to the same guest
   configuration root over verified SSH. Missing files are skipped; guest-only
   files remain. JSONC comments and user settings are preserved byte-for-byte,
@@ -400,7 +455,17 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
   in the existing optional host-configuration Git pulls, only when it is itself a
   physical repository. Custom `--user-data-dir` profiles are not discovered.
 
-- Herdr's portable settings come from its selected host configuration, including `HERDR_CONFIG_PATH`. Initial provisioning and explicit `sandbox up --refresh` adopt those settings through Herdr's remote `--provision --overwrite-config` operation; ordinary `up` reuse, `sandbox attach` and reconnects neither transfer configuration nor ask configuration questions. The dedicated flag, not general `--yes`, authorizes replacement of changed existing settings. Semantically unchanged settings are not rewritten. Sandbox uses the host configuration only to select the guest shell; it does not copy the full Herdr file or duplicate Herdr's merge rules. Tab-bar status commands and text are transferable; machine-local keybinding commands, agent arguments, working directories, and sound paths remain guest-owned. Agent configuration and explicitly enabled credentials continue through Sandbox's separate transfer. Missing host Herdr configuration leaves portable guest settings unchanged.
+- Herdr's portable settings come from its selected host configuration, including
+  `HERDR_CONFIG_PATH`. Initial provisioning and explicit `sandbox refresh` adopt
+  them through Herdr's `--provision --overwrite-config` operation. Ordinary `up`
+  reuse and attach neither transfer configuration nor ask configuration questions.
+  Herdr's dedicated overwrite flag, not general `--yes`, authorizes replacement;
+  unchanged settings are not rewritten. Sandbox selects the guest shell but does
+  not copy the full Herdr file or duplicate its merge rules. Tab-bar entries and
+  custom command bindings transfer unchanged; the environment-specific exclusions
+  under Output, bootstrap, and attachment remain guest-owned. Agent configuration
+  and enabled credentials use Sandbox's separate transfer. Missing host Herdr
+  configuration leaves portable guest settings unchanged.
 
 - After guest verification, `up` reports each enabled credential provider as transferred and verified or skipped with a non-secret reason; it never prints credential paths or values.
 - When no credential provider is enabled, `sandbox plan` identifies this as the secure default and names the `credentialSync` owner for explicit opt-in.
@@ -417,7 +482,14 @@ Herdr Sandbox is pre-1.0 and makes no backward-compatibility promise.
 - A custom project-profile failure names its workspace and
   `.herdr-sandbox\provision.ps1` owner before preserving the original PowerShell
   cause.
-- Full provisioning defaults to the latest stable version, including retained Sandbox refreshes. Targeted continuation preserves successful unchanged steps from the incomplete operation rather than resolving newer versions for them. Only an explicit user selection overrides full-refresh defaults, including selections in `user.ps1`, project `.herdr-sandbox\provision.ps1`, or package configuration. An older installed version never qualifies for reuse merely because its command works. Version and hash records bind the operation and its continuation, not later full refreshes. `Install-PythonStack` resolves the highest stable numeric `Python.Python.<series>` family and its latest patch when no series or version is supplied; a requested series or version remains exact.
+- Provisioning resolves current stable versions when a selected step must run,
+  unless `user.ps1`, a project profile, or package configuration selects an exact
+  version. Initial continuation and retained `sandbox refresh` preserve successful
+  unchanged checkpointed steps; an older installed version alone is not completion
+  evidence. Changed inputs invalidate the corresponding records. When invoked,
+  `Install-PythonStack` resolves the highest stable numeric `Python.Python.<series>`
+  family and latest patch without an explicit selection; a requested series or
+  version remains exact.
 - Before fresh or retained guest mutation, the nonexecuting planner merges every selected built-in tool requirement across `user.ps1` and all selected project profiles and prints the winning selection, source, and every owner. An explicit provisioning value, including an explicitly selected project version source, wins over an automatically discovered optional project version file; that optional file wins over the stack default or latest-stable resolver. Equal winning values are shared. Conflicting explicit values, conflicting selected project sources, and incompatible stack constraints fail before mutation. Missing optional version files never fail. The project-local `$projectPlaywrightVersion` selector explicitly chooses bounded non-reparse `frontend\package-lock.json` v3 state and requires matching exact `@playwright/test`, `playwright`, and `playwright-core` versions. Rust considers an exact `rust-toolchain.toml` channel only when no provisioning value or stack constraint already owns `rust-toolchain`; it remains separate from the `Rustlang.Rustup` package version. Generic stacks require no project manifest or dependency state, while project-specific shortcuts retain only their documented identity inputs.
 - The directly callable `Install-CppStack` reuses the current stable Visual Studio Build Tools layout with only the x64 MSVC tools and the highest stable Windows 11 SDK component in its catalog, and installs the current stable CMake release through the shared verified package owner. It persists the official x64 Developer PowerShell environment required by new SSH and Herdr shells, exposes `cl`, `link`, `lib`, `nmake`, `msbuild`, `rc`, and `cmake`, and proves both C and C++ compile/run paths. It adds no LLVM, MinGW, MSYS2, project dependency, or second compiler or Visual Studio owner.
 - The directly callable `Install-JavaStack` resolves the highest stable numeric `Microsoft.OpenJDK.<major>` family and latest update through the existing hash-verified cached MSI path. The package family remains project-stack-owned and cannot also be configured as a global Base addition. A matching update is retained; otherwise the publisher-required uninstall-previous path runs before installing the target, while inconclusive remaining-version output is only a warning. The stack persists and verifies `JAVA_HOME`, exposes the exact publisher-owned `java` and `javac` commands, and proves a compile/run path. It adds no alternate JDK vendor, JRE-only path, build tool, framework, or project dependency.

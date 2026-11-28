@@ -167,16 +167,38 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - One app-local Windows lifecycle mutex serializes app-owned launch preparation, a pre- and post-preparation no-running check, launch/publication, and every `down` or cleanup mutation; concurrent operations therefore cannot collide in the shared host cache, lifecycle identity, or run deletion.
 - Immediately after launching its concrete `WindowsSandbox.exe`, Go atomically records one strict active-session contract containing the run/config identity, the stable-Tailscale opt-in bit, and the observed PID, executable, creation time, and exact command line.
 - The launching command retains and waits on that exact process until provisioning completes; early launcher exit cancels provisioning immediately so the command releases lifecycle ownership instead of hanging.
-- After bounded startup cleanup, `status`'s separately locked inspector combines that identity with existing progress/ready/failure files without persistent mutation. For a ready guest it derives age from the verified launcher creation time and reuses the exact per-run SSH identity for one five-second read of the guest `C:` logical volume's current free and total bytes. It does not inspect or infer the undocumented host differencing-disk layout.
+- `status`'s read-only inspector combines that identity with existing progress/ready/failure files without cleanup or persistent mutation. For a ready guest it derives age from the verified launcher creation time and reuses the exact per-run SSH identity for one five-second read of the guest `C:` logical volume's current free and total bytes. It does not inspect or infer the undocumented host differencing-disk layout.
 - `down` retains the exact launcher and child-client process handles across revalidation; for a ready opted-in guest it stops Tailscale and captures current local state over the verified per-run SSH connection without restarting the service on success.
 - It then force-terminates the exact child client followed by its exact launcher and waits boundedly for both, bypassing the Windows close-confirmation dialog without targeting any unowned process.
 - Capture, host persistence, refusal, or termination failure restarts Tailscale when the guest remains reachable and preserves ownership for diagnosis.
 - A missing-process stale record is cleared only when no unmanaged Sandbox remains.
-- After CLI syntax validation, `internal/cli` invokes the single lifecycle cleanup owner before mutating `up` and `down`; `clean` invokes that owner directly and exactly once. `InspectSession` owns status-time cleanup and inspection under one lock acquisition so status does not run two separately locked passes. It waits only one second for the lifecycle mutex; when a strict host-owned running reprovision operation explains the busy lock, it skips cleanup and double-reads unchanged active/operation identity around one read-only status snapshot. Help, plan, and invalid input do not cross the native or destructive boundary. Cleanup reads the strict active identity, enumerates the launcher/client set, and revalidates the same process evidence before deletion. Process inspection pins the exact `Get-Process` handle before reading its canonical creation time and confirms a disappearing process through CIM instead of dereferencing a missing object. It pins non-reparse data, run, and SSH directories with Go 1.26 `os.Root` handles and owns only the exact `active.json`, `ssh\config`, and run-ID child names relative to those roots. A replacement at one of those exact app-owned rooted names may itself be removed, but no rename or reparse race may redirect deletion outside the pinned root. An exact running app-owned tree protects its run; only a missing active process together with an empty global Sandbox process set proves the Sandbox gone and permits removal of the former active run, stale active identity, and app-owned SSH target. If that exact owned process changes from running to proven gone between cleanup preflights, cleanup replans once from the unchanged active identity; every other identity change remains fail-closed. Unmanaged, changed-root, malformed, reparse-bearing, or inspection-failed state remains intact and returns a diagnosable incomplete-cleanup error; `status` reports that warning and continues to show preserved stale/unmanaged state, while mutating commands fail closed.
+- After syntax validation and required approval, mutating lifecycle paths use the
+  single cleanup owner; `clean` invokes it directly. `down` prints the guest-only
+  data-loss and host-edit warning and obtains confirmation or `--yes` before any
+  cleanup or shutdown mutation. `InspectSession` serves the overview,
+  `status`, and remote listing without cleanup or operation-record writes. A busy
+  lifecycle lock explained by a strict running operation permits a stable snapshot
+  guarded by unchanged active/operation identity. Help, plan, and invalid input
+  remain nonmutating.
+- Cleanup reads the strict active identity, enumerates the launcher/client set,
+  and revalidates that evidence before deletion. Process inspection pins the exact
+  `Get-Process` handle before reading creation time and confirms disappearance
+  through CIM. Go 1.26 `os.Root` handles pin non-reparse data, run, and SSH roots;
+  deletion owns only exact `active.json`, `ssh\config`, and run-ID children. A
+  replacement at an owned rooted name may itself be removed, but no rename or
+  reparse race may redirect deletion outside the pinned root. A running app-owned
+  tree protects its run. Only a missing active process and an empty global Sandbox
+  process set permit removal of its stale run, active identity, and SSH target.
+  If the owned process becomes proven gone between preflights, cleanup replans once
+  from unchanged active identity. Other identity drift, unmanaged processes,
+  malformed/reparse-bearing roots, or failed inspection preserve state and fail
+  closed. Read-only status reports stale or uncertain state without removing it.
 - The embedded `assets/inspect-processes.ps1` owns both the process census and exact PID inspection. Each cleanup checkpoint gathers both in one bounded Windows PowerShell 5.1 process and one initial CIM query; both checkpoints remain mandatory.
 - The lifecycle mutex remains held through initial and retained provisioning.
   A repeated `up` may resume the exact app-owned starting, connectable, ready,
-  or failed-but-connectable guest. Initial bootstrap establishes verified SSH
+  or failed-but-connectable guest during initial setup. `refresh` requires an
+  owned existing guest and checks that requirement again after cleanup; it never
+  falls through to fresh launch. Initial bootstrap establishes verified SSH
   before Base Development, user profiles, or project profiles run.
 - Go canonicalizes the current selected folder-mount/workspace/cache paths, regenerates the complete WSB launch contract with current memory, accepts canonical contracts whose complete mapping sets differ only by Windows-equivalent letter casing or element order, and names exact audio input, audio output, memory, cache, folder-mount, workspace, Tailscale, or residual contract differences before refusing mutation.
 - Canonical round-trip validation keeps unknown XML or formatting drift fail-closed.
@@ -201,7 +223,9 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - `sandbox attach` acquires the same lock, runs canonical cleanup, requires exact ready process and status identity, reconstructs per-run SSH material from the app-owned private key and ready host key, verifies pinned host/guest Herdr identity plus SSH, revalidates unchanged active/ready identity, and only then publishes the stable alias.
 - The lock is released before the interactive TUI starts.
 - `up --no-attach` stops at terminal ready; normal `up` validates all three console streams before cleanup or provisioning.
-- `sandbox remote` reuses the same `InspectSession` cleanup and inspection owner as `status` before rendering the ready connection profile.
+- `sandbox remote` reuses `InspectSession` for device status and available
+  connection details. Its optional plain-text menu invokes explicit device actions;
+  noninteractive listing never mutates state.
 
 ## Guest Bootstrap
 
@@ -238,8 +262,14 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - `herdr-ext` is the required maintained Windows distribution because official upstream does not yet support running the Herdr server on Windows or provide the remote-provisioning behavior this workflow depends on.
 - It supplies both support for the Herdr server on Windows and the exact unattended `--remote <target> --provision --overwrite-config --yes --json` contract; the CLI and executable remain `herdr` and `herdr.exe`, while bounded `herdr --version` output must contain the exact case-sensitive `herdr-ext` marker.
 - Its installer, release channel, and managed-install layout remain outside Sandbox ownership.
+- Herdr is a generic remote client, not a Sandbox control plane. Sandbox owns its
+  menus, device configuration, and lifecycle state; only Sandbox depends on Herdr.
 - This repository publishes only Sandbox-owned files and never bundles or declares a package dependency on Herdr Extended.
-- Before CLI-owned cleanup or lifecycle mutation, `up` and `attach` resolve the standard host `herdr.exe` command, run bounded hidden `--version` and `status client --json` probes, and resolve the active physical runtime reported by that public status contract. Only `up` additionally probes remote provisioning before starting its provisioning work; identity revalidation never repeats capability probes.
+- Before CLI-owned cleanup or lifecycle mutation, `up`, `refresh`, and `attach`
+  resolve the standard host `herdr.exe` command, run bounded hidden `--version`
+  and `status client --json` probes, and resolve the active physical runtime.
+  Provisioning through `up` or `refresh` additionally probes remote provisioning;
+  identity revalidation never repeats capability probes.
 - The version probe rejects every identity without the exact case-sensitive `herdr-ext` marker before capability inspection.
 - Client status must contain `version|herdr_version|build_id|protocol|binary|session` exactly once, including a build ID consistent with the runtime identity. Additive Herdr-owned status fields are ignored so compatible older and newer Herdr Extended builds remain usable. The independently formatted runtime version remains bounded status data and is not compared with `--version`, while it owns protocol and active physical-runtime discovery.
 - The remote probe first verifies target parsing, then removes `PATH` and invokes an invalid target with exact `--provision --overwrite-config --yes --json` so only a compatible implementation can reach its first `ssh.exe` lookup without starting SSH or network activity.
@@ -255,7 +285,7 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   The signed physical MSIX image remains validation evidence, not a direct sshd
   launch path. WinGet version is diagnostic, not a connection prerequisite.
 - Go transfers development configuration and patches only the guest shell and enabled worktree mapping in the guest's existing `%APPDATA%\herdr\config.toml`. TOML decoding and encoding preserve values rather than original comments or formatting, correctly handling quoted keys, dotted keys and inline tables. Invalid TOML or non-table override targets fail before an archive can be published. One bounded SSH read supplies the guest snapshot in memory; the existing atomic writer checks its digest immediately before replacement and refuses observed concurrent edits. The final compare-to-replace interval remains an optimistic-write race, not a filesystem lock. No guest settings are persisted back to the host. Host shell preference and host configuration-repository selection honor the same `HERDR_CONFIG_PATH` override as Herdr. This preliminary patch preserves other guest values; it is not the settings-transfer implementation. Herdr's following export/import owns host adoption, including unchanged `keys.command` entries, and the explicit environment-specific exclusions in the product contract. Sandbox does not duplicate its filter or rewrite command paths.
-- During provisioning, Go installs the reusable `sandbox` SSH alias and invokes exact `herdr --remote sandbox --provision --overwrite-config --yes --json` under a five-minute context with inherited Herdr routing variables removed. Initial setup and explicit `sandbox up --refresh` authorize adoption of transferable client settings; general `--yes` is not the configuration-overwrite permission. Herdr alone exports and imports settings, skips semantically unchanged writes, preserves target machine-local values including Sandbox's two overrides, validates the result, and activates the server. Ordinary ready reuse and attach use `--remote sandbox --remote-keybindings server`, with no configuration transfer, prompt, or stored policy.
+- During provisioning, Go installs the reusable `sandbox` SSH alias and invokes exact `herdr --remote sandbox --provision --overwrite-config --yes --json` under a five-minute context with inherited Herdr routing variables removed. Initial setup and explicit `sandbox refresh` authorize adoption of transferable client settings; general `--yes` is not the configuration-overwrite permission. Herdr alone exports and imports settings, skips semantically unchanged writes, preserves target machine-local values including Sandbox's two overrides, validates the result, and activates the server. Ordinary ready reuse and attach use `--remote sandbox --remote-keybindings server`, with no configuration transfer, prompt, or stored policy.
 - The result requires target `sandbox`, platform `windows-x86_64` or `windows-aarch64`, one canonical absolute local `herdr.exe` path returned by Herdr, `installed|already_matching`, `started|reloaded|restarted`, `config_outcome` equal to `applied|unchanged|no_source`, and the selected distribution version/protocol exactly once. `preserved` is rejected because Sandbox explicitly requested adoption with `--overwrite-config`. A runtime without configuration-provisioning evidence is rejected instead of silently leaving portable settings unsynchronized. Additive Herdr-owned fields are ignored.
 - Fresh flow requires `started`; retained flow requires `reloaded` or `restarted`.
 - Custom command transfer requires corrected Herdr exporter and importer binaries.
@@ -291,8 +321,8 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   callers select the same WinGet owner explicitly on both targets.
 - The existing Base step owner writes successful input fingerprints atomically to
   `status/development-steps.json`, inside the current run. Each step invalidates its
-  old record before execution. An incomplete operation reuses those records;
-  explicit `--refresh` or a previously successful operation starts a fresh set.
+  old record before execution. Initial continuation and explicit `sandbox refresh`
+  both reuse successful unchanged records, including after a completed operation.
   Base implementation/process changes invalidate Base evidence; profile evidence
   additionally binds stack implementation, package/tool selections, workspace
   manifest and profile bytes. Arbitrary profiles remain atomic steps. This is
@@ -304,7 +334,7 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   converted to warnings. No package repair loop or provider fallback is added.
 - A ready guest's targeted development repair verifies SSH and Herdr without
   reprovisioning the server or synchronizing unrelated configuration/credentials.
-  An incomplete core attempt still runs normal finalization. `--refresh` owns
+  An incomplete core attempt still runs normal finalization. `sandbox refresh` owns
   adoption of changed host configuration, TTS selection and Herdr runtime.
 - The normal fast gate executes the isolated PowerShell continuation and
   transport/profile tests. These checks use real script boundaries and atomic
@@ -313,11 +343,13 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 - No Sandbox-owned binary copy, wrapper, temporary config, direct server start, duplicate reload, alternate executable discovery, or compatibility bridge remains.
 - The Herdr thin client remains on the host and attaches through the untouched PATH command with `herdr --remote <app-owned-ssh-target> --remote-keybindings server`. The printed manual command uses the same selection so guest custom commands remain available.
 - Ready/reprovision/attach identity checks require its current distribution version, runtime version, and protocol to equal the guest; fresh and retained `up` also re-hash and compare the selected command, physical runtime, and complete file set immediately before reporting success. Final attachment checks only the safe executable paths and live client identity, not the full distribution hashes. Opening a ready connection uses the Herdr status query over SSH as its connectivity proof, without a separate readiness-marker command.
-- A host command or runtime change after a guest becomes ready is handled by explicit `up --refresh`, whose single remote provision owner reloads or restarts as required instead of forcing guest replacement.
-- Ordinary `up` dispatches a completed ready guest to `OpenReadyConnection` before
+- A host command or runtime change after a guest becomes ready is handled by explicit `sandbox refresh`, whose single remote provision owner reloads or restarts as required instead of forcing guest replacement.
+- Ordinary `up` dispatches a previously usable guest to `OpenReadyConnection` before
   host configuration pulls or provisioning. A failed connection never falls back
-  to refreshing. An incomplete operation retains the existing continuation path;
-  `--refresh` deliberately bypasses reuse. No additional readiness store is added.
+  to refreshing. An incomplete initial operation with kind `setup` retains the
+  continuation path; a failed later `refresh` does not block ordinary reopening.
+  Explicit `refresh` selects provisioning without attaching. It preserves the
+  existing checkpoint owner, and workstation `--refresh` semantics are unchanged.
 - A final configuration pass after successful early credential sync does not
   export credentials again. Before replacing guest Git configuration, the existing
   apply owner retains only exact installed `gh auth git-credential` helper entries
@@ -343,10 +375,10 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 ### Run State And Published Contracts
 
 - Per-run files are ephemeral operational state.
-- Closing Windows Sandbox discards all guest state. Cleanup-capable lifecycle and
-  inspection commands remove stale host run diagnostics only after the lifecycle
-  evidence above proves that no Sandbox process remains. Help, version, config,
-  plan, and init do not trigger that cleanup.
+- Closing Windows Sandbox discards guest-only state, not edits in host mappings.
+  Cleanup-capable lifecycle commands remove stale run diagnostics only after the
+  evidence above proves that no Sandbox process remains. Overview, status, remote
+  listing, help, version, config, plan, and init do not trigger that cleanup.
 - The optional stable Tailscale identity and remote SSH server identity are separate durable credential state.
 - Each uses one strict envelope encrypted for the current host user with Windows DPAPI and atomically stored below the existing machine-local identity root; the remote public key supplies the stable fingerprint while its private key exists in plaintext only in bounded host memory and over the verified management SSH channel.
 - Automatic and explicit cleanup share one run planner/remover: they delete only child directories whose names match the exact run-ID contract and whose complete trees contain no reparse points; the runs root, unknown entries, unsafe candidates, SSH identities, Tailscale identity, user configuration/provisioning, workspaces, and package/tool cache are never followed or removed.
@@ -366,9 +398,16 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   matches its manifested project. It creates missing workspaces, preserves ambiguous
   ones, and focuses the active project. A partial failure cannot blindly recreate
   every workspace on retry.
-- Each initial or retained provisioning attempt owns one strict, host-only `<run>\operation.json` current/latest contract containing operation/run IDs, kind, running or terminal state, bounded phase/message, and ordered UTC timestamps.
+- Each initial or retained provisioning attempt owns one strict, host-only
+  `<run>\operation.json` current/latest contract containing operation/run IDs,
+  kind (`setup` for initial work, `reprovision` for later refresh), running or
+  terminal state, bounded phase/message,
+  and ordered UTC timestamps. The existing record distinguishes initial
+  continuation from later refresh without a second readiness registry.
 - The guest-writable status mapping cannot forge it.
-- A terminal retained failure remains separate from ready guest health; immediately after any public lifecycle path freely acquires the lock, a matching running record is atomically marked interrupted before inspection, close, replacement, or deletion.
+- A terminal retained failure remains separate from ready guest health. A mutating
+  lifecycle owner marks an orphaned matching running record interrupted before
+  further mutation; read-only inspection does not write that transition.
 - A new operation cannot overwrite a still-running record.
 - Status enriches lifecycle truth from the strict guest workspace manifest, a bounded live logical-volume query, and at most eight of 128 bounded timing records without exposing host workspace paths, credentials, raw command output, or terminal-control sequences.
 
@@ -426,6 +465,12 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
 
 ### Configuration, Mounts, And Workspace Selection
 
+- First-use `up` reuses the initializer's stack catalog and exclusive profile
+  writer rather than introducing another setup format. It resolves and validates
+  the exact selected folder before approval or profile creation. Protected home
+  roots are rejected before writing; an explicitly selected child cannot widen
+  to an ancestor profile. An existing selected profile is reused. Optional remote
+  enablement uses the same host configuration change owner as the device menu.
 - Development-provisioning PowerShell 5.1 files remain external to the Go binary.
 - Release-owned `base.ps1` and `stacks.ps1` beside the executable are the only built-in provider/adapter authority and are refreshed by installing a new application release; Go validates and snapshots both for each run.
 - The same Go seeding owner creates `%APPDATA%\herdr-sandbox\config.json` and the single user-owned `user.ps1` extension only when absent, then refreshes each app-owned configuration sample and embedded JSON Schema file atomically: setup invokes it after installing the executable, portable use invokes it on the first mutating provisioning path, and `sandbox config` refreshes the references before opening the user file.
@@ -448,18 +493,19 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   and sorts that set. No password, device private
   key, or remote-client profile enters this owner. The durable remote server key
   remains Ed25519 independently of supported client key types.
-- `remote setup` reuses configuration validation and atomic persistence. It
-  previews the host identity plus a snapshot of existing standard incoming lists
-  at `%USERPROFILE%\.ssh\authorized_keys` and
-  `%ProgramData%\ssh\administrators_authorized_keys`; `--key FILE` replaces that
-  source discovery with the supplied public-key file. Existing entries are merged. A
-  single default-no confirmation (or `--yes`) authorizes that bounded set.
-  Restricted authorized-key options fail before mutation; they are never stripped.
-  Discovery neither searches `.pub`/private files nor evaluates custom `sshd`
-  sources or Match rules. There is no ongoing synchronization or pairing service.
-  Saving preserves unrelated configuration. A ready tailnet guest receives a
-  key-only update under the existing lifecycle lock and pinned management SSH
-  connection. `assets/remote-ssh-keys.ps1` reuses the hash-verified remote SSH
+- `internal/cli/remote.go` owns the plain device menu and explicit add, rename,
+  replace, remove, enable, and apply actions. Add/replace read one public-key line
+  from stdin, never a key-file importer or automatic incoming-list discovery.
+  Existing raw `remoteSSHAuthorizedKeys` entries remain valid. Optional
+  `remoteSSHDeviceNames` maps fingerprints to labels in the same host config;
+  unnamed keys remain usable, and no second registry, daemon, pairing service,
+  TUI dependency, or client-to-client SSH connection is introduced. The managing
+  host identity remains reserved and cannot be edited or revoked as a device.
+- Approved edits reuse strict config validation and optimistic compare-and-swap
+  persistence, preserving unrelated host settings. The CLI then calls the existing
+  `ApplyRemoteKeys` owner with that exact saved canonical snapshot. A ready tailnet
+  guest receives a key-only update under the lifecycle lock and pinned management
+  SSH connection. `assets/remote-ssh-keys.ps1` reuses the hash-verified remote SSH
   control owner, validates the proposed public keys with OpenSSH, atomically
   replaces the authorization file and updates its existing prepared digest.
   A failed digest publication restores the previous authorization file and reports
@@ -469,9 +515,12 @@ shell, and this finalization neither restarts SSH/Herdr nor changes firewall rul
   Exact read-back and unchanged listener identity precede atomic publication to
   the existing run-input authorization snapshot. No new state owner, enrollment,
   Herdr operation, listener restart or provisioning is involved. A partial failure
-  is reported, never treated as confirmed access. With no managed guest, setup
-  dispatches normal `up --no-attach`; a non-ready or non-tailnet guest is preserved
-  and reported rather than automatically replaced.
+  is reported as saved on the host but not confirmed live; prior access may remain.
+  Device listing compares saved keys with the existing applied run snapshot and
+  exposes unconfirmed removals. Removal affects new authentication only, never
+  current sessions. With no managed guest, changes wait for the next explicit
+  `up`; no guest is started. A non-ready or non-tailnet guest is preserved and
+  reported rather than automatically replaced.
 
 ### Package And Agent Sync Planning
 
