@@ -232,7 +232,7 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 	}
 	var confirmationErr error
 	after, saved, err := deps.changeRemote(ctx, change, func(preview sandbox.RemoteSettings) bool {
-		fmt.Fprintf(output, "Save %s permanently on this host and apply to the running Sandbox.\n", action)
+		fmt.Fprintf(output, "Action: %s. Save on this host and apply to the running Sandbox.\n", action)
 		if change.Device != "" {
 			fmt.Fprintln(output, "Selected device key:", change.Device)
 		}
