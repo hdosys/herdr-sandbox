@@ -13,24 +13,27 @@ import (
 
 func TestUpReusesReadyEnvironmentAndKeepsRefreshExplicit(t *testing.T) {
 	for _, scenario := range []struct {
-		name, operation           string
+		name, operation, kind     string
 		refresh, failedConnection bool
 		wantReady, wantProvision  bool
 	}{
 		{name: "ready", operation: "succeeded", wantReady: true},
 		{name: "ready without operation record", wantReady: true},
-		{name: "incomplete", operation: "failed", wantProvision: true},
+		{name: "failed refresh stays usable", operation: "failed", kind: "reprovision", wantReady: true},
+		{name: "interrupted refresh stays usable", operation: "interrupted", kind: "reprovision", wantReady: true},
+		{name: "incomplete initial setup", operation: "failed", kind: "setup", wantProvision: true},
 		{name: "explicit refresh", operation: "succeeded", refresh: true, wantProvision: true},
 		{name: "failed connection never reprovisions", operation: "succeeded", failedConnection: true, wantReady: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			deps := defaultCommandDependencies()
+			deps.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
 			deps.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
 			deps.cleanup = func(context.Context) (sandbox.CleanResult, error) { return sandbox.CleanResult{}, nil }
 			deps.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 				status := sandbox.SessionStatus{State: sandbox.SessionReady}
 				if scenario.operation != "" {
-					status.Operation = &sandbox.SessionOperation{State: scenario.operation}
+					status.Operation = &sandbox.SessionOperation{State: scenario.operation, Kind: scenario.kind}
 				}
 				return status, nil
 			}
@@ -52,7 +55,7 @@ func TestUpReusesReadyEnvironmentAndKeepsRefreshExplicit(t *testing.T) {
 			}
 			args := []string{"up", "--no-attach"}
 			if scenario.refresh {
-				args = append(args, "--refresh")
+				args[0] = "refresh"
 			}
 			var output, stderr bytes.Buffer
 			code := runWithCommandDependencies(t.Context(), args, &bytes.Buffer{}, &output, &stderr, deps)
@@ -84,7 +87,7 @@ func TestStatusSeparatesUsabilityFromIncompleteSetup(t *testing.T) {
 		if !strings.Contains(output.String(), "Oracle failed") || strings.Contains(output.String(), "PID: 1234") != verbose {
 			t.Fatalf("wrong summary/detail output: %s", &output)
 		}
-		if !verbose && (!strings.Contains(output.String(), "sandbox attach") || !strings.Contains(output.String(), "Resume unfinished setup: sandbox up")) {
+		if !verbose && (!strings.Contains(output.String(), "Work now: sandbox up") || !strings.Contains(output.String(), "Resume the update: sandbox refresh")) {
 			t.Fatalf("missing recovery action: %s", &output)
 		}
 	}

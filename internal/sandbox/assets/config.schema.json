@@ -48,19 +48,26 @@
     "tailscale": {
       "type": "boolean",
       "default": false,
-      "description": "Enables stable Tailscale identity and automatic host SSH access. First startup opens browser sign-in. Use sandbox remote setup for guided configuration."
+      "description": "Enables stable Tailscale identity and automatic host SSH access. First startup opens browser sign-in. Use sandbox remote for guided configuration."
     },
     "remoteSSHAuthorizedKeys": {
       "type": "array",
       "maxItems": 7,
       "uniqueItems": true,
       "default": [],
-      "description": "Additional device-owned Ed25519, RSA or ECDSA public keys. The host key is added automatically. Use sandbox remote setup to import existing authorized keys.",
+      "description": "Additional device-owned Ed25519, RSA or ECDSA public keys. The host key is added automatically. Use sandbox remote to manage devices.",
       "items": {
         "type": "string",
         "maxLength": 4096,
         "pattern": "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]+={0,2}(?: [^\\r\\n]+)?$"
       }
+    },
+    "remoteSSHDeviceNames": {
+      "type": "object",
+      "maxProperties": 7,
+      "description": "Optional display names keyed by the SHA256 fingerprint of an authorized device key. Authorization remains owned by remoteSSHAuthorizedKeys.",
+      "propertyNames": { "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 80 }
     },
     "configurationSync": {
       "$ref": "#/$defs/configurationSync"

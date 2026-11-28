@@ -76,7 +76,7 @@ func OpenReadyConnection(ctx context.Context, output io.Writer, hostHerdr HostHe
 		return Connection{}, fmt.Errorf("validate ready Sandbox identity: %w", err)
 	}
 	if ready.HerdrVersion != hostHerdr.version || ready.HerdrRuntimeVersion != hostHerdr.runtimeVersion || ready.HerdrProtocol != hostHerdr.protocol {
-		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox up --refresh` to update the ready guest with the current host runtime",
+		return Connection{}, fmt.Errorf("ready guest Herdr identity = %q protocol %d, current host = %q protocol %d; run `sandbox refresh` to update the ready guest with the current host runtime",
 			ready.HerdrVersion, ready.HerdrProtocol, hostHerdr.version, hostHerdr.protocol)
 	}
 	plan := runPlan{

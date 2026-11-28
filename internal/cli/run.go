@@ -17,60 +17,16 @@ import (
 	"herdr-sandbox/internal/sandbox"
 )
 
-const usage = `Usage:
-  sandbox config
-  sandbox pull-host-config
-  sandbox workstation setup [--profile FILE] [--refresh]
-  sandbox workstation create NAME
-  sandbox workstation build NAME
-  sandbox workstation test NAME
-  sandbox workstation test --installer FILE
-  sandbox workstation export --output FILE [--include-settings] [--defaults]
-  sandbox version
-  sandbox --version
-  sandbox plan
-  sandbox init [--stack android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|oracle|playwright-cli|python|python-ai|rust|tradingview|zig|all|handy|herdr]...
-  sandbox up [--memory-mb MB] [--timeout DURATION] [--no-attach] [--refresh]
-  sandbox up --provisioning installer --installer FILE [--no-attach]
-  sandbox attach
-  sandbox status [--verbose]
-  sandbox remote [--qr]
-  sandbox remote setup [--key PUBLIC_KEY_FILE] [--yes]
-  sandbox down
-  sandbox clean
+const usage = `Usage: sandbox COMMAND
+  up       Set up a new environment, finish initial setup, or open an existing one
+  refresh  Explicitly apply configuration/tool updates, reusing unchanged steps
+  remote   Manage permanent device access and apply changes to the running guest
+  status   Show usability, the last setup result and the next action (--verbose for details)
+  down     Discard the guest after confirmation; host files and saved keys remain
 
-Commands:
-  config  create the global config when absent and open it with the registered .json application
-  pull-host-config  fast-forward transferred Git-backed configuration roots on the host
-  workstation  create a saved personal installation, build its installer, test it in Sandbox, or run direct setup
-  version, --version  print version, UTC build freshness, and source revision when available
-  plan    validate and print the effective plan without changing app or Sandbox state
-  init    create one project profile without replacing an existing profile
-  up      launch fresh or re-provision the exact ready Sandbox, then attach unless disabled
-  attach  verify and attach to the exact ready Sandbox without re-provisioning
-  status  report the app-owned Sandbox; proven stale app state may be cleaned
-  remote  show Tailnet access; remote setup configures it and starts the Sandbox
-  down    stop only the exact app-owned Sandbox, then optionally pull host configuration
-  clean   remove inactive app-owned run workspaces
-
-Configuration:
-  %APPDATA%\herdr-sandbox\config.json
-  - workspaces and optional workspaceDiscovery
-  - named folder mounts with explicit read-only or read/write access
-  - absolute cacheDirectory (default <system-temp>\herdr-sandbox\cache)
-  - memoryMB (default 32768), audio (output), audioInput (microphone), and tailscale
-  - remoteSSHAuthorizedKeys for additional devices (remote setup imports host authorized keys)
-  - configurationSync host Git pull choices for up and down (all disabled by default)
-  - codingAgentSync choices (all enabled by default)
-  - credentialSync choices (all disabled by default)
-  - wingetPackages additions, removals, and version pins
-
-Behavior:
-  - up has a four-hour launch-to-terminal-ready timeout; --timeout replaces it for one run
-  - up connects to a ready Sandbox, or resumes incomplete setup; --refresh explicitly updates tools and configuration
-  - optional TTS unavailability does not block a verified ready Sandbox or automatic attach
-  - installer provisioning requires a fresh Sandbox and never runs normal tool provisioning to repair the result
-  - the nearest .herdr-sandbox\provision.ps1 becomes the active workspace
+Running sandbox without arguments shows a read-only overview.
+Use sandbox COMMAND --help for that command only.
+Advanced: attach, init, plan, config, clean, pull-host-config, workstation, version.
 `
 
 const (
@@ -102,8 +58,11 @@ type commandDependencies struct {
 	resolvePlan                func(context.Context, string) (sandbox.EffectivePlan, error)
 	workstationInstaller       func(string) (string, error)
 	initialize                 func(string, []string) (sandbox.ProjectInitResult, error)
+	firstUse                   func(string) (sandbox.FirstUse, error)
 	openConfig                 func() (string, bool, error)
-	setupRemote                func(context.Context, string, func(sandbox.RemoteSetup) bool) (bool, error)
+	remoteSettings             func(context.Context) (sandbox.RemoteSettings, error)
+	changeRemote               func(context.Context, sandbox.RemoteChange, func(sandbox.RemoteSettings) bool) (sandbox.RemoteSettings, bool, error)
+	interactive                func(io.Reader) bool
 	applyRemoteKeys            func(context.Context, []string) (bool, error)
 	seedInstaller              func() error
 	stopInstallerProcesses     func(context.Context) error
@@ -127,8 +86,11 @@ func defaultCommandDependencies() commandDependencies {
 		resolvePlan:                sandbox.ResolveEffectivePlan,
 		workstationInstaller:       sandbox.SavedWorkstationInstaller,
 		initialize:                 sandbox.InitializeProject,
+		firstUse:                   sandbox.InspectFirstUse,
 		openConfig:                 sandbox.OpenConfiguration,
-		setupRemote:                sandbox.SetupRemote,
+		remoteSettings:             sandbox.ReadRemoteSettings,
+		changeRemote:               sandbox.ChangeRemoteAccess,
+		interactive:                interactiveInput,
 		applyRemoteKeys:            sandbox.ApplyRemoteKeys,
 		seedInstaller:              sandbox.SeedInstallerConfiguration,
 		stopInstallerProcesses:     sandbox.StopInstallerProcesses,
@@ -145,12 +107,20 @@ func runWithDependencies(ctx context.Context, args []string, stdin io.Reader, st
 }
 
 func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, dependencies commandDependencies) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	bare := len(args) == 0
+	if bare {
+		args = []string{"status"}
+	}
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		if args[0] == "help" && len(args) == 2 {
+			fmt.Fprint(stdout, scopedUsage(args[1]))
+			return 0
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	if commandHelpRequested(args) && directHelpCommand(args[0]) {
-		fmt.Fprint(stdout, usage)
+	if commandHelpRequested(args) && (directHelpCommand(args[0]) || args[0] == "up" || args[0] == "refresh") {
+		fmt.Fprint(stdout, scopedUsage(args[0]))
 		return 0
 	}
 	switch args[0] {
@@ -323,48 +293,31 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		} else {
 			printSessionSummary(stdout, status)
 		}
-		if status.State != sandbox.SessionReady {
+		if !bare && status.State != sandbox.SessionReady {
 			return 1
 		}
 		return 0
 	case "remote":
-		if len(args) > 1 && args[1] == "setup" {
-			return runRemoteSetup(ctx, args[2:], stdin, stdout, stderr, dependencies)
-		}
-		qr := len(args) == 2 && args[1] == "--qr"
-		if len(args) != 1 && !qr {
-			fmt.Fprintf(stderr, "sandbox: remote does not accept arguments other than --qr or setup\n\n%s", usage)
+		return runRemote(ctx, args[1:], stdin, stdout, stderr, dependencies)
+	case "down":
+		flags := flag.NewFlagSet("sandbox down", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		yes := flags.Bool("yes", false, "confirm discarding guest-only data")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			fmt.Fprint(stderr, scopedUsage("down"))
 			return 2
 		}
-		status, err := dependencies.inspect(ctx)
-		if err != nil {
-			fmt.Fprintln(stderr, "sandbox:", err)
-			return 1
-		}
-		if status.State != sandbox.SessionReady || status.RemoteAccess == nil {
-			fmt.Fprintln(stderr, "sandbox: remote access is not ready. Run `sandbox remote setup` for automatic configuration and startup.")
-			return 1
-		}
-		if err := printRemoteAccess(stdout, *status.RemoteAccess); err != nil {
-			fmt.Fprintln(stderr, "sandbox:", err)
-			return 1
-		}
-		if qr {
-			lines, err := status.RemoteAccess.QRLines()
+		fmt.Fprintln(stdout, "Discarding the Sandbox permanently removes guest-only files. Host projects, their edits, and saved device keys remain; host-file changes are NOT rolled back.")
+		if !*yes {
+			approved, err := confirmPrompt(bufio.NewReaderSize(stdin, 8192), stdout, "Discard the Sandbox?")
 			if err != nil {
 				fmt.Fprintln(stderr, "sandbox:", err)
 				return 1
 			}
-			fmt.Fprintln(stdout, "\nQR (connection URI only)")
-			for _, line := range lines {
-				fmt.Fprintln(stdout, strings.ReplaceAll(line, "##", "██"))
+			if !approved {
+				fmt.Fprintln(stdout, "Cancelled. Sandbox preserved.")
+				return 0
 			}
-		}
-		return 0
-	case "down":
-		if len(args) != 1 {
-			fmt.Fprintf(stderr, "sandbox: down does not accept arguments\n\n%s", usage)
-			return 2
 		}
 		if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
 			return 1
@@ -394,27 +347,33 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		}
 		printCleanResult(stdout, result)
 		return 0
-	case "up":
+	case "up", "refresh":
 	default:
 		fmt.Fprintf(stderr, "sandbox: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 
 	options := sandbox.DefaultOptions()
-	noAttach := false
+	options.Refresh = args[0] == "refresh"
+	noAttach := options.Refresh
+	var initialStacks stackSelections
+	var remoteAccess, yes bool
 	provisioningMode := "normal"
-	flags := flag.NewFlagSet("sandbox up", flag.ContinueOnError)
+	flags := flag.NewFlagSet("sandbox "+args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.IntVar(&options.MemoryMB, "memory-mb", options.MemoryMB, "override configured Sandbox memory in MB for this run (minimum 2048)")
 	flags.DurationVar(&options.Timeout, "timeout", options.Timeout, "launch-to-terminal-ready timeout (default 4h)")
-	flags.BoolVar(&noAttach, "no-attach", false, "leave the verified Sandbox ready without starting the interactive Herdr client")
-	flags.BoolVar(&options.Refresh, "refresh", false, "explicitly update tools and configuration instead of connecting or resuming")
+	flags.BoolVar(&noAttach, "no-attach", noAttach, "leave the Sandbox ready without opening Herdr")
+	flags.StringVar(&options.ProjectDirectory, "project", "", "exact project directory for setup")
+	flags.Var(&initialStacks, "stack", "stack for a new project profile; repeat for several stacks")
+	flags.BoolVar(&remoteAccess, "remote-access", false, "enable Tailscale during initial configuration")
+	flags.BoolVar(&yes, "yes", false, "approve the explicitly selected initial project and remote-access settings")
 	flags.StringVar(&provisioningMode, "provisioning", "normal", "normal or installer")
 	flags.StringVar(&options.InstallerPath, "installer", "", "exact workstation installer with its matching JSON sidecar")
 	flags.Usage = func() {}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprint(stderr, usage)
+			fmt.Fprint(stderr, scopedUsage(args[0]))
 			return 0
 		}
 		fmt.Fprintf(stderr, "sandbox: %v\n\n%s", err, usage)
@@ -474,18 +433,19 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
-	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
-		return 1
-	}
-	if !options.InstallerProvisioning && !options.Refresh {
+	if !options.InstallerProvisioning {
 		status, err := dependencies.inspect(ctx)
 		if err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
-		if status.State == sandbox.SessionReady && (status.Operation == nil || status.Operation.State == "succeeded") {
-			if memoryOverrideSet {
-				fmt.Fprintln(stderr, "sandbox: a running Sandbox keeps its memory allocation; use sandbox plan to review changes before an explicit new startup")
+		if options.Refresh && status.State == sandbox.SessionStopped {
+			fmt.Fprintln(stderr, "sandbox: no running environment to update. Start it with sandbox up.")
+			return 1
+		}
+		if !options.Refresh && !status.NeedsInitialSetup() {
+			if memoryOverrideSet || options.ProjectDirectory != "" || len(initialStacks) > 0 || remoteAccess {
+				fmt.Fprintln(stderr, "sandbox: the running environment was not changed. Use sandbox refresh for supported updates; fixed folder or memory changes require an explicit new startup.")
 				return 1
 			}
 			connection, err := dependencies.openReady(ctx, stdout, hostHerdr)
@@ -493,13 +453,19 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 				fmt.Fprintln(stderr, "sandbox:", err)
 				return 1
 			}
-			fmt.Fprintln(stdout, "Using the existing environment. No tools or configuration were refreshed. Use `sandbox up --refresh` to update them.")
+			fmt.Fprintln(stdout, "Using the existing environment. No package queries or configuration refresh. Use `sandbox refresh` to update it.")
 			if noAttach {
 				fmt.Fprintln(stdout, "Next: sandbox attach")
 				return 0
 			}
 			return runAttach(ctx, connection, stdin, stdout, stderr, dependencies.attach)
 		}
+		if !prepareFirstUse(ctx, &options, initialStacks, remoteAccess, yes, stdin, stdout, stderr, dependencies) {
+			return 1
+		}
+	}
+	if !cleanupBeforeCommand(ctx, stderr, dependencies.cleanup) {
+		return 1
 	}
 	if !options.InstallerProvisioning {
 		if pulled, err := dependencies.pullHostConfigOnUp(ctx); err != nil {
@@ -609,7 +575,7 @@ func runInit(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	fmt.Fprintln(stdout, "  Stacks:")
 	printBulletList(stdout, result.Stacks, "    ")
 	fmt.Fprintln(stdout, "\nNext: sandbox up")
-	fmt.Fprintln(stdout, "To apply this profile to an existing ready environment: sandbox up --refresh")
+	fmt.Fprintln(stdout, "To apply this profile to an existing ready environment: sandbox refresh")
 	fmt.Fprintln(stdout, "Optional preview: sandbox plan")
 	return 0
 }
@@ -720,7 +686,11 @@ func printSessionSummary(output io.Writer, status sandbox.SessionStatus) {
 		if status.Operation.State != "succeeded" {
 			fmt.Fprintf(output, "  %s\n", status.Operation.Message)
 			if status.State == sandbox.SessionReady && status.Operation.State != "running" {
-				fmt.Fprintln(output, "  You can still work: sandbox attach. Resume unfinished setup: sandbox up.")
+				if status.NeedsInitialSetup() {
+					fmt.Fprintln(output, "  Finish initial setup: sandbox up. Direct connection without setup: sandbox attach.")
+				} else {
+					fmt.Fprintln(output, "  Work now: sandbox up. Resume the update: sandbox refresh.")
+				}
 			}
 		}
 	}

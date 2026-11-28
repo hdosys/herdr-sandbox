@@ -21,6 +21,7 @@ const (
 	maximumOperationMessageLen = 512
 
 	operationKindReprovision = "reprovision"
+	operationKindSetup       = "setup"
 
 	operationStateRunning     = "running"
 	operationStateSucceeded   = "succeeded"
@@ -219,7 +220,7 @@ func (operation SessionOperation) validate() error {
 	if !runIDPattern.MatchString(operation.ID) || !runIDPattern.MatchString(operation.RunID) {
 		return errors.New("operationID or runID is invalid")
 	}
-	if operation.Kind != operationKindReprovision {
+	if operation.Kind != operationKindReprovision && operation.Kind != operationKindSetup {
 		return fmt.Errorf("operation kind = %q", operation.Kind)
 	}
 	switch operation.State {

@@ -30,6 +30,10 @@ func ApplyRemoteKeys(ctx context.Context, approvedKeys []string) (applied bool, 
 	if err != nil {
 		return false, err
 	}
+	exists, err := regularFileExists(filepath.Join(dataDirectory, activeSessionFileName))
+	if err != nil || !exists {
+		return false, err
+	}
 	executable, err := windowsSandboxExecutable()
 	if err != nil {
 		return false, err
@@ -120,7 +124,7 @@ func ApplyRemoteKeys(ctx context.Context, approvedKeys []string) (applied bool, 
 		return false, err
 	}
 	if err := writeFileAtomicallyIfUnchanged(inputPath, original, encoded, 0o600); err != nil {
-		return false, fmt.Errorf("remote keys applied, but active plan could not be saved; repeat remote setup to reconcile: %w", err)
+		return false, fmt.Errorf("remote keys applied, but active plan could not be saved; run sandbox remote apply to reconcile: %w", err)
 	}
 	return true, nil
 }
@@ -131,7 +135,7 @@ func verifyApprovedRemoteKeys(configured, approved []string) error {
 		return err
 	}
 	if !sameRemoteSSHAuthorizedKeys(keys, approved) {
-		return errors.New("configured remote keys changed after approval; no guest keys were changed, repeat remote setup to review the current set")
+		return errors.New("configured remote keys changed after approval; no guest keys were changed, use sandbox remote to review the current set")
 	}
 	return nil
 }

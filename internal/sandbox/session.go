@@ -49,6 +49,7 @@ var guestFinalizationScript []byte
 const guestFinalizationName = "finalize-provisioning.ps1"
 
 type Options struct {
+	ProjectDirectory      string
 	DataDirectory         string
 	MemoryMB              int
 	Timeout               time.Duration
@@ -58,6 +59,7 @@ type Options struct {
 	InstallerPath         string
 	resume                bool
 	repairReady           bool
+	initialSetup          bool
 }
 
 type Connection struct {
@@ -152,7 +154,7 @@ func cancellationOutcomeError(cause error, stage provisioningCancellationStage) 
 	message := "startup cancelled before a Sandbox was launched"
 	switch stage {
 	case provisioningCancellationRetained:
-		message = "provisioning cancelled; the Sandbox was preserved. Run `sandbox up` to retry in the same guest"
+		message = "provisioning cancelled; the Sandbox and completed steps were preserved. Run `sandbox status` for the next action"
 	case provisioningCancellationFresh:
 		message = "fresh provisioning wait cancelled; the Sandbox may continue guest bootstrap. Run `sandbox status` to inspect it"
 	}
@@ -212,7 +214,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 		fmt.Fprintln(options.Output, "Warning: the previous retained reprovision ended without a terminal result and is now recorded as interrupted.")
 	}
 
-	provisioning, err := resolveProvisioning("")
+	provisioning, err := resolveProvisioning(options.ProjectDirectory)
 	if err != nil {
 		return Connection{}, err
 	}
@@ -246,8 +248,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	if options.InstallerProvisioning && retained {
 		return Connection{}, errors.New("installer acceptance requires a fresh Sandbox; the existing Sandbox was preserved. End it explicitly only after saving current work, then run the installer provisioning path")
 	}
-	options.resume = retained && !options.Refresh && sessionStatus.Operation != nil && sessionStatus.Operation.State != operationStateSucceeded
-	options.repairReady = options.resume && sessionStatus.State == SessionReady &&
+	options.resume = retained
+	options.initialSetup = sessionStatus.NeedsInitialSetup()
+	options.repairReady = options.resume && !options.Refresh && sessionStatus.Operation != nil && sessionStatus.State == SessionReady &&
 		(sessionStatus.Operation.Phase == "development-incomplete" || sessionStatus.Operation.Phase == "optional-unavailable")
 	if retained {
 		if !canResumeSession(sessionStatus) {
@@ -301,7 +304,7 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	} else {
 		fmt.Fprintln(options.Output, "Mode: starting and provisioning a new Sandbox")
 	}
-	if provisioning.ModelsDirectory != "" && !options.resume && !options.InstallerProvisioning {
+	if provisioning.ModelsDirectory != "" && (!options.resume || options.Refresh) && !options.InstallerProvisioning {
 		fmt.Fprintln(options.Output, "Preparing HyperFrames VoxCPM2 release and host models...")
 		if err := prepareHyperFramesVoxCPM2(runContext, provisioning.ModelsDirectory, provisioning.TTSBundle, options.Output); err != nil {
 			return Connection{}, err

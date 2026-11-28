@@ -15,7 +15,7 @@ import (
 
 func TestDevelopmentIncompleteGuidanceKeepsUsabilityAndFailureDistinct(t *testing.T) {
 	var output bytes.Buffer
-	writeDevelopmentIncompleteGuidance(&output)
+	writeDevelopmentIncompleteGuidance(&output, "sandbox refresh")
 	for _, want := range []string{
 		"Sandbox is running", "Attach now with `sandbox attach` to use Herdr",
 		"Already provisioned tools remain usable", "failed or unfinished setup may be unavailable",

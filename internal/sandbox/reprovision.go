@@ -50,10 +50,10 @@ func (err *developmentProvisioningError) Error() string {
 	return fmt.Sprintf("development setup incomplete (failed steps: %d)", len(err.failures))
 }
 
-func writeDevelopmentIncompleteGuidance(output io.Writer) {
+func writeDevelopmentIncompleteGuidance(output io.Writer, retry string) {
 	fmt.Fprintln(output, "Sandbox is running. Attach now with `sandbox attach` to use Herdr.")
 	fmt.Fprintln(output, "Development setup is incomplete. Already provisioned tools remain usable; features depending on failed or unfinished setup may be unavailable.")
-	fmt.Fprintln(output, "Fix the reported failures, then retry `sandbox up` in this same Sandbox. Completed unchanged steps are preserved; use `sandbox up --refresh` only for a full refresh. Do not run `sandbox down`.")
+	fmt.Fprintf(output, "Fix the reported failure, then run `%s`. Completed unchanged steps are preserved. Do not run `sandbox down`.\n", retry)
 }
 
 type explorerRestartStatus struct {
@@ -81,7 +81,11 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	provisioning.Mounts = plan.Mounts
 	provisioning.Workspaces = plan.Workspaces
 	fmt.Fprintf(options.Output, "Provisioning Sandbox run %s; matching installed tools will be reused...\n", plan.ID)
-	operation, err := startSessionOperation(plan.RunDirectory, plan.ID, operationKindReprovision,
+	kind, retry := operationKindReprovision, "sandbox refresh"
+	if !wasReady || options.initialSetup {
+		kind, retry = operationKindSetup, "sandbox up"
+	}
+	operation, err := startSessionOperation(plan.RunDirectory, plan.ID, kind,
 		"bootstrap", "Waiting for the SSH management connection.")
 	if err != nil {
 		return Connection{}, err
@@ -93,7 +97,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		if developmentFailure != nil && len(developmentFailure.optional) > 0 {
 			state = operationStateFailed
 			phase = "optional-unavailable"
-			message = "Sandbox ready; optional features unavailable: " + strings.Join(developmentFailure.optional, "; ") + ". Run sandbox up to resume."
+			message = "Sandbox ready; optional features unavailable: " + strings.Join(developmentFailure.optional, "; ") + ". Run " + retry + " to resume."
 		}
 		if resultErr != nil {
 			state = operationFailureState(ctx, resultErr)
@@ -119,7 +123,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 		operation = finished
 		if resultErr != nil {
 			if operation.Phase == "development-incomplete" {
-				writeDevelopmentIncompleteGuidance(options.Output)
+				writeDevelopmentIncompleteGuidance(options.Output, retry)
 			} else if operation.Phase == "bootstrap" {
 				fmt.Fprintln(options.Output, "Sandbox preserved. If bootstrap failed, use its retry command in the guest console, then run `sandbox up` again. Do not run `sandbox down`.")
 			} else {
@@ -163,7 +167,7 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 	defer cleanupSnapshot()
 	snapshot.Resume = options.resume
 	if options.resume {
-		fmt.Fprintln(options.Output, "Resuming incomplete setup; completed unchanged steps are preserved. Use `sandbox up --refresh` for a full refresh.")
+		fmt.Fprintln(options.Output, "Applying changes; successful steps with unchanged inputs are preserved.")
 	}
 	plan.Workspaces = snapshot.Workspaces
 	plan.ActiveWorkspace = snapshot.ActiveWorkspace

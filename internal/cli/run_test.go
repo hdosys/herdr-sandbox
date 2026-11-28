@@ -223,8 +223,8 @@ func TestRunRemotePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
 		AuthorizedKeyCount: 1,
 	}
 	dependencies := defaultCommandDependencies()
-	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
-		return sandbox.SessionStatus{State: sandbox.SessionReady, RemoteAccess: &access}, nil
+	dependencies.remoteSettings = func(context.Context) (sandbox.RemoteSettings, error) {
+		return sandbox.RemoteSettings{Enabled: true, Session: sandbox.SessionStatus{State: sandbox.SessionReady, RemoteAccess: &access}}, nil
 	}
 	var stdout, stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"remote"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
@@ -237,13 +237,13 @@ func TestRunRemotePrintsOnlyReadySecretFreeConnectionProfile(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout.String(), "████") {
 		t.Fatalf("optional QR missing: %s %s", &stdout, &stderr)
 	}
-	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
-		return sandbox.SessionStatus{State: sandbox.SessionReady}, nil
+	dependencies.remoteSettings = func(context.Context) (sandbox.RemoteSettings, error) {
+		return sandbox.RemoteSettings{Session: sandbox.SessionStatus{State: sandbox.SessionReady}}, nil
 	}
 	stdout.Reset()
 	stderr.Reset()
 	code = runWithCommandDependencies(context.Background(), []string{"remote"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
-	if code != 1 || !strings.Contains(stderr.String(), "remote access is not ready") {
+	if code != 0 || !strings.Contains(stdout.String(), "Remote access: not enabled") {
 		t.Fatalf("unconfigured remote code=%d stderr=%q", code, stderr.String())
 	}
 }
@@ -373,7 +373,7 @@ func TestRunInformationalAndInvalidInputDoesNotCleanup(t *testing.T) {
 }
 
 func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
-	for _, args := range [][]string{{"down"}, {"clean"}, {"up", "--no-attach"}} {
+	for _, args := range [][]string{{"down", "--yes"}, {"clean"}, {"up", "--no-attach"}} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			called := false
 			cleanup := func(context.Context) (sandbox.CleanResult, error) {
@@ -470,7 +470,7 @@ func TestRunDownUsesInjectedOwner(t *testing.T) {
 			}
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			code := runWithCommandDependencies(context.Background(), []string{"down"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+			code := runWithCommandDependencies(context.Background(), []string{"down", "--yes"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
 			output := stdout.String()
 			unexpectedOutput := stderr.String()
 			if test.downError != nil {
@@ -503,7 +503,7 @@ func TestRunDownStopsBeforePullAndReportsPostStopPullFailure(t *testing.T) {
 		return sandbox.HostConfigurationPullResult{Pulled: []string{"OpenCode configuration"}}, errors.New("diverged")
 	}
 	var stdout, stderr bytes.Buffer
-	code := runWithCommandDependencies(context.Background(), []string{"down"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
+	code := runWithCommandDependencies(context.Background(), []string{"down", "--yes"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
 	if code != 1 || strings.Join(order, "|") != "cleanup|down|pull" || !strings.Contains(stdout.String(), "Result: stopped") ||
 		!strings.Contains(stdout.String(), "OpenCode configuration") || !strings.Contains(stderr.String(), "Sandbox is stopped") {
 		t.Fatalf("code = %d, order = %v, stdout = %q, stderr = %q", code, order, stdout.String(), stderr.String())
@@ -532,6 +532,7 @@ func TestRunPullHostConfigAndUpReportPartialResultsBeforeFailure(t *testing.T) {
 	for _, command := range []string{"pull-host-config", "up"} {
 		t.Run(command, func(t *testing.T) {
 			dependencies := defaultCommandDependencies()
+			dependencies.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
 			dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 				return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
 			}
@@ -589,6 +590,7 @@ func TestRunUpRejectsNoninteractiveAttachBeforeCleanupOrProvisioning(t *testing.
 
 func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	dependencies.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
 	}
@@ -630,6 +632,7 @@ func TestRunUpNoAttachSkipsStreamValidationAndInteractiveAttach(t *testing.T) {
 
 func TestRunUpExplicitTimeoutOverridesDefault(t *testing.T) {
 	dependencies := defaultCommandDependencies()
+	dependencies.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
 	}
@@ -677,6 +680,7 @@ func TestRunUpInstallerSelectionAndNoHostPull(t *testing.T) {
 func TestRunUpReportsCancellationAndReturnsStandardExitCode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dependencies := defaultCommandDependencies()
+	dependencies.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
 	dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
 		return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
 	}

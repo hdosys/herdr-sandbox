@@ -223,12 +223,7 @@ func InspectSession(ctx context.Context) (SessionStatus, error) {
 		}
 		return inspectSessionDuringOperation(ctx, dataDirectory, err)
 	}
-	cleanup, cleanupErr := cleanupStaleStateAt(ctx, dataDirectory)
 	status, inspectErr := inspectSessionAt(ctx, dataDirectory)
-	status.CleanupRemovedRuns = cleanup.RemovedRuns
-	if cleanupErr != nil {
-		status.Warnings = append(status.Warnings, "Stale-state cleanup incomplete: "+cleanupErr.Error())
-	}
 	status.NextAction = sessionNextAction(status)
 	releaseErr := release()
 	if inspectErr != nil {

@@ -9,9 +9,15 @@ represent failed tag attempts; this changelog does not recreate them.
 
 ### Changed
 
-- Ordinary `sandbox up` now reconnects to a completed environment without refreshing
-  packages or host configuration. `--refresh` explicitly requests those changes.
-  `sandbox status` separates usability from incomplete setup, with full diagnostic
+- The primary CLI is now `up`, `refresh`, `remote`, `status`, and `down`.
+  First startup guides project and tool selection; opening an initialized guest
+  does not retry a failed later update. Explicit `refresh` reuses unchanged steps.
+- Remote devices can be named, added by pasting a public key, renamed, rekeyed,
+  or removed. Approved changes remain on the host and apply automatically to the
+  current tailnet guest. Saved-but-unconfirmed access is reported explicitly.
+- Bare invocation is read-only, help is command-specific, and `down` requires
+  confirmation of guest-data loss while preserving host edits and saved keys.
+- `sandbox status` separates usability from incomplete setup, with full diagnostic
   details available through `--verbose`.
 - Retained refresh verifies Tailscale without interrupting its service and avoids
   transferring credentials again after a successful early credential sync.
@@ -24,11 +30,8 @@ represent failed tag attempts; this changelog does not recreate them.
 - Tailscale joins an existing tailnet through one browser sign-in and reuses the
   protected Sandbox identity on later starts, without a manually created auth key
   or mandatory device tag.
-- `sandbox remote setup` previews standard host incoming SSH public-key lists and
-  enables ordinary tailnet SSH with one confirmation, preserving configured keys.
-  The host's managed key is included automatically; `--key FILE` adds a new
-  device directly to a ready tailnet Sandbox without restarting it, disconnecting
-  sessions, or repeating provisioning.
+- The host's managed SSH identity is included automatically and cannot be removed
+  through device management. Existing public-key lists remain valid without migration.
 - First Tailscale sign-in opens in the default browser. `sandbox remote` shows
   compact SSH and Herdr connection commands plus the host fingerprint; `--qr`
   adds the optional connection QR. Additional keys support Ed25519, RSA of at

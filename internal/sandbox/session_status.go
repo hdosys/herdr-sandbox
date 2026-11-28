@@ -247,32 +247,41 @@ func inspectSessionDuringOperation(ctx context.Context, dataDirectory string, lo
 	return status, nil
 }
 
+// NeedsInitialSetup distinguishes unfinished first setup from a failed later
+// refresh using the existing operation record, not another readiness store.
+func (status SessionStatus) NeedsInitialSetup() bool {
+	return status.State != SessionReady || status.Operation != nil && status.Operation.Kind == operationKindSetup && status.Operation.State != operationStateSucceeded
+}
+
 func sessionNextAction(status SessionStatus) string {
 	if status.InstallerProvisioning && status.State != SessionReady && status.State != SessionStopped {
 		return "Installer test instance preserved. Inspect its installer report; normal provisioning is disabled for this instance. A new fresh acceptance run requires an explicit later shutdown."
 	}
 	switch status.State {
 	case SessionStopped:
-		return "Run `sandbox up` from a configured project."
+		return "Run `sandbox up` to set up or open your project."
 	case SessionStarting:
 		return "Wait for provisioning, then run `sandbox status` again."
 	case SessionConnectable:
 		return "Run `sandbox up` to continue provisioning in the existing Sandbox."
 	case SessionReady:
 		if status.Operation != nil && status.Operation.State == operationStateRunning {
-			return "Wait for retained reprovisioning to finish, then run `sandbox attach`."
+			return "An operation is running. Let it finish before another lifecycle command."
 		}
-		if status.Operation != nil && status.Operation.State == operationStateFailed {
-			return "Run `sandbox attach` to work now, or correct the reported failure and run `sandbox up` to resume unfinished steps."
+		if status.NeedsInitialSetup() {
+			return "Run `sandbox up` to finish initial setup. The guest is preserved."
 		}
-		return "Run `sandbox attach` to connect without reprovisioning."
+		if status.Operation != nil && status.Operation.State != operationStateSucceeded {
+			return "Run `sandbox up` to work now. Use `sandbox refresh` when you want to resume the failed update."
+		}
+		return "Run `sandbox up` to connect without updating tools or configuration."
 	case SessionFailed:
 		if status.GuestIP != "" {
 			return "Correct the reported error, then run `sandbox up` to retry in the same Sandbox."
 		}
 		return "Retry the bootstrap using the command shown in the existing Sandbox console, then run `sandbox up`. Keep the Sandbox open."
 	case SessionStale:
-		return "Run `sandbox status` again to retry bounded stale-state cleanup."
+		return "Run `sandbox clean` to request safe stale-state cleanup."
 	case SessionUnmanaged:
 		return "Close or otherwise manage the unrelated Windows Sandbox before running `sandbox up`."
 	default:

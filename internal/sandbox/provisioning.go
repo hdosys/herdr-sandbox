@@ -281,6 +281,7 @@ type globalConfiguration struct {
 	AudioInput              bool                             `json:"audioInput"`
 	Tailscale               bool                             `json:"tailscale"`
 	RemoteSSHAuthorizedKeys []string                         `json:"remoteSSHAuthorizedKeys"`
+	RemoteSSHDeviceNames    map[string]string                `json:"remoteSSHDeviceNames,omitempty"`
 	ConfigurationSync       configurationSyncConfiguration   `json:"configurationSync"`
 	Mounts                  map[string]mountConfiguration    `json:"mounts"`
 	CodingAgentSync         codingAgentSyncConfiguration     `json:"codingAgentSync"`
@@ -377,7 +378,7 @@ func resolveProvisioning(startDirectory string) (provisioningPlan, error) {
 		return provisioningPlan{}, err
 	}
 	if len(plan.Workspaces) == 0 {
-		return provisioningPlan{}, errors.New("no workspace is selected; run `sandbox init --stack <name>` from a project containing the source to map, or add a workspace to %APPDATA%\\herdr-sandbox\\config.json")
+		return provisioningPlan{}, errors.New("no workspace is selected; run `sandbox up` interactively to approve a project, or use --project PATH --stack NAME --yes for explicit setup")
 	}
 	return plan, nil
 }
@@ -606,6 +607,9 @@ func resolveProvisioningConfigurationAt(startDirectory, globalRoot, defaultRoot 
 	}
 	remoteSSHAuthorizedKeys, err := canonicalizeRemoteSSHAuthorizedKeys(configuration.RemoteSSHAuthorizedKeys)
 	if err != nil {
+		return provisioningPlan{}, err
+	}
+	if _, err := remoteSettingsFromConfiguration(configuration); err != nil {
 		return provisioningPlan{}, err
 	}
 	if len(remoteSSHAuthorizedKeys) >= maximumRemoteSSHAuthorizedKeys {
@@ -973,6 +977,12 @@ func decodeGlobalConfiguration(decoder *json.Decoder, config *globalConfiguratio
 			if err := json.Unmarshal(raw, &config.RemoteSSHAuthorizedKeys); err != nil {
 				return fmt.Errorf("field %q: %w", key, err)
 			}
+		case "remoteSSHDeviceNames":
+			names, err := decodeNamedStrings(decoder, "key fingerprint", false)
+			if err != nil {
+				return fmt.Errorf("field %q: %w", key, err)
+			}
+			config.RemoteSSHDeviceNames = names
 		case "mounts":
 			mounts, err := decodeConfiguredMounts(decoder)
 			if err != nil {
@@ -1405,6 +1415,10 @@ func decodeMountConfiguration(decoder *json.Decoder) (mountConfiguration, error)
 }
 
 func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error) {
+	return decodeNamedStrings(decoder, "workspace", true)
+}
+
+func decodeNamedStrings(decoder *json.Decoder, role string, foldCase bool) (map[string]string, error) {
 	opening, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -1421,11 +1435,14 @@ func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error
 		}
 		name, ok := token.(string)
 		if !ok {
-			return nil, errors.New("workspace name must be a string")
+			return nil, fmt.Errorf("%s name must be a string", role)
 		}
-		identity := strings.ToLower(name)
+		identity := name
+		if foldCase {
+			identity = strings.ToLower(name)
+		}
 		if seen[identity] {
-			return nil, fmt.Errorf("duplicate workspace name %q", name)
+			return nil, fmt.Errorf("duplicate %s name %q", role, name)
 		}
 		seen[identity] = true
 		raw, err := decodeNonNullJSONValue(decoder, name)
@@ -1434,7 +1451,7 @@ func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error
 		}
 		var directory string
 		if err := json.Unmarshal(raw, &directory); err != nil {
-			return nil, fmt.Errorf("workspace %q: %w", name, err)
+			return nil, fmt.Errorf("%s %q: %w", role, name, err)
 		}
 		workspaces[name] = directory
 	}
@@ -1443,7 +1460,7 @@ func decodeConfiguredWorkspaces(decoder *json.Decoder) (map[string]string, error
 		return nil, err
 	}
 	if closing != json.Delim('}') {
-		return nil, errors.New("workspace object is not closed")
+		return nil, fmt.Errorf("%s object is not closed", role)
 	}
 	return workspaces, nil
 }
