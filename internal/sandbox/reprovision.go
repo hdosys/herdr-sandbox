@@ -125,9 +125,9 @@ func provisionSession(ctx context.Context, options Options, plan runPlan, ready 
 			if operation.Phase == "development-incomplete" {
 				writeDevelopmentIncompleteGuidance(options.Output, retry)
 			} else if operation.Phase == "bootstrap" {
-				fmt.Fprintln(options.Output, "Sandbox preserved. If bootstrap failed, use its retry command in the guest console, then run `sandbox up` again. Do not run `sandbox down`.")
+				fmt.Fprintf(options.Output, "Sandbox preserved. If bootstrap failed, use its retry command in the guest console, then run `%s` again. Do not run `sandbox down`.\n", retry)
 			} else {
-				fmt.Fprintln(options.Output, "Sandbox preserved. Correct the reported error and run `sandbox up` again; do not run `sandbox down`.")
+				fmt.Fprintf(options.Output, "Sandbox preserved. Correct the reported error and run `%s` again; do not run `sandbox down`.\n", retry)
 			}
 		}
 	}()

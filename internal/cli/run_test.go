@@ -18,15 +18,12 @@ func runWithCleanup(ctx context.Context, args []string, stdin *bytes.Buffer, std
 
 func TestRunPrintsHelp(t *testing.T) {
 	var stdout bytes.Buffer
-	code := Run(context.Background(), nil, &bytes.Buffer{}, &stdout, &bytes.Buffer{})
+	code := Run(context.Background(), []string{"--help"}, &bytes.Buffer{}, &stdout, &bytes.Buffer{})
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
 	for _, required := range []string{
-		"sandbox version", "sandbox --version", "sandbox plan", "sandbox init", "sandbox up", "--no-attach",
-		"sandbox attach", "sandbox status", "sandbox remote", "sandbox pull-host-config", "sandbox down", "sandbox clean",
-		"cacheDirectory (default <system-temp>\\herdr-sandbox\\cache)", "memoryMB (default 32768)",
-		"four-hour launch-to-terminal-ready timeout", "--timeout replaces it for one run", "workspaceDiscovery", "credentialSync choices (all disabled by default)", "named folder mounts", "wingetPackages", "audio (output)", "audioInput (microphone)", "tailscale", "remoteSSHAuthorizedKeys", "android", "all", "cpp", "handy", "hyperframes", "java", "nsis", "playwright-cli", "python-ai", "tradingview",
+		"  up ", "  refresh ", "  remote ", "  status ", "  down ", "sandbox COMMAND --help", "Advanced:",
 	} {
 		if !strings.Contains(stdout.String(), required) {
 			t.Fatalf("help is missing %q: %q", required, stdout.String())
@@ -38,29 +35,6 @@ func TestRunPrintsHelp(t *testing.T) {
 	for _, hidden := range []string{"--installer-"} {
 		if strings.Contains(stdout.String(), hidden) {
 			t.Fatalf("installer-only command %q leaked into help: %q", hidden, stdout.String())
-		}
-	}
-}
-
-func TestStackHelpListsGenericStacksBeforeMetaAndCheckoutShortcuts(t *testing.T) {
-	generic := "android|audio|cpp|dotnet|go|hyperframes|java|node|nsis|playwright-cli|python|python-ai|rust|tradingview|zig"
-	trailing := "all|handy|herdr"
-	for name, text := range map[string]string{"usage": usage, "prompt": stackSelectionHelp} {
-		if name == "usage" {
-			for line := range strings.SplitSeq(text, "\n") {
-				if strings.HasPrefix(strings.TrimSpace(line), "sandbox init ") {
-					text = line
-					break
-				}
-			}
-		}
-		previous := -1
-		for stack := range strings.SplitSeq(generic+"|"+trailing, "|") {
-			index := strings.Index(text, stack)
-			if index <= previous {
-				t.Fatalf("%s stack order is invalid at %q: %q", name, stack, text)
-			}
-			previous = index
 		}
 	}
 }
@@ -88,13 +62,13 @@ func TestRunPrintsVersionWithoutCrossingSandboxBoundary(t *testing.T) {
 	}
 }
 
-func TestFlagCommandHelpPreservesStderr(t *testing.T) {
-	for _, command := range []string{"init", "up"} {
+func TestCommandHelpIsScoped(t *testing.T) {
+	for _, command := range []string{"init", "up", "refresh", "remote"} {
 		t.Run(command, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
 			code := Run(context.Background(), []string{command, "--help"}, &bytes.Buffer{}, &stdout, &stderr)
-			if code != 0 || stdout.Len() != 0 || stderr.String() != usage {
+			if code != 0 || !strings.HasPrefix(stdout.String(), "Usage: sandbox "+command) || stderr.Len() != 0 {
 				t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 			}
 		})
@@ -382,6 +356,10 @@ func TestRunValidCommandsAttemptCleanupBeforeNativeWork(t *testing.T) {
 			}
 			dependencies := defaultCommandDependencies()
 			dependencies.cleanup = cleanup
+			dependencies.firstUse = func(string) (sandbox.FirstUse, error) { return sandbox.FirstUse{}, nil }
+			dependencies.inspect = func(context.Context) (sandbox.SessionStatus, error) {
+				return sandbox.SessionStatus{State: sandbox.SessionStopped}, nil
+			}
 			if args[0] == "up" {
 				dependencies.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) {
 					return sandbox.HostHerdr{}, nil
@@ -474,7 +452,10 @@ func TestRunDownUsesInjectedOwner(t *testing.T) {
 			output := stdout.String()
 			unexpectedOutput := stderr.String()
 			if test.downError != nil {
-				output, unexpectedOutput = stderr.String(), stdout.String()
+				output, unexpectedOutput = stderr.String(), ""
+				if !strings.Contains(stdout.String(), "NOT rolled back") {
+					t.Fatal("missing pre-effect warning")
+				}
 			}
 			wantOrder := "cleanup|down|pull"
 			if test.downError != nil {

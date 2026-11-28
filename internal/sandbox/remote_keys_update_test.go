@@ -43,20 +43,44 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 		t.Fatal("remote endpoint address unavailable")
 	}
 	temporary := t.TempDir()
-	identity := filepath.Join(temporary, "device")
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
-	keygen := hiddenCommandContext(ctx, filepath.Join(os.Getenv("ProgramFiles"), "OpenSSH", "ssh-keygen.exe"), "-q", "-t", "ed25519", "-N", "", "-f", identity)
-	if output, err := keygen.CombinedOutput(); err != nil {
-		t.Fatalf("temporary device identity: %v: %s", err, output)
+	createDevice := func(name string) (string, string) {
+		t.Helper()
+		identity := filepath.Join(temporary, name)
+		keygen := hiddenCommandContext(ctx, filepath.Join(os.Getenv("ProgramFiles"), "OpenSSH", "ssh-keygen.exe"), "-q", "-t", "ed25519", "-N", "", "-f", identity)
+		if output, err := keygen.CombinedOutput(); err != nil {
+			t.Fatalf("temporary device identity: %v: %s", err, output)
+		}
+		public, err := os.ReadFile(identity + ".pub")
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := canonicalRemotePublicKey(strings.TrimSpace(string(public)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return identity, key
 	}
-	public, err := os.ReadFile(identity + ".pub")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := canonicalRemotePublicKey(strings.TrimSpace(string(public)))
-	if err != nil {
-		t.Fatal(err)
+	identity, key := createDevice("device")
+	replacementIdentity, replacementKey := createDevice("replacement")
+	configurationRoot := t.TempDir()
+	persistDevice := func(change RemoteChange) []string {
+		t.Helper()
+		settings, saved, err := changeRemoteAccessAt(ctx, configurationRoot, change, func(RemoteSettings) bool { return true }, "")
+		if err != nil || !saved {
+			t.Fatalf("persist %s: %t %v", change.Action, saved, err)
+		}
+		reloaded, err := loadGlobalConfiguration(filepath.Join(configurationRoot, globalConfigurationName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sameRemoteSSHAuthorizedKeys(reloaded.RemoteSSHAuthorizedKeys, settings.AuthorizedKeys) {
+			t.Fatal("future provisioning would use different saved keys")
+		}
+		// The fixture controls only its own new device; all pre-existing live keys
+		// remain outside the test's editable device configuration.
+		return append(append([]string{}, keys...), settings.AuthorizedKeys...)
 	}
 	hostPublic, err := os.ReadFile(filepath.Join(root, "ssh_host_ed25519_key.pub"))
 	if err != nil {
@@ -66,7 +90,7 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	if err := os.WriteFile(knownHosts, []byte(state.TailscaleIPv4+" "+strings.TrimSpace(string(hostPublic))+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	connect := func() ([]byte, error) {
+	connect := func(identity string) ([]byte, error) {
 		connectionContext, stop := context.WithTimeout(ctx, 15*time.Second)
 		defer stop()
 		command := hiddenCommandContext(connectionContext, "ssh.exe", "-F", "NUL", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
@@ -74,7 +98,7 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 			remoteSSHUser+"@"+state.TailscaleIPv4, "echo", "remote-key-accepted")
 		return command.CombinedOutput()
 	}
-	if output, err := connect(); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
+	if output, err := connect(identity); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
 		t.Fatalf("unapproved device was not rejected by public-key authentication: %v: %s", err, output)
 	}
 	apply := func(operationContext context.Context, selected []string, lockPrepared bool) error {
@@ -101,7 +125,7 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 			t.Errorf("temporary device authorization cleanup failed: %v", err)
 		}
 	})
-	proposed := append(append([]string{}, keys...), key)
+	proposed := persistDevice(RemoteChange{Action: "add", Name: "Temporary device", PublicKey: key})
 	if err := apply(ctx, proposed, true); err == nil || !strings.Contains(err.Error(), "being used by another process") || !strings.Contains(err.Error(), "Set-AtomicBytes") {
 		t.Fatalf("locked prepared state did not reject the second publication: %v", err)
 	}
@@ -112,13 +136,25 @@ func TestRemoteKeysCurrentSandbox(t *testing.T) {
 	if err := apply(ctx, proposed, false); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := connect(); err != nil || !strings.Contains(string(output), "remote-key-accepted") {
+	if output, err := connect(identity); err != nil || !strings.Contains(string(output), "remote-key-accepted") {
 		t.Fatalf("newly approved device could not connect: %v: %s", err, output)
 	}
-	if err := apply(ctx, keys, false); err != nil {
+	if err := apply(ctx, persistDevice(RemoteChange{Action: "rename", Device: "Temporary device", Name: "Renamed device"}), false); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := connect(); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
+	if err := apply(ctx, persistDevice(RemoteChange{Action: "replace", Device: "Renamed device", PublicKey: replacementKey}), false); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := connect(identity); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
+		t.Fatalf("replaced key stayed authorized: %v: %s", err, output)
+	}
+	if output, err := connect(replacementIdentity); err != nil || !strings.Contains(string(output), "remote-key-accepted") {
+		t.Fatalf("replacement device could not connect: %v: %s", err, output)
+	}
+	if err := apply(ctx, persistDevice(RemoteChange{Action: "remove", Device: "Renamed device"}), false); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := connect(replacementIdentity); err == nil || !strings.Contains(string(output), "Permission denied (publickey)") {
 		t.Fatalf("removed temporary key remained authorized: %v: %s", err, output)
 	}
 	after, err := os.ReadFile(filepath.Join(root, "authorized_keys"))

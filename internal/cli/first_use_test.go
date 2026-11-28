@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,5 +87,59 @@ func TestBareOverviewAndScopedHelpAreReadOnly(t *testing.T) {
 	out.Reset()
 	if code := runWithCommandDependencies(t.Context(), []string{"remote", "--help"}, &bytes.Buffer{}, &out, &stderr, deps); code != 0 || !strings.Contains(out.String(), "sandbox remote add") || strings.Contains(out.String(), "sandbox workstation") {
 		t.Fatalf("unscoped help: %d %s", code, &out)
+	}
+}
+
+func TestGuideReusesAnExplicitlySelectedExistingProfile(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows configuration owner")
+	}
+	root := t.TempDir()
+	for variable, leaf := range map[string]string{"USERPROFILE": "home", "APPDATA": "app", "LOCALAPPDATA": "local"} {
+		path := filepath.Join(root, leaf)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(variable, path)
+	}
+	initial, existing := filepath.Join(root, "new"), filepath.Join(root, "existing")
+	for _, path := range []string{initial, existing} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := sandbox.InitializeProject(existing, []string{"go"}); err != nil {
+		t.Fatal(err)
+	}
+	deps := defaultCommandDependencies()
+	deps.interactive = func(io.Reader) bool { return true }
+	deps.initialize = func(string, []string) (sandbox.ProjectInitResult, error) {
+		t.Fatal("guide attempted to overwrite an existing profile")
+		return sandbox.ProjectInitResult{}, nil
+	}
+	options := sandbox.Options{ProjectDirectory: initial}
+	var out, stderr bytes.Buffer
+	if !prepareFirstUse(t.Context(), &options, nil, false, false, strings.NewReader(existing+"\nn\ny\n"), &out, &stderr, deps) || options.ProjectDirectory != existing {
+		t.Fatalf("existing profile not reused: %+v %s %s", options, &out, &stderr)
+	}
+}
+
+func TestRefreshRejectsMissingOrUnownedGuestBeforeEffects(t *testing.T) {
+	for _, state := range []string{sandbox.SessionStopped, sandbox.SessionStale, sandbox.SessionUnmanaged} {
+		deps := defaultCommandDependencies()
+		deps.resolveHerdr = func(context.Context) (sandbox.HostHerdr, error) { return sandbox.HostHerdr{}, nil }
+		deps.inspect = func(context.Context) (sandbox.SessionStatus, error) { return sandbox.SessionStatus{State: state}, nil }
+		deps.cleanup = func(context.Context) (sandbox.CleanResult, error) {
+			t.Fatal("refresh attempted to clear a non-running guest")
+			return sandbox.CleanResult{}, nil
+		}
+		deps.up = func(context.Context, sandbox.Options, sandbox.HostHerdr) (sandbox.Connection, error) {
+			t.Fatal("refresh entered new-guest startup")
+			return sandbox.Connection{}, nil
+		}
+		var out, stderr bytes.Buffer
+		if code := runWithCommandDependencies(t.Context(), []string{"refresh"}, &bytes.Buffer{}, &out, &stderr, deps); code != 1 {
+			t.Fatalf("state=%s code=%d", state, code)
+		}
 	}
 }

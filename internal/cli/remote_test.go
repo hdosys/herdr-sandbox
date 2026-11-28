@@ -20,7 +20,7 @@ func TestRemotePastedKeyRequiresApprovalAndAppliesExactSavedSnapshot(t *testing.
 			if change.Action != "add" || change.Name != "Laptop" || change.PublicKey != "public-key-input" {
 				t.Fatalf("wrong change: %#v", change)
 			}
-			result := sandbox.RemoteSettings{AuthorizedKeys: []string{"approved-device-key"}}
+			result := sandbox.RemoteSettings{Enabled: true, AuthorizedKeys: []string{"approved-device-key"}}
 			approved = confirm(result)
 			return result, approved, nil
 		}
@@ -48,7 +48,7 @@ func TestRemoteChangeReportsPendingOrAppliedWithoutStartingGuest(t *testing.T) {
 		deps := defaultCommandDependencies()
 		deps.remoteSettings = func(context.Context) (sandbox.RemoteSettings, error) { return sandbox.RemoteSettings{}, nil }
 		deps.changeRemote = func(_ context.Context, _ sandbox.RemoteChange, confirm func(sandbox.RemoteSettings) bool) (sandbox.RemoteSettings, bool, error) {
-			r := sandbox.RemoteSettings{}
+			r := sandbox.RemoteSettings{Enabled: true}
 			return r, confirm(r), nil
 		}
 		deps.applyRemoteKeys = func(context.Context, []string) (bool, error) {
@@ -83,7 +83,7 @@ func TestRemoteMenuSelectsStableFingerprintAndWarnsOnRemoval(t *testing.T) {
 		if change.Action != "remove" || change.Device != "SHA256:device" {
 			t.Fatalf("unstable device target: %#v", change)
 		}
-		result := sandbox.RemoteSettings{}
+		result := sandbox.RemoteSettings{Enabled: true}
 		return result, confirm(result), nil
 	}
 	deps.applyRemoteKeys = func(context.Context, []string) (bool, error) { return true, nil }
@@ -91,5 +91,26 @@ func TestRemoteMenuSelectsStableFingerprintAndWarnsOnRemoval(t *testing.T) {
 	code := runWithCommandDependencies(t.Context(), []string{"remote"}, strings.NewReader("4\n1\ny\n"), &out, &stderr, deps)
 	if code != 0 || !strings.Contains(out.String(), "Existing SSH sessions are NOT disconnected") {
 		t.Fatalf("code=%d %s %s", code, &out, &stderr)
+	}
+}
+
+func TestRemoteApplyRejectsDisabledAccessAndMisleadingFlags(t *testing.T) {
+	for _, args := range [][]string{{"remote", "apply"}, {"remote", "apply", "--device", "Laptop"}, {"remote", "enable", "--name", "Laptop"}} {
+		deps := defaultCommandDependencies()
+		deps.remoteSettings = func(context.Context) (sandbox.RemoteSettings, error) {
+			if len(args) > 2 {
+				t.Fatal("invalid flags crossed into configuration inspection")
+			}
+			return sandbox.RemoteSettings{}, nil
+		}
+		deps.applyRemoteKeys = func(context.Context, []string) (bool, error) {
+			t.Fatal("unapproved or incorrectly scoped apply")
+			return false, nil
+		}
+		var out, stderr bytes.Buffer
+		code := runWithCommandDependencies(t.Context(), args, &bytes.Buffer{}, &out, &stderr, deps)
+		if code == 0 || strings.Contains(out.String(), "automatically at the next") {
+			t.Fatalf("false success: %d %s %s", code, &out, &stderr)
+		}
 	}
 }

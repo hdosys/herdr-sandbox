@@ -82,7 +82,7 @@ func TestRunConfigHelpDoesNotOpenConfiguration(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runWithCommandDependencies(context.Background(), []string{"config", "--help"}, &bytes.Buffer{}, &stdout, &stderr, dependencies)
-	if code != 0 || stdout.String() != usage || stderr.Len() != 0 {
+	if code != 0 || !strings.Contains(stdout.String(), "Usage: sandbox config") || stderr.Len() != 0 {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }

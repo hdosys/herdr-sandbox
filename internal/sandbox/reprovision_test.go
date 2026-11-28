@@ -19,7 +19,7 @@ func TestDevelopmentIncompleteGuidanceKeepsUsabilityAndFailureDistinct(t *testin
 	for _, want := range []string{
 		"Sandbox is running", "Attach now with `sandbox attach` to use Herdr",
 		"Already provisioned tools remain usable", "failed or unfinished setup may be unavailable",
-		"retry `sandbox up` in this same Sandbox", "Do not run `sandbox down`",
+		"run `sandbox refresh`", "Do not run `sandbox down`",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("missing guidance %q in %q", want, output.String())

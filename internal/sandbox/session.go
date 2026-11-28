@@ -154,7 +154,7 @@ func cancellationOutcomeError(cause error, stage provisioningCancellationStage) 
 	message := "startup cancelled before a Sandbox was launched"
 	switch stage {
 	case provisioningCancellationRetained:
-		message = "provisioning cancelled; the Sandbox and completed steps were preserved. Run `sandbox status` for the next action"
+		message = "provisioning cancelled; the Sandbox was preserved, including completed steps. Run `sandbox status` for the next action"
 	case provisioningCancellationFresh:
 		message = "fresh provisioning wait cancelled; the Sandbox may continue guest bootstrap. Run `sandbox status` to inspect it"
 	}
@@ -245,6 +245,9 @@ func Up(ctx context.Context, options Options, hostHerdr HostHerdr) (result Conne
 	var ready readyStatus
 	var tailscaleBootstrap tailscaleBootstrap
 	retained := sessionStatus.State != SessionStopped
+	if options.Refresh && !retained {
+		return Connection{}, errors.New("no managed guest remains to refresh; no new guest was started. Use sandbox up for an explicit startup")
+	}
 	if options.InstallerProvisioning && retained {
 		return Connection{}, errors.New("installer acceptance requires a fresh Sandbox; the existing Sandbox was preserved. End it explicitly only after saving current work, then run the installer provisioning path")
 	}

@@ -266,7 +266,7 @@ func sessionNextAction(status SessionStatus) string {
 		return "Run `sandbox up` to continue provisioning in the existing Sandbox."
 	case SessionReady:
 		if status.Operation != nil && status.Operation.State == operationStateRunning {
-			return "An operation is running. Let it finish before another lifecycle command."
+			return "Wait for the running operation to finish, then run `sandbox up`."
 		}
 		if status.NeedsInitialSetup() {
 			return "Run `sandbox up` to finish initial setup. The guest is preserved."

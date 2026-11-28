@@ -139,3 +139,15 @@ func TestRemoteDevicesCannotRevokeOrRelabelManagingHost(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteDeviceReplacementKeepsOptionalNameOptional(t *testing.T) {
+	root := t.TempDir()
+	key := testEd25519PublicKey(1)
+	if err := os.WriteFile(filepath.Join(root, globalConfigurationName), []byte(`{"tailscale":true,"remoteSSHAuthorizedKeys":["`+key+`"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, saved, err := changeRemoteAccessAt(t.Context(), root, RemoteChange{Action: "replace", Device: remoteKeyFingerprint(key), PublicKey: testEd25519PublicKey(2)}, func(RemoteSettings) bool { return true }, "")
+	if err != nil || !saved || len(result.Devices) != 1 || result.Devices[0].Name != "" || result.Devices[0].PublicKey != testEd25519PublicKey(2) {
+		t.Fatalf("unnamed replacement: saved=%t result=%+v err=%v", saved, result, err)
+	}
+}

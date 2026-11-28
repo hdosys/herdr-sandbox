@@ -30,8 +30,12 @@ func prepareFirstUse(ctx context.Context, options *sandbox.Options, stacks []str
 				approved, readErr := confirmPrompt(reader, output, "Enable Tailscale and the managing host's remote shell access?")
 				return readErr == nil && approved
 			})
-			if err != nil || !saved {
-				fmt.Fprintln(stderr, "sandbox: use sandbox remote to approve remote access, or --remote-access --yes for an explicit initial configuration")
+			if err != nil {
+				fmt.Fprintln(stderr, "sandbox: remote configuration was not confirmed:", err)
+				return false
+			}
+			if !saved {
+				fmt.Fprintln(output, "Cancelled. Remote access settings were not changed.")
 				return false
 			}
 		}
@@ -50,7 +54,19 @@ func prepareFirstUse(ctx context.Context, options *sandbox.Options, stacks []str
 		if folder != "" {
 			selection.Directory = folder
 		}
-		if len(stacks) == 0 {
+	}
+	// A typed or chosen path is not implicitly its nearest parent profile.
+	selection, err = deps.firstUse(selection.Directory)
+	if err != nil {
+		fmt.Fprintln(stderr, "sandbox: project selection was not changed:", err)
+		return false
+	}
+	if !selection.NeedsProject && len(stacks) > 0 {
+		fmt.Fprintln(stderr, "sandbox: the selected folder already has a profile; it was not overwritten")
+		return false
+	}
+	if deps.interactive(input) {
+		if selection.NeedsProject && len(stacks) == 0 {
 			fmt.Fprintln(output, "Available stacks:", stackSelectionHelp)
 			line, err := readPrompt(reader, output, "Required stacks (space or comma separated): ", 1024)
 			if err != nil {
@@ -67,14 +83,25 @@ func prepareFirstUse(ctx context.Context, options *sandbox.Options, stacks []str
 			}
 		}
 	}
-	if len(stacks) == 0 {
+	if selection.NeedsProject && len(stacks) == 0 {
 		fmt.Fprintln(stderr, "sandbox: choose at least one stack; nothing changed")
 		return false
 	}
-	fmt.Fprintf(output, "Share this exact project read/write: %s\nTools: %s\nHost-file changes persist even after discarding the guest.\n", selection.Directory, strings.Join(stacks, ", "))
+	tools := strings.Join(stacks, ", ")
+	if !selection.NeedsProject {
+		tools = "existing project profile (unchanged)"
+	}
+	fmt.Fprintf(output, "Share this exact project read/write: %s\nTools: %s\nHost-file changes persist even after discarding the guest.\n", selection.Directory, tools)
+	memory := options.MemoryMB
+	if memory == 0 {
+		memory = selection.MemoryMB
+	}
+	if memory > 0 {
+		fmt.Fprintf(output, "Memory: %d MB (change with --memory-mb).\n", memory)
+	}
 	approved := yes
 	if !approved {
-		approved, err = confirmPrompt(reader, output, "Create this project profile and start setup?")
+		approved, err = confirmPrompt(reader, output, "Use this project and start setup?")
 		if err != nil {
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return false
@@ -88,12 +115,16 @@ func prepareFirstUse(ctx context.Context, options *sandbox.Options, stacks []str
 		fmt.Fprintln(stderr, "sandbox:", err)
 		return false
 	}
-	result, err := deps.initialize(selection.Directory, stacks)
-	if err != nil {
-		fmt.Fprintln(stderr, "sandbox:", err)
-		return false
+	if selection.NeedsProject {
+		result, err := deps.initialize(selection.Directory, stacks)
+		if err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return false
+		}
+		fmt.Fprintln(output, "Created project profile:", result.Path)
+	} else {
+		fmt.Fprintln(output, "Using the existing project profile without changes.")
 	}
-	fmt.Fprintln(output, "Created project profile:", result.Path)
 	options.ProjectDirectory = selection.Directory
 	if remote && !selection.RemoteEnabled {
 		_, _, err := deps.changeRemote(ctx, sandbox.RemoteChange{Action: "enable"}, func(sandbox.RemoteSettings) bool { return true })

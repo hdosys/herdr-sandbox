@@ -140,7 +140,7 @@ func remoteSettingsFromConfiguration(config globalConfiguration) (RemoteSettings
 		return RemoteSettings{}, errors.New("at most seven devices are supported; the managing host keeps its own reserved key")
 	}
 	if len(keys) > 0 && !config.Tailscale {
-		return RemoteSettings{}, errors.New("authorized devices require Tailscale to be enabled")
+		return RemoteSettings{}, errors.New("remoteSSHAuthorizedKeys requires tailscale to be true")
 	}
 	result := RemoteSettings{Enabled: config.Tailscale, AuthorizedKeys: keys}
 	known := map[string]bool{}
@@ -222,6 +222,9 @@ func changeRemoteAccessAt(ctx context.Context, root string, change RemoteChange,
 		if before.Devices[index].PublicKey == managedKey {
 			return before, false, errors.New("the managing host identity is reserved and cannot be edited as a device")
 		}
+		if change.Action == "replace" && change.Name == "" {
+			change.Name = before.Devices[index].Name
+		}
 	}
 	switch change.Action {
 	case "enable":
@@ -230,8 +233,10 @@ func changeRemoteAccessAt(ctx context.Context, root string, change RemoteChange,
 		if err != nil {
 			return before, false, fmt.Errorf("invalid public SSH key; nothing changed: %w", err)
 		}
-		if err := validateRemoteDeviceName(change.Name); err != nil {
-			return before, false, err
+		if change.Action == "add" || change.Name != "" {
+			if err := validateRemoteDeviceName(change.Name); err != nil {
+				return before, false, err
+			}
 		}
 		fingerprint := remoteKeyFingerprint(key)
 		if key == managedKey {
@@ -252,7 +257,9 @@ func changeRemoteAccessAt(ctx context.Context, root string, change RemoteChange,
 		} else {
 			keys = append(keys, key)
 		}
-		names[fingerprint] = change.Name
+		if change.Name != "" {
+			names[fingerprint] = change.Name
+		}
 	case "rename":
 		if err := validateRemoteDeviceName(change.Name); err != nil {
 			return before, false, err

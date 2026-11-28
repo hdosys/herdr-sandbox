@@ -70,7 +70,7 @@ func TestEnrichSessionStatusKeepsGuestReadinessSeparateFromLatestOperation(t *te
 	status.NextAction = sessionNextAction(status)
 	if status.State != SessionReady || status.Operation == nil || status.Operation.State != operationStateFailed ||
 		len(status.Workspaces) != 1 || !status.Workspaces[0].Active ||
-		!strings.Contains(status.NextAction, "attach") {
+		!strings.Contains(status.NextAction, "sandbox up") || !strings.Contains(status.NextAction, "sandbox refresh") {
 		t.Fatalf("enriched status = %#v", status)
 	}
 }
@@ -164,7 +164,7 @@ func TestSessionNextActionWaitsForRunningRetainedOperation(t *testing.T) {
 			State: operationStateRunning,
 		},
 	}
-	if next := sessionNextAction(status); !strings.Contains(next, "Wait") || !strings.Contains(next, "attach") {
+	if next := sessionNextAction(status); !strings.Contains(next, "Wait") || !strings.Contains(next, "sandbox up") {
 		t.Fatalf("next action = %q", next)
 	}
 }

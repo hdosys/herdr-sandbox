@@ -61,7 +61,7 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 	if err != nil {
 		return ProjectInitResult{}, fmt.Errorf("resolve project directory: %w", err)
 	}
-	projectDirectory, err := canonicalMappedDirectory(startDirectory)
+	projectDirectory, err := validateProjectFolder(startDirectory)
 	if err != nil {
 		return ProjectInitResult{}, fmt.Errorf("validate project directory: %w", err)
 	}
@@ -132,6 +132,24 @@ func InitializeProject(startDirectory string, requested []string) (ProjectInitRe
 	}
 	written = true
 	return ProjectInitResult{Path: path, Stacks: labels}, nil
+}
+
+func validateProjectFolder(directory string) (string, error) {
+	canonical, err := canonicalMappedDirectory(directory)
+	if err != nil {
+		return "", err
+	}
+	identity, err := physicalMappedDirectory(canonical)
+	if err != nil {
+		return "", err
+	}
+	if err := validatePhysicalMappingDoesNotContainProtectedRoot("project folder", identity); err != nil {
+		return "", err
+	}
+	if err := validatePhysicalMappingDoesNotExposeSensitiveRoot("project folder", identity); err != nil {
+		return "", err
+	}
+	return canonical, nil
 }
 
 func normalizeProjectInitStacks(requested []string) ([]projectStack, []string, error) {

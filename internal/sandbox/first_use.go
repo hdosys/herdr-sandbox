@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -42,6 +43,20 @@ func InspectFirstUse(directory string) (FirstUse, error) {
 	hasProfile := false
 	for _, workspace := range plan.Workspaces {
 		hasProfile = hasProfile || workspace.Active
+		if explicitDirectory && workspace.Active {
+			equal, err := workspaceDirectoriesEqual(directory, workspace.HostDirectory)
+			if err != nil {
+				return FirstUse{}, err
+			}
+			if !equal {
+				return FirstUse{}, fmt.Errorf("selected folder %s inherits a broader project profile at %s; select that root explicitly only if you intend to expose it", directory, workspace.HostDirectory)
+			}
+		}
+	}
+	if explicitDirectory {
+		if _, err := validateProjectFolder(directory); err != nil {
+			return FirstUse{}, err
+		}
 	}
 	return FirstUse{Directory: directory, NeedsProject: len(plan.Workspaces) == 0 || explicitDirectory && !hasProfile, RemoteEnabled: plan.Tailscale, MemoryMB: plan.MemoryMB}, nil
 }

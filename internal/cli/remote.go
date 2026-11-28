@@ -95,13 +95,27 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 		fmt.Fprint(output, remoteUsage)
 		return 0
 	}
+	change := sandbox.RemoteChange{}
+	yes := false
+	if len(args) > 0 && !(len(args) == 1 && args[0] == "--qr") {
+		var err error
+		change, yes, err = parseRemoteAction(args[0], args[1:])
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(output, remoteUsage)
+			return 0
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "sandbox:", err)
+			return 2
+		}
+	}
 	settings, err := deps.remoteSettings(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "sandbox:", err)
 		return 1
 	}
 	reader := bufio.NewReaderSize(input, 8192)
-	action := ""
+	action := change.Action
 	menu := len(args) == 0 && deps.interactive(input)
 	if len(args) == 0 || len(args) == 1 && args[0] == "--qr" {
 		printRemoteDevices(output, settings)
@@ -151,26 +165,8 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 			fmt.Fprintln(stderr, "sandbox: choose one of the displayed actions")
 			return 2
 		}
-	} else {
-		action, args = args[0], args[1:]
 	}
-	change := sandbox.RemoteChange{Action: action}
-	flags := flag.NewFlagSet("sandbox remote "+action, flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	yes := flags.Bool("yes", false, "approve the displayed access change")
-	flags.StringVar(&change.Name, "name", "", "device display name")
-	flags.StringVar(&change.Device, "device", "", "existing device name or fingerprint")
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "sandbox: unexpected remote arguments")
-		return 2
-	}
-	if action != "add" && action != "rename" && action != "replace" && action != "remove" && action != "enable" && action != "apply" {
-		fmt.Fprint(stderr, remoteUsage)
-		return 2
-	}
+	change.Action = action
 	if action == "apply" {
 		return applyRemoteSettings(ctx, settings, output, stderr, deps)
 	}
@@ -209,7 +205,7 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 			change.Name = selected.Name
 		}
 	}
-	if action == "add" || action == "rename" || action == "replace" {
+	if action == "add" || action == "rename" {
 		if change.Name == "" && menu {
 			change.Name, err = readPrompt(reader, output, "Device name: ", 80)
 		}
@@ -244,7 +240,7 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 			fmt.Fprintf(output, "  %s: %s\n", device.Name, device.Fingerprint)
 		}
 		fmt.Fprintln(output, "Approved devices receive shell and TCP-forwarding access, subject to tailnet policy.")
-		if *yes {
+		if yes {
 			return true
 		}
 		approved, err := confirmPrompt(reader, output, "Confirm access change?")
@@ -267,6 +263,10 @@ func runRemote(ctx context.Context, args []string, input io.Reader, output, stde
 }
 
 func applyRemoteSettings(ctx context.Context, settings sandbox.RemoteSettings, output, stderr io.Writer, deps commandDependencies) int {
+	if !settings.Enabled {
+		fmt.Fprintln(stderr, "sandbox: remote access is disabled. Use sandbox remote enable to approve it first.")
+		return 1
+	}
 	fmt.Fprintln(output, "Saved on this host for future Sandboxes. Applying to the current guest...")
 	applied, err := deps.applyRemoteKeys(ctx, settings.AuthorizedKeys)
 	if err != nil {
@@ -280,4 +280,30 @@ func applyRemoteSettings(ctx context.Context, settings sandbox.RemoteSettings, o
 		fmt.Fprintln(output, "No managed guest. Access will apply automatically at the next sandbox up.")
 	}
 	return 0
+}
+
+func parseRemoteAction(action string, args []string) (sandbox.RemoteChange, bool, error) {
+	change := sandbox.RemoteChange{Action: action}
+	if action != "add" && action != "rename" && action != "replace" && action != "remove" && action != "enable" && action != "apply" {
+		return change, false, errors.New("remote does not accept this action; see sandbox remote --help")
+	}
+	flags := flag.NewFlagSet("sandbox remote "+action, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	yes := flags.Bool("yes", false, "approve the displayed change")
+	flags.StringVar(&change.Name, "name", "", "device display name")
+	flags.StringVar(&change.Device, "device", "", "device name or fingerprint")
+	if err := flags.Parse(args); err != nil {
+		return change, false, err
+	}
+	if flags.NArg() != 0 {
+		return change, false, errors.New("unexpected remote arguments")
+	}
+	var invalid error
+	flags.Visit(func(value *flag.Flag) {
+		allowed := value.Name == "yes" && action != "apply" || value.Name == "name" && (action == "add" || action == "rename" || action == "replace") || value.Name == "device" && (action == "rename" || action == "replace" || action == "remove")
+		if !allowed {
+			invalid = fmt.Errorf("--%s is not supported by remote %s", value.Name, action)
+		}
+	})
+	return change, *yes, invalid
 }

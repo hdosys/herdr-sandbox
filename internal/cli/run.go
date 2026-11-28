@@ -304,6 +304,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 		flags.SetOutput(stderr)
 		yes := flags.Bool("yes", false, "confirm discarding guest-only data")
 		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			fmt.Fprintln(stderr, "sandbox: down does not accept these arguments")
 			fmt.Fprint(stderr, scopedUsage("down"))
 			return 2
 		}
@@ -439,7 +440,7 @@ func runWithCommandDependencies(ctx context.Context, args []string, stdin io.Rea
 			fmt.Fprintln(stderr, "sandbox:", err)
 			return 1
 		}
-		if options.Refresh && status.State == sandbox.SessionStopped {
+		if options.Refresh && (status.State == sandbox.SessionStopped || status.State == sandbox.SessionStale || status.State == sandbox.SessionUnmanaged) {
 			fmt.Fprintln(stderr, "sandbox: no running environment to update. Start it with sandbox up.")
 			return 1
 		}
@@ -511,7 +512,7 @@ func commandHelpRequested(args []string) bool {
 
 func directHelpCommand(command string) bool {
 	switch command {
-	case "config", "pull-host-config", "version", "plan", "attach", "status", "remote", "down", "clean":
+	case "config", "pull-host-config", "version", "plan", "init", "attach", "status", "remote", "down", "clean":
 		return true
 	default:
 		return false
